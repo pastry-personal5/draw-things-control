@@ -1,0 +1,1 @@
+draw-things-cli generate --config-file ./dt-config/image-to-video-wan-2-2.json --image ~/c-work/8005-output/video-20260923-011442-1790093682364768913-last-frame.png --output foo.mov --model "wan_v2.2_a14b_hne_i2v_i8x.ckpt"

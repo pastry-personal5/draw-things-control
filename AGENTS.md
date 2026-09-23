@@ -11,8 +11,12 @@ This is a Python 3.12 project (`draw-things-control`) that controls the Draw Thi
 - **Language**: Python 3.12+
 - **Package Manager**: uv (via `uv.lock` and `pyproject.toml`)
 - **Virtual Environment**: `.venv` (managed by uv)
-- **Project Layout**: Simple flat structure; `main.py` is the entry point
-- **Linter**: [PERSON_NAME] (configured in `pyproject.toml` under `[tool.ruff]`)
+- **Project Layout**: Flat modules with clear boundaries; `main.py` is the entry point
+- **CLI**: Typer in `main.py`; the application use case is `generation_service.py`
+- **Arguments**: `draw_things_arguments.py` owns validated options and command serialization
+- **Process I/O**: `draw_things_runner.py` supervises processes; `process_output.py` classifies output
+- **Logging**: Loguru for process output and status messages
+- **Linter**: Ruff (configured in `pyproject.toml`)
 
 ## Development Conventions
 
@@ -62,17 +66,16 @@ Do not use Context7 for: refactoring, writing scripts from scratch, debugging bu
 
 ## Testing and Linting
 
-- Use `uv run ruff check` for linting — see ruff configuration in `pyproject.toml`
+- Use `uv run --extra dev ruff check .` for linting — see Ruff configuration in `pyproject.toml`
 - Ruff is preconfigured with pycodestyle, pyflakes, isort, bugbear, and comprehensions
 - Line length is unlimited in practice (`line-length = 65535`) by explicit
   owner decision
 - Run `uv run ruff format` to apply consistent formatting
-- No test framework is configured yet
-- When adding tests, place them in a `tests/` directory
-- Use `uv run pytest` once pytest is added as a dev dependency
+- Tests use standard-library `unittest` and Typer's `CliRunner`
+- Place tests in `tests/` and run them with `make check`
 
 ## Git Conventions
 
-- Commit messages follow conventional commits format: `[PERSON_NAME]): description`, `fix(scope): description`, etc.
+- Commit messages follow conventional commits format: `feat(scope): description`, `fix(scope): description`, etc.
 - Branch naming: `main` is the primary branch
 - No remote configured yet; set one up when pushing to a hosted provider

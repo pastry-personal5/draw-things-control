@@ -5,7 +5,10 @@ license = {file = "LICENSE"}
 description = "A safe command-line wrapper for Draw Things image generation."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "loguru>=0.7.3",
+    "typer>=0.27.2",
+]
 
 [project.optional-dependencies]
 dev = [

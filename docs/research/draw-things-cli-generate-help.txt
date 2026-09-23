@@ -1,0 +1,174 @@
+OVERVIEW: Run local inference and save generated output image(s) or video.
+
+DESCRIPTION:
+  Resolve a local inference model, load recommended settings, apply JSON
+overrides,
+  then apply explicit command-line overrides before generation. By default
+generation
+  runs locally; use --remote for a Draw Things server or --cloud-compute for
+Draw
+  Things cloud compute.
+
+MODEL REFERENCES:
+  --model accepts a model file id, a human-readable model name, an
+hf://owner/repo
+  reference, an owner/repo reference, or a Hugging Face model URL.
+
+CONFIGURATION PRECEDENCE:
+  1. Recommended settings for the resolved model.
+  2. Overrides from --config-json or --config-file.
+  3. Explicit command-line flags such as --steps, --cfg, --width, --height,
+     --frames, --seed, and --strength.
+  4. --negative-prompt overrides any recommended negative prompt.
+
+AUDIO VIDEO CONTINUATION:
+  --avc enables segmented audio video continuation. It currently supports only
+  LongCat-Video-Avatar 1.5. The output duration follows --audio; use
+  --segment-frames and --cond-frames to control continuation segments.
+
+EXAMPLES:
+  draw-things-cli generate --model flux_2_klein_4b_q6p.ckpt --prompt "a red
+cube on a table"
+  draw-things-cli generate --model flux_2_klein_4b_q6p.ckpt --prompt-file
+prompt.txt
+  draw-things-cli generate --model flux_2_klein_4b_q6p.ckpt --prompt "studio
+portrait" --image input.png --strength 0.35
+  draw-things-cli generate --model flux_2_klein_4b_q6p.ckpt --prompt "combine
+these references" --image first.png --image second.png
+  draw-things-cli generate --cloud-compute --model flux_2_klein_4b_q6p.ckpt
+--prompt "a red cube on a table" --output cube.png
+  draw-things-cli generate --remote --remote-url 127.0.0.1 --no-remote-tls
+--model flux_2_klein_4b_q6p.ckpt --prompt "a red cube"
+  draw-things-cli generate --model flux_2_klein_4b_q6p.ckpt --prompt "a red
+cube on a table" --terminal-image
+  draw-things-cli generate --model ltx_2.3_22b_distilled_q6p.ckpt --prompt
+"ocean waves at sunset" --frames 49 --output clip.mov
+  draw-things-cli generate --avc --model longcat_video_avatar_1.5_dmd_i8x.ckpt
+--image man.png --audio man.mp3 --output man.mp4
+
+USAGE: draw-things-cli generate <options>
+
+MODEL RESOLUTION:
+  --models-dir <models-dir>
+                          Models directory.
+        Resolution order: --models-dir, DRAWTHINGS_MODELS_DIR, then on macOS
+        ~/Library/Containers/com.liuliu.draw-things/Data/Documents/Models. On
+        other platforms, fall back to <binary-dir>/Models (if it exists), then
+        ~/Documents/Models.
+  -m, --model <model>     Model file, model name, or Hugging Face repo/URL.
+        Accepted forms: flux_2_klein_4b_q6p.ckpt, "FLUX.2 [klein] 4B (6-bit)",
+        hf://owner/repo, owner/repo, or https://huggingface.co/owner/repo.
+
+PROMPTS:
+  -p, --prompt <prompt>   Prompt text.
+  --prompt-file <prompt-file>
+                          Read prompt text from a file, or `-` for stdin.
+        Use this for long or multiline prompts. Mutually exclusive with the
+        inline prompt flag.
+  --negative-prompt <negative-prompt>
+                          Negative prompt text.
+        If omitted, recommended settings may provide one.
+  --negative-prompt-file <negative-prompt-file>
+                          Read negative prompt text from a file, or `-` for
+                          stdin.
+        Use this for long or multiline negative prompts. Mutually exclusive
+        with the inline negative prompt flag.
+
+SAMPLING:
+  --steps <steps>         Sampling steps.
+  --cfg <cfg>             CFG guidance scale.
+  --width <width>         Output width in pixels (multiple of 64).
+  --height <height>       Output height in pixels (multiple of 64).
+  --frames <frames>       Number of frames for video-capable models. Without
+                          --avc, duration is the frame count divided by the
+                          model FPS.
+  --strength <strength>   Denoising strength for img2img (0...1).
+  -s, --seed <seed>       Random seed.
+
+CONFIGURATION OVERRIDES:
+  --config-json <config-json>
+                          Inline JSON override in JSGenerationConfiguration
+                          format.
+        This is merged onto the model's recommended settings. It is not treated
+        as a complete configuration by itself. For custom local LoRAs that are
+        not registered in custom_lora.json, include loras[].version (for
+        example "flux1") so the CLI can construct per-invocation LoRA metadata.
+  --config-file <config-file>
+                          Path to a JSON override file in
+                          JSGenerationConfiguration format.
+        The file is parsed as a partial override and merged onto the model's
+        recommended settings. For custom local LoRAs that are not registered in
+        custom_lora.json, include loras[].version (for example "flux1") so the
+        CLI can construct per-invocation LoRA metadata.
+
+IMAGE INPUT:
+  --image <image>         Input image path. Repeat --image to add reference
+                          images for supported models.
+        The first image is the primary img2img or reference input; subsequent
+        images are additional references in the supplied order. Each image is
+        resized with aspect-preserving scale and center crop to match the
+        requested output size. --avc accepts exactly one image.
+  --audio <audio>         Audio file for LongCat driving audio or MiniMax H3
+                          Ref2VA native audio references.
+  --audio-encoder-file <audio-encoder-file>
+                          Audio encoder checkpoint filename in the models
+                          directory (defaults to the model's encoder).
+
+AUDIO VIDEO CONTINUATION:
+  --avc                   Enable segmented audio video continuation.
+        Currently supported only for LongCat-Video-Avatar 1.5.
+  --segment-frames <segment-frames>
+                          Frames generated per AVC segment. Requires --avc.
+                          (default: 93)
+  --cond-frames <cond-frames>
+                          Overlap frames reused for AVC continuation. Requires
+                          --avc. (default: 13)
+
+OUTPUT:
+  -o, --output <output>   Output path (.png, .mov, or .mp4).
+        Use .png for image output and .mov/.mp4 for video-capable models. If
+        omitted, the CLI previews the result inline in supported interactive
+        terminals and does not write a file.
+  --video-format <video-format>
+                          Video export format for .mov/.mp4 outputs.
+        Accepted values: prores4444, prores422hq, h264, hevc. ProRes formats
+        require .mov output.
+  --terminal-image        Render the first generated PNG inline in supported
+                          terminals.
+        Auto-detects iTerm2 or kitty-graphics terminals such as kitty and
+        Ghostty. PNG output only.
+  --terminal-image-protocol <terminal-image-protocol>
+                          Terminal inline image protocol. (default: auto)
+        Accepted values: auto, iterm2, kitty. `auto` prefers iTerm2, then
+        kitty-graphics terminals such as Ghostty.
+
+EXECUTION:
+  --download-missing/--no-download-missing
+                          Auto-download missing model files. (default:
+                          --download-missing)
+  --disable-preview       Disable live sampling preview during generation.
+  --offline               Disable network access. Uses cached community
+                          catalogs and recommended settings only, and never
+                          downloads models.
+
+BACKEND:
+  --remote                Generate on a remote Draw Things server instead of
+                          local models.
+  --remote-url <remote-url>
+                          Remote server host or URL.
+  --remote-port <remote-port>
+                          Remote server port. (default: 7859)
+  --remote-tls/--no-remote-tls
+                          Use TLS for remote generation. (default: --remote-tls)
+  --remote-shared-secret <remote-shared-secret>
+                          Shared secret for password-protected remote servers.
+  --cloud-compute         Generate on Draw Things cloud compute.
+  --api-key <api-key>     Draw Things API key for cloud compute. Uses saved
+                          credentials or DRAWTHINGS_API_KEY if omitted.
+  --cloud-api-base-url <cloud-api-base-url>
+                          Cloud API base URL.
+
+OPTIONS:
+  --version               Show the version.
+  -h, --help              Show help information.
+
