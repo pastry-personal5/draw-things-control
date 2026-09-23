@@ -1,7 +1,25 @@
 [project]
 name = "draw-things-control"
 version = "0.1.0"
-description = "Add your description here"
+license = {file = "LICENSE"}
+description = "A safe command-line wrapper for Draw Things image generation."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5.0",
+]
+
+[tool.ruff]
+# Owner decision: this project intentionally has no maximum line length.
+# Ruff requires a positive value, so use its largest supported value.
+line-length = 65535
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C4"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"

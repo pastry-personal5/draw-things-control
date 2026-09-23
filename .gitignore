@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Draw Things CLI binary (large build artifact)
+draw-things-cli
+draw-things-cli.exe
+
+# Local symlink overrides within dt-config
+dt-config/dt-config
+
+# Runtime / output artifacts
+*.log
+*.tmp
+*.pid
+*.bak
+
+# OS
+Thumbs.db
