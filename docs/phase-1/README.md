@@ -1,5 +1,7 @@
 # Phase 1: Basic Functionalities
 
+**Status:** done (2026-09-25)
+
 ## Goal
 
 Make `draw-things-control` useful for unattended, repeatable generation work:
