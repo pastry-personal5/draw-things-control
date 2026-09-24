@@ -201,7 +201,8 @@ wait. Ctrl-C ends a wait at once and stops the job.
 - Files go to `<output_directory>/<name>/`, or `output.directory` under the
   global `output_directory` if the job sets it.
 - Names are `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`. Video runs also save
-  `<name>-…-last-frame.png`. Nothing is ever overwritten.
+  `<name>-…-last-frame.png`, taken from the final second of the video with
+  `ffmpeg`. Nothing is ever overwritten.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.

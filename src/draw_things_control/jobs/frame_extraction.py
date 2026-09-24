@@ -19,7 +19,7 @@ def extract_last_frame(video: Path, png: Path, executable: str = "ffmpeg") -> No
     """Write the final frame of ``video`` to ``png``, never overwriting a file."""
     ffmpeg = require_ffmpeg(executable)
     # Seek near the end and keep overwriting one image; the last frame decoded wins.
-    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-sseof", "-3", "-i", str(video), "-update", "1", str(png)]
+    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-sseof", "-1", "-i", str(video), "-update", "1", "-q:v", "1", str(png)]
     result = subprocess.run(command, capture_output=True, text=True, errors="replace", check=False)
     if result.returncode != 0 or not png.is_file():
         detail = result.stderr.strip() or f"exit code {result.returncode}"
