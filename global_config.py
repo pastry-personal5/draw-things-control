@@ -1,0 +1,77 @@
+"""Load the machine-specific global configuration for jobs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.yaml"
+EXAMPLE_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.example.yaml"
+GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records"}
+REQUIRED_GLOBAL_CONFIG_KEYS = ("input_directory", "output_directory", "version")
+
+
+@dataclass(frozen=True)
+class GlobalConfig:
+    """Default directories for job inputs and outputs."""
+
+    input_directory: Path
+    output_directory: Path
+    write_job_records: bool = False
+
+
+def load_yaml_mapping(path: Path, description: str) -> dict[str, Any]:
+    """Read a YAML file whose top level must be a mapping."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise ValueError(f"{description} not found: {path}") from error
+    except OSError as error:
+        raise ValueError(f"Cannot read {description.lower()} {path}: {error.strerror}") from error
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        raise ValueError(f"{description} is not valid YAML: {path} ({error})") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"{description} must contain a YAML mapping: {path}")
+    return data
+
+
+def load_global_config(path: Path = DEFAULT_GLOBAL_CONFIG) -> GlobalConfig:
+    """Parse and validate the global configuration file."""
+    if not path.exists():
+        hint = f"; copy {EXAMPLE_GLOBAL_CONFIG.relative_to(PROJECT_ROOT)} to {DEFAULT_GLOBAL_CONFIG.relative_to(PROJECT_ROOT)} and edit its paths" if path == DEFAULT_GLOBAL_CONFIG else ""
+        raise ValueError(f"Global configuration not found: {path}{hint}")
+    data = load_yaml_mapping(path, "Global configuration")
+    unknown = sorted(set(data) - GLOBAL_CONFIG_KEYS)
+    if unknown:
+        raise ValueError(f"{path}: unknown key '{unknown[0]}'")
+    for key in REQUIRED_GLOBAL_CONFIG_KEYS:
+        if key not in data:
+            raise ValueError(f"{path}: '{key}' is required")
+    if data["version"] != 1 or isinstance(data["version"], bool):
+        raise ValueError(f"{path}: 'version' must be 1")
+    input_directory = _absolute_directory(path, data, "input_directory")
+    output_directory = _absolute_directory(path, data, "output_directory")
+    if not input_directory.is_dir():
+        raise ValueError(f"{path}: 'input_directory' does not exist or is not a directory: {input_directory}")
+    if output_directory.exists() and not output_directory.is_dir():
+        raise ValueError(f"{path}: 'output_directory' is not a directory: {output_directory}")
+    write_job_records = data.get("write_job_records", False)
+    if not isinstance(write_job_records, bool):
+        raise ValueError(f"{path}: 'write_job_records' must be true or false")
+    return GlobalConfig(input_directory=input_directory, output_directory=output_directory, write_job_records=write_job_records)
+
+
+def _absolute_directory(path: Path, data: dict[str, Any], key: str) -> Path:
+    value = data[key]
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{path}: '{key}' must be a non-empty path")
+    directory = Path(value).expanduser()
+    if not directory.is_absolute():
+        raise ValueError(f"{path}: '{key}' must be an absolute path (a leading ~ is allowed): {value}")
+    return directory

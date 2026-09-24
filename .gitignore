@@ -47,3 +47,6 @@ dt-config/dt-config
 
 # OS
 Thumbs.db
+
+# Machine-specific global configuration (copy from config/global-config.example.yaml)
+config/global-config.yaml

@@ -130,10 +130,23 @@ class GenerationService:
             raise ValueError(f"Could not find '{arguments.executable}' on PATH. Install Draw Things CLI or pass --executable with its path.")
         result = self._runner_factory(arguments, timeout, shutdown_grace).run()
         return GenerationOutcome(
-            exit_code=124 if result.timed_out else result.return_code,
+            exit_code=self._exit_code(result),
             timed_out=result.timed_out,
             termination_signal=result.termination_signal,
         )
+
+    @staticmethod
+    def _exit_code(result: RunResult) -> int:
+        """Map a run to a shell exit code by cause, not by the child's own code."""
+        if result.timed_out:
+            return 124
+        if result.termination_signal is not None:
+            # Stopped by the wrapper: report the signal even if the child exited 0.
+            return 128 + result.termination_signal.value
+        if result.return_code < 0:
+            # Killed by a signal from outside the wrapper.
+            return 128 - result.return_code
+        return result.return_code
 
     @staticmethod
     def _input_file(path: Path, name: str) -> Path:
@@ -149,9 +162,14 @@ class GenerationService:
         return cls._input_file(Path(path), name)
 
     @staticmethod
-    def _format_preview(command: tuple[str, ...]) -> str:
+    def redact_command(command: tuple[str, ...]) -> list[str]:
+        """Return the command with credential values replaced, safe to show or save."""
         display = list(command)
         for index, token in enumerate(display[:-1]):
             if token in {"--api-key", "--remote-shared-secret"}:
                 display[index + 1] = "[redacted]"
-        return shlex.join(display)
+        return display
+
+    @classmethod
+    def _format_preview(cls, command: tuple[str, ...]) -> str:
+        return shlex.join(cls.redact_command(command))

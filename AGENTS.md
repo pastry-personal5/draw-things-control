@@ -17,6 +17,7 @@ This is a Python 3.12 project (`draw-things-control`) that controls the Draw Thi
 - **Process I/O**: `draw_things_runner.py` supervises processes; `process_output.py` classifies output
 - **Logging**: Loguru for process output and status messages
 - **Linter**: Ruff (configured in `pyproject.toml`)
+- **Formatter**: Black (configured in `pyproject.toml`)
 
 ## Development Conventions
 
@@ -30,6 +31,66 @@ This is a Python 3.12 project (`draw-things-control`) that controls the Draw Thi
 
 - **README.md**: Project overview, setup instructions, usage guide
 - **AGENTS.md**: Agent-specific instructions (this file)
+- **docs/research/**: Background research notes
+
+### Phase and Milestone Documents
+
+The app is developed phase by phase. Each phase contains one or more
+milestones.
+
+```
+docs/
+  phase-1/
+    README.md                        # phase document
+    milestone-01-<theme>.md          # milestone documents
+    milestone-02-<theme>.md
+  phase-2/
+    README.md
+    milestone-01-<theme>.md
+```
+
+- **Phase directory**: `docs/phase-<n>/`, where `<n>` is an unpadded integer
+  starting at 1 (`phase-1`, `phase-2`, ...).
+- **Phase document**: `docs/phase-<n>/README.md`. It states the phase goal,
+  scope and non-goals, the ordered list of milestones (linked), and the exit
+  criteria for completing the phase.
+- **Milestone document**: `docs/phase-<n>/milestone-<xx>-<theme>.md`, where
+  `<xx>` is a two-digit number (`01`, `02`, ...) that restarts at `01` in each
+  phase, and `<theme>` is a short lowercase kebab-case description (for
+  example, `milestone-01-cli-foundation.md`).
+- Each milestone document covers: goal, scope, planned changes, acceptance
+  criteria, and status (`planned`, `in-progress`, or `done`).
+- Create the phase document before its first milestone document, and add a
+  link to every new milestone in the phase document.
+- Keep documents current: update a milestone's status and the phase document
+  when work lands. Do not renumber existing milestones; append new ones.
+
+### Phase Changelog
+
+Important owner decisions, design decisions, and changes are recorded in one
+changelog per phase: `docs/phase-<n>/phase-<n>-changelog.md`
+(`docs/phase-1/phase-1-changelog.md`, `docs/phase-2/phase-2-changelog.md`, ...).
+
+- Record three kinds of entries, each tagged in the heading line:
+  - **Owner decision**: an explicit choice by the project owner (for example,
+    "unlimited line length", "runs are chained"). Include the owner's reasoning
+    when it was given.
+  - **Design decision**: an architectural or format choice made while planning
+    or building (for example, "prompts pair by position"), with the
+    alternatives considered and why they were rejected.
+  - **Change**: a notable change to behavior, file formats, commands, or
+    project structure.
+- Entries are newest first, under a date heading (`## YYYY-MM-DD`), one bullet
+  or short paragraph each, and name the milestone they belong to when there is
+  one (for example, `[M01]`).
+- Add the entry in the same change that makes the decision or the change; do
+  not batch entries up for later.
+- Never delete or rewrite past entries. If a decision is reversed, add a new
+  entry that supersedes the old one and references it.
+- Create the changelog together with the phase document
+  (`docs/phase-<n>/README.md`), and link it from there.
+- Routine work (typo fixes, refactors with no visible effect) does not need an
+  entry.
 
 ## Context7 MCP Usage
 
@@ -51,10 +112,12 @@ Do not use Context7 for: refactoring, writing scripts from scratch, debugging bu
   takes precedence over PEP 8's usual 79-character guidance and any default
   formatter wrapping behavior. Keep a line intact when that is clearer; do not
   introduce manual wrapping solely to satisfy a character limit.
-- The canonical machine-readable setting is `line-length = 65535` in
-  `[tool.ruff]` in `pyproject.toml`: Ruff requires a positive number, and this
-  is its largest supported value. Do not lower it unless the owner revises this
-  decision.
+- **Formatter: Black.** This is an explicit owner decision; Ruff is used
+  only for linting, not formatting.
+- The canonical machine-readable setting is `line-length = 65535` in both
+  `[tool.ruff]` and `[tool.black]` in `pyproject.toml`: both tools require a
+  positive number, and this is Ruff's largest supported value. Keep the two
+  values equal, and do not lower them unless the owner revises this decision.
 
 - Use `def main()` as the entry point pattern
 - Guard with `if __name__ == "__main__":`
@@ -62,7 +125,7 @@ Do not use Context7 for: refactoring, writing scripts from scratch, debugging bu
 - Keep functions small and single-purpose
 - No trailing whitespace; use Unix line endings
 - Line length is unlimited in practice (`line-length = 65535` in
-  `[tool.ruff]`); see the owner decision above.
+  `[tool.ruff]` and `[tool.black]`); see the owner decision above.
 
 ## Testing and Linting
 
@@ -70,7 +133,7 @@ Do not use Context7 for: refactoring, writing scripts from scratch, debugging bu
 - Ruff is preconfigured with pycodestyle, pyflakes, isort, bugbear, and comprehensions
 - Line length is unlimited in practice (`line-length = 65535`) by explicit
   owner decision
-- Run `uv run ruff format` to apply consistent formatting
+- Run `make format` (`uv run --extra dev black .`) to format code; `make check` fails if Black would reformat anything
 - Tests use standard-library `unittest` and Typer's `CliRunner`
 - Place tests in `tests/` and run them with `make check`
 

@@ -46,3 +46,18 @@ class GenerationServiceTests(unittest.TestCase):
         outcome = service.execute(DrawThingsGenerateArguments(model="example.ckpt"), dry_run=False, timeout=5, shutdown_grace=2)
         self.assertEqual(outcome.exit_code, 124)
         self.assertEqual(captured, [(5, 2)])
+
+    def test_exit_code_reports_the_cause(self) -> None:
+        cases = (
+            (FakeResult(return_code=0, timed_out=False, termination_signal=signal.SIGINT), 130),
+            (FakeResult(return_code=-15, timed_out=False, termination_signal=signal.SIGTERM), 143),
+            (FakeResult(return_code=0, timed_out=False, termination_signal=signal.SIGHUP), 129),
+            (FakeResult(return_code=-9, timed_out=False), 137),
+            (FakeResult(return_code=3, timed_out=False), 3),
+            (FakeResult(return_code=0, timed_out=False), 0),
+        )
+        for result, expected in cases:
+            with self.subTest(result=result):
+                service = GenerationService(runner_factory=lambda *_args, result=result: FakeRunner(result), find_executable=lambda executable: executable, config_loader=lambda _path: {})
+                outcome = service.execute(DrawThingsGenerateArguments(model="example.ckpt"), dry_run=False, timeout=None, shutdown_grace=1)
+                self.assertEqual(outcome.exit_code, expected)

@@ -11,6 +11,8 @@ and status while the runner supervises the CLI process.
 ## Features
 
 - Generate images or video from prompts, reference images, audio, and JSON overrides
+- Run jobs: a YAML file describing a chain of image-to-image, text-to-video, or
+  image-to-video runs, each starting from the previous run's output
 - Validate a configuration before starting a slow generation run
 - Preview the command with `--dry-run` (credentials are redacted)
 - Select local, remote, or cloud generation options
@@ -40,18 +42,18 @@ uv sync
 uv run python main.py --help
 
 # Check a bundled configuration
-uv run python main.py validate-config dt-config/image-to-video-wan-2-2.json
+uv run python main.py validate-config dt-config/image-to-video-wan-2-2.example.json
 
 # Preview the image-to-video request from example-command.txt
 uv run python main.py generate \
-  --config-file dt-config/image-to-video-wan-2-2.json \
+  --config-file dt-config/image-to-video-wan-2-2.example.json \
   --image /path/to/source.png \
   --output /path/to/output.mov \
   --dry-run
 
 # Run the request (requires draw-things-cli on PATH)
 uv run python main.py generate \
-  --config-file dt-config/image-to-video-wan-2-2.json \
+  --config-file dt-config/image-to-video-wan-2-2.example.json \
   --image /path/to/source.png \
   --output /path/to/output.mov \
   --timeout 3600
@@ -63,6 +65,52 @@ uv run python main.py generate \
   --output cube.png
 ```
 
+## Jobs
+
+A job file describes a chain of generations: `batch_count` runs, each using
+one of several named prompt pairs, where every run starts from the previous
+run's output (the last frame, for video). See `data/example-job.yaml` for a
+commented example and
+[`docs/phase-1/milestone-01-job-definition-batch.md`](docs/phase-1/milestone-01-job-definition-batch.md)
+for every rule.
+
+First, create the global configuration with your input and output directories:
+
+```bash
+cp config/global-config.example.yaml config/global-config.yaml
+# edit input_directory and output_directory
+```
+
+Then validate, preview, and run a job:
+
+```bash
+uv run python main.py validate-job data/example-job.yaml
+uv run python main.py run-job data/example-job.yaml --dry-run
+uv run python main.py run-job data/example-job.yaml
+```
+
+- `mode` is `i2i`, `t2v`, or `i2v`. `i2i` and `i2v` jobs need an `input`
+  image in the global `input_directory`, and it must already be exactly the
+  job's width and height (resizing comes in a later milestone). `t2v` jobs
+  have no input; run 1 generates from text, and later runs continue from the
+  previous last frame.
+- `config_file` names a file in `dt-config/`, the base configuration.
+  `config_override` changes `model`, `refiner_model`, `refiner_start`,
+  `steps`, `guidance_scale`, `shift`, `width`, `height`, `frame_count`,
+  `strength`, or `seed` for every run.
+- Outputs go to `<output_directory>/<name>` unless `output.directory` is set,
+  and are named `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`; video runs also save
+  `<name>-…-last-frame.png`. Nothing is ever overwritten.
+- With `write_job_records: true` in the global configuration, each
+  `run-job` also writes `<name>-<timestamp>-job.json`, a manifest of
+  every run (batch, pair, prompts, seed, files, command, exit code, timing),
+  and `<name>-<timestamp>-job.log`, the full log. Off by default.
+- A failed, timed-out, or interrupted run stops the job, keeps any partial
+  output, and exits with that run's exit code. Video jobs need `ffmpeg` on
+  `PATH` to extract last frames.
+- Pass `--executable /path/to/draw-things-cli` if the CLI is not on `PATH`,
+  and `--global-config PATH` to use another global configuration.
+
 ## Project Structure
 
 ```
@@ -73,10 +121,21 @@ uv run python main.py generate \
 ├── draw_things_arguments.py  # Validated generation options and argv building
 ├── draw_things_runner.py  # Process and signal supervision
 ├── process_output.py  # Output classification, progress, and Loguru logging
-├── dt-config/         # Example Draw Things configurations
-├── draw-things-cli-generate-help.txt  # Saved upstream generate help
-├── example-command.txt  # Original image-to-video command
-├── tests/             # CLI, argument, and runner tests
+├── global_config.py   # Global input and output directories
+├── job_definition.py  # Job file loading and validation
+├── job_service.py     # Running and chaining a job's runs
+├── generation_config.py  # dt-config/ lookup and override merging
+├── input_size.py      # Input image size check
+├── output_naming.py   # Timestamped output names
+├── frame_extraction.py  # Last-frame extraction with ffmpeg
+├── job_manifest.py    # Job manifest (JSON)
+├── job_log.py         # Job log file
+├── config/            # Global configuration example
+├── data/              # Job files (example-job.yaml)
+├── dt-config/         # Draw Things base configurations
+├── docs/research/     # Saved upstream help and the original example command
+├── docs/phase-1/      # Phase and milestone plans, and the changelog
+├── tests/             # Unit and CLI tests
 ├── pyproject.toml     # Project metadata and dependencies
 ├── uv.lock            # Lockfile for deterministic installs
 ├── README.md          # This file
@@ -92,7 +151,7 @@ whose `model` setting supplies it. Explicit `--model` takes precedence. Repeat
 `--negative-prompt-file -` reads from stdin; only one may use stdin per run.
 `--output` is optional when the underlying CLI can preview in the terminal.
 Run `uv run python main.py generate --help` for the wrapper options, or see
-`draw-things-cli-generate-help.txt` for the saved upstream help. Use
+`docs/research/draw-things-cli-generate-help.txt` for the saved upstream help. Use
 `--executable /path/to/draw-things-cli` if the CLI is not on `PATH`.
 
 ## Architecture
@@ -122,7 +181,22 @@ cannot itself be caught or handled by a process, so it is used only as the
 forced final fallback. `--timeout SECONDS` bounds total generation time and
 uses the same graceful-then-forced shutdown sequence.
 
-The command inputs from `example-command.txt` and the saved upstream help are
+Without `--output`, or with `--terminal-image`, the child inherits the
+terminal instead of having its output captured, so `draw-things-cli` can
+preview the image inline.
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | A job run exited with 0 but wrote no output, or last-frame extraction failed |
+| 2 | Invalid input: options, configuration, or job file |
+| 124 | A run exceeded `--timeout` or `run_timeout_seconds` |
+| 128 + N | Stopped by signal N: 130 for Ctrl-C, 143 for `SIGTERM`, 129 for `SIGHUP` |
+| other | The exit code of `draw-things-cli` |
+
+The command inputs from `docs/research/example-command.txt` and the saved upstream help are
 represented by `DrawThingsGenerateArguments`. The runner receives that typed
 object, which builds the argument vector without invoking a shell. Unset
 options are omitted so Draw Things can apply its own recommended settings.
@@ -135,7 +209,7 @@ from draw_things_runner import DrawThingsProcessRunner
 
 arguments = DrawThingsGenerateArguments(
     model="wan_v2.2_a14b_hne_i2v_i8x.ckpt",
-    config_file=Path("dt-config/image-to-video-wan-2-2.json"),
+    config_file=Path("dt-config/image-to-video-wan-2-2.example.json"),
     image=Path("/path/to/source.png"),
     output=Path("output.mov"),
 )

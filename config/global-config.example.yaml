@@ -1,0 +1,25 @@
+# Global configuration for draw-things-control (format version 1).
+#
+# Copy this file to config/global-config.yaml and edit the paths:
+#   cp config/global-config.example.yaml config/global-config.yaml
+# config/global-config.yaml is git-ignored because its paths are specific to
+# one machine. Use --global-config PATH with run-job or validate-job to read a
+# different file.
+#
+# input_directory and output_directory are required, and unknown keys are errors.
+# Paths must be absolute; a leading ~ is expanded to your home directory.
+
+version: 1
+
+# Where a job's relative `input` file is looked up. Must already exist.
+input_directory: ~/draw-things/input
+
+# Root for job outputs: a job's relative `output.directory` is created here,
+# and a job without `output.directory` writes to <output_directory>/<name>.
+# Created if missing.
+output_directory: ~/draw-things/output
+
+# Optional. true: each run-job also saves <name>-<timestamp>-job.json (a record
+# of every run) and <name>-<timestamp>-job.log (the full log) beside its
+# outputs. Default: false (nothing but the generated files is written).
+write_job_records: false

@@ -9,6 +9,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TextIO
 
@@ -16,6 +17,30 @@ from loguru import logger
 
 from draw_things_arguments import CommandArguments
 from process_output import OutputProcessor, OutputStream, ProcessMessage
+
+HANDLED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+SignalHandlers = dict[int, signal.Handlers | int | None]
+
+
+def install_signal_handlers(on_signal: Callable[[signal.Signals], None]) -> SignalHandlers | None:
+    """Route HANDLED_SIGNALS to ``on_signal``; return the previous handlers, or None off the main thread."""
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    previous_handlers = {number: signal.getsignal(number) for number in HANDLED_SIGNALS}
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        on_signal(signal.Signals(signum))
+
+    for handled_signal in HANDLED_SIGNALS:
+        signal.signal(handled_signal, handle_signal)
+    return previous_handlers
+
+
+def restore_signal_handlers(previous_handlers: SignalHandlers | None) -> None:
+    """Put back the handlers returned by install_signal_handlers."""
+    if previous_handlers is not None:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 @dataclass(frozen=True)
@@ -46,7 +71,9 @@ class DrawThingsProcessRunner:
         shutdown_grace_seconds: float = 10.0,
         timeout_seconds: float | None = None,
         output_drain_seconds: float = 1.0,
+        kill_wait_seconds: float = 5.0,
         handle_signals: bool = True,
+        capture_output: bool = True,
     ) -> None:
         if shutdown_grace_seconds < 0:
             raise ValueError("shutdown_grace_seconds must not be negative")
@@ -54,6 +81,8 @@ class DrawThingsProcessRunner:
             raise ValueError("timeout_seconds must be positive")
         if output_drain_seconds < 0:
             raise ValueError("output_drain_seconds must not be negative")
+        if kill_wait_seconds < 0:
+            raise ValueError("kill_wait_seconds must not be negative")
         self._command = arguments.command
         if not self._command:
             raise ValueError("command must not be empty")
@@ -61,26 +90,32 @@ class DrawThingsProcessRunner:
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._timeout_seconds = timeout_seconds
         self._output_drain_seconds = output_drain_seconds
+        self._kill_wait_seconds = kill_wait_seconds
         self._handle_signals = handle_signals
+        self._capture_output = capture_output
         self._shutdown_requested = threading.Event()
         self._requested_signal: signal.Signals | None = None
         self._timed_out = False
-        self._kill_sent = False
+        self._kill_sent_at: float | None = None
 
     def run(self) -> ProcessResult:
         """Run the command, relaying output until completion or bounded shutdown."""
         started_at = time.monotonic()
         timeout_at = started_at + self._timeout_seconds if self._timeout_seconds is not None else None
-        process = self._start_process()
-        logger.info("Started subprocess (PID {})", process.pid)
-        process_group_id = process.pid
         output_queue: queue.Queue[tuple[OutputStream, str]] = queue.Queue()
-        readers = self._start_readers(process, output_queue)
-        previous_handlers = self._install_signal_handlers()
-        shutdown_started_at: float | None = None
-        leader_exited_at: float | None = None
+        # Install handlers before the child exists, so a signal in between cannot orphan it.
+        previous_handlers = install_signal_handlers(self.request_shutdown) if self._handle_signals else None
+        process: subprocess.Popen[str] | None = None
+        readers: tuple[threading.Thread, ...] = ()
         completed = False
         try:
+            process = self._start_process()
+            logger.info("Started subprocess (PID {})", process.pid)
+            process_group_id = process.pid
+            if self._capture_output:
+                readers = self._start_readers(process, output_queue)
+            shutdown_started_at: float | None = None
+            leader_exited_at: float | None = None
             while True:
                 now = time.monotonic()
                 self._drain_output(output_queue, started_at)
@@ -90,7 +125,12 @@ class DrawThingsProcessRunner:
                     self.request_shutdown(signal.SIGTERM)
                 if self._shutdown_requested.is_set():
                     shutdown_started_at = self._shutdown_process_group(process_group_id, shutdown_started_at, now)
+                    # Reap the leader: an unreaped zombie keeps its group visible on Linux.
+                    process.poll()
                     if not self._is_process_group_alive(process_group_id):
+                        break
+                    if self._kill_sent_at is not None and now - self._kill_sent_at >= self._kill_wait_seconds:
+                        logger.warning("Process group {} is still present {} seconds after SIGKILL; giving up", process_group_id, self._kill_wait_seconds)
                         break
                 elif process.poll() is not None:
                     if leader_exited_at is None:
@@ -103,6 +143,8 @@ class DrawThingsProcessRunner:
                         break
                 time.sleep(0.02)
 
+            # Let the readers queue the child's last lines before the final drain.
+            self._join_readers(readers)
             self._drain_output(output_queue, started_at)
             return_code = process.poll()
             logger.info("Subprocess finished with exit code {}", return_code if return_code is not None else 125)
@@ -120,12 +162,13 @@ class DrawThingsProcessRunner:
             completed = True
             return result
         finally:
-            if not completed:
-                self.request_shutdown()
-            self._cleanup_process_group(process_group_id, process)
-            for reader in readers:
-                reader.join(timeout=self._output_drain_seconds)
-            self._restore_signal_handlers(previous_handlers)
+            if process is not None:
+                if not completed:
+                    self.request_shutdown()
+                self._cleanup_process_group(process.pid, process)
+                if not completed:
+                    self._join_readers(readers)
+            restore_signal_handlers(previous_handlers)
 
     def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None:
         """Request graceful shutdown programmatically or from a signal handler."""
@@ -142,18 +185,30 @@ class DrawThingsProcessRunner:
             logger.warning("Sending SIGTERM to process group {}", process_group_id)
             self._send_to_process_group(process_group_id, signal.SIGTERM)
             return now
-        if now - shutdown_started_at >= self._shutdown_grace_seconds and not self._kill_sent:
-            self._kill_sent = True
+        if now - shutdown_started_at >= self._shutdown_grace_seconds and self._kill_sent_at is None:
+            self._kill_sent_at = now
             logger.warning("Sending SIGKILL to process group {}", process_group_id)
             self._send_to_process_group(process_group_id, signal.SIGKILL)
         return shutdown_started_at
 
+    def _join_readers(self, readers: tuple[threading.Thread, ...]) -> None:
+        # One deadline for all readers, so waiting stays bounded by the drain time.
+        deadline = time.monotonic() + self._output_drain_seconds
+        for reader in readers:
+            reader.join(timeout=max(0.0, deadline - time.monotonic()))
+
     def _cleanup_process_group(self, process_group_id: int, process: subprocess.Popen[str]) -> None:
         if not self._shutdown_requested.is_set() or not self._is_process_group_alive(process_group_id):
             return
+        if self._kill_sent_at is not None:
+            # The run loop already sent SIGKILL and gave up; do not restart the shutdown.
+            process.poll()
+            return
         self._send_to_process_group(process_group_id, signal.SIGTERM)
         deadline = time.monotonic() + self._shutdown_grace_seconds
-        while self._is_process_group_alive(process_group_id) and time.monotonic() < deadline:
+        while process.poll() is None or self._is_process_group_alive(process_group_id):
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.02)
         if self._is_process_group_alive(process_group_id):
             self._send_to_process_group(process_group_id, signal.SIGKILL)
@@ -164,17 +219,20 @@ class DrawThingsProcessRunner:
                 pass
 
     def _start_process(self) -> subprocess.Popen[str]:
+        # Without capture the child inherits the terminal, so it can preview images inline.
+        pipe = subprocess.PIPE if self._capture_output else None
         try:
             return subprocess.Popen(
                 self._command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=pipe,
+                stderr=pipe,
                 text=True,
+                errors="replace",
                 bufsize=1,
                 start_new_session=True,
             )
-        except FileNotFoundError as error:
-            raise ValueError(f"Could not start executable: {self._command[0]}") from error
+        except OSError as error:
+            raise ValueError(f"Could not start executable {self._command[0]}: {error.strerror or error}") from error
 
     @staticmethod
     def _start_readers(process: subprocess.Popen[str], output_queue: queue.Queue[tuple[OutputStream, str]]) -> tuple[threading.Thread, threading.Thread]:
@@ -202,25 +260,6 @@ class DrawThingsProcessRunner:
             except queue.Empty:
                 return
             self._output_processor.process(stream, text, time.monotonic() - started_at)
-
-    def _install_signal_handlers(self) -> dict[int, signal.Handlers] | None:
-        if not self._handle_signals or threading.current_thread() is not threading.main_thread():
-            return None
-        handled_signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
-        previous_handlers = {number: signal.getsignal(number) for number in handled_signals}
-
-        def handle_signal(signum: int, _frame: object) -> None:
-            self.request_shutdown(signal.Signals(signum))
-
-        for handled_signal in handled_signals:
-            signal.signal(handled_signal, handle_signal)
-        return previous_handlers
-
-    @staticmethod
-    def _restore_signal_handlers(previous_handlers: dict[int, signal.Handlers] | None) -> None:
-        if previous_handlers is not None:
-            for signum, handler in previous_handlers.items():
-                signal.signal(signum, handler)
 
     @staticmethod
     def _is_process_group_alive(process_group_id: int) -> bool:

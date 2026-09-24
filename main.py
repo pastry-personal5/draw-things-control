@@ -14,17 +14,32 @@ from loguru import logger
 from configuration import load_config
 from draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_runner import DrawThingsProcessRunner
+from frame_extraction import extract_last_frame, require_ffmpeg
 from generation_service import GenerationService
+from global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
+from job_definition import JobDefinition, load_job, report_ignored_config
+from job_service import JobService
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
 
-def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float) -> DrawThingsProcessRunner:
+def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
     """Connect the generation use case to its process adapter."""
-    return DrawThingsProcessRunner(arguments, timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace)
+    # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
+    capture_output = arguments.output is not None and not arguments.terminal_image
+    return DrawThingsProcessRunner(arguments, timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals)
+
+
+def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float) -> DrawThingsProcessRunner:
+    """Create a run's runner; JobService owns signal handling and forwards signals to it."""
+    return create_runner(arguments, timeout, shutdown_grace, handle_signals=False)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
+job_service = JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg)
+
+JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
+GlobalConfigOption = Annotated[Path, typer.Option("--global-config", help="Global configuration file.")]
 
 
 def configure_logging() -> None:
@@ -107,6 +122,61 @@ def validate_config(config: Annotated[Path, typer.Argument(help="JSON configurat
         logger.error("{}", error)
         raise typer.Exit(code=2) from error
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
+
+
+def read_job(job_file: Path, global_config: Path) -> tuple[JobDefinition, GlobalConfig]:
+    """Load the global configuration and the job, exiting with code 2 if either is invalid."""
+    try:
+        settings = load_global_config(global_config.expanduser())
+        return load_job(job_file, settings), settings
+    except ValueError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=2) from error
+
+
+@app.command("validate-job")
+def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG) -> None:
+    """Validate a job file without running anything."""
+    job, _settings = read_job(job_file, global_config)
+    report_ignored_config(job)
+    seed, source = job.configured_seed()
+    typer.echo(f"Valid job: {job.path}")
+    typer.echo(f"  name: {job.name}")
+    typer.echo(f"  mode: {job.mode}")
+    typer.echo(f"  runs: {job.batch_count} ({', '.join(pair.name for pair in job.schedule())})")
+    typer.echo(f"  input: {job.input or '(none, text only)'}")
+    typer.echo(f"  output directory: {job.output_directory}")
+    typer.echo(f"  config file: {job.config_file}")
+    typer.echo(f"  model: {job.model}")
+    typer.echo(f"  seed: {seed if seed is not None else '(random, drawn when the job starts)'} ({source})")
+
+
+@app.command("run-job")
+def run_job(
+    job_file: JobFileArgument,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print every command without running anything.")] = False,
+    executable: Annotated[str, typer.Option(help="Draw Things CLI executable.")] = "draw-things-cli",
+    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
+    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+) -> None:
+    """Run every generation in a job, chaining each output into the next run."""
+    job, settings = read_job(job_file, global_config)
+    try:
+        if dry_run:
+            report_ignored_config(job)
+            preview = job_service.preview(job, executable=executable)
+            typer.echo(f"# Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source})")
+            typer.echo("# Output names are examples; a real run generates new ones.")
+            for run, command in zip(preview.runs, preview.command_previews, strict=True):
+                typer.echo(f"# Run {run.number}/{len(preview.runs)} (batch {run.batch}, pair {run.pair.name})")
+                typer.echo(command)
+            return
+        outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records)
+    except ValueError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=2) from error
+    if outcome.exit_code:
+        raise typer.Exit(code=outcome.exit_code)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
