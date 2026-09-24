@@ -16,7 +16,7 @@
 	"maskBlur": 1.5,
 	"maskBlurOutset": 0,
 	"model": "wan_v2.2_a14b_hne_i2v_i8x.ckpt",
-	"numFrames": 17,
+	"numFrames": 81,
 	"preserveOriginalAfterInpaint": false,
 	"refinerModel": "wan_v2.2_a14b_lne_i2v_i8x.ckpt",
 	"refinerStart": 0.1,

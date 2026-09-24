@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -9,7 +10,7 @@ from job_fixtures import BASE_CONFIG, JobTestCase, job_data
 from loguru import logger
 from PIL import Image
 
-from job_definition import GenerationMode, load_job, report_ignored_config
+from job_definition import GenerationMode, cooldown_details, duration_text, load_job, report_ignored_config, seconds_text
 
 
 class JobDefinitionTests(JobTestCase):
@@ -227,3 +228,33 @@ class JobDefinitionTests(JobTestCase):
                 "INFO Input photo.jpg (1920x1080) will be scaled to 1252x704 and letterboxed to 1280x704 for run 1",
             ],
         )
+
+    def test_cooldown_comes_from_the_job_then_the_global_config_then_the_default(self) -> None:
+        self.assertEqual((self.load().cooldown_seconds, self.load().cooldown_source), (0.0, "default"))
+        self.global_config = replace(self.global_config, cooldown_seconds=900.0)
+        job = self.load()
+        self.assertEqual((job.cooldown_seconds, job.cooldown_source), (900.0, "global_config"))
+        for value, expected in ((120, 120.0), (0, 0.0), (2.5, 2.5)):
+            with self.subTest(value=value):
+                job = self.load(cooldown_seconds=value)
+                self.assertEqual((job.cooldown_seconds, job.cooldown_source), (expected, "job"))
+
+    def test_cooldown_is_allowed_in_every_mode(self) -> None:
+        self.assertEqual(self.load(mode="t2v", input=None, cooldown_seconds=60).cooldown_seconds, 60.0)
+        self.assertEqual(self.load(mode="i2i", cooldown_seconds=60).cooldown_seconds, 60.0)
+
+    def test_invalid_cooldown_is_rejected(self) -> None:
+        for value in (-1, 3601, float("nan"), float("inf"), True, "15 min"):
+            with self.subTest(value=value):
+                self.assert_invalid(r"'cooldown_seconds' must be a number of seconds from 0 to 3600", cooldown_seconds=value)
+
+    def test_cooldown_details(self) -> None:
+        self.global_config = replace(self.global_config, cooldown_seconds=900.0)
+        self.assertEqual(cooldown_details(self.load(batch_count=7, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (6 waits, 1 h 30 min total)")
+        self.assertEqual(cooldown_details(self.load(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown_seconds=90)), "90 s between runs, from job (1 wait, 1 min 30 s total)")
+        self.assertEqual(cooldown_details(self.load(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (no waits: 1 run)")
+        self.assertEqual(cooldown_details(self.load(cooldown_seconds=0)), "none (job)")
+
+    def test_seconds_and_durations_read_as_written(self) -> None:
+        self.assertEqual([seconds_text(value) for value in (900, 900.0, 0.5, 1234.5678, 0.00001, 412.3)], ["900 s", "900 s", "0.5 s", "1234.5678 s", "0.00001 s", "412.3 s"])
+        self.assertEqual([duration_text(value) for value in (5400, 3600, 90, 0.4, 2.5, 0, 3661.25)], ["1 h 30 min", "1 h", "1 min 30 s", "0.4 s", "2.5 s", "0 s", "1 h 1 min 1.2 s"])

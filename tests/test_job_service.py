@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
+import shutil
 import signal
-from dataclasses import dataclass
-from datetime import datetime
+import threading
+import time
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +19,7 @@ from PIL import Image
 
 import job_service
 from draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_runner import install_signal_handlers, restore_signal_handlers
 from job_definition import JobDefinition, load_job
 from job_service import JobService
 
@@ -62,7 +67,10 @@ class JobServiceTests(JobTestCase):
             random_number=lambda: next(numbers),
             random_seed=lambda: 777,
             handle_signals=False,
+            cooldown=lambda seconds: self.cooldown(seconds),
         )
+        # Replaced by fake_cooldown; a job without a cooldown never calls it.
+        self.cooldown = lambda seconds: seconds
 
     def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
         self.calls.append((arguments, timeout, grace))
@@ -360,3 +368,127 @@ class JobServiceTests(JobTestCase):
         self.assertIn("--width 832 --height 448", command)
         self.assertIn("--width 832 --height 448", preview.command_previews[1])
         self.assertFalse(job.output_directory.exists())
+
+    # Cooldown between runs.
+
+    def cooldown_job(self, **changes: object) -> JobDefinition:
+        return self.job(**{"batch_count": 3, "prompt_pairs": [{"name": "only", "positive": "text"}], **changes})
+
+    def fake_cooldown(self, interrupt_on: int | None = None, waited: float | None = None):
+        """A wait that sleeps for no time; it records each wait and the manifest as saved when the wait starts."""
+        waits: list[tuple[float, int, list]] = []
+
+        def cooldown(seconds: float) -> float:
+            manifest_path = next(self.output_directory.rglob("*-job.json"), None)
+            saved = json.loads(manifest_path.read_text(encoding="utf-8"))["runs"] if manifest_path is not None else []
+            waits.append((seconds, len(self.calls), [run["cooldown_after_seconds"] for run in saved]))
+            if interrupt_on == len(waits):
+                self.service._interrupt = signal.SIGINT
+                return waited if waited is not None else seconds / 2
+            return seconds
+
+        self.cooldown = cooldown
+        return waits
+
+    def test_cooldown_waits_between_runs_but_not_after_the_last(self) -> None:
+        waits = self.fake_cooldown()
+        for mode, changes in (("i2v", {}), ("i2i", {}), ("t2v", {"input": None})):
+            with self.subTest(mode=mode):
+                waits.clear()
+                self.calls.clear()
+                shutil.rmtree(self.output_directory, ignore_errors=True)
+                outcome = self.run_job(self.cooldown_job(mode=mode, cooldown_seconds=900, **changes))
+                self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 3))
+                # Each wait comes after one run and before the next, and starts with the manifest showing 0.
+                self.assertEqual(waits, [(900.0, 1, [0.0]), (900.0, 2, [900.0, 0.0])])
+                manifest = self.manifest(outcome)
+                self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"]), (900.0, "job"))
+                self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [900.0, 900.0, None])
+                log = outcome.log.read_text(encoding="utf-8")
+                self.assertIn("cooldown 900 s (from job)", log)
+                self.assertIn("Cooldown: waiting 900 s before run 2/3 (until 15:45:12)", log)
+                self.assertIn("Cooldown finished; starting run 3/3", log)
+
+    def test_global_cooldown_applies_and_a_job_can_turn_it_off(self) -> None:
+        waits = self.fake_cooldown()
+        self.global_config = replace(self.global_config, cooldown_seconds=60.0)
+        outcome = self.run_job(self.cooldown_job())
+        self.assertEqual([seconds for seconds, _runs, _saved in waits], [60.0, 60.0])
+        self.assertEqual(self.manifest(outcome)["cooldown_source"], "global_config")
+        waits.clear()
+        outcome = self.run_job(self.cooldown_job(cooldown_seconds=0))
+        self.assertEqual(waits, [])
+        self.assertIn("no cooldown (from job)", outcome.log.read_text(encoding="utf-8"))
+
+    def test_no_cooldown_without_either_key(self) -> None:
+        waits = self.fake_cooldown()
+        outcome = self.run_job(self.cooldown_job())
+        self.assertEqual(waits, [])
+        manifest = self.manifest(outcome)
+        self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"]), (0.0, "default"))
+        self.assertNotIn("Cooldown", outcome.log.read_text(encoding="utf-8"))
+
+    def test_no_cooldown_after_a_failed_or_timed_out_run(self) -> None:
+        waits = self.fake_cooldown()
+        for result in (FakeResult(return_code=3), FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM)):
+            with self.subTest(result=result):
+                self.calls.clear()
+                self.results[1] = result
+                outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
+                self.assertEqual((len(self.calls), waits), (1, []))
+                self.assertIsNone(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"])
+
+    def test_signal_during_a_cooldown_stops_the_job(self) -> None:
+        waits = self.fake_cooldown(interrupt_on=1, waited=412.34)
+        outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls), len(waits)), (130, 1, 1, 1))
+        manifest = self.manifest(outcome)
+        self.assertEqual(manifest["status"], "interrupted")
+        self.assertEqual([(run["status"], run["cooldown_after_seconds"]) for run in manifest["runs"]], [("succeeded", 412.3)])
+        log = outcome.log.read_text(encoding="utf-8")
+        self.assertIn("Job stopped by SIGINT during the cooldown before run 2/3 (waited 412.3 s of 900 s)", log)
+        self.assertNotIn("Cooldown finished", log)
+
+    def test_real_cooldown_waits_and_is_ended_by_a_signal(self) -> None:
+        self.assertLess(self.service._wait_for_cooldown(0.05), 0.5)
+        self.assertGreaterEqual(self.service._wait_for_cooldown(0.05), 0.05)
+        service = JobService(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg")
+        open_fds = set(os.listdir("/dev/fd"))
+        previous_fd = signal.set_wakeup_fd(-1)
+        signal.set_wakeup_fd(previous_fd)
+        handlers = install_signal_handlers(service._handle_signal)
+        timer = threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT))
+        try:
+            timer.start()
+            started = time.monotonic()
+            waited = service._wait_for_cooldown(5)
+            elapsed = time.monotonic() - started
+        finally:
+            timer.cancel()
+            restore_signal_handlers(handlers)
+        self.assertEqual(service._interrupt, signal.SIGINT)
+        self.assertLess(elapsed, 1)
+        self.assertAlmostEqual(waited, elapsed, delta=0.05)
+        # The previous wake-up fd is back, and the pipe is closed.
+        self.assertEqual(signal.set_wakeup_fd(previous_fd), previous_fd)
+        self.assertEqual(set(os.listdir("/dev/fd")), open_fds)
+
+    def test_signal_after_a_full_cooldown_stops_before_the_next_run(self) -> None:
+        def full_wait_then_signal(seconds: float) -> float:
+            self.service._interrupt = signal.SIGTERM
+            return seconds
+
+        self.cooldown = full_wait_then_signal
+        outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
+        self.assertEqual((outcome.exit_code, len(self.calls)), (143, 1))
+        self.assertEqual(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"], 900.0)
+        log = outcome.log.read_text(encoding="utf-8")
+        self.assertIn("Job stopped by SIGTERM before run 2/3", log)
+        self.assertNotIn("during the cooldown", log)
+
+    def test_cooldown_end_time_is_local_like_the_other_timestamps(self) -> None:
+        utc_now = datetime(2026, 9, 24, 6, 30, 12, tzinfo=timezone.utc)
+        self.service._clock = lambda: utc_now
+        outcome = self.run_job(self.cooldown_job(batch_count=2, cooldown_seconds=90))
+        expected = (utc_now.astimezone() + timedelta(seconds=90)).strftime("%H:%M:%S")
+        self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", outcome.log.read_text(encoding="utf-8"))

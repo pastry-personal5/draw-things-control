@@ -5,6 +5,8 @@ import os
 import signal
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +14,7 @@ from unittest import mock
 
 from loguru import logger
 
-from draw_things_runner import DrawThingsProcessRunner
+from draw_things_runner import DrawThingsProcessRunner, interruptible_wait
 from process_output import OutputProcessor, OutputStream, ProcessMessage
 
 
@@ -118,3 +120,21 @@ class ProcessRunnerTests(unittest.TestCase):
             runner._cleanup_process_group(12345, process)
         send.assert_not_called()
         process.wait.assert_not_called()
+
+
+class InterruptibleWaitTests(unittest.TestCase):
+    def test_waits_the_full_time_unless_stopped(self) -> None:
+        self.assertGreaterEqual(interruptible_wait(0.05, lambda: False), 0.05)
+        self.assertLess(interruptible_wait(5, lambda: True), 0.5)
+
+    def test_off_the_main_thread_it_waits_without_a_wakeup_fd(self) -> None:
+        waited: list[float] = []
+        thread = threading.Thread(target=lambda: waited.append(interruptible_wait(0.05, lambda: False)))
+        thread.start()
+        thread.join(5)
+        self.assertGreaterEqual(waited[0], 0.05)
+
+    def test_polls_stopped_again_after_a_wakeup(self) -> None:
+        # stopped() turning true between wake-ups ends the wait at the next one.
+        deadline = time.monotonic() + 0.1
+        self.assertLess(interruptible_wait(0.3, lambda: time.monotonic() >= deadline, wake_on_signal=False), 0.35)

@@ -369,7 +369,8 @@ manifest as `log_file`.
    [Milestone 02](milestone-02-runner-fixes.md).
 
 A signal between runs (for example, during last-frame extraction) stops the
-job the same way, before the next run starts.
+job the same way, before the next run starts. So does a signal during a
+cooldown between runs ([Milestone 04](milestone-04-run-cooldown.md)).
 
 ## Planned changes
 

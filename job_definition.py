@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, fields
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -11,12 +12,12 @@ from typing import Any
 from loguru import logger
 
 import generation_config
-from global_config import GlobalConfig, load_yaml_mapping
+from global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, load_yaml_mapping
 from input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "batch_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent"}
+JOB_KEYS = {"version", "name", "mode", "input", "batch_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown_seconds"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "batch_count", "prompt_pairs", "config_file")
 PAIR_KEYS = {"name", "positive", "negative", "batches", "default"}
 OUTPUT_KEYS = {"directory", "extension"}
@@ -108,6 +109,9 @@ class JobDefinition:
     input_resize: ResizePlan | None = None
     # (source, key, value) for each width or height that the desired size replaces.
     ignored_size: tuple[tuple[str, str, Any], ...] = ()
+    # Seconds to wait between runs, and where that came from: job, global_config, or default.
+    cooldown_seconds: float = 0.0
+    cooldown_source: str = "default"
 
     @property
     def input_copy(self) -> ResizePlan | None:
@@ -183,8 +187,9 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         fail("config_override.refiner_start", f"requires a refiner model in config_override.refiner_model or {config_file}")
 
     timeout = data.get("run_timeout_seconds")
-    if timeout is not None and (not _is_number(timeout) or timeout <= 0):
+    if timeout is not None and (not is_number(timeout) or timeout <= 0):
         fail("run_timeout_seconds", "must be a positive number of seconds")
+    cooldown_seconds, cooldown_source = _cooldown(fail, data, global_config)
 
     desired = _desired_size(fail, data, mode)
     plan: ResizePlan | None = None
@@ -222,11 +227,53 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         config_override=override,
         model=model,
         run_timeout_seconds=float(timeout) if timeout is not None else None,
+        cooldown_seconds=cooldown_seconds,
+        cooldown_source=cooldown_source,
         ignored_config=ignored_config,
         size=plan.target_size if plan is not None else None,
         input_resize=plan,
         ignored_size=tuple(ignored_size),
     )
+
+
+def seconds_text(seconds: float) -> str:
+    """A number of seconds as written in the job, for example ``900 s``, ``0.5 s``, or ``0.00001 s``."""
+    # repr gives the shortest digits that round-trip; Decimal writes them without an exponent.
+    text = format(Decimal(repr(float(seconds))), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return f"{text} s"
+
+
+def duration_text(seconds: float) -> str:
+    """A length of time in hours, minutes, and seconds to a tenth, for example ``1 h 30 min`` or ``0.4 s``."""
+    total = round(seconds, 1)
+    hours, rest = divmod(int(total), 3600)
+    minutes = rest // 60
+    secs = round(total - hours * 3600 - minutes * 60, 1)
+    parts = [f"{value} {unit}" for value, unit in ((hours, "h"), (minutes, "min")) if value]
+    if secs or not parts:
+        parts.append(seconds_text(secs))
+    return " ".join(parts)
+
+
+def cooldown_summary(job: JobDefinition, source_prefix: str = "") -> str:
+    """The job's cooldown and its source, for example ``cooldown 900 s (from global_config)``."""
+    if job.cooldown_seconds > 0:
+        return f"cooldown {seconds_text(job.cooldown_seconds)} ({source_prefix}{job.cooldown_source})"
+    return f"no cooldown ({source_prefix}{job.cooldown_source})"
+
+
+def cooldown_details(job: JobDefinition) -> str:
+    """The cooldown line of validate-job: the value, its source, and the waits it adds."""
+    if job.cooldown_seconds <= 0:
+        return f"none ({job.cooldown_source})"
+    waits = job.batch_count - 1
+    if waits == 0:
+        extent = "no waits: 1 run"
+    else:
+        extent = f"{waits} wait{'s' if waits > 1 else ''}, {duration_text(waits * job.cooldown_seconds)} total"
+    return f"{seconds_text(job.cooldown_seconds)} between runs, from {job.cooldown_source} ({extent})"
 
 
 def report_ignored_config(job: JobDefinition) -> None:
@@ -290,11 +337,22 @@ def _desired_size(fail: _Failure, data: dict[str, Any], mode: GenerationMode) ->
     if max_crop is not None:
         if len(given) != 1:
             fail("max_input_crop_percent", "requires exactly one of desired_input_width or desired_input_height")
-        if not _is_number(max_crop) or not 0 <= max_crop <= 100:
+        if not is_number(max_crop) or not 0 <= max_crop <= 100:
             fail("max_input_crop_percent", "must be a number from 0 to 100")
     if not given:
         return None
     return data.get("desired_input_width"), data.get("desired_input_height"), max_crop
+
+
+def _cooldown(fail: _Failure, data: dict[str, Any], global_config: GlobalConfig) -> tuple[float, str]:
+    """The job's cooldown and its source: the job's key, else the global configuration's, else 0."""
+    if "cooldown_seconds" in data:
+        if not is_cooldown(data["cooldown_seconds"]):
+            fail("cooldown_seconds", COOLDOWN_ERROR)
+        return float(data["cooldown_seconds"]), "job"
+    if global_config.cooldown_seconds is not None:
+        return global_config.cooldown_seconds, "global_config"
+    return 0.0, "default"
 
 
 def _prompt_pairs(fail: _Failure, value: Any, batch_count: int) -> tuple[PromptPair, ...]:
@@ -377,16 +435,16 @@ def _config_override(fail: _Failure, value: Any, mode: GenerationMode) -> Config
         if key in value and (not isinstance(value[key], str) or not value[key]):
             fail(field(key), "must be a non-empty model name")
     for key, low, high in (("refiner_start", 0, 1), ("strength", 0, 1)):
-        if key in value and (not _is_number(value[key]) or not low <= value[key] <= high):
+        if key in value and (not is_number(value[key]) or not low <= value[key] <= high):
             fail(field(key), f"must be a number from {low} to {high}")
     for key, minimum in (("steps", 1), ("frame_count", 1)):
         if key in value and (not _is_int(value[key]) or value[key] < minimum):
             fail(field(key), f"must be an integer >= {minimum}")
     if "seed" in value and (not _is_int(value["seed"]) or not 0 <= value["seed"] <= MAX_SEED):
         fail(field("seed"), f"must be an integer from 0 to {MAX_SEED}")
-    if "guidance_scale" in value and (not _is_number(value["guidance_scale"]) or value["guidance_scale"] < 0):
+    if "guidance_scale" in value and (not is_number(value["guidance_scale"]) or value["guidance_scale"] < 0):
         fail(field("guidance_scale"), "must be a number >= 0")
-    if "shift" in value and (not _is_number(value["shift"]) or value["shift"] <= 0):
+    if "shift" in value and (not is_number(value["shift"]) or value["shift"] <= 0):
         fail(field("shift"), "must be a number > 0")
     for key in ("width", "height"):
         if key in value and (not _is_int(value[key]) or value[key] <= 0 or value[key] % 64):
@@ -415,7 +473,3 @@ def _job_size(fail: _Failure, override: ConfigOverride, base_config: dict[str, A
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _is_number(value: Any) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)

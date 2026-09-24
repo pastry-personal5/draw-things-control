@@ -26,6 +26,8 @@ class RunRecord:
     seconds: float | None = None
     exit_code: int | None = None
     status: str = "running"
+    # Seconds the job waited after this run, before the next; None when it did not wait.
+    cooldown_after_seconds: float | None = None
     # Run 1's resized copy of ``input``, which ``command`` passes as --image; removed after the run.
     # Rebuild it from the job manifest's ``input_resize`` to replay the command.
     resized_input: str | None = None
@@ -42,6 +44,8 @@ class JobManifest:
     config_override: dict[str, Any]
     seed: int
     seed_source: str
+    cooldown_seconds: float
+    cooldown_source: str
     started_at: str
     log_file: str | None
     input_resize: dict[str, Any] | None = None

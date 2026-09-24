@@ -128,6 +128,14 @@ uv run python main.py run-job data/example-job.yaml
   `run-job` also writes `<name>-<timestamp>-job.json`, a manifest of
   every run (batch, pair, prompts, seed, files, command, exit code, timing),
   and `<name>-<timestamp>-job.log`, the full log. Off by default.
+- `cooldown_seconds` (0 to 3600) makes a job wait that long after each
+  successful run except the last, so long chains do not overheat the
+  machine. Set it in the global configuration as the default for every job
+  (the example sets 900, 15 minutes), or in a job file to override it; a
+  job's `cooldown_seconds: 0` turns the wait off. With neither, there is no
+  wait. `validate-job`, `--dry-run`, the log, and the manifest show the value
+  and where it came from (`job`, `global_config`, or `default`). Ctrl-C
+  during a cooldown ends it at once and stops the job (exit code 130).
 - A failed, timed-out, or interrupted run stops the job, keeps any partial
   output, and exits with that run's exit code. Video jobs need `ffmpeg` on
   `PATH` to extract last frames.

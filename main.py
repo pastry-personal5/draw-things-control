@@ -17,7 +17,7 @@ from draw_things_runner import DrawThingsProcessRunner
 from frame_extraction import extract_last_frame, require_ffmpeg
 from generation_service import GenerationService
 from global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
-from job_definition import JobDefinition, load_job, report_ignored_config
+from job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
 from job_service import JobService
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
@@ -144,6 +144,7 @@ def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = 
     typer.echo(f"  name: {job.name}")
     typer.echo(f"  mode: {job.mode}")
     typer.echo(f"  runs: {job.batch_count} ({', '.join(pair.name for pair in job.schedule())})")
+    typer.echo(f"  cooldown: {cooldown_details(job)}")
     typer.echo(f"  input: {job.input or '(none, text only)'}")
     typer.echo(f"  output directory: {job.output_directory}")
     typer.echo(f"  config file: {job.config_file}")
@@ -166,9 +167,11 @@ def run_job(
         if dry_run:
             report_ignored_config(job)
             preview = job_service.preview(job, executable=executable)
-            typer.echo(f"# Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source})")
+            typer.echo(f"# Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job)}")
             typer.echo("# Output names are examples; a real run generates new ones.")
             for run, command in zip(preview.runs, preview.command_previews, strict=True):
+                if run.number > 1 and job.cooldown_seconds > 0:
+                    typer.echo(f"# Cooldown {seconds_text(job.cooldown_seconds)}")
                 typer.echo(f"# Run {run.number}/{len(preview.runs)} (batch {run.batch}, pair {run.pair.name})")
                 typer.echo(command)
             return

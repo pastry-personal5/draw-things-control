@@ -63,3 +63,26 @@ class JobCliTests(JobTestCase):
         self.assertEqual(first[first.index("--image") + 1], "<photo.jpg resized to 832x448>")
         self.assertEqual(first[first.index("--width") + 1 : first.index("--height") + 2], ["832", "--height", "448"])
         self.assertFalse(self.output_directory.exists())
+
+    def test_validate_job_and_dry_run_show_the_cooldown(self) -> None:
+        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 900\n", encoding="utf-8")
+        result = self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("  cooldown: 900 s between runs, from global_config (4 waits, 1 h total)", result.stdout)
+        executable_stub = self.root / "draw-things-cli"
+        executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable_stub.chmod(0o755)
+        result = self.runner.invoke(app, ["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertTrue(lines[0].endswith(", cooldown 900 s (global_config)"), lines[0])
+        comments = [line for line in lines if line.startswith("# Run ") or line.startswith("# Cooldown")]
+        self.assertEqual(comments, ["# Run 1/5 (batch 1, pair walk)", "# Cooldown 900 s", "# Run 2/5 (batch 2, pair wave)", "# Cooldown 900 s", "# Run 3/5 (batch 3, pair walk)", "# Cooldown 900 s", "# Run 4/5 (batch 4, pair wave)", "# Cooldown 900 s", "# Run 5/5 (batch 5, pair walk)"])
+
+    def test_job_can_turn_off_the_global_cooldown(self) -> None:
+        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 900\n", encoding="utf-8")
+        job_path = self.write_job(job_data(cooldown_seconds=0), name="no-cooldown.yaml")
+        result = self.runner.invoke(app, ["validate-job", str(job_path), "--global-config", str(self.global_path)])
+        self.assertIn("  cooldown: none (job)", result.stdout)
+        bad = self.write_job(job_data(cooldown_seconds=4000), name="bad.yaml")
+        self.assertEqual(self.runner.invoke(app, ["validate-job", str(bad), "--global-config", str(self.global_path)]).exit_code, 2)

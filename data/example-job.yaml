@@ -65,3 +65,4 @@ config_override:
   seed: 829023514                      # omitted: config_file's seed, else one random seed for the whole job
 
 run_timeout_seconds: 3600              # limit for each run
+# cooldown_seconds: 300                # optional; wait after each run but the last; overrides the global cooldown_seconds; 0 = no wait

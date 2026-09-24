@@ -5,6 +5,70 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-25
 
+- **Change** [M04]: Code review fixes. The cooldown's "until" time is local
+  time, like the other timestamps. A signal that arrives after a full wait
+  now stops the job "before run k" instead of "during the cooldown". The
+  wake-up-pipe wait moved to `draw_things_runner.interruptible_wait`.
+  `validate-job`, the dry run, and the log print seconds as written in the
+  file (`0.00001 s`, not `1e-05 s`), and totals keep tenths (`0.4 s`, not
+  `0 s`).
+
+- **Change** [M04]: Milestone 04 is done. The global configuration and job
+  files accept `cooldown_seconds` (0 to 3600); a job waits that long after
+  each successful run except the last, and a signal ends the wait at once.
+  `config/global-config.example.yaml` sets 900. The job manifest gains
+  `cooldown_seconds` and `cooldown_source`, and run records gain
+  `cooldown_after_seconds`. `validate-job` prints a `cooldown` line, and
+  the `run-job --dry-run` header names the cooldown, with `# Cooldown <n> s`
+  between runs.
+
+- **Owner decision** [M04]: A signal ends the cooldown through a wake-up pipe
+  (`signal.set_wakeup_fd` and `select`), so the stop is instant. Polling with
+  short sleeps was offered and not chosen.
+- **Design decision** [M04]: The draft's `threading.Event`, set from the
+  signal handler, is dropped: `Event.wait()` holds a non-reentrant lock, so
+  a signal arriving at the wrong moment would deadlock the main thread. The
+  handler only sets `_interrupt`, as before, and the wait restores the
+  previous wake-up fd when it ends. This supersedes the `threading.Event`
+  part of the M04 design decision below.
+- **Owner decision** [M04]: The manifest records the time waited on the run
+  before the wait (`cooldown_after_seconds`), saved when the wait starts and
+  when it ends, so a wait cut short by a signal is recorded too. The draft's
+  per-run `cooldown_seconds` on the next run is dropped, since that run never
+  starts when a signal ends the wait.
+- **Owner decision** [M04]: The log shows a line when each cooldown starts
+  and another when it ends, and the global configuration source is labeled
+  `global_config`, like the seed's `config_file`. This supersedes the
+  `global config` label in the M04 owner decisions below.
+
+- **Owner decision** [M04]: The cooldown is allowed in every mode (`i2i`,
+  `t2v`, `i2v`), not only `i2v`. This supersedes "`i2v` only" in the M04
+  design decision below.
+- **Owner decision** [M04]: The cooldown has a global default: a new
+  optional `cooldown_seconds` key in the global configuration, which applies
+  to every mode and which a job's `cooldown_seconds` overrides (0 turns it
+  off). With neither key set, the app's default is 0 (no wait).
+  `config/global-config.example.yaml` sets 900 (15 minutes). This supersedes
+  "per job only" in the M04 design decision below.
+- **Owner decision** [M04]: The cooldown is a fixed time, from 0 to 3600
+  seconds, and `validate-job`, the dry run, the log, and the manifest show
+  where the value came from (`job`, `global config`, or `default`).
+- **Change** [M04]: The milestone is renamed "Cooldown between runs"
+  (`milestone-04-run-cooldown.md`), since it is no longer `i2v` only.
+- **Change** [M04]: Milestone 04, a cooldown between `i2v` runs, is
+  planned. A new optional job key, `cooldown_seconds` (0 to 3600, default 0),
+  makes the job wait after each successful run except the last. A signal
+  ends the wait and stops the job. The job manifest records the setting and
+  the time waited before each run.
+- **Design decision** [M04]: The cooldown is a fixed wait set per job, not
+  based on temperature. Reading macOS thermal state (`pmset -g therm`) was
+  rejected for now: it reports throttling only after it has started, and it
+  would tie the app to one platform. A global default was rejected because
+  the right wait depends on the model, size, and frame count, which the job
+  sets. The wait is a `threading.Event` wait, so a signal ends it at once;
+  `time.sleep` would resume after the signal handler returned. Pending owner
+  confirmation: `i2v` only, default 0, and per job only (see the
+  milestone's open questions).
 - **Change** [M03]: Review fixes. The manifest's `input_resize.fit` gains
   `scale` (scaled to exactly the target: no crop, no bars) and `rotate`
   (upright copy at the target size), so an exact fit is no longer reported

@@ -53,3 +53,17 @@ class GlobalConfigTests(unittest.TestCase):
         self.write(base + "write_job_records: yes please\n")
         with self.assertRaisesRegex(ValueError, "write_job_records"):
             load_global_config(self.path)
+
+    def test_cooldown_seconds_is_optional_and_in_range(self) -> None:
+        base = f"version: 1\ninput_directory: {self.root / 'input'}\noutput_directory: /tmp/out\n"
+        self.write(base)
+        self.assertIsNone(load_global_config(self.path).cooldown_seconds)
+        for text, expected in (("900", 900.0), ("0", 0.0), ("3600", 3600.0), ("0.5", 0.5)):
+            with self.subTest(text):
+                self.write(base + f"cooldown_seconds: {text}\n")
+                self.assertEqual(load_global_config(self.path).cooldown_seconds, expected)
+        for text in ("-1", "3600.5", ".nan", ".inf", "true", "15 min"):
+            with self.subTest(text):
+                self.write(base + f"cooldown_seconds: {text}\n")
+                with self.assertRaisesRegex(ValueError, r"'cooldown_seconds' must be a number of seconds from 0 to 3600"):
+                    load_global_config(self.path)

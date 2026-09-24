@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import queue
+import select
 import signal
 import subprocess
 import threading
@@ -41,6 +42,54 @@ def restore_signal_handlers(previous_handlers: SignalHandlers | None) -> None:
     if previous_handlers is not None:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+
+
+def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_signal: bool = True) -> float:
+    """Wait ``seconds``, ending early once ``stopped()`` is true; return the seconds waited.
+
+    With ``wake_on_signal``, a wake-up pipe ends the wait as soon as a signal with a Python handler
+    arrives (such as those from install_signal_handlers): Python's C-level handler writes a byte to
+    it, which wakes ``select``, and the Python handler then makes ``stopped()`` true. The handler must
+    only set a flag: a lock or event taken from a handler on the main thread could deadlock.
+    """
+    started = time.monotonic()
+    deadline = started + seconds
+    read_end, write_end = os.pipe()
+    registered = False
+    previous_fd = -1
+    try:
+        os.set_blocking(read_end, False)
+        os.set_blocking(write_end, False)
+        if wake_on_signal:
+            try:
+                previous_fd = signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
+                registered = True
+            except ValueError:
+                # Off the main thread no handler runs, so no signal can end the wait.
+                pass
+        # Checked after registering, so a signal arriving now still leaves a byte in the pipe.
+        while not stopped():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            readable, _, _ = select.select([read_end], [], [], remaining)
+            if readable:
+                _drain(read_end)
+    finally:
+        if registered:
+            signal.set_wakeup_fd(previous_fd)
+        os.close(read_end)
+        os.close(write_end)
+    return time.monotonic() - started
+
+
+def _drain(read_end: int) -> None:
+    """Empty a non-blocking wake-up pipe."""
+    try:
+        while os.read(read_end, 512):
+            pass
+    except BlockingIOError:
+        pass
 
 
 @dataclass(frozen=True)

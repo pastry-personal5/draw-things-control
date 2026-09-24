@@ -8,7 +8,7 @@ import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -16,10 +16,10 @@ from loguru import logger
 
 from configuration import load_config
 from draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_runner import install_signal_handlers, restore_signal_handlers
+from draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
 from generation_config import build_config_json
 from generation_service import GenerationService, Runner
-from job_definition import JobDefinition, PromptPair, report_ignored_config
+from job_definition import JobDefinition, PromptPair, cooldown_summary, report_ignored_config, seconds_text
 from job_log import add_job_log, remove_job_log
 from job_manifest import JobManifest, RunRecord, write_manifest
 from output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
@@ -36,6 +36,8 @@ class StoppableRunner(Runner, Protocol):
 
 RunnerFactory = Callable[[DrawThingsGenerateArguments, float | None, float], StoppableRunner]
 FrameExtractor = Callable[[Path, Path], None]
+# Waits up to the given seconds between runs and returns the seconds actually waited.
+Cooldown = Callable[[float], float]
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,7 @@ class JobService:
         random_number: RandomNumber = random_four_digits,
         random_seed: Callable[[], int] = lambda: random.randint(0, 2**32 - 1),
         handle_signals: bool = True,
+        cooldown: Cooldown | None = None,
     ) -> None:
         self._runner_factory = runner_factory
         self._find_executable = find_executable
@@ -95,6 +98,7 @@ class JobService:
         self._random_number = random_number
         self._random_seed = random_seed
         self._handle_signals = handle_signals
+        self._cooldown = cooldown or self._wait_for_cooldown
         self._generation = GenerationService(runner_factory=self._create_runner, find_executable=find_executable, config_loader=load_config)
         self._current_runner: StoppableRunner | None = None
         self._interrupt: signal.Signals | None = None
@@ -165,6 +169,8 @@ class JobService:
                 config_override=job.config_override.as_dict(),
                 seed=seed,
                 seed_source=seed_source,
+                cooldown_seconds=job.cooldown_seconds,
+                cooldown_source=job.cooldown_source,
                 started_at=self._timestamp(),
                 log_file=log_path.name if log_path is not None else None,
                 input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
@@ -185,7 +191,7 @@ class JobService:
         schedule = job.schedule()
         total = len(schedule)
         records = f"; manifest {manifest_path}; log {log_path}" if manifest_path is not None else ""
-        logger.info("Job {} ({}): {} runs, seed {} (from {}){}", job.name, job.mode, total, manifest.seed, manifest.seed_source, records)
+        logger.info("Job {} ({}): {} runs, seed {} (from {}), {}{}", job.name, job.mode, total, manifest.seed, manifest.seed_source, cooldown_summary(job, "from "), records)
         report_ignored_config(job)
         self._save(manifest_path, manifest)
         current_input = job.input
@@ -196,9 +202,7 @@ class JobService:
         exit_code = 0
         for number, pair in enumerate(schedule, start=1):
             if self._interrupt is not None:
-                logger.warning("Job stopped by {} before run {}/{}", self._interrupt.name, number, total)
-                manifest.status = "interrupted"
-                exit_code = 128 + self._interrupt.value
+                exit_code = self._stop(manifest, self._interrupt, f"before run {number}/{total}")
                 break
             run = self._plan_run(job, number, pair, current_input, manifest.seed, executable, set())
             record = RunRecord(
@@ -237,12 +241,46 @@ class JobService:
             completed += 1
             self._save(manifest_path, manifest)
             current_input = run.last_frame or run.output
+            wait = number < total and job.cooldown_seconds > 0 and self._interrupt is None
+            stop = self._cool_down(job, manifest, manifest_path, record, number + 1, total) if wait else None
+            if stop is not None:
+                exit_code = self._stop(manifest, *stop)
+                break
         else:
             manifest.status = "succeeded"
         manifest.finished_at = self._timestamp()
         self._save(manifest_path, manifest)
         logger.info("Job {} {}: {}/{} runs completed{}", job.name, manifest.status, completed, total, records)
         return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=manifest_path, log=log_path)
+
+    def _cool_down(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, record: RunRecord, next_run: int, total: int) -> tuple[signal.Signals, str] | None:
+        """Wait the job's cooldown after ``record``'s run; return the signal that cut it short and where, or None."""
+        seconds = job.cooldown_seconds
+        until = (self._clock().astimezone() + timedelta(seconds=seconds)).strftime("%H:%M:%S")
+        logger.info("Cooldown: waiting {} before run {}/{} (until {})", seconds_text(seconds), next_run, total, until)
+        # Saved at 0 first, so the manifest shows the job is cooling down rather than stuck.
+        record.cooldown_after_seconds = 0.0
+        self._save(manifest_path, manifest)
+        waited = self._cooldown(seconds)
+        # Only a wait that ended early was cut short; a signal after a full wait stops the job before the next run.
+        stopped = self._interrupt if waited < seconds else None
+        record.cooldown_after_seconds = round(waited, 1)
+        self._save(manifest_path, manifest)
+        if stopped is not None:
+            return stopped, f"during the cooldown before run {next_run}/{total} (waited {seconds_text(round(waited, 1))} of {seconds_text(seconds)})"
+        logger.info("Cooldown finished; starting run {}/{}", next_run, total)
+        return None
+
+    def _wait_for_cooldown(self, seconds: float) -> float:
+        """The default cooldown: a wait that the job's signal handler ends at once."""
+        return interruptible_wait(seconds, lambda: self._interrupt is not None, wake_on_signal=self._handle_signals)
+
+    @staticmethod
+    def _stop(manifest: JobManifest, received_signal: signal.Signals, where: str) -> int:
+        """Mark the job interrupted by ``received_signal``; return its exit code."""
+        logger.warning("Job stopped by {} {}", received_signal.name, where)
+        manifest.status = "interrupted"
+        return 128 + received_signal.value
 
     @staticmethod
     def _save(manifest_path: Path | None, manifest: JobManifest) -> None:

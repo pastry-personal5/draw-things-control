@@ -23,3 +23,9 @@ output_directory: ~/draw-things/output
 # of every run) and <name>-<timestamp>-job.log (the full log) beside its
 # outputs. Default: false (nothing but the generated files is written).
 write_job_records: false
+
+# Optional. Seconds every job waits after each successful run, before the
+# next, so long chains (especially video) do not overheat the machine. A job
+# file's own cooldown_seconds overrides it; a job sets 0 to skip the wait.
+# 0 to 3600. Default: 0 (no wait).
+cooldown_seconds: 900
