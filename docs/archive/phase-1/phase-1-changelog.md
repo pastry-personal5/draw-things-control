@@ -7,8 +7,8 @@ Owner decisions, design decisions, and notable changes for
 
 - **Change**: Phase 1 is done. All four milestones are done and the exit
   criteria are met. Follow-on work continues in
-  [Phase 2](../phase-2/README.md) (a TUI) and
-  [Phase 3](../phase-3/README.md) (an API server and an MCP server).
+  [Phase 2](../../phase-2/README.md) (a TUI) and
+  [Phase 3](../../phase-3/README.md) (an API server and an MCP server).
 
 - **Change** [M04]: Code review fixes. The cooldown's "until" time is local
   time, like the other timestamps. A signal that arrives after a full wait

@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 2: Terminal UI for Humans](README.md)
 **Status:** planned
-**Depends on:** [Phase 1](../phase-1/README.md)
+**Depends on:** [Phase 1](../archive/phase-1/README.md)
 
 ## Goal
 

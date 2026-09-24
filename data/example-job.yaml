@@ -7,7 +7,7 @@
 # Relative paths: `input` is read from the global input_directory, and
 # `output.directory` is created under the global output_directory.
 # `config_file` is a file name only; the app finds it in dt-config/.
-# See docs/phase-1/milestone-01-job-definition-batch.md for every rule.
+# See docs/archive/phase-1/milestone-01-job-definition-batch.md for every rule.
 
 version: 1
 name: sunset-walk                      # job name, the base of output file names; [a-z0-9-]

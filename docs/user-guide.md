@@ -186,7 +186,7 @@ input is never stretched:
 A rotated photo is turned upright first, and an embedded color profile is
 converted to sRGB. `--dry-run` shows the resized copy as
 `'<photo.jpg resized to 832x448>'`. The full rules are in the
-[input resize milestone](phase-1/milestone-03-input-image-resize.md).
+[input resize milestone](archive/phase-1/milestone-03-input-image-resize.md).
 
 ### Cooldown
 

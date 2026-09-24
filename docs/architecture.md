@@ -41,7 +41,7 @@ Import direction: `cli`, `tui`, `server` -> `jobs`, `state` -> `core`;
 `mcp_server` -> `server` over HTTP only. Front ends never import each other.
 Launch with `dtc` or `python -m draw_things_control`.
 
-Phase plans: [1](phase-1/README.md), [2](phase-2/README.md),
+Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 [3](phase-3/README.md). Each phase reuses the layers below it unchanged.
 
 ## Phase 1: core and CLI (done)
