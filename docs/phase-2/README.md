@@ -19,7 +19,7 @@ processes from driving the GPU at once.
   runs and per-run records: the source of truth for run history
 - An OS-level run lock (`fcntl.flock`) taken by every command that starts a
   generation: `run-job`, `generate`, and the TUI
-- A Textual TUI, started with `main.py tui`, to browse jobs, run and stop a
+- A Textual TUI, started with `dtc tui`, to browse jobs, run and stop a
   job, watch it live, and review past runs
 - One-time import of existing manifests into the state store
 - Pruning of history older than 14 days (`history_retention_days` overrides
@@ -62,10 +62,11 @@ as AGENTS.md requires.
 
 ## Code layout
 
-The core stays flat in the project root. The TUI lives in `tui/`. Shared
-new core modules: `job_events.py` (Milestone 01; it also holds the CLI's log
-observer, or that moves to `job_log_observer.py`), and `state_store.py`,
-`state_recorder.py`, and `run_lock.py` (Milestone 02).
+All code lives in the `src/draw_things_control/` package (see
+[architecture](../architecture.md)). The TUI lives in `tui/`. Shared new
+modules: `jobs/job_events.py` (Milestone 01; it also holds the CLI's log
+observer, or that moves to `jobs/job_log_observer.py`), and `state/store.py`,
+`state/recorder.py`, and `core/run_lock.py` (Milestone 02).
 
 ## Changelog
 

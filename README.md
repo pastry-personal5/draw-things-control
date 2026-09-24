@@ -11,15 +11,15 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and `draw-things-cli`.
 
 ```bash
 uv sync
-uv run python main.py --help
+uv run dtc --help
 
 # Preview a command without running it
-uv run python main.py generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube" --output cube.png --dry-run
+uv run dtc generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube" --output cube.png --dry-run
 
 # Run a job
 cp config/global-config.example.yaml config/global-config.yaml   # then edit the paths
-uv run python main.py validate-job data/example-job.yaml
-uv run python main.py run-job data/example-job.yaml
+uv run dtc validate-job data/example-job.yaml
+uv run dtc run-job data/example-job.yaml
 ```
 
 ## Documentation

@@ -2,10 +2,9 @@
 
 import unittest
 
-from job_fixtures import JobTestCase, job_data
-
-from input_size import floor_to_step, read_image_info, resize_plan
-from job_definition import load_job
+from draw_things_control.jobs.input_size import floor_to_step, read_image_info, resize_plan
+from draw_things_control.jobs.job_definition import load_job
+from tests.fixtures import JobTestCase, job_data
 
 
 class InputSizeTests(JobTestCase):

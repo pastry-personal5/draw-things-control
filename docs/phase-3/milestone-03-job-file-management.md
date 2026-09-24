@@ -31,7 +31,7 @@ Out of scope:
 
 ### Enabling writes
 
-- Writes are off by default. `main.py serve --allow-write` turns them on.
+- Writes are off by default. `dtc serve --allow-write` turns them on.
 - Without the option, the endpoints below return 404 and are absent from
   `GET /capabilities`, and the MCP write tools are not registered
   (Milestone 04). They are not merely rejected: they do not exist.

@@ -16,8 +16,8 @@ from typing import TextIO
 
 from loguru import logger
 
-from draw_things_arguments import CommandArguments
-from process_output import OutputProcessor, OutputStream, ProcessMessage
+from draw_things_control.core.draw_things_arguments import CommandArguments
+from draw_things_control.core.process_output import OutputProcessor, OutputStream, ProcessMessage
 
 HANDLED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 SignalHandlers = dict[int, signal.Handlers | int | None]

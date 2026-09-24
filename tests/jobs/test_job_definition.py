@@ -6,11 +6,11 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from job_fixtures import BASE_CONFIG, JobTestCase, job_data
 from loguru import logger
 from PIL import Image
 
-from job_definition import GenerationMode, cooldown_details, duration_text, load_job, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_definition import GenerationMode, cooldown_details, duration_text, load_job, report_ignored_config, seconds_text
+from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 
 class JobDefinitionTests(JobTestCase):
@@ -198,7 +198,7 @@ class JobDefinitionTests(JobTestCase):
         path.write_bytes(path.read_bytes()[:2000])
         self.load(input="noise.jpg")
         # Already the target and upright: the original is used as-is, so it is not decoded.
-        with mock.patch("job_definition.decode_image") as decode:
+        with mock.patch("draw_things_control.jobs.job_definition.decode_image") as decode:
             self.assertIsNone(self.load(input="noise.jpg", desired_input_width=832).input_copy)
         decode.assert_not_called()
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
@@ -207,8 +207,8 @@ class JobDefinitionTests(JobTestCase):
         load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.dt_config, decode_input=False)
 
     def test_loading_a_job_does_not_import_the_resizer(self) -> None:
-        code = "import sys, job_definition; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
-        self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent, check=False).returncode, 0)
+        code = "import sys, draw_things_control.jobs.job_definition; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
+        self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[2], check=False).returncode, 0)
 
     def test_image_over_the_pixel_limit_is_a_validation_error(self) -> None:
         self.write_image("photo.jpg", (1920, 1080))

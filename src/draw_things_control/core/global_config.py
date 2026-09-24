@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.yaml"
 EXAMPLE_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.example.yaml"
 GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown_seconds"}

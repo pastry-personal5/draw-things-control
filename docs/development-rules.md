@@ -7,7 +7,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 - Python 3.12 (see `.python-version`), managed with uv.
 - Install with `uv sync`. Never use `pip install` directly.
-- Run code from the project root: `uv run python main.py ...`.
+- Run code from the project root: `uv run dtc ...` (or `uv run python -m draw_things_control ...`.
 - Keep `pyproject.toml` and `uv.lock` in sync when adding a dependency.
 - Before using a library, framework, SDK, or CLI tool, fetch its current
   documentation through the Context7 MCP tools (`resolve-library-id`, then
@@ -30,9 +30,16 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 ## Project layout
 
-- The core stays flat in the project root; `main.py` is the CLI entry point.
-- From Phase 2, each front end has its own subpackage: `tui/`, `server/`,
-  `mcp_server/`.
+- No source files in the project root. All code is the `draw_things_control`
+  package under `src/` (uv src layout), with tests in `tests/` mirroring it.
+- Subpackages: `core/` (runner, arguments, generation, configuration), `jobs/`
+  (job definition, service, manifests, input handling), `cli/` (Typer app),
+  and, as phases land, `state/`, `tui/`, `server/`, `mcp_server/`.
+- Dependencies point one way: `cli`, `tui`, `server`, `mcp_server` -> `jobs`,
+  `state` -> `core`. Front ends never import each other; `mcp_server` talks to
+  `server` over HTTP only.
+- Imports are absolute (`from draw_things_control.core... import ...`).
+- Entry point: the `dtc` console script, or `python -m draw_things_control`.
 - `dt-config/*.json` and `config/global-config.yaml` are user files. Never
   edit, delete, or deduplicate them from code, tests, or tools.
 - See [architecture.md](architecture.md) for module responsibilities.
@@ -42,6 +49,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 - Tests use standard-library `unittest` and Typer's `CliRunner`, and live in
   `tests/`.
 - No test starts the real `draw-things-cli`; inject a fake runner.
+- Test files live in `tests/<subpackage>/`, each directory has an `__init__.py`, and shared helpers are in `tests/fixtures.py`.
 - `make check` runs Ruff, Black in check mode, and the tests. It must pass
   before a change is committed.
 - `make format` applies Black.

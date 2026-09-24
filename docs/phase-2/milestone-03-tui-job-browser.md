@@ -13,7 +13,7 @@ and exactly what running it would do, without leaving the terminal.
 
 In scope:
 
-- The `main.py tui` command and the Textual application shell in `tui/`
+- The `dtc tui` command and the Textual application shell in `tui/`
 - A job list read from the job directory
 - A read-only detail view: the resolved job and its dry-run plan
 - Global keys and a help screen
@@ -28,9 +28,9 @@ Out of scope:
 
 ### Command and package
 
-- `main.py tui [--global-config PATH] [--data-dir PATH]` starts the app.
+- `dtc tui [--global-config PATH] [--data-dir PATH]` starts the app.
   The default data directory is `data/`.
-- Code lives in `tui/`: `app.py` (the `App`), `screens.py`, `widgets.py`,
+- Code lives in `src/draw_things_control/tui/`: `app.py` (the `App`), `screens.py`, `widgets.py`,
   and `styles.tcss`. The screens use existing core code
   (`read_job`, `JobService.preview`) and add no job logic of their own.
 - `textual` is added to `pyproject.toml` and `uv.lock` (always installed).
@@ -74,7 +74,7 @@ The run and history keys are added by Milestones 04 and 05.
 
 ## Acceptance criteria
 
-- `main.py tui` opens, lists the jobs in `data/`, and quits cleanly with
+- `dtc tui` opens, lists the jobs in `data/`, and quits cleanly with
   `q` and with Ctrl-C.
 - A valid job shows its summary, prompt pairs, and dry-run plan; the plan
   matches `run-job --dry-run` for the same file.

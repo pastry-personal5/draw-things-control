@@ -38,7 +38,7 @@ Out of scope:
 - Submitting takes a job file name, validates it, and stores the text and
   settings. The stored text, not the file, is what runs: the worker parses it
   when the job starts with a new `load_job_text(text, global_config, ...)`
-  in `job_definition.py`, which shares all validation with `load_job`
+  in `jobs/job_definition.py`, which shares all validation with `load_job`
   (which becomes a thin wrapper that reads the file). Input files are
   checked when the job starts, so a file removed in the meantime fails the
   job, naming the path, before any run begins.

@@ -4,8 +4,8 @@ import signal
 import unittest
 from dataclasses import dataclass
 
-from draw_things_arguments import DrawThingsGenerateArguments
-from generation_service import GenerationService
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.generation_service import GenerationService
 
 
 @dataclass(frozen=True)

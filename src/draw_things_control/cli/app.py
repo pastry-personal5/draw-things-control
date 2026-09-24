@@ -11,14 +11,14 @@ from typing import Annotated
 import typer
 from loguru import logger
 
-from configuration import load_config
-from draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_runner import DrawThingsProcessRunner
-from frame_extraction import extract_last_frame, require_ffmpeg
-from generation_service import GenerationService
-from global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
-from job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
-from job_service import JobService
+from draw_things_control.core.configuration import load_config
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
+from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
+from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg
+from draw_things_control.jobs.job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_service import JobService
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
@@ -187,7 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the Typer app and preserve its command exit status."""
     configure_logging()
     try:
-        app(args=list(argv) if argv is not None else None, prog_name="main.py")
+        app(args=list(argv) if argv is not None else None, prog_name="dtc")
     except SystemExit as error:
         return int(error.code or 0)
     return 0

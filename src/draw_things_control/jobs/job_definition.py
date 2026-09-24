@@ -11,9 +11,9 @@ from typing import Any
 
 from loguru import logger
 
-import generation_config
-from global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, load_yaml_mapping
-from input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
+from draw_things_control.core import generation_config
+from draw_things_control.core.global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, load_yaml_mapping
+from draw_things_control.jobs.input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 SIZE_KEYS = ("desired_input_width", "desired_input_height")

@@ -41,7 +41,7 @@ Out of scope:
     14; 0 keeps history forever. See "Retention" below. The app never edits
   `config/global-config.yaml`.
 
-### Store (`state_store.py`)
+### Store (`state/store.py`)
 
 - Standard library `sqlite3`, WAL mode, foreign keys on. One connection per
   thread, since `sqlite3` connections are not thread-safe.
@@ -82,7 +82,7 @@ History older than `history_retention_days` (default 14) is pruned.
 
 ### Recorder
 
-An event observer (`state_recorder.py`) writes to the store as events
+An event observer (`state/recorder.py`) writes to the store as events
 arrive: `JobStarted` creates the `job_runs` row, `RunStarted` and
 `RunFinished` write the `runs` row, and `JobFinished` closes the job run.
 It is composed with the CLI's log observer, so `run-job` does both.
@@ -99,7 +99,7 @@ It is composed with the CLI's log observer, so `run-job` does both.
 - A recording failure (for example, a locked or read-only database) is
   logged and does not stop the generation, as with any observer error.
 
-### Run lock (`run_lock.py`)
+### Run lock (`core/run_lock.py`)
 
 - A non-blocking `fcntl.flock(LOCK_EX | LOCK_NB)` on `state/run.lock`. The
   operating system releases it when the process exits, however it exits, so
@@ -117,7 +117,7 @@ It is composed with the CLI's log observer, so `run-job` does both.
 
 ### History import
 
-`main.py import-history` reads phase 1 manifests (the `*.json` records beside
+`dtc import-history` reads phase 1 manifests (the `*.json` records beside
 outputs, in the configured output directory; they exist only for runs made
 with `write_job_records: true`) and inserts them as
 `job_runs` and `runs`. It is idempotent: a manifest already imported, keyed

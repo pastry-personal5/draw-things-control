@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from job_manifest import JobManifest, RunRecord, write_manifest
+from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
 
 
 class JobManifestTests(unittest.TestCase):

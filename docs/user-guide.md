@@ -1,7 +1,7 @@
 # User Guide
 
 How to use the `draw-things-control` command line. Every command is run from
-the project root as `uv run python main.py <command>`.
+the project root as `uv run dtc <command>`.
 
 ## Contents
 
@@ -24,7 +24,7 @@ last frames.
 
 ```bash
 uv sync
-uv run python main.py --help
+uv run dtc --help
 ```
 
 If `draw-things-cli` is not on your `PATH`, add
@@ -64,7 +64,7 @@ Add `--help` to any command for its full option list.
 Text to image needs only a model, a prompt, and an output:
 
 ```bash
-uv run python main.py generate \
+uv run dtc generate \
   --model flux_2_klein_4b_q6p.ckpt \
   --prompt "a small red cube on a table" \
   --output cube.png
@@ -73,7 +73,7 @@ uv run python main.py generate \
 Image to video with a bundled configuration:
 
 ```bash
-uv run python main.py generate \
+uv run dtc generate \
   --config-file dt-config/image-to-video-wan-2-2.example.json \
   --image /path/to/source.png \
   --output /path/to/output.mov \
@@ -101,7 +101,7 @@ Common options:
 ## Check a configuration file
 
 ```bash
-uv run python main.py validate-config dt-config/image-to-video-wan-2-2.example.json
+uv run dtc validate-config dt-config/image-to-video-wan-2-2.example.json
 ```
 
 The files in `dt-config/` are yours: this tool reads them and never changes
@@ -116,9 +116,9 @@ last frame, for video). Each run uses one of your named prompt pairs.
 The workflow is always the same three steps:
 
 ```bash
-uv run python main.py validate-job data/example-job.yaml
-uv run python main.py run-job data/example-job.yaml --dry-run
-uv run python main.py run-job data/example-job.yaml
+uv run dtc validate-job data/example-job.yaml
+uv run dtc run-job data/example-job.yaml --dry-run
+uv run dtc run-job data/example-job.yaml
 ```
 
 1. `validate-job` reports any problem, naming the field, and shows the

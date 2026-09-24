@@ -31,7 +31,7 @@ Out of scope:
 
 ### Events
 
-A new module, `job_events.py`, holds frozen dataclasses:
+A new module, `jobs/job_events.py`, holds frozen dataclasses:
 
 | Event | When | Main fields |
 |-------|------|-------------|
@@ -65,7 +65,7 @@ output is unchanged, so the CLI and the job log file behave as before.
 
 ### Logging and the terminal
 
-Loguru's sinks are process-global. `main.py`'s `configure_logging()` adds
+Loguru's sinks are process-global. `cli/app.py`'s `configure_logging()` adds
 stdout and stderr sinks, which would write over a full-screen UI. Front ends
 that own the terminal (the Phase 2 TUI) must not install them. The job log
 file sink (`add_job_log`) is a file and stays as is.
@@ -92,8 +92,8 @@ jobs in a worker thread with `install_signals=False`.
 
 ### The CLI as an observer
 
-A `LogObserver` (in `job_events.py` or a small `job_log_observer.py`)
-produces the same log lines that `JobService` writes today. `main.py`
+A `LogObserver` (in `jobs/job_events.py` or a small `jobs/job_log_observer.py`)
+produces the same log lines that `JobService` writes today. `cli/app.py`
 passes it to `run()`. Job log files and manifests are unchanged.
 
 ## Acceptance criteria

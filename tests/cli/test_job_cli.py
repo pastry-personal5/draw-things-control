@@ -4,11 +4,11 @@ import shlex
 from pathlib import Path
 from unittest import mock
 
-from job_fixtures import JobTestCase, job_data
 from typer.testing import CliRunner
 
-from draw_things_arguments import DrawThingsGenerateArguments
-from main import app, create_runner
+from draw_things_control.cli.app import app, create_runner
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from tests.fixtures import JobTestCase, job_data
 
 
 class JobCliTests(JobTestCase):
@@ -19,7 +19,7 @@ class JobCliTests(JobTestCase):
         self.global_path.write_text(f"version: 1\ninput_directory: {self.input_directory}\noutput_directory: {self.output_directory}\n", encoding="utf-8")
         self.job_path = self.write_job(job_data())
         # The commands read the repository's dt-config/; point it at the test's copy.
-        patcher = mock.patch("generation_config.DT_CONFIG_DIRECTORY", self.dt_config)
+        patcher = mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config)
         patcher.start()
         self.addCleanup(patcher.stop)
 

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from global_config import load_global_config
+from draw_things_control.core.global_config import load_global_config
 
 
 class GlobalConfigTests(unittest.TestCase):

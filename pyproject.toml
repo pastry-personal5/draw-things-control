@@ -13,6 +13,13 @@ dependencies = [
     "typer>=0.27.2",
 ]
 
+[project.scripts]
+dtc = "draw_things_control.cli.app:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"
+
 [project.optional-dependencies]
 dev = [
     "black>=26.5.1",
@@ -32,3 +39,6 @@ ignore = []
 # Owner decision: no maximum line length (same value as Ruff's line-length).
 line-length = 65535
 target-version = ["py312"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["draw_things_control", "tests"]

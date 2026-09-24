@@ -13,11 +13,11 @@ GPU; an MCP server gives agents typed tools on top of it.
 - A persistent job queue in the SQLite state store, run by one worker, with
   the same cooldown between queued jobs as between runs
 - Restart handling and an explicit resume for interrupted jobs
-- An HTTP API (`main.py serve`) with bearer-token auth, job control, history,
+- An HTTP API (`dtc serve`) with bearer-token auth, job control, history,
   and a live event stream
 - Job file management for agents: create, edit, and delete jobs in `data/`,
   behind an explicit write flag, with backups and a trash folder
-- An MCP server (`main.py mcp`) that is a thin client of the HTTP API
+- An MCP server (`dtc mcp`) that is a thin client of the HTTP API
 - Limits on submissions, path confinement, redaction, and an audit log
   (built with the first API endpoints)
 
@@ -69,9 +69,9 @@ milestone is built, and versions are chosen then.
 
 ## Code layout
 
-`server/` holds the API and queue worker, and `mcp_server/` holds the MCP
-server. The core stays flat, with new modules where the core needs them
-(for example `job_queue.py`).
+Inside `src/draw_things_control/`, `server/` holds the API and queue worker,
+and `mcp_server/` holds the MCP server. Shared code goes in `core/`, `jobs/`,
+or `state/` as fits (for example `jobs/job_queue.py`).
 
 ## Changelog
 

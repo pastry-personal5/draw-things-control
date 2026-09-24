@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-uv run -m main \
+uv run dtc \
 validate-job \
 ./data/duo.yaml 

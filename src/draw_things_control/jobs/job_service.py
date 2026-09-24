@@ -14,18 +14,18 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from configuration import load_config
-from draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
-from generation_config import build_config_json
-from generation_service import GenerationService, Runner
-from job_definition import JobDefinition, PromptPair, cooldown_summary, report_ignored_config, seconds_text
-from job_log import add_job_log, remove_job_log
-from job_manifest import JobManifest, RunRecord, write_manifest
-from output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
+from draw_things_control.core.configuration import load_config
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
+from draw_things_control.core.generation_config import build_config_json
+from draw_things_control.core.generation_service import GenerationService, Runner
+from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, cooldown_summary, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_log import add_job_log, remove_job_log
+from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
+from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
 
 if TYPE_CHECKING:
-    from input_resize import TemporaryInput
+    from draw_things_control.jobs.input_resize import TemporaryInput
 
 
 class StoppableRunner(Runner, Protocol):
@@ -136,7 +136,7 @@ class JobService:
         plan = job.input_copy
         if job.input is not None and plan is not None:
             # Imported here, so jobs that never resize do not load numpy and LittleCMS.
-            from input_resize import TemporaryInput
+            from draw_things_control.jobs.input_resize import TemporaryInput
 
             temporary_input = TemporaryInput(job.input, plan)
         try:

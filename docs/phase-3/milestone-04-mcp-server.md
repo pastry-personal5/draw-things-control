@@ -13,7 +13,7 @@ whole create, queue, watch, cancel workflow without knowing HTTP.
 
 In scope:
 
-- `main.py mcp`, an MCP server over stdio
+- `dtc mcp`, an MCP server over stdio
 - Tools that map to API endpoints
 - Write tools registered only when the server has writes on
 - Clear behavior when the API server is not running
@@ -28,7 +28,7 @@ Out of scope:
 
 ### The `mcp` command
 
-- `main.py mcp [--server-url http://127.0.0.1:8765] [--token-file config/server-token]`
+- `dtc mcp [--server-url http://127.0.0.1:8765] [--token-file config/server-token]`
   runs an MCP server on stdio, built with the official `mcp` Python SDK.
   Its documentation is fetched through Context7 first.
 - It talks to the API with `httpx` and the same bearer token from the token
@@ -86,7 +86,7 @@ and never from disk.
 
 If the server is not reachable, or the token is missing or wrong, each tool
 returns an error that says so and names the command that starts the server
-(`main.py serve`), not a stack trace.
+(`dtc serve`), not a stack trace.
 
 ## Acceptance criteria
 

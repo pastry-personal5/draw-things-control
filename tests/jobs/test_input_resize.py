@@ -10,8 +10,8 @@ from unittest import mock
 from loguru import logger
 from PIL import Image, ImageChops, ImageCms, ImageDraw, ImageOps, ImageStat
 
-from input_resize import TemporaryInput, resize_image
-from input_size import ResizePlan, decode_image, resize_plan
+from draw_things_control.jobs.input_resize import TemporaryInput, resize_image
+from draw_things_control.jobs.input_size import ResizePlan, decode_image, resize_plan
 
 DISPLAY_P3 = Path("/System/Library/ColorSync/Profiles/Display P3.icc")
 
@@ -112,7 +112,7 @@ class InputResizeTests(unittest.TestCase):
     def test_srgb_profile_is_not_converted(self) -> None:
         profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
         source = self.save(Image.new("RGB", (256, 128), (1, 2, 3)), "srgb.png", icc_profile=profile)
-        with mock.patch("input_resize.ImageCms.profileToProfile") as convert:
+        with mock.patch("draw_things_control.jobs.input_resize.ImageCms.profileToProfile") as convert:
             image = self.resized(source, resize_plan("srgb.png", (256, 128), None, 128, 64))
         convert.assert_not_called()
         self.assertEqual(image.getpixel((64, 32)), (1, 2, 3))
@@ -221,7 +221,7 @@ class InputResizeTests(unittest.TestCase):
 
     def test_unconvertible_mode_reports_the_input(self) -> None:
         source = self.save(Image.new("RGB", (256, 128), "white"))
-        with mock.patch("input_resize.to_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
+        with mock.patch("draw_things_control.jobs.input_resize.to_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
             with self.assertRaisesRegex(ValueError, "Could not resize input .*input.png: conversion from LAB"):
                 TemporaryInput(source, resize_plan("input.png", (256, 128), None, 128, None))
 
@@ -247,7 +247,7 @@ class InputResizeTests(unittest.TestCase):
             return created[-1]
 
         source = self.save(Image.new("RGB", (1920, 1080), "white"))
-        with mock.patch("input_resize.tempfile.mkdtemp", tracking_mkdtemp), mock.patch("input_resize.resize_image", side_effect=OSError("disk full")):
+        with mock.patch("draw_things_control.jobs.input_resize.tempfile.mkdtemp", tracking_mkdtemp), mock.patch("draw_things_control.jobs.input_resize.resize_image", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(ValueError, "Could not resize input .*disk full"):
                 TemporaryInput(source, resize_plan("input.png", (1920, 1080), None, 850, None))
         self.assertFalse(Path(created[0]).exists())

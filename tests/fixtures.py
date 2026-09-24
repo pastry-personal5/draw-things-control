@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 from PIL import Image
 
-from global_config import GlobalConfig
+from draw_things_control.core.global_config import GlobalConfig
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 

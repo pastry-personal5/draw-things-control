@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 
 
 class RunResult(Protocol):

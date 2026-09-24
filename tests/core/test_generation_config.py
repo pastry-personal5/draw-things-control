@@ -4,12 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from generation_config import DT_CONFIG_DIRECTORY, build_config_json, find_config_file
+from draw_things_control.core.generation_config import DT_CONFIG_DIRECTORY, build_config_json, find_config_file
 
 
 class GenerationConfigTests(unittest.TestCase):
     def test_config_directory_is_the_repository_folder(self) -> None:
-        self.assertEqual(DT_CONFIG_DIRECTORY, Path(__file__).resolve().parent.parent / "dt-config")
+        self.assertEqual(DT_CONFIG_DIRECTORY, Path(__file__).resolve().parents[2] / "dt-config")
 
     def test_bare_name_is_found_in_the_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

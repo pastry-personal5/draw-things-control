@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from configuration import load_config
+from draw_things_control.core.configuration import load_config
 
-DT_CONFIG_DIRECTORY = Path(__file__).resolve().parent / "dt-config"
+DT_CONFIG_DIRECTORY = Path(__file__).resolve().parents[3] / "dt-config"
 
 # Job override keys that draw-things-cli has no flag for, and their Draw Things names.
 CONFIG_ONLY_KEYS = {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift"}

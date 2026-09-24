@@ -19,26 +19,47 @@ CLI ─────────┐       TUI ────────┐        
       draw-things-cli
 ```
 
+## Source layout
+
+Everything is one package, `src/draw_things_control/`; nothing lives in the
+project root but configuration, data, docs, and tests. Dependencies point one
+way, from front ends down to `core`.
+
+```
+src/draw_things_control/
+├── core/        # runner, arguments, generation, configuration      (phase 1)
+├── jobs/        # job definition and service, manifests, inputs     (phase 1; events, queue later)
+├── cli/         # Typer app: the `dtc` command                      (phase 1)
+├── state/       # SQLite store and recorder                         (phase 2)
+├── tui/         # Textual app                                       (phase 2)
+├── server/      # HTTP API and queue worker                         (phase 3)
+└── mcp_server/  # MCP client of the HTTP API                        (phase 3)
+tests/           # mirrors the package: tests/core, tests/jobs, tests/cli, ...
+```
+
+Import direction: `cli`, `tui`, `server` -> `jobs`, `state` -> `core`;
+`mcp_server` -> `server` over HTTP only. Front ends never import each other.
+Launch with `dtc` or `python -m draw_things_control`.
+
 Phase plans: [1](phase-1/README.md), [2](phase-2/README.md),
 [3](phase-3/README.md). Each phase reuses the layers below it unchanged.
 
 ## Phase 1: core and CLI (done)
 
-Flat modules in the project root; `main.py` is the Typer entry point.
-
 | Module | Responsibility |
 |--------|----------------|
-| `main.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`) and wiring |
-| `generation_service.py` | `generate` use case: validate, resolve, preview or run |
-| `job_service.py` | `run-job` use case: chain a job's runs, cooldown |
-| `draw_things_arguments.py` | Validated options and argument-vector building (no shell) |
-| `draw_things_runner.py` | Process group, signals, timeout, graceful-then-forced shutdown |
-| `process_output.py` | Classify and log child output; structured progress |
-| `global_config.py`, `job_definition.py` | Global config and job file loading and validation |
-| `configuration.py`, `generation_config.py` | JSON overrides, `dt-config/` lookup and merging |
-| `input_size.py`, `input_resize.py` | Input image check and resize |
-| `output_naming.py`, `frame_extraction.py` | Output names; last frames via `ffmpeg` |
-| `job_manifest.py`, `job_log.py` | Per-job JSON manifest and log file |
+| `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`) and wiring |
+| `core/generation_service.py` | `generate` use case: validate, resolve, preview or run |
+| `core/draw_things_arguments.py` | Validated options and argument-vector building (no shell) |
+| `core/draw_things_runner.py` | Process group, signals, timeout, graceful-then-forced shutdown |
+| `core/process_output.py` | Classify and log child output; structured progress |
+| `core/global_config.py` | Global config loading |
+| `core/configuration.py`, `core/generation_config.py` | JSON overrides, `dt-config/` lookup and merging |
+| `jobs/job_service.py` | `run-job` use case: chain a job's runs, cooldown |
+| `jobs/job_definition.py` | Job file loading and validation |
+| `jobs/input_size.py`, `jobs/input_resize.py` | Input image check and resize |
+| `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg` |
+| `jobs/job_manifest.py`, `jobs/job_log.py` | Per-job JSON manifest and log file |
 
 Services receive their runner and executable lookup as dependencies, so tests
 never start a process.
@@ -57,13 +78,13 @@ Ctrl-C); otherwise the CLI's own code.
 
 Adds what every later front end needs, without changing the CLI's behavior:
 
-- `job_events.py`: structured job events and `JobService.cancel()`. The CLI's
+- `jobs/job_events.py`: structured job events and `JobService.cancel()`. The CLI's
   log output becomes one event observer. Runner output feeds `RunOutput`
   events through an `on_output` callback.
-- `state_store.py`, `state_recorder.py`: SQLite run history (standard
+- `state/store.py`, `state/recorder.py`: SQLite run history (standard
   library), recording every `run-job` run with its YAML text and resolved
   settings. Rows older than 14 days are pruned; output files never are.
-- `run_lock.py`: `fcntl.flock` lock taken by `run-job`, `generate`, and the
+- `core/run_lock.py`: `fcntl.flock` lock taken by `run-job`, `generate`, and the
   TUI. A second starter fails immediately; nothing queues silently.
 - `tui/` (Textual): job browser, live run view, run history. Read-only for
   job files.
@@ -71,17 +92,17 @@ Adds what every later front end needs, without changing the CLI's behavior:
 ## Phase 3: API and MCP for agents (planned)
 
 - Queue and one worker in the state store, with restart recovery and explicit
-  resume (`job_queue.py`). The server holds the run lock while it is up.
-- `server/`: HTTP API (`main.py serve`, FastAPI and uvicorn), bearer-token
+  resume (`jobs/job_queue.py`). The server holds the run lock while it is up.
+- `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn), bearer-token
   auth, job control, history, event stream, limits, and an audit log.
 - Job file management in `data/` behind a write flag, with `.backups/` and
   `.trash/`.
-- `mcp_server/` (`main.py mcp`): a thin client of the HTTP API, exposing typed
+- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, exposing typed
   tools. It never touches the core directly.
 
 ## Rules across phases
 
-- The core stays flat; each front end gets its own subpackage.
+- No source in the project root; each front end gets its own subpackage.
 - Front ends call services and observe events; they do not parse logs.
 - One run at a time, machine-wide. No parallel generation.
 - Never edited by any interface: `dt-config/*.json`, `config/global-config.yaml`.

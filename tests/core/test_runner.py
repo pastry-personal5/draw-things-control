@@ -14,8 +14,8 @@ from unittest import mock
 
 from loguru import logger
 
-from draw_things_runner import DrawThingsProcessRunner, interruptible_wait
-from process_output import OutputProcessor, OutputStream, ProcessMessage
+from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner, interruptible_wait
+from draw_things_control.core.process_output import OutputProcessor, OutputStream, ProcessMessage
 
 
 @dataclass(frozen=True)

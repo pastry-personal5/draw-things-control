@@ -13,7 +13,7 @@ import numpy as np
 from loguru import logger
 from PIL import Image, ImageCms, ImageOps
 
-from input_size import IMAGE_ERRORS, Box, ResizePlan
+from draw_things_control.jobs.input_size import IMAGE_ERRORS, Box, ResizePlan
 
 BLACK = (0, 0, 0)
 SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))

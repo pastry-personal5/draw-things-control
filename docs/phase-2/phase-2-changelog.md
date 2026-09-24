@@ -5,6 +5,20 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-25
 
+- **Owner decision**: No source files in the project root. Supersedes the
+  "core stays flat" part of the subpackage decision below. All code moves to
+  one package, `src/draw_things_control/` (uv `src` layout, `uv_build`
+  backend), with `core/`, `jobs/`, and `cli/` now, and `state/`, `tui/`,
+  `server/`, `mcp_server/` as phases land. Alternatives: a root-level package
+  without `src/`, and several top-level packages.
+- **Change**: `main.py` is removed. The CLI is the `dtc` console script
+  (`uv run dtc ...`) or `python -m draw_things_control`; `run.sh`,
+  `validate.sh`, and the Makefile use it. Tests moved to `tests/core`,
+  `tests/jobs`, `tests/cli`, run with `unittest discover -s tests -t .`. New
+  Phase 2 and 3 modules are placed as `jobs/job_events.py`, `state/store.py`,
+  `state/recorder.py`, `core/run_lock.py`, and `jobs/job_queue.py`. Phase 1
+  documents keep their historical `main.py` wording.
+
 - **Change**: Documentation reorganized. The root README is now a short
   overview. Its usage, job, and exit-code content moved to
   `docs/user-guide.md` and `docs/architecture.md`, and the conventions in

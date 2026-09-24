@@ -13,7 +13,7 @@ HTTP API with authentication, without yet allowing any file to be written.
 
 In scope:
 
-- `main.py serve`, running the API and the queue worker in one process
+- `dtc serve`, running the API and the queue worker in one process
 - Bearer-token authentication
 - Read, run, and monitor endpoints, and a live event stream
 
@@ -27,7 +27,7 @@ Out of scope:
 
 ### The `serve` command
 
-- `main.py serve [--host 127.0.0.1] [--port 8765] [--global-config PATH] [--data-dir PATH] [--allow-remote-bind]`.
+- `dtc serve [--host 127.0.0.1] [--port 8765] [--global-config PATH] [--data-dir PATH] [--allow-remote-bind]`.
   Runs in the foreground (uvicorn with the FastAPI app from `server/`).
 - A host that is not loopback is refused unless `--allow-remote-bind` is
   given.

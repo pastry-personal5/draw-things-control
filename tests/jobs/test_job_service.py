@@ -14,14 +14,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from job_fixtures import JobTestCase, job_data
 from PIL import Image
 
-import job_service
-from draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_runner import install_signal_handlers, restore_signal_handlers
-from job_definition import JobDefinition, load_job
-from job_service import JobService
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_runner import install_signal_handlers, restore_signal_handlers
+from draw_things_control.jobs import job_service
+from draw_things_control.jobs.job_definition import JobDefinition, load_job
+from draw_things_control.jobs.job_service import JobService
+from tests.fixtures import JobTestCase, job_data
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 
@@ -223,7 +223,7 @@ class JobServiceTests(JobTestCase):
             raise KeyboardInterrupt
 
         self.service._handle_signals = True
-        with mock.patch("job_service.install_signal_handlers", interrupted), mock.patch("job_service.remove_job_log", wraps=job_service.remove_job_log) as remove:
+        with mock.patch("draw_things_control.jobs.job_service.install_signal_handlers", interrupted), mock.patch("draw_things_control.jobs.job_service.remove_job_log", wraps=job_service.remove_job_log) as remove:
             with self.assertRaises(KeyboardInterrupt):
                 self.run_job(self.job())
         remove.assert_called_once()
@@ -314,7 +314,7 @@ class JobServiceTests(JobTestCase):
                 self.calls.clear()
                 job = self.job(**keys)
                 self.assertIsNone(job.input_copy)
-                with mock.patch("input_resize.resize_image") as resize, mock.patch("input_resize.tempfile.mkdtemp") as mkdtemp:
+                with mock.patch("draw_things_control.jobs.input_resize.resize_image") as resize, mock.patch("draw_things_control.jobs.input_resize.tempfile.mkdtemp") as mkdtemp:
                     outcome = self.run_job(job)
                 resize.assert_not_called()
                 mkdtemp.assert_not_called()
@@ -352,7 +352,7 @@ class JobServiceTests(JobTestCase):
 
     def test_resize_failure_leaves_no_output_directory_or_manifest(self) -> None:
         job = self.resize_job()
-        with mock.patch("input_resize.resize_image", side_effect=OSError("disk full")):
+        with mock.patch("draw_things_control.jobs.input_resize.resize_image", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(ValueError, "Could not resize input"):
                 self.run_job(job)
         self.assertFalse(job.output_directory.exists())
@@ -360,7 +360,7 @@ class JobServiceTests(JobTestCase):
 
     def test_preview_shows_a_placeholder_and_writes_nothing(self) -> None:
         job = self.resize_job()
-        with mock.patch("input_resize.resize_image") as resize:
+        with mock.patch("draw_things_control.jobs.input_resize.resize_image") as resize:
             preview = self.service.preview(job, executable="draw-things-cli")
         resize.assert_not_called()
         command = preview.command_previews[0]

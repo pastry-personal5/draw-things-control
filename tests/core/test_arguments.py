@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 
 
 class GenerateArgumentsTests(unittest.TestCase):

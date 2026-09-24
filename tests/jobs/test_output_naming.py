@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-from output_naming import job_file_stem, last_frame_path, next_output_path, output_name, random_four_digits
+from draw_things_control.jobs.output_naming import job_file_stem, last_frame_path, next_output_path, output_name, random_four_digits
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 
