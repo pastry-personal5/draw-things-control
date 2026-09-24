@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from job_fixtures import JobTestCase, job_data
+from PIL import Image
 
 import job_service
 from draw_things_arguments import DrawThingsGenerateArguments
@@ -241,3 +242,121 @@ class JobServiceTests(JobTestCase):
         outcome = self.run_job(job, write_records=False)
         self.assertEqual(outcome.exit_code, 3)
         self.assertEqual(list(job.output_directory.iterdir()), [])
+
+    def resize_job(self, **changes: object) -> JobDefinition:
+        self.write_image("photo.jpg", (1920, 1080))
+        return self.job(input="photo.jpg", desired_input_width=850, **changes)
+
+    def test_run_one_gets_the_resized_copy_and_it_is_removed_after_run_one(self) -> None:
+        seen: list[tuple[int, int]] = []
+
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+            # Look at the image while the run is happening, since the copy is gone afterwards.
+            if not self.calls:
+                with Image.open(arguments.image) as image:
+                    seen.append(image.size)
+            return self.create_runner(arguments, timeout, grace)
+
+        self.service._runner_factory = create_runner
+        job = self.resize_job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
+        outcome = self.run_job(job)
+        self.assertEqual(outcome.exit_code, 0)
+        first, second = self.calls[0][0], self.calls[1][0]
+        self.assertEqual(seen, [(832, 448)])
+        self.assertEqual(first.image.name, "photo-832x448.png")
+        self.assertFalse(first.image.parent.exists())
+        self.assertEqual(second.image, self.extracted[0][1])
+        for arguments in (first, second):
+            config = json.loads(arguments.config_json or "{}")
+            self.assertEqual((arguments.width, arguments.height, config["width"], config["height"]), (832, 448, 832, 448))
+        manifest = self.manifest(outcome)
+        self.assertEqual(manifest["runs"][0]["input"], str(job.input))
+        self.assertEqual(manifest["runs"][0]["resized_input"], str(first.image))
+        self.assertIn(str(first.image), manifest["runs"][0]["command"])
+        self.assertIsNone(manifest["runs"][1]["resized_input"])
+        self.assertEqual(manifest["input_resize"]["fit"], "crop")
+        self.assertEqual(manifest["input_resize"]["target_size"], [832, 448])
+        log = outcome.log.read_text(encoding="utf-8")
+        self.assertIn("will be scaled to 832x468 and cropped to 832x448 (4.3%)", log)
+        self.assertIn("Run 1 input: temporary copy", log)
+
+    def test_temporary_copy_is_removed_when_run_one_fails_or_is_interrupted(self) -> None:
+        for result in (FakeResult(return_code=3), FakeResult(return_code=0, termination_signal=signal.SIGINT)):
+            with self.subTest(result=result):
+                self.calls.clear()
+                self.results[1] = result
+                self.run_job(self.resize_job())
+                self.assertEqual(len(self.calls), 1)
+                self.assertFalse(self.calls[0][0].image.parent.exists())
+
+    def test_temporary_copy_is_removed_when_the_job_raises(self) -> None:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+            self.calls.append((arguments, timeout, grace))
+            raise KeyboardInterrupt
+
+        self.service._runner_factory = cannot_start
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_job(self.resize_job())
+        self.assertFalse(self.calls[0][0].image.parent.exists())
+
+    def test_upright_input_at_the_target_is_used_as_is(self) -> None:
+        # The 832x448 input already has the calculated size, however the keys reach it (850 floors to 832).
+        for keys in ({"desired_input_width": 832}, {"desired_input_width": 850}, {"desired_input_height": 470}, {"desired_input_width": 832, "desired_input_height": 448}, {"desired_input_width": 832, "max_input_crop_percent": 0}):
+            with self.subTest(keys=keys):
+                self.calls.clear()
+                job = self.job(**keys)
+                self.assertIsNone(job.input_copy)
+                with mock.patch("input_resize.resize_image") as resize, mock.patch("input_resize.tempfile.mkdtemp") as mkdtemp:
+                    outcome = self.run_job(job)
+                resize.assert_not_called()
+                mkdtemp.assert_not_called()
+                self.assertEqual(self.calls[0][0].image, job.input)
+                manifest = self.manifest(outcome)
+                self.assertEqual((manifest["input_resize"]["fit"], manifest["input_resize"]["target_size"]), ("none", [832, 448]))
+                self.assertIsNone(manifest["runs"][0]["resized_input"])
+                self.assertIn("Input first-frame.png is already 832x448; no resize needed", outcome.log.read_text(encoding="utf-8"))
+                preview = self.service.preview(job, executable="draw-things-cli")
+                self.assertEqual(preview.runs[0].input, job.input)
+
+    def test_rotated_input_at_the_target_gets_an_upright_copy(self) -> None:
+        self.write_image("rotated.jpg", (448, 832), orientation=6)
+        seen: list[tuple[int, int]] = []
+
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+            if not self.calls:
+                with Image.open(arguments.image) as image:
+                    seen.append((image.size, image.getexif().get(0x0112)))
+            return self.create_runner(arguments, timeout, grace)
+
+        self.service._runner_factory = create_runner
+        job = self.job(input="rotated.jpg", desired_input_width=832)
+        self.run_job(job)
+        self.assertNotEqual(self.calls[0][0].image, job.input)
+        self.assertEqual(seen, [((832, 448), None)])
+
+    def test_jobs_without_desired_keys_build_the_same_commands(self) -> None:
+        outcome = self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        arguments = self.calls[0][0]
+        self.assertEqual((arguments.width, arguments.height), (None, None))
+        self.assertNotIn("--width", arguments.command)
+        self.assertEqual(json.loads(arguments.config_json or "{}")["width"], 832)
+        self.assertIsNone(self.manifest(outcome)["input_resize"])
+
+    def test_resize_failure_leaves_no_output_directory_or_manifest(self) -> None:
+        job = self.resize_job()
+        with mock.patch("input_resize.resize_image", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(ValueError, "Could not resize input"):
+                self.run_job(job)
+        self.assertFalse(job.output_directory.exists())
+        self.assertEqual(self.calls, [])
+
+    def test_preview_shows_a_placeholder_and_writes_nothing(self) -> None:
+        job = self.resize_job()
+        with mock.patch("input_resize.resize_image") as resize:
+            preview = self.service.preview(job, executable="draw-things-cli")
+        resize.assert_not_called()
+        command = preview.command_previews[0]
+        self.assertIn("--image '<photo.jpg resized to 832x448>'", command)
+        self.assertIn("--width 832 --height 448", command)
+        self.assertIn("--width 832 --height 448", preview.command_previews[1])
+        self.assertFalse(job.output_directory.exists())

@@ -13,6 +13,7 @@ through the existing `draw-things-cli` wrapper.
 - Running a job as a sequence of `draw-things-cli generate` invocations
 - Image-to-image, text-to-video, and image-to-video jobs, selected per job
 - Multiple positive/negative prompts and a batch count per job
+- Resizing the first input image of `i2v` and `i2i` jobs to a requested size (`desired_input_width`, `desired_input_height`)
 - Chaining runs: the first input (or, for text-to-video, the prompt alone) seeds run 1, and each run's output seeds the next
 - Timestamped output naming (`<job-name>-<timestamp>-<random>.<ext>`) and a readable run log
 
@@ -29,6 +30,7 @@ through the existing `draw-things-cli` wrapper.
 |---|-----------|--------|
 | 01 | [Job definition and chained batch runs](milestone-01-job-definition-batch.md) | done |
 | 02 | [Runner fixes](milestone-02-runner-fixes.md) (done before 01) | done |
+| 03 | [First input image resize](milestone-03-input-image-resize.md) | done |
 
 ## Changelog
 

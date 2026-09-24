@@ -15,6 +15,15 @@ mode: i2v                              # i2i, t2v, or i2v
 input: first-frame.png                 # first input, run 1 only (i2i/i2v; not allowed for t2v)
 batch_count: 7                         # total runs; run k+1 starts from run k's last frame
 
+# Optional (i2i/i2v): resize the first input before run 1, and generate every
+# run at that size instead of width/height below. Each value is 1 to 8192 and
+# is rounded down to a multiple of 64. With one key, the other follows the
+# input's aspect ratio and the leftover pixels are cropped from the center;
+# with both keys, the input is letterboxed with black bars.
+# desired_input_width: 850             # 1920x1080 input: 832x448, 4.3% cropped
+# desired_input_height: 470
+# max_input_crop_percent: 10           # one key only; refuse a larger crop (default 10)
+
 # Each batch uses the pair that lists it, or the default pair.
 # With batch_count 7: walk, wave, walk, wave, walk, idle, idle.
 prompt_pairs:
@@ -49,7 +58,7 @@ config_override:
   steps: 40
   guidance_scale: 5.0
   shift: 3.99
-  width: 832                           # pixels, multiple of 64; i2i/i2v: input must be exactly this size
+  width: 832                           # pixels, multiple of 64; i2i/i2v: input must be exactly this size unless desired_input_* is set
   height: 448                          # pixels, multiple of 64
   frame_count: 17
   strength: 1.0

@@ -12,10 +12,11 @@ from loguru import logger
 
 import generation_config
 from global_config import GlobalConfig, load_yaml_mapping
-from input_size import check_input_size, read_image_size
+from input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
-JOB_KEYS = {"version", "name", "mode", "input", "batch_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds"}
+SIZE_KEYS = ("desired_input_width", "desired_input_height")
+JOB_KEYS = {"version", "name", "mode", "input", "batch_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "batch_count", "prompt_pairs", "config_file")
 PAIR_KEYS = {"name", "positive", "negative", "batches", "default"}
 OUTPUT_KEYS = {"directory", "extension"}
@@ -102,6 +103,18 @@ class JobDefinition:
     model: str
     run_timeout_seconds: float | None
     ignored_config: dict[str, Any] = field(default_factory=dict)
+    # Set only when a desired_input_* key is: the size of every run, and how the first input gets there.
+    size: tuple[int, int] | None = None
+    input_resize: ResizePlan | None = None
+    # (source, key, value) for each width or height that the desired size replaces.
+    ignored_size: tuple[tuple[str, str, Any], ...] = ()
+
+    @property
+    def input_copy(self) -> ResizePlan | None:
+        """The resize plan when run 1 needs a resized or upright copy of the input, otherwise None."""
+        if self.input is not None and self.input_resize is not None and self.input_resize.needs_copy:
+            return self.input_resize
+        return None
 
     def schedule(self) -> tuple[PromptPair, ...]:
         """Return the prompt pair used by each batch, in batch order."""
@@ -119,8 +132,12 @@ class JobDefinition:
         return None, "random"
 
 
-def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path | None = None) -> JobDefinition:
-    """Parse a job file and validate everything that can be checked before running."""
+def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path | None = None, *, decode_input: bool = True) -> JobDefinition:
+    """Parse a job file and validate everything that can be checked before running.
+
+    When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
+    writes the copy right away passes ``decode_input=False``, since writing it decodes the input anyway.
+    """
     dt_config_directory = dt_config_directory or generation_config.DT_CONFIG_DIRECTORY
     path = path.expanduser().resolve()
     data = load_yaml_mapping(path, "Job file")
@@ -169,9 +186,27 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     if timeout is not None and (not _is_number(timeout) or timeout <= 0):
         fail("run_timeout_seconds", "must be a positive number of seconds")
 
+    desired = _desired_size(fail, data, mode)
+    plan: ResizePlan | None = None
+    ignored_size: list[tuple[str, str, Any]] = []
     if input_path is not None:
-        job_size, source = _job_size(fail, override, base_config, config_file)
-        check_input_size(input_path, read_image_size(input_path), job_size, source)
+        image_size, orientation = read_image_info(input_path)
+        if desired is None:
+            job_size, source = _job_size(fail, override, base_config, config_file)
+            check_input_size(input_path, image_size, job_size, source)
+        else:
+            desired_width, desired_height, max_crop_percent = desired
+            try:
+                plan = resize_plan(input_path.name, image_size, orientation, desired_width, desired_height, max_crop_percent)
+            except ValueError as error:
+                raise ValueError(f"{path}: {error}") from error
+            if decode_input and plan.needs_copy:
+                decode_image(input_path)
+            for key in ("width", "height"):
+                if getattr(override, key) is not None:
+                    ignored_size.append(("config_override", key, getattr(override, key)))
+                if key in base_config:
+                    ignored_size.append(("config_file", key, base_config[key]))
 
     return JobDefinition(
         path=path,
@@ -188,6 +223,9 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         model=model,
         run_timeout_seconds=float(timeout) if timeout is not None else None,
         ignored_config=ignored_config,
+        size=plan.target_size if plan is not None else None,
+        input_resize=plan,
+        ignored_size=tuple(ignored_size),
     )
 
 
@@ -195,6 +233,15 @@ def report_ignored_config(job: JobDefinition) -> None:
     """Tell the user which base configuration keys the job's mode ignores."""
     for key, value in job.ignored_config.items():
         logger.info("Ignoring {} ({}) from config_file {}: not used in {} jobs; the job's batch_count sets the number of runs", key, value, job.config_file, job.mode)
+    if job.size is not None:
+        size = f"{job.size[0]}x{job.size[1]}"
+        for source, key, value in job.ignored_size:
+            if source == "config_file":
+                logger.info("Ignoring {} ({}) from config_file {}: desired_input_width/desired_input_height set the size ({})", key, value, job.config_file, size)
+            else:
+                logger.info("Ignoring config_override.{} ({}): desired_input_width/desired_input_height set the size ({})", key, value, size)
+    if job.input_resize is not None and job.input is not None:
+        logger.info("{}", job.input_resize.describe(job.input.name))
 
 
 class _Failure:
@@ -229,6 +276,25 @@ def _input_path(fail: _Failure, data: dict[str, Any], mode: GenerationMode, glob
     if not path.is_file():
         fail("input", f"file does not exist: {path}")
     return path
+
+
+def _desired_size(fail: _Failure, data: dict[str, Any], mode: GenerationMode) -> tuple[int | None, int | None, float | None] | None:
+    """Validate the desired_input_* keys and max_input_crop_percent; None when no size key is set."""
+    given = [key for key in SIZE_KEYS if key in data]
+    for key in given:
+        if not mode.requires_input:
+            fail(key, f"is not allowed in {mode} jobs, which have no input image")
+        if not _is_int(data[key]) or not 1 <= data[key] <= MAX_DESIRED_SIZE:
+            fail(key, f"must be an integer from 1 to {MAX_DESIRED_SIZE}")
+    max_crop = data.get("max_input_crop_percent")
+    if max_crop is not None:
+        if len(given) != 1:
+            fail("max_input_crop_percent", "requires exactly one of desired_input_width or desired_input_height")
+        if not _is_number(max_crop) or not 0 <= max_crop <= 100:
+            fail("max_input_crop_percent", "must be a number from 0 to 100")
+    if not given:
+        return None
+    return data.get("desired_input_width"), data.get("desired_input_height"), max_crop
 
 
 def _prompt_pairs(fail: _Failure, value: Any, batch_count: int) -> tuple[PromptPair, ...]:

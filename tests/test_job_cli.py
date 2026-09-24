@@ -50,3 +50,16 @@ class JobCliTests(JobTestCase):
         self.assertFalse(create_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._capture_output)
         self.assertFalse(create_runner(DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png"), terminal_image=True), None, 1)._capture_output)
         self.assertTrue(create_runner(DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png")), None, 1)._capture_output)
+
+    def test_dry_run_with_desired_size_shows_the_placeholder(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        job_path = self.write_job(job_data(input="photo.jpg", desired_input_width=850), name="resize.yaml")
+        executable_stub = self.root / "draw-things-cli"
+        executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable_stub.chmod(0o755)
+        result = self.runner.invoke(app, ["run-job", str(job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        first = next(shlex.split(line) for line in result.stdout.splitlines() if not line.startswith("#"))
+        self.assertEqual(first[first.index("--image") + 1], "<photo.jpg resized to 832x448>")
+        self.assertEqual(first[first.index("--width") + 1 : first.index("--height") + 2], ["832", "--height", "448"])
+        self.assertFalse(self.output_directory.exists())

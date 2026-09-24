@@ -1,7 +1,13 @@
 """Tests for loading and validating job definitions."""
 
+import subprocess
+import sys
+from pathlib import Path
+from unittest import mock
+
 from job_fixtures import BASE_CONFIG, JobTestCase, job_data
 from loguru import logger
+from PIL import Image
 
 from job_definition import GenerationMode, load_job, report_ignored_config
 
@@ -129,3 +135,95 @@ class JobDefinitionTests(JobTestCase):
                 job = self.load(config_file="batch.json", mode=mode, **changes)
                 self.assertEqual(job.base_config["batchCount"], 4)
                 self.assertEqual(job.ignored_config, {})
+
+    def reported(self, job) -> list[str]:
+        messages: list[str] = []
+        sink = logger.add(messages.append, format="{level} {message}")
+        try:
+            report_ignored_config(job)
+        finally:
+            logger.remove(sink)
+        return [message.rstrip("\n") for message in messages]
+
+    def test_desired_size_sets_the_job_size_in_i2v_and_i2i(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        for mode in ("i2v", "i2i"):
+            with self.subTest(mode):
+                job = self.load(mode=mode, input="photo.jpg", desired_input_width=850)
+                self.assertEqual(job.size, (832, 448))
+                assert job.input_resize is not None
+                self.assertEqual((job.input_resize.fit, job.input_resize.max_crop_percent), ("crop", 10))
+
+    def test_without_desired_keys_nothing_changes(self) -> None:
+        job = self.load()
+        self.assertEqual((job.size, job.input_resize, job.ignored_size), (None, None, ()))
+        self.write_image("photo.jpg", (1920, 1080))
+        self.assert_invalid("is 1920x1080, but the job size is 832x448", input="photo.jpg")
+
+    def test_desired_size_needs_no_width_or_height_from_the_config(self) -> None:
+        self.write_base_config({"model": "m.ckpt"}, name="nosize.json")
+        self.assert_invalid("config_override.width", config_file="nosize.json")
+        job = self.load(config_file="nosize.json", desired_input_width=832)
+        self.assertEqual((job.size, job.ignored_size), ((832, 448), ()))
+
+    def test_invalid_desired_keys_name_the_key(self) -> None:
+        self.assert_invalid("'desired_input_width' is not allowed in t2v jobs, which have no input image", mode="t2v", input=None, desired_input_width=832)
+        self.assert_invalid("'desired_input_height' is not allowed in t2v", mode="t2v", input=None, desired_input_height=448)
+        for value in (0, 8193, 832.0, True, "832"):
+            with self.subTest(value=value):
+                self.assert_invalid("'desired_input_width' must be an integer from 1 to 8192", desired_input_width=value)
+        self.load(desired_input_width=8192, max_input_crop_percent=100)
+        self.assert_invalid(r"'desired_input_width' is 50, which floors to 0", desired_input_width=50)
+
+    def test_max_input_crop_percent_needs_exactly_one_size_key(self) -> None:
+        message = "'max_input_crop_percent' requires exactly one of desired_input_width or desired_input_height"
+        self.assert_invalid(message, max_input_crop_percent=10)
+        self.assert_invalid(message, desired_input_width=832, desired_input_height=448, max_input_crop_percent=10)
+        for value in (-1, 101, "10", False):
+            with self.subTest(value=value):
+                self.assert_invalid("'max_input_crop_percent' must be a number from 0 to 100", desired_input_width=832, max_input_crop_percent=value)
+        self.assertEqual(self.load(desired_input_width=832, max_input_crop_percent=2.5).input_resize.max_crop_percent, 2.5)
+
+    def test_crop_over_the_limit_names_the_job_file(self) -> None:
+        self.write_image("panorama.png", (6000, 400))
+        with self.assertRaisesRegex(ValueError, r"job.yaml: 'max_input_crop_percent' is 10, but panorama.png \(6000x400\) at width 1600"):
+            self.load(input="panorama.png", desired_input_width=1600)
+        self.assertEqual(self.load(input="panorama.png", desired_input_width=1600, max_input_crop_percent=45).size, (1600, 64))
+
+    def test_undecodable_input_fails_only_when_a_copy_is_made(self) -> None:
+        # A truncated JPEG still has a readable header, so only a full decode finds the damage.
+        path = self.input_directory / "noise.jpg"
+        Image.effect_noise((832, 448), 64).convert("RGB").save(path)
+        path.write_bytes(path.read_bytes()[:2000])
+        self.load(input="noise.jpg")
+        # Already the target and upright: the original is used as-is, so it is not decoded.
+        with mock.patch("job_definition.decode_image") as decode:
+            self.assertIsNone(self.load(input="noise.jpg", desired_input_width=832).input_copy)
+        decode.assert_not_called()
+        self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
+        self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640, desired_input_height=448)
+        # A real run writes the copy right away, which decodes the input, so it skips this decode.
+        load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.dt_config, decode_input=False)
+
+    def test_loading_a_job_does_not_import_the_resizer(self) -> None:
+        code = "import sys, job_definition; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
+        self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent, check=False).returncode, 0)
+
+    def test_image_over_the_pixel_limit_is_a_validation_error(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        with mock.patch("PIL.Image.MAX_IMAGE_PIXELS", 1000):
+            self.assert_invalid("'input' is not a readable image: .*decompression bomb", input="photo.jpg", desired_input_width=832)
+
+    def test_ignored_width_and_height_are_reported(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        job = self.load(input="photo.jpg", desired_input_width=1280, desired_input_height=720, config_override={"width": 832})
+        self.assertEqual(job.ignored_size, (("config_override", "width", 832), ("config_file", "width", 832), ("config_file", "height", 448)))
+        self.assertEqual(
+            self.reported(job),
+            [
+                "INFO Ignoring config_override.width (832): desired_input_width/desired_input_height set the size (1280x704)",
+                "INFO Ignoring width (832) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
+                "INFO Ignoring height (448) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
+                "INFO Input photo.jpg (1920x1080) will be scaled to 1252x704 and letterboxed to 1280x704 for run 1",
+            ],
+        )

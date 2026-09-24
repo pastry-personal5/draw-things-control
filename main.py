@@ -124,11 +124,11 @@ def validate_config(config: Annotated[Path, typer.Argument(help="JSON configurat
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
 
 
-def read_job(job_file: Path, global_config: Path) -> tuple[JobDefinition, GlobalConfig]:
+def read_job(job_file: Path, global_config: Path, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the global configuration and the job, exiting with code 2 if either is invalid."""
     try:
         settings = load_global_config(global_config.expanduser())
-        return load_job(job_file, settings), settings
+        return load_job(job_file, settings, decode_input=decode_input), settings
     except ValueError as error:
         logger.error("{}", error)
         raise typer.Exit(code=2) from error
@@ -160,7 +160,8 @@ def run_job(
     global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
 ) -> None:
     """Run every generation in a job, chaining each output into the next run."""
-    job, settings = read_job(job_file, global_config)
+    # A real run decodes the input when it writes run 1's copy, so it skips the validation decode.
+    job, settings = read_job(job_file, global_config, decode_input=dry_run)
     try:
         if dry_run:
             report_ignored_config(job)

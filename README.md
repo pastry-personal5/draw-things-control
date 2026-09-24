@@ -90,10 +90,33 @@ uv run python main.py run-job data/example-job.yaml
 ```
 
 - `mode` is `i2i`, `t2v`, or `i2v`. `i2i` and `i2v` jobs need an `input`
-  image in the global `input_directory`, and it must already be exactly the
-  job's width and height (resizing comes in a later milestone). `t2v` jobs
-  have no input; run 1 generates from text, and later runs continue from the
-  previous last frame.
+  image in the global `input_directory`. Unless the job sets a desired size
+  (below), the input must already be exactly the job's width and height.
+  `t2v` jobs have no input; run 1 generates from text, and later runs continue
+  from the previous last frame.
+- `desired_input_width` and `desired_input_height` (optional, `i2i` and `i2v`
+  only, 1 to 8192) resize the first input before run 1, and every run
+  generates at the resulting size; `width` and `height` from `config_override`
+  and `config_file` are then ignored (an INFO line says so). Each value is
+  rounded down to a multiple of 64. The input is never stretched:
+  - **One key:** the other is derived from the input's aspect ratio and
+    rounded down, and the few pixels left over are cropped from the center.
+    The job is refused if the crop is over `max_input_crop_percent` (default
+    10). Example: 1920x1080 with `desired_input_width: 850` becomes 832x448
+    (scaled to 832x468, 4.3% cropped).
+  - **Both keys:** the input is scaled to fit inside and padded with black
+    bars (letterbox).
+
+  An input that already has the target's aspect ratio is just scaled, with
+  no crop and no bars.
+
+  An input whose EXIF orientation is not upright is always rotated upright
+  first, and an embedded color profile (for example, Display P3) is
+  converted to sRGB. Resizing is one Lanczos pass in floating point:
+  downscaling in linear light with anti-ringing, so fine bright detail keeps
+  its brightness and edges stay sharp, and upscaling in sRGB values. The resized copy is a temporary PNG, removed when run 1 ends;
+  `--dry-run` shows it as `'<photo.jpg resized to 832x448>'`. See
+  [`docs/phase-1/milestone-03-input-image-resize.md`](docs/phase-1/milestone-03-input-image-resize.md).
 - `config_file` names a file in `dt-config/`, the base configuration.
   `config_override` changes `model`, `refiner_model`, `refiner_start`,
   `steps`, `guidance_scale`, `shift`, `width`, `height`, `frame_count`,
@@ -125,7 +148,8 @@ uv run python main.py run-job data/example-job.yaml
 ├── job_definition.py  # Job file loading and validation
 ├── job_service.py     # Running and chaining a job's runs
 ├── generation_config.py  # dt-config/ lookup and override merging
-├── input_size.py      # Input image size check
+├── input_size.py      # Input image reading, size check, and resize planning
+├── input_resize.py    # Writing the resized first input image
 ├── output_naming.py   # Timestamped output names
 ├── frame_extraction.py  # Last-frame extraction with ffmpeg
 ├── job_manifest.py    # Job manifest (JSON)

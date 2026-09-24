@@ -26,6 +26,9 @@ class RunRecord:
     seconds: float | None = None
     exit_code: int | None = None
     status: str = "running"
+    # Run 1's resized copy of ``input``, which ``command`` passes as --image; removed after the run.
+    # Rebuild it from the job manifest's ``input_resize`` to replay the command.
+    resized_input: str | None = None
 
 
 @dataclass
@@ -41,6 +44,7 @@ class JobManifest:
     seed_source: str
     started_at: str
     log_file: str | None
+    input_resize: dict[str, Any] | None = None
     finished_at: str | None = None
     status: str = "running"
     runs: list[RunRecord] = field(default_factory=list)

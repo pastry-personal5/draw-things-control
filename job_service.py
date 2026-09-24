@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
@@ -23,6 +23,9 @@ from job_definition import JobDefinition, PromptPair, report_ignored_config
 from job_log import add_job_log, remove_job_log
 from job_manifest import JobManifest, RunRecord, write_manifest
 from output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
+
+if TYPE_CHECKING:
+    from input_resize import TemporaryInput
 
 
 class StoppableRunner(Runner, Protocol):
@@ -103,6 +106,10 @@ class JobService:
         runs: list[PlannedRun] = []
         reserved: set[Path] = set()
         current_input = job.input
+        plan = job.input_copy
+        if job.input is not None and plan is not None:
+            width, height = plan.target_size
+            current_input = Path(f"<{job.input.name} resized to {width}x{height}>")
         for number, pair in enumerate(job.schedule(), start=1):
             run = self._plan_run(job, number, pair, current_input, seed, executable, reserved)
             reserved.update(path for path in (run.output, run.last_frame) if path is not None)
@@ -120,6 +127,21 @@ class JobService:
             raise ValueError("--shutdown-grace must not be negative")
         self._check_tools(job, executable)
         seed, seed_source = self._seed(job)
+        # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
+        temporary_input: TemporaryInput | None = None
+        plan = job.input_copy
+        if job.input is not None and plan is not None:
+            # Imported here, so jobs that never resize do not load numpy and LittleCMS.
+            from input_resize import TemporaryInput
+
+            temporary_input = TemporaryInput(job.input, plan)
+        try:
+            return self._run_with_records(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records, seed=seed, seed_source=seed_source, temporary_input=temporary_input)
+        finally:
+            if temporary_input is not None:
+                temporary_input.cleanup()
+
+    def _run_with_records(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool, seed: int, seed_source: str, temporary_input: TemporaryInput | None) -> JobOutcome:
         job.output_directory.mkdir(parents=True, exist_ok=True)
         manifest_path: Path | None = None
         log_path: Path | None = None
@@ -145,8 +167,9 @@ class JobService:
                 seed_source=seed_source,
                 started_at=self._timestamp(),
                 log_file=log_path.name if log_path is not None else None,
+                input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
             )
-            return self._run_chain(job, manifest, manifest_path, log_path, executable=executable, shutdown_grace=shutdown_grace)
+            return self._run_chain(job, manifest, manifest_path, log_path, executable=executable, shutdown_grace=shutdown_grace, temporary_input=temporary_input)
         except BaseException:
             if manifest is not None and manifest.status == "running":
                 manifest.status = "failed"
@@ -158,7 +181,7 @@ class JobService:
             if log_sink is not None:
                 remove_job_log(log_sink)
 
-    def _run_chain(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, *, executable: str, shutdown_grace: float) -> JobOutcome:
+    def _run_chain(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, *, executable: str, shutdown_grace: float, temporary_input: TemporaryInput | None) -> JobOutcome:
         schedule = job.schedule()
         total = len(schedule)
         records = f"; manifest {manifest_path}; log {log_path}" if manifest_path is not None else ""
@@ -166,6 +189,9 @@ class JobService:
         report_ignored_config(job)
         self._save(manifest_path, manifest)
         current_input = job.input
+        if temporary_input is not None:
+            logger.info("Run 1 input: temporary copy {} (removed after run 1)", temporary_input.path)
+            current_input = temporary_input.path
         completed = 0
         exit_code = 0
         for number, pair in enumerate(schedule, start=1):
@@ -180,11 +206,13 @@ class JobService:
                 pair=pair.name,
                 positive=pair.positive,
                 negative=pair.negative,
-                input=str(run.input) if run.input is not None else None,
+                # Run 1's temporary copy is gone after the run, so record the job's own input.
+                input=str(job.input if number == 1 else run.input) if run.input is not None else None,
                 output=run.output.name,
                 last_frame=None,
                 command=GenerationService.redact_command(run.arguments.command),
                 started_at=self._timestamp(),
+                resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
             )
             manifest.runs.append(record)
             self._save(manifest_path, manifest)
@@ -194,6 +222,8 @@ class JobService:
             except BaseException:
                 record.status = "failed"
                 raise
+            if number == 1 and temporary_input is not None:
+                temporary_input.cleanup()
             record.status = status
             record.exit_code = exit_code
             if status != "succeeded":
@@ -252,6 +282,10 @@ class JobService:
         override = job.config_override
         config = build_config_json(job.base_config, override.as_dict())
         config["model"] = job.model
+        width, height = override.width, override.height
+        if job.size is not None:
+            width, height = job.size
+            config["width"], config["height"] = job.size
         arguments = DrawThingsGenerateArguments(
             model=job.model,
             executable=executable,
@@ -259,8 +293,8 @@ class JobService:
             negative_prompt=pair.negative,
             steps=override.steps,
             cfg=override.guidance_scale,
-            width=override.width,
-            height=override.height,
+            width=width,
+            height=height,
             frames=override.frame_count,
             strength=override.strength,
             seed=seed,

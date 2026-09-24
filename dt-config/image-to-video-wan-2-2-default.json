@@ -23,7 +23,7 @@
 	"sampler": 17,
 	"seed": 829023514,
 	"seedMode": 2,
-	"sharpness": 0.5,
+	"sharpness": 0.1,
 	"shift": 3.99,
 	"shiftForAudio": 3,
 	"steps": 40,

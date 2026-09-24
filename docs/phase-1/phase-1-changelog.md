@@ -3,6 +3,121 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 1](README.md). Newest first.
 
+## 2026-09-25
+
+- **Change** [M03]: Review fixes. The manifest's `input_resize.fit` gains
+  `scale` (scaled to exactly the target: no crop, no bars) and `rotate`
+  (upright copy at the target size), so an exact fit is no longer reported
+  as `letterbox` or `crop` with 0.0%; `max_crop_percent` and `crop_percent`
+  are set whenever exactly one `desired_input_*` key is. Run records gain
+  `resized_input`, the temporary path run 1's `command` passes as
+  `--image`. An image over Pillow's pixel limit, or in a mode that cannot be
+  converted, is now a validation or resize error (exit code 2) instead of a
+  traceback. `read_image_size` is removed.
+- **Design decision** [M03]: The input is fully decoded only when a copy is
+  made, after the target and crop checks, and a real `run-job` relies on
+  writing the copy to decode it, so it is decoded once. An input used as-is
+  is not decoded, as without the keys. Loading a job no longer imports numpy
+  or LittleCMS. An embedded profile described as sRGB is not converted.
+  This supersedes the "validation fully decodes the input" rule in the
+  Milestone 03 plan.
+
+- **Design decision** [M03]: Resizing the first input aims for maximum
+  fidelity without losing sharpness. Downscaling runs in linear light, in
+  32-bit float, with Lanczos and 70% anti-ringing; upscaling runs in sRGB
+  values, also in float; 8-bit rounding happens once. Measured against
+  Pillow's 8-bit sRGB-value Lanczos: fine bright detail keeps its brightness
+  (187.5 against 127.5, ideal 188), edges are as sharp (1.38 against 1.39
+  px), the dark halo is no larger (7.3%), and thin highlights keep their
+  light (103% against 77%). Alternatives rejected: sRGB-value resampling
+  (darkens fine detail), plain linear light (33% dark halos), full
+  anti-ringing or a Hamming filter (softer edges, 1.49 px), linear light for
+  upscaling (softer), and unsharp masking (over-bright highlights). This
+  supersedes the "resampling in sRGB values" part of the fidelity decision
+  below.
+- **Change** [M03]: New dependency `numpy`, for the floating-point
+  resampling. Pillow alone cannot apply the sRGB transfer curve to float
+  images.
+- **Design decision** [M03]: The resized first input keeps its fidelity. An
+  embedded ICC profile is converted to sRGB (relative colorimetric, black
+  point compensation), 16-bit and 32-bit grayscale are scaled to 8 bits
+  instead of clipped, the crop fit resamples the exact fractional source area
+  to the target in one Lanczos pass, and an input that only needs rotating is
+  copied losslessly. Alternatives rejected: dropping the profile (P3 photos
+  shift color), keeping it in the PNG (`draw-things-cli` is not known to
+  honor it), resizing then cropping (two roundings), and resampling in linear
+  light (unusual, and slower in Pillow).
+- **Change** [M03]: Milestone 03 is done. Jobs accept
+  `desired_input_width`, `desired_input_height`, and
+  `max_input_crop_percent`; the first input is resized (cropped or
+  letterboxed, never stretched) to a temporary PNG for run 1, and every run
+  generates at that size. New module `input_resize.py`; `input_size.py`
+  plans the resize; the job manifest gains `input_resize`. The Milestone 01
+  size mismatch message now suggests the new keys instead of saying resizing
+  is planned.
+- **Owner decision** [M03]: `desired_input_width` and `desired_input_height`
+  are at most 8192 each, after rounding and including a derived value.
+  Alternatives rejected: a pixel-count limit, and no limit (a huge value
+  would exhaust memory in Pillow).
+- **Owner decision** [M03]: With one `desired_input_*` key, a job is refused
+  when the crop would remove more than `max_input_crop_percent` of the scaled
+  image on the cropped axis. The new optional root-level key defaults to 10.
+  Alternatives rejected: a warning only, no check, and a fixed limit.
+- **Design decision** [M03]: `max_input_crop_percent` is a validation error
+  unless exactly one `desired_input_*` key is set, because only then is the
+  input cropped; this follows the rule that a setting with no effect fails
+  instead of being ignored.
+- **Owner decision** [M03]: An input whose EXIF orientation is not 1 always
+  gets an upright temporary copy, even when its size already matches, because
+  `draw-things-cli` may not apply EXIF rotation. Alternative rejected: passing
+  the original file when the size matches.
+- **Owner decision** [M03]: `run-job --dry-run` shows run 1's `--image` as a
+  placeholder (`<photo.jpg resized to 832x448>`) when a copy will be written.
+  Alternative rejected: the original path with only an INFO line.
+- **Design decision** [M03]: Validation fully decodes the input, not only its
+  header, and `run-job` writes the resized copy before the manifest and log
+  are created, so a bad image exits with code 2 and leaves no manifest.
+  `JobDefinition.size` is `None` without the keys, so existing jobs build the
+  same commands as before.
+- **Owner decision** [M03]: When only one `desired_input_*` key is given,
+  the input's aspect ratio is kept and there are no black bars: the image is
+  scaled to cover the target and the few pixels left over from rounding down
+  to 64 are cropped, centered. When both keys are given, the letterbox rule
+  (below) still applies. In neither case is the image stretched. This
+  supersedes the letterbox-for-every-job part of the earlier fit decision.
+  Alternatives rejected: letterboxing with thin bars, and choosing a smaller
+  64-multiple box whose ratio is closer to the input's.
+- **Change**: Added the Milestone 03 plan
+  (`milestone-03-input-image-resize.md`).
+- **Owner decision** [M03]: `i2v` and `i2i` jobs get two optional root-level
+  keys, `desired_input_width` and `desired_input_height` (any positive
+  integers). Either may be set alone; the missing one is derived from the
+  input image's aspect ratio. Without either key, the Milestone 01 exact-size
+  check is unchanged. This takes up the input resizing that Milestone 01
+  deferred, in place of `size_from_input` and `max_pixels`.
+- **Owner decision** [M03]: Each value (given or derived) is rounded down to a
+  multiple of 64; a value that comes out under 64 is a validation error.
+  Alternatives rejected: rounding to the nearest or up, and clamping to 64.
+- **Owner decision** [M03]: The first input is letterboxed (scaled to fit,
+  upscaled if needed, padded with black) to the target size. Alternatives
+  rejected: center-crop, stretch, refusing a mismatched aspect ratio, and a
+  configurable pad color or blurred fill.
+- **Owner decision** [M03]: The target size is the generation size for every
+  run. When a `desired_input_*` key is set, `width` and `height` from
+  `config_override` and `config_file` are ignored, and an INFO message names
+  each ignored value. Alternative rejected: a validation error when
+  `config_override` also sets them.
+- **Owner decision** [M03]: The keys are a validation error in `t2v` jobs,
+  which have no input image.
+- **Owner decision** [M03]: The resized input is a temporary PNG, deleted
+  when run 1 ends or the job exits. Alternative rejected: keeping it beside
+  the outputs.
+- **Design decision** [M03]: A missing value is derived from the other value
+  after it is rounded down, so the target is as close as possible to the
+  input's aspect ratio. An input already at the target size is used as-is.
+  The manifest records the resize in a job-level `input_resize` field, and
+  run 1's `input` keeps the original path.
+
 ## 2026-09-24
 
 - **Owner decision**: Code is formatted with Black, not `ruff format`; Ruff
