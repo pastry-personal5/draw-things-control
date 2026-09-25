@@ -313,36 +313,7 @@ class JobService:
                 exit_code = self._stop(manifest, self._interrupt, f"before run {number}/{total}")
                 break
             run = self._plan_run(job, number, pair, current_input, manifest.seed, executable, set())
-            record = RunRecord(
-                pair=pair.name,
-                positive=pair.positive,
-                negative=pair.negative,
-                # Run 1's temporary copy is gone after the run, so record the job's own input.
-                input=str(job.input if number == 1 else run.input) if run.input is not None else None,
-                output=run.output.name,
-                last_frame=None,
-                command=GenerationService.redact_command(run.arguments.command),
-                started_at=self._timestamp(),
-                resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
-            )
-            manifest.runs.append(record)
-            self._save(manifest_path, manifest)
-            logger.info("Run {}/{} (pair {}): input={}, output={}", number, total, pair.name, run.input or "(none, text only)", run.output)
-            self._emit(
-                RunStarted(
-                    at=record.started_at,
-                    number=number,
-                    total=total,
-                    pair=pair.name,
-                    positive=pair.positive,
-                    negative=pair.negative,
-                    input=record.input,
-                    resized_input=record.resized_input,
-                    output=run.output.name,
-                    last_frame=run.last_frame.name if run.last_frame is not None else None,
-                    command=tuple(record.command),
-                )
-            )
+            record = self._start_run(job, manifest, manifest_path, run, number, total, temporary_input)
             try:
                 status, exit_code = self._execute_run(job, run, record, shutdown_grace, number)
             except BaseException:
@@ -379,6 +350,41 @@ class JobService:
         stopped_by = self._exit_signal(exit_code) if manifest.status == "interrupted" else None
         self._emit(JobFinished(at=manifest.finished_at, status=manifest.status, exit_code=exit_code, completed_runs=completed, total_runs=total, signal=stopped_by))
         return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=manifest_path, log=log_path)
+
+    def _start_run(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, run: PlannedRun, number: int, total: int, temporary_input: TemporaryInput | None) -> RunRecord:
+        """Record ``run`` in the manifest, log it, and announce it; return its record."""
+        pair = run.pair
+        record = RunRecord(
+            pair=pair.name,
+            positive=pair.positive,
+            negative=pair.negative,
+            # Run 1's temporary copy is gone after the run, so record the job's own input.
+            input=str(job.input if number == 1 else run.input) if run.input is not None else None,
+            output=run.output.name,
+            last_frame=None,
+            command=GenerationService.redact_command(run.arguments.command),
+            started_at=self._timestamp(),
+            resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
+        )
+        manifest.runs.append(record)
+        self._save(manifest_path, manifest)
+        logger.info("Run {}/{} (pair {}): input={}, output={}", number, total, pair.name, run.input or "(none, text only)", run.output)
+        self._emit(
+            RunStarted(
+                at=record.started_at,
+                number=number,
+                total=total,
+                pair=pair.name,
+                positive=pair.positive,
+                negative=pair.negative,
+                input=record.input,
+                resized_input=record.resized_input,
+                output=run.output.name,
+                last_frame=run.last_frame.name if run.last_frame is not None else None,
+                command=tuple(record.command),
+            )
+        )
+        return record
 
     def _cool_down(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, record: RunRecord, next_run: int, total: int) -> tuple[signal.Signals, str] | None:
         """Wait the job's cooldown after ``record``'s run; return the signal that cut it short and where, or None."""

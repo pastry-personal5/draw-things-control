@@ -29,7 +29,7 @@ Out of scope:
 
 ### Starting a job
 
-- `r` on a valid job asks for confirmation (job name, run count, total
+- `x` on a valid job asks for confirmation (job name, run count, total
   cooldown time), then starts it. Invalid jobs cannot be started.
 - The job runs on a worker thread, using
   `JobService.run(..., observer=...)` (on a service built with
@@ -95,7 +95,7 @@ goes back. The last job's result is one key away from the job list.
   final status.
 - `s` during a run and during a cooldown ends the job, with the job
   `interrupted` in the state store and no later run started.
-- With the lock held by another process, `r` shows the busy message and
+- With the lock held by another process, `x` shows the busy message and
   starts nothing.
 - `q` during a run offers to stop it; choosing to quit stops the job and
   releases the lock.

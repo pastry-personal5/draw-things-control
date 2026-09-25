@@ -65,6 +65,28 @@ def open_store(settings: GlobalConfig) -> Store:
         raise typer.Exit(code=1) from error
 
 
+@contextmanager
+def open_state(settings: GlobalConfig) -> Iterator[Store]:
+    """Open the state store for a command and close it afterwards; a database failure exits with code 1."""
+    store = open_store(settings)
+    try:
+        yield store
+    except sqlite3.Error as error:
+        logger.error("Cannot use the state database {}: {}", store.path, error)
+        raise typer.Exit(code=1) from error
+    finally:
+        store.close()
+
+
+def load_settings(global_config: Path) -> GlobalConfig:
+    """Load the global configuration, exiting with code 2 if it is invalid."""
+    try:
+        return load_global_config(global_config.expanduser())
+    except ValueError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=2) from error
+
+
 def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
     """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints."""
     # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
@@ -174,8 +196,8 @@ def validate_config(config: Annotated[Path, typer.Argument(help="JSON configurat
 
 def read_job(job_file: Path, global_config: Path, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the global configuration and the job, exiting with code 2 if either is invalid."""
+    settings = load_settings(global_config)
     try:
-        settings = load_global_config(global_config.expanduser())
         return load_job(job_file, settings, decode_input=decode_input), settings
     except ValueError as error:
         logger.error("{}", error)
@@ -223,18 +245,10 @@ def run_job(
                 typer.echo(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
                 typer.echo(command)
             return
-        with held_run_lock("run-job"):
-            store = open_store(settings)
-            try:
-                try:
-                    # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
-                    store.sweep_interrupted()
-                except sqlite3.Error as error:
-                    logger.error("Cannot use the state database {}: {}", store.path, error)
-                    raise typer.Exit(code=1) from error
-                outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store))
-            finally:
-                store.close()
+        with held_run_lock("run-job"), open_state(settings) as store:
+            # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
+            store.sweep_interrupted()
+            outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store))
     except ValueError as error:
         logger.error("{}", error)
         raise typer.Exit(code=2) from error
@@ -248,23 +262,13 @@ def import_history_command(
     global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
 ) -> None:
     """Import phase 1 job manifests into the execution history; safe to repeat."""
-    try:
-        settings = load_global_config(global_config.expanduser())
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+    settings = load_settings(global_config)
     search = (directory or settings.output_directory).expanduser()
     if not search.is_dir():
         logger.error("Not a directory: {}", search)
         raise typer.Exit(code=2)
-    store = open_store(settings)
-    try:
+    with open_state(settings) as store:
         report = import_history(store, search)
-    except sqlite3.Error as error:
-        logger.error("Cannot use the state database {}: {}", store.path, error)
-        raise typer.Exit(code=1) from error
-    finally:
-        store.close()
     typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
 
 
