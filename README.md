@@ -20,6 +20,9 @@ uv run dtc generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube"
 cp config/global-config.example.yaml config/global-config.yaml   # then edit the paths
 uv run dtc validate-job data/example-job.yaml
 uv run dtc run-job data/example-job.yaml
+
+# Browse jobs and their dry-run plans in a terminal UI
+uv run dtc tui
 ```
 
 ## Documentation

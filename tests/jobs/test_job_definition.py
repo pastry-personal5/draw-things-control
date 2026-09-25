@@ -6,10 +6,10 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from loguru import logger
 from PIL import Image
 
-from draw_things_control.jobs.job_definition import GenerationMode, cooldown_details, duration_text, load_job, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_definition import GenerationMode, load_job
+from draw_things_control.jobs.job_report import cooldown_details, duration_text, ignored_config_lines, seconds_text
 from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 
@@ -124,14 +124,9 @@ class JobDefinitionTests(JobTestCase):
         job = self.load(config_file="batch.json")
         self.assertNotIn("batchCount", job.base_config)
         self.assertEqual(job.ignored_config, {"batchCount": 4})
-        messages: list[str] = []
-        sink = logger.add(messages.append, format="{level} {message}")
-        try:
-            report_ignored_config(job)
-        finally:
-            logger.remove(sink)
+        messages = ignored_config_lines(job)
         self.assertEqual(len(messages), 1)
-        self.assertTrue(messages[0].startswith("INFO Ignoring batchCount (4) from config_file batch.json"))
+        self.assertTrue(messages[0].startswith("Ignoring batchCount (4) from config_file batch.json"))
 
     def test_other_modes_keep_run_count(self) -> None:
         self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.json")
@@ -140,15 +135,6 @@ class JobDefinitionTests(JobTestCase):
                 job = self.load(config_file="batch.json", mode=mode, **changes)
                 self.assertEqual(job.base_config["batchCount"], 4)
                 self.assertEqual(job.ignored_config, {})
-
-    def reported(self, job) -> list[str]:
-        messages: list[str] = []
-        sink = logger.add(messages.append, format="{level} {message}")
-        try:
-            report_ignored_config(job)
-        finally:
-            logger.remove(sink)
-        return [message.rstrip("\n") for message in messages]
 
     def test_desired_size_sets_the_job_size_in_i2v_and_i2i(self) -> None:
         self.write_image("photo.jpg", (1920, 1080))
@@ -224,12 +210,12 @@ class JobDefinitionTests(JobTestCase):
         job = self.load(input="photo.jpg", desired_input_width=1280, desired_input_height=720, config_override={"width": 832})
         self.assertEqual(job.ignored_size, (("config_override", "width", 832), ("config_file", "width", 832), ("config_file", "height", 448)))
         self.assertEqual(
-            self.reported(job),
+            ignored_config_lines(job),
             [
-                "INFO Ignoring config_override.width (832): desired_input_width/desired_input_height set the size (1280x704)",
-                "INFO Ignoring width (832) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
-                "INFO Ignoring height (448) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
-                "INFO Input photo.jpg (1920x1080) will be scaled to 1252x704 and letterboxed to 1280x704 for run 1",
+                "Ignoring config_override.width (832): desired_input_width/desired_input_height set the size (1280x704)",
+                "Ignoring width (832) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
+                "Ignoring height (448) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
+                "Input photo.jpg (1920x1080) will be scaled to 1252x704 and letterboxed to 1280x704 for run 1",
             ],
         )
 

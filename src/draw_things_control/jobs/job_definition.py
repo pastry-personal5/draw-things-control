@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, fields
-from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-from loguru import logger
 
 from draw_things_control.core import generation_config
 from draw_things_control.core.global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, read_yaml_mapping
@@ -240,61 +237,6 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         ignored_size=tuple(ignored_size),
         source_text=source_text,
     )
-
-
-def seconds_text(seconds: float) -> str:
-    """A number of seconds as written in the job, for example ``900 s``, ``0.5 s``, or ``0.00001 s``."""
-    # repr gives the shortest digits that round-trip; Decimal writes them without an exponent.
-    text = format(Decimal(repr(float(seconds))), "f")
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return f"{text} s"
-
-
-def duration_text(seconds: float) -> str:
-    """A length of time in hours, minutes, and seconds to a tenth, for example ``1 h 30 min`` or ``0.4 s``."""
-    total = round(seconds, 1)
-    hours, rest = divmod(int(total), 3600)
-    minutes = rest // 60
-    secs = round(total - hours * 3600 - minutes * 60, 1)
-    parts = [f"{value} {unit}" for value, unit in ((hours, "h"), (minutes, "min")) if value]
-    if secs or not parts:
-        parts.append(seconds_text(secs))
-    return " ".join(parts)
-
-
-def cooldown_summary(job: JobDefinition, source_prefix: str = "") -> str:
-    """The job's cooldown and its source, for example ``cooldown 900 s (from global_config)``."""
-    if job.cooldown_seconds > 0:
-        return f"cooldown {seconds_text(job.cooldown_seconds)} ({source_prefix}{job.cooldown_source})"
-    return f"no cooldown ({source_prefix}{job.cooldown_source})"
-
-
-def cooldown_details(job: JobDefinition) -> str:
-    """The cooldown line of validate-job: the value, its source, and the waits it adds."""
-    if job.cooldown_seconds <= 0:
-        return f"none ({job.cooldown_source})"
-    waits = job.run_count - 1
-    if waits == 0:
-        extent = "no waits: 1 run"
-    else:
-        extent = f"{waits} wait{'s' if waits > 1 else ''}, {duration_text(waits * job.cooldown_seconds)} total"
-    return f"{seconds_text(job.cooldown_seconds)} between runs, from {job.cooldown_source} ({extent})"
-
-
-def report_ignored_config(job: JobDefinition) -> None:
-    """Tell the user which base configuration keys the job's mode ignores."""
-    for key, value in job.ignored_config.items():
-        logger.info("Ignoring {} ({}) from config_file {}: not used in {} jobs; the job's run_count sets the number of runs", key, value, job.config_file, job.mode)
-    if job.size is not None:
-        size = f"{job.size[0]}x{job.size[1]}"
-        for source, key, value in job.ignored_size:
-            if source == "config_file":
-                logger.info("Ignoring {} ({}) from config_file {}: desired_input_width/desired_input_height set the size ({})", key, value, job.config_file, size)
-            else:
-                logger.info("Ignoring config_override.{} ({}): desired_input_width/desired_input_height set the size ({})", key, value, size)
-    if job.input_resize is not None and job.input is not None:
-        logger.info("{}", job.input_resize.describe(job.input.name))
 
 
 class _Failure:

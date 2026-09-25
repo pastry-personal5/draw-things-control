@@ -36,7 +36,7 @@ class RecorderTests(JobTestCase):
             cooldown=lambda seconds: seconds,
         )
 
-    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
         self.calls += 1
         return FakeRunner(arguments, self.results.get(self.calls, FakeResult()), write_output=True)
 

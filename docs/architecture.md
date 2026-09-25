@@ -38,7 +38,8 @@ tests/           # mirrors the package: tests/core, tests/jobs, tests/cli, ...
 ```
 
 Import direction: `cli`, `tui`, `server` -> `state` -> `jobs` -> `core`;
-`mcp_server` -> `server` over HTTP only. Front ends never import each other.
+`mcp_server` -> `server` over HTTP only. Front ends never import each other,
+except that the `dtc tui` command in `cli/app.py` starts the TUI app.
 Launch with `dtc` or `python -m draw_things_control`.
 
 Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
@@ -57,6 +58,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 | `core/configuration.py`, `core/generation_config.py` | JSON overrides, `dt-config/` lookup and merging |
 | `jobs/job_service.py` | `run-job` use case: chain a job's runs, cooldown |
 | `jobs/job_definition.py` | Job file loading and validation |
+| `jobs/job_report.py` | Reading jobs and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI (phase 2) |
 | `jobs/input_size.py`, `jobs/input_resize.py` | Input image check and resize |
 | `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg`, labeled sRGB |
 | `jobs/video_color.py` | Adds a `colr` color-tag box to a finished video, without touching frames or timing |
@@ -92,9 +94,15 @@ Adds what every later front end needs, without changing the CLI's behavior:
   taken by `run-job`, `generate`, and the TUI. A second starter fails
   immediately with exit code 75; nothing queues silently. The file also names
   the running `draw-things-cli`, so a run refuses to start while one survives a
-  `SIGKILLed` `dtc`.
-- `tui/` (Textual): job browser, live run view, execution history. Read-only for
-  job files.
+  `SIGKILLed` `dtc`. The holder passes its `record_child` down as a
+  `ChildStartCallback` (`JobService.run(on_child_start=)`,
+  `GenerationService.execute(on_start=)`, then the `RunnerFactory`'s
+  `on_start`), so no module state is involved.
+- `tui/` (Textual, Milestone 03 done): `app.py` takes its settings, data
+  directory, executable, and `JobService` as arguments; `screens.py` has the
+  job list, detail view, and help; `widgets.py` renders `jobs/job_report.py`
+  text. Files are read on worker threads and never written. The live run view
+  and execution history follow in Milestones 04 and 05.
 
 ## Phase 3: API and MCP for agents (planned)
 

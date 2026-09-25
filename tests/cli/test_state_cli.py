@@ -58,7 +58,7 @@ class StateCliTests(JobTestCase):
         self.global_path = path
         return path
 
-    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
         self.runs_started += 1
         return FakeRunner(arguments, self.results.get(self.runs_started, FakeResult()), write_output=True)
 
@@ -164,13 +164,27 @@ class StateCliTests(JobTestCase):
         self.run_job()
         self.assertIsNone(store.get_execution(old))
 
-    def test_the_runner_reports_its_child_to_the_held_lock(self) -> None:
-        lock = mock.Mock()
-        with mock.patch.object(cli, "_active_lock", lock):
-            runner = create_job_runner(DrawThingsGenerateArguments(model="m.ckpt", executable="/opt/bin/my-cli"), None, 1)
+    def test_the_runner_reports_its_child_with_the_executable_name(self) -> None:
+        on_start = mock.Mock()
+        runner = create_job_runner(DrawThingsGenerateArguments(model="m.ckpt", executable="/opt/bin/my-cli"), None, 1, None, on_start)
         runner._on_start(4242)
-        lock.record_child.assert_called_once_with(4242, "my-cli")
+        on_start.assert_called_once_with(4242, "my-cli")
         self.assertIsNone(create_job_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._on_start)
+
+    def test_run_job_passes_the_held_lock_to_the_job(self) -> None:
+        seen: list[object] = []
+        run = self.fake_service.run
+
+        def recording_run(*args: object, **kwargs: object):
+            seen.append(kwargs["on_child_start"])
+            return run(*args, **kwargs)
+
+        with mock.patch.object(self.fake_service, "run", recording_run):
+            self.assertEqual(self.run_job().exit_code, 0)
+        [on_child_start] = seen
+        self.assertIsInstance(on_child_start.__self__, RunLock)
+        self.assertEqual(on_child_start.__func__, RunLock.record_child)
+        self.assertFalse(hasattr(cli, "_active_lock"))
 
     def test_import_history_imports_once_and_reports_counts(self) -> None:
         self.write_global_config("write_job_records: true\n")

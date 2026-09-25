@@ -16,12 +16,14 @@ from loguru import logger
 from draw_things_control.core.configuration import load_config
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
-from draw_things_control.core.generation_service import GenerationService
-from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
+from draw_things_control.core.generation_service import ChildStartCallback, GenerationService
+from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.process_output import MessageCallback, OutputProcessor
 from draw_things_control.core.run_lock import EX_TEMPFAIL, RunLock, RunLockBusy, RunLockError
 from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg
-from draw_things_control.jobs.job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_definition import JobDefinition
+from draw_things_control.jobs.job_report import job_summary, plan_lines, read_settings, report_ignored_config
+from draw_things_control.jobs.job_report import read_job as load_job_and_settings
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.jobs.video_color import tag_video_colors
 from draw_things_control.state.history_import import import_history
@@ -30,15 +32,22 @@ from draw_things_control.state.store import StateError, Store
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
+DEFAULT_DATA_DIRECTORY = PROJECT_ROOT / "data"
 
-# The run lock this process holds, if any; the runners it starts report their child's PID to it.
-_active_lock: RunLock | None = None
+
+@contextmanager
+def invalid_input_exits() -> Iterator[None]:
+    """Log a ValueError (invalid input, configuration, or job) and exit with code 2."""
+    try:
+        yield
+    except ValueError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=2) from error
 
 
 @contextmanager
 def held_run_lock(command: str) -> Iterator[RunLock]:
     """Hold the machine-wide run lock for ``command``, or exit 75 if a run is in progress, 1 if it cannot be taken."""
-    global _active_lock
     lock = RunLock(command)
     try:
         lock.acquire()
@@ -48,11 +57,9 @@ def held_run_lock(command: str) -> Iterator[RunLock]:
     except RunLockError as error:
         logger.error("{}", error)
         raise typer.Exit(code=1) from error
-    _active_lock = lock
     try:
         yield lock
     finally:
-        _active_lock = None
         lock.release()
 
 
@@ -80,32 +87,35 @@ def open_state(settings: GlobalConfig) -> Iterator[Store]:
 
 def load_settings(global_config: Path) -> GlobalConfig:
     """Load the global configuration, exiting with code 2 if it is invalid."""
-    try:
-        return load_global_config(global_config.expanduser())
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+    with invalid_input_exits():
+        return read_settings(global_config)
 
 
-def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
-    """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints."""
+def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
+    """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints, ``on_start`` its PID and executable name."""
     # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
     capture_output = arguments.output is not None and not arguments.terminal_image
-    lock = _active_lock
-    on_start = (lambda pid: lock.record_child(pid, Path(arguments.executable).name)) if lock is not None else None
-    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_start)
+    name = Path(arguments.executable).name
+    on_pid = (lambda pid: on_start(pid, name)) if on_start is not None else None
+    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_pid)
 
 
-def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> DrawThingsProcessRunner:
+def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
     """Create a run's runner; JobService owns signal handling and forwards signals to it."""
-    return create_runner(arguments, timeout, shutdown_grace, on_message, handle_signals=False)
+    return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
+
+
+def create_job_service() -> JobService:
+    """The JobService every front end uses to run jobs with the real tools."""
+    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
-job_service = JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors)
+job_service = create_job_service()
 
 JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
 GlobalConfigOption = Annotated[Path, typer.Option("--global-config", help="Global configuration file.")]
+ExecutableOption = Annotated[str, typer.Option(help="Draw Things CLI executable.")]
 
 
 def configure_logging() -> None:
@@ -163,16 +173,13 @@ def generate(
     options = locals().copy()
     for wrapper_option in ("dry_run", "timeout", "shutdown_grace"):
         options.pop(wrapper_option)
-    try:
+    with invalid_input_exits():
         arguments = service.prepare(options)
         if dry_run:
             outcome = service.execute(arguments, dry_run=True, timeout=timeout, shutdown_grace=shutdown_grace)
         else:
-            with held_run_lock("generate"):
-                outcome = service.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace)
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+            with held_run_lock("generate") as lock:
+                outcome = service.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace, on_start=lock.record_child)
     if outcome.command_preview is not None:
         typer.echo(outcome.command_preview)
     if outcome.timed_out:
@@ -186,22 +193,15 @@ def generate(
 @app.command("validate-config")
 def validate_config(config: Annotated[Path, typer.Argument(help="JSON configuration file to validate.")]) -> None:
     """Validate a Draw Things JSON override file."""
-    try:
+    with invalid_input_exits():
         settings = load_config(config.expanduser())
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
 
 
 def read_job(job_file: Path, global_config: Path, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the global configuration and the job, exiting with code 2 if either is invalid."""
-    settings = load_settings(global_config)
-    try:
-        return load_job(job_file, settings, decode_input=decode_input), settings
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+    with invalid_input_exits():
+        return load_job_and_settings(job_file, global_config, decode_input=decode_input)
 
 
 @app.command("validate-job")
@@ -209,49 +209,33 @@ def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = 
     """Validate a job file without running anything."""
     job, _settings = read_job(job_file, global_config)
     report_ignored_config(job)
-    seed, source = job.configured_seed()
     typer.echo(f"Valid job: {job.path}")
-    typer.echo(f"  name: {job.name}")
-    typer.echo(f"  mode: {job.mode}")
-    typer.echo(f"  runs: {job.run_count} ({', '.join(pair.name for pair in job.schedule())})")
-    typer.echo(f"  cooldown: {cooldown_details(job)}")
-    typer.echo(f"  input: {job.input or '(none, text only)'}")
-    typer.echo(f"  output directory: {job.output_directory}")
-    typer.echo(f"  config file: {job.config_file}")
-    typer.echo(f"  model: {job.model}")
-    typer.echo(f"  seed: {seed if seed is not None else '(random, drawn when the job starts)'} ({source})")
+    for label, value in job_summary(job):
+        typer.echo(f"  {label}: {value}")
 
 
 @app.command("run-job")
 def run_job(
     job_file: JobFileArgument,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print every command without running anything.")] = False,
-    executable: Annotated[str, typer.Option(help="Draw Things CLI executable.")] = "draw-things-cli",
+    executable: ExecutableOption = "draw-things-cli",
     shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
     global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
 ) -> None:
     """Run every generation in a job, chaining each output into the next run."""
     # A real run decodes the input when it writes run 1's copy, so it skips the validation decode.
     job, settings = read_job(job_file, global_config, decode_input=dry_run)
-    try:
+    with invalid_input_exits():
         if dry_run:
             report_ignored_config(job)
             preview = job_service.preview(job, executable=executable)
-            typer.echo(f"# Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job)}")
-            typer.echo("# Output names are examples; a real run generates new ones.")
-            for run, command in zip(preview.runs, preview.command_previews, strict=True):
-                if run.number > 1 and job.cooldown_seconds > 0:
-                    typer.echo(f"# Cooldown {seconds_text(job.cooldown_seconds)}")
-                typer.echo(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
-                typer.echo(command)
+            for line in plan_lines(job, preview):
+                typer.echo(line)
             return
-        with held_run_lock("run-job"), open_state(settings) as store:
+        with held_run_lock("run-job") as lock, open_state(settings) as store:
             # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
             store.sweep_interrupted()
-            outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store))
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+            outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store), on_child_start=lock.record_child)
     if outcome.exit_code:
         raise typer.Exit(code=outcome.exit_code)
 
@@ -270,6 +254,29 @@ def import_history_command(
     with open_state(settings) as store:
         report = import_history(store, search)
     typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
+
+
+@app.command("tui")
+def tui_command(
+    data_dir: Annotated[Path, typer.Option("--data-dir", help="Directory of job files.")] = DEFAULT_DATA_DIRECTORY,
+    executable: ExecutableOption = "draw-things-cli",
+    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+) -> None:
+    """Browse the jobs in the data directory in a terminal UI."""
+    settings = load_settings(global_config)
+    # Imported here, so the other commands do not load Textual.
+    from draw_things_control.tui.app import DrawThingsApp
+
+    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_service=create_job_service())
+    # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
+    logger.remove()
+    try:
+        tui.run()
+    finally:
+        configure_logging()
+    # Textual sets a nonzero return code when the app ends on an error, after printing the traceback.
+    if tui.return_code:
+        raise typer.Exit(code=tui.return_code)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

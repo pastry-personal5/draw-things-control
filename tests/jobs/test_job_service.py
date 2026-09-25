@@ -107,7 +107,7 @@ class JobServiceTests(JobTestCase):
         # Replaced by fake_cooldown; a job without a cooldown never calls it.
         self.cooldown = lambda seconds: seconds
 
-    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
         self.calls.append((arguments, timeout, grace))
         self.callbacks.append(on_message)
         number = len(self.calls)
@@ -243,7 +243,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(self.calls, [])
 
     def test_run_that_cannot_start_is_marked_failed(self) -> None:
-        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             raise ValueError("Could not start executable draw-things-cli: Permission denied")
 
         self.service._runner_factory = cannot_start
@@ -294,12 +294,12 @@ class JobServiceTests(JobTestCase):
     def test_run_one_gets_the_resized_copy_and_it_is_removed_after_run_one(self) -> None:
         seen: list[tuple[int, int]] = []
 
-        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             # Look at the image while the run is happening, since the copy is gone afterwards.
             if not self.calls:
                 with Image.open(arguments.image) as image:
                     seen.append(image.size)
-            return self.create_runner(arguments, timeout, grace, on_message)
+            return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
         self.service._runner_factory = create_runner
         job = self.resize_job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
@@ -334,7 +334,7 @@ class JobServiceTests(JobTestCase):
                 self.assertFalse(self.calls[0][0].image.parent.exists())
 
     def test_temporary_copy_is_removed_when_the_job_raises(self) -> None:
-        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             self.calls.append((arguments, timeout, grace))
             raise KeyboardInterrupt
 
@@ -366,11 +366,11 @@ class JobServiceTests(JobTestCase):
         self.write_image("rotated.jpg", (448, 832), orientation=6)
         seen: list[tuple[int, int]] = []
 
-        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             if not self.calls:
                 with Image.open(arguments.image) as image:
                     seen.append((image.size, image.getexif().get(0x0112)))
-            return self.create_runner(arguments, timeout, grace, on_message)
+            return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
         self.service._runner_factory = create_runner
         job = self.job(input="rotated.jpg", desired_input_width=832)
@@ -601,7 +601,7 @@ class JobServiceTests(JobTestCase):
         lines = ((OutputStream.STDOUT, "loading"), (OutputStream.STDERR, "step 3/8"), (OutputStream.STDOUT, "done"))
         seen_arguments: list = []
 
-        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> TalkingRunner:
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> TalkingRunner:
             seen_arguments.append(on_message)
             return TalkingRunner(arguments, on_message, lines)
 
@@ -620,7 +620,7 @@ class JobServiceTests(JobTestCase):
         self.assertTrue(callable(self.callbacks[1]))
 
     def test_a_runner_that_raises_still_closes_the_events(self) -> None:
-        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             raise ValueError("Could not start executable draw-things-cli: Permission denied")
 
         self.service._runner_factory = cannot_start
@@ -653,7 +653,7 @@ class JobServiceTests(JobTestCase):
     def test_cancel_from_another_thread_stops_a_running_run(self) -> None:
         runners: list[BlockingRunner] = []
 
-        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> BlockingRunner:
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> BlockingRunner:
             runners.append(BlockingRunner(arguments))
             return runners[-1]
 
@@ -696,7 +696,7 @@ class JobServiceTests(JobTestCase):
     def test_cancel_between_runner_creation_and_run_still_stops_that_run(self) -> None:
         runners: list[FakeRunner] = []
 
-        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             # The cancel lands before the service has stored the runner, so it can only reach it through the flag.
             self.assertTrue(self.service.cancel())
             runners.append(FakeRunner(arguments, FakeResult(), write_output=True))
@@ -712,12 +712,12 @@ class JobServiceTests(JobTestCase):
     def test_a_second_concurrent_run_is_refused(self) -> None:
         refusals: list[Exception] = []
 
-        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             try:
                 self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2)
             except RuntimeError as error:
                 refusals.append(error)
-            return self.create_runner(arguments, timeout, grace, on_message)
+            return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
         self.service._runner_factory = factory
         outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))

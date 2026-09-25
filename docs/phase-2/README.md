@@ -43,7 +43,7 @@ processes from driving the GPU at once.
 |---|-----------|--------|
 | 01 | [Job events and cancellation](milestone-01-job-events-cancel.md) | done |
 | 02 | [State store and run lock](milestone-02-state-store-run-lock.md) | done |
-| 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | planned |
+| 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | done |
 | 04 | [Live run view](milestone-04-tui-live-run.md) | planned |
 | 05 | [Execution history](milestone-05-tui-run-history.md) | planned |
 

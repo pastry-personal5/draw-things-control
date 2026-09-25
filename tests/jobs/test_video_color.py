@@ -120,7 +120,7 @@ class JobTaggingTests(JobTestCase):
         self.tagger = mock.Mock(side_effect=lambda video: self.order.append("tag") or True)
         numbers = itertools.count(1000)
         self.service = JobService(
-            runner_factory=lambda arguments, timeout, grace, on_message=None: FakeRunner(arguments, FakeResult(), write_output=True),
+            runner_factory=lambda arguments, timeout, grace, on_message=None, on_start=None: FakeRunner(arguments, FakeResult(), write_output=True),
             find_executable=lambda executable: executable,
             frame_extractor=lambda video, png: (self.order.append("extract"), png.write_bytes(b"png")),
             require_ffmpeg=lambda: "ffmpeg",

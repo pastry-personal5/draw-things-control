@@ -28,10 +28,14 @@ class Runner(Protocol):
     def run(self) -> RunResult: ...
 
 
-class RunnerFactory(Protocol):
-    """Creates the runner for one request; ``on_message`` receives each line the child prints, or is None."""
+# Receives the PID and executable name of a child once it has started, for example RunLock.record_child.
+ChildStartCallback = Callable[[int, str], None]
 
-    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> Runner: ...
+
+class RunnerFactory(Protocol):
+    """Creates the runner for one request; ``on_message`` receives each line the child prints, and ``on_start`` its PID and name; either may be None."""
+
+    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> Runner: ...
 
 
 @dataclass(frozen=True)
@@ -122,8 +126,8 @@ class GenerationService:
             cloud_api_base_url=options["cloud_api_base_url"],
         )
 
-    def execute(self, arguments: DrawThingsGenerateArguments, *, dry_run: bool, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> GenerationOutcome:
-        """Preview or execute a prepared request; ``on_message`` receives each line the child prints."""
+    def execute(self, arguments: DrawThingsGenerateArguments, *, dry_run: bool, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> GenerationOutcome:
+        """Preview or execute a prepared request; ``on_message`` receives each line the child prints, ``on_start`` its PID and name."""
         if timeout is not None and timeout <= 0:
             raise ValueError("--timeout must be positive")
         if shutdown_grace < 0:
@@ -132,7 +136,7 @@ class GenerationService:
             return GenerationOutcome(exit_code=0, command_preview=self._format_preview(arguments.command))
         if self._find_executable(arguments.executable) is None:
             raise ValueError(f"Could not find '{arguments.executable}' on PATH. Install Draw Things CLI or pass --executable with its path.")
-        result = self._runner_factory(arguments, timeout, shutdown_grace, on_message).run()
+        result = self._runner_factory(arguments, timeout, shutdown_grace, on_message, on_start).run()
         return GenerationOutcome(
             exit_code=self._exit_code(result),
             timed_out=result.timed_out,

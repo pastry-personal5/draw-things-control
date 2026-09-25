@@ -12,6 +12,7 @@ the project root as `uv run dtc <command>`.
 - [Jobs: chained runs](#jobs-chained-runs)
 - [Job file reference](#job-file-reference)
 - [Where outputs go](#where-outputs-go)
+- [Browse jobs in the terminal UI](#browse-jobs-in-the-terminal-ui)
 - [Execution history and the run lock](#execution-history-and-the-run-lock)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
@@ -59,6 +60,7 @@ different file.
 | `validate-job FILE` | Check a job file; runs nothing |
 | `run-job FILE` | Run every generation in a job, chained |
 | `import-history` | Import phase 1 job manifests into the execution history |
+| `tui` | Browse jobs, their settings, and their dry-run plans in a terminal UI |
 
 Add `--help` to any command for its full option list.
 
@@ -220,6 +222,45 @@ wait. Ctrl-C ends a wait at once and stops the job.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
+
+## Browse jobs in the terminal UI
+
+`dtc tui` lists every job file in `data/` and shows what running one would do,
+without leaving the terminal:
+
+```bash
+uv run dtc tui
+uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli
+```
+
+- The list shows each `*.yaml` and `*.yml` file (any letter case) directly in the data directory
+  (default: `data/` in the project, whatever the working directory), sorted
+  by file name, with its name, mode, run count, and whether it is valid. An
+  invalid file shows its first error, naming the field. Sub-directories,
+  dot-directories, and dotfiles are not listed.
+- Enter opens a job: the summary `validate-job` prints, each prompt pair
+  with the runs that use it, and the plan `run-job --dry-run` prints. For a
+  job that sets no seed, the plan uses the placeholder seed `0`, so it is
+  the same each time; a run draws a real seed. If `draw-things-cli` or
+  `ffmpeg` is missing, the plan shows why and the rest still shows.
+- `--executable` is the `draw-things-cli` the plan names, as for `run-job`.
+- The list is read when the TUI starts and when you press `r`, which also
+  recomputes any plan you already opened. Edit a job in your editor, then
+  press `r`.
+- The TUI only reads files; it never changes a job, a configuration, or
+  `state/`, and in this version it runs nothing.
+- An invalid global configuration is reported before the TUI starts, and the
+  command exits with 2. If the TUI itself fails, it prints the error and the
+  command exits with 1.
+
+| Key | Action |
+|-----|--------|
+| Up/Down, `j`/`k` | Move in the list |
+| Enter | Open the detail view |
+| Escape | Back from the detail view |
+| `r` | Refresh the list |
+| `?` | Help |
+| `q`, Ctrl-C | Quit |
 
 ## Execution history and the run lock
 

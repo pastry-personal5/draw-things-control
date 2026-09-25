@@ -21,12 +21,13 @@ from draw_things_control.core.configuration import load_config
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
 from draw_things_control.core.generation_config import build_config_json
-from draw_things_control.core.generation_service import GenerationService, Runner
+from draw_things_control.core.generation_service import ChildStartCallback, GenerationService, Runner
 from draw_things_control.core.process_output import MessageCallback, ProcessMessage
-from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, cooldown_summary, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_definition import JobDefinition, PromptPair
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, RunFinished, RunOutput, RunStarted, notify
 from draw_things_control.jobs.job_log import add_job_log, remove_job_log
 from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
+from draw_things_control.jobs.job_report import cooldown_summary, report_ignored_config, seconds_text
 from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
 
 if TYPE_CHECKING:
@@ -40,9 +41,12 @@ class StoppableRunner(Runner, Protocol):
 
 
 class RunnerFactory(Protocol):
-    """Creates a run's runner; ``on_message`` receives each line the child prints, or is None when nothing observes the job."""
+    """Creates a run's runner; ``on_message`` receives each line the child prints, or is None when nothing observes the job.
 
-    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> StoppableRunner: ...
+    ``on_start``, when given, receives the child's PID and executable name once it has started.
+    """
+
+    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> StoppableRunner: ...
 
 
 FrameExtractor = Callable[[Path, Path], None]
@@ -120,13 +124,17 @@ class JobService:
         self._state_lock = threading.Lock()
         self._running = False
         self._observer: JobObserver | None = None
+        self._on_child_start: ChildStartCallback | None = None
         self._wake_read: int | None = None
         self._wake_write: int | None = None
 
-    def preview(self, job: JobDefinition, *, executable: str) -> JobPreview:
-        """Validate that the job can start and describe every run without running anything."""
+    def preview(self, job: JobDefinition, *, executable: str, seed: int | None = None) -> JobPreview:
+        """Validate that the job can start and describe every run without running anything.
+
+        A job with no configured seed draws a random one, unless ``seed`` is given to use in its place.
+        """
         self._check_tools(job, executable)
-        seed, source = self._seed(job)
+        seed, source = self._seed(job, seed)
         runs: list[PlannedRun] = []
         reserved: set[Path] = set()
         current_input = job.input
@@ -142,14 +150,15 @@ class JobService:
         previews = tuple(self._generation.execute(run.arguments, dry_run=True, timeout=job.run_timeout_seconds, shutdown_grace=0).command_preview or "" for run in runs)
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), command_previews=previews)
 
-    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None) -> JobOutcome:
+    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None, on_child_start: ChildStartCallback | None = None) -> JobOutcome:
         """Run the job's runs in order; stop at the first failed, timed-out, or interrupted run.
 
         With ``write_records``, a JSON manifest and a log file are saved beside the outputs. ``observer``
-        receives a JobEvent for each step, on this thread; one that raises is logged and ignored. Only one
+        receives a JobEvent for each step, on this thread; one that raises is logged and ignored.
+        ``on_child_start`` receives each run's child PID and executable name, for the run lock. Only one
         job runs at a time on a service: a second concurrent call raises RuntimeError.
         """
-        self._begin(observer)
+        self._begin(observer, on_child_start)
         try:
             return self._run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records)
         finally:
@@ -178,7 +187,7 @@ class JobService:
             runner.request_shutdown(received_signal)
         return True
 
-    def _begin(self, observer: JobObserver | None) -> None:
+    def _begin(self, observer: JobObserver | None, on_child_start: ChildStartCallback | None) -> None:
         with self._state_lock:
             if self._running:
                 raise RuntimeError("This JobService is already running a job")
@@ -189,11 +198,13 @@ class JobService:
             self._running = True
             self._interrupt = None
             self._observer = observer
+            self._on_child_start = on_child_start
 
     def _end(self) -> None:
         with self._state_lock:
             self._running = False
             self._observer = None
+            self._on_child_start = None
             for descriptor in (self._wake_read, self._wake_write):
                 if descriptor is not None:
                     os.close(descriptor)
@@ -207,7 +218,7 @@ class JobService:
         if shutdown_grace < 0:
             raise ValueError("--shutdown-grace must not be negative")
         self._check_tools(job, executable)
-        seed, seed_source = self._seed(job)
+        seed, seed_source = self._seed(job, None)
         # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
         temporary_input: TemporaryInput | None = None
         plan = job.input_copy
@@ -446,7 +457,7 @@ class JobService:
     def _execute_run(self, job: JobDefinition, run: PlannedRun, record: RunRecord, shutdown_grace: float, number: int) -> tuple[str, int]:
         started = time.monotonic()
         try:
-            outcome = self._generation.execute(run.arguments, dry_run=False, timeout=job.run_timeout_seconds, shutdown_grace=shutdown_grace, on_message=self._output_callback(number))
+            outcome = self._generation.execute(run.arguments, dry_run=False, timeout=job.run_timeout_seconds, shutdown_grace=shutdown_grace, on_message=self._output_callback(number), on_start=self._on_child_start)
         finally:
             self._current_runner = None
             record.seconds = round(time.monotonic() - started, 1)
@@ -514,12 +525,14 @@ class JobService:
         if job.mode.is_video:
             self._require_ffmpeg()
 
-    def _seed(self, job: JobDefinition) -> tuple[int, str]:
+    def _seed(self, job: JobDefinition, placeholder: int | None) -> tuple[int, str]:
         seed, source = job.configured_seed()
-        return (seed, source) if seed is not None else (self._random_seed(), "random")
+        if seed is not None:
+            return seed, source
+        return (placeholder if placeholder is not None else self._random_seed()), "random"
 
-    def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> StoppableRunner:
-        runner = self._runner_factory(arguments, timeout, shutdown_grace, on_message)
+    def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> StoppableRunner:
+        runner = self._runner_factory(arguments, timeout, shutdown_grace, on_message, on_start)
         self._current_runner = runner
         if self._interrupt is not None:
             runner.request_shutdown(self._interrupt)

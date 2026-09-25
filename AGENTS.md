@@ -7,16 +7,16 @@ before changing anything.
 ## Project overview
 
 A Python 3.12 project that controls the Draw Things image generation
-application through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) and Phase 3 (API and MCP servers) are planned. See
+application through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) is in progress (Milestones 01 to 03 done); Phase 3 (API and MCP servers) is planned. See
 [docs/architecture.md](docs/architecture.md) for the modules across all three phases and
 [docs/user-guide.md](docs/user-guide.md) for usage.
 
 ## Technology stack
 
 - **Language and tools**: Python 3.12+, uv (`uv.lock`, `pyproject.toml`), `.venv` managed by uv
-- **Layout**: no source in the project root. One package, `src/draw_things_control/`, with `core/`, `jobs/`, `cli/` and, later, `state/`, `tui/`, `server/`, `mcp_server/`; tests mirror it in `tests/`
+- **Layout**: no source in the project root. One package, `src/draw_things_control/`, with `core/`, `jobs/`, `cli/`, `state/`, `tui/` and, later, `server/`, `mcp_server/`; tests mirror it in `tests/`
 - **Entry point**: `dtc` (Typer, `cli/app.py`) or `python -m draw_things_control`
-- **Imports**: absolute; `cli`/`tui`/`server` -> `state` -> `jobs` -> `core`; front ends never import each other
+- **Imports**: absolute; `cli`/`tui`/`server` -> `state` -> `jobs` -> `core`; front ends never import each other, except that `dtc tui` in `cli/app.py` starts the TUI app (`tui` never imports `cli`)
 - **Logging**: Loguru
 - **Lint and format**: Ruff lints, Black formats (both configured in `pyproject.toml`)
 
