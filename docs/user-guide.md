@@ -225,73 +225,119 @@ wait. Ctrl-C ends a wait at once and stops the job.
 
 ## Browse and run jobs in the terminal UI
 
-`dtc tui` lists every job file in `data/`, shows what running one would do,
-and runs one while you watch, without leaving the terminal:
+`dtc tui` shows your jobs, runs one while you watch, and shows what ran
+before, all on one screen in a dark theme. You drive it by typing commands
+that begin with `/`:
 
 ```bash
 uv run dtc tui
 uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli --shutdown-grace 10
 ```
 
-- The list shows each `*.yaml` and `*.yml` file (any letter case) directly in the data directory
-  (default: `data/` in the project, whatever the working directory), sorted
-  by file name, with its name, mode, run count, and whether it is valid. An
-  invalid file shows its first error, naming the field. Sub-directories,
-  dot-directories, and dotfiles are not listed.
-- Enter opens a job: the summary `validate-job` prints, each prompt pair
-  with the runs that use it, and the plan `run-job --dry-run` prints. For a
-  job that sets no seed, the plan uses the placeholder seed `0`, so it is
-  the same each time; a run draws a real seed. If `draw-things-cli` or
-  `ffmpeg` is missing, the plan shows why and the rest still shows.
+The screen, top to bottom:
+
+- **draw-things-cli** (top left, 15 lines): the run line (the running run's
+  number, elapsed time, step progress, and output file, or the cooldown
+  countdown), then the last 2000 lines `draw-things-cli` printed. stderr is
+  in red, and progress-bar lines update the run line instead of adding
+  lines.
+- **Messages** (below it, like the draw-things-cli pane and the status line
+  on black): the output of each command and a readable log of
+  the running job: when it started, each run's start (with its command,
+  credentials redacted) and result, cooldowns, and the job's result with its
+  manifest and log paths. It keeps the last 5000 lines.
+- **History** (the right third): every execution recorded in the state
+  store, newest first: its ID, job name, status, start time, and runs
+  succeeded of total.
+- **The command line**, between two lines, showing `> ` and a white block
+  cursor, then the **status line**: the running or last job, the data
+  directory, and a reminder of `/help` and Ctrl-C.
+
+On a terminal shorter than 30 lines, the draw-things-cli pane shrinks (down
+to 7 lines) to leave Messages some room. The smallest usable size is 80x24.
+
+| Command | Action |
+|---------|--------|
+| `/help` | List the commands and keys |
+| `/jobs` | List the job files and whether each is valid |
+| `/job JOB` | The summary, prompt pairs, and dry-run plan of a job |
+| `/run JOB` | Read the job again, confirm, and run it |
+| `/stop` | Stop the running job, after confirmation |
+| `/history` | Read the history again |
+| `/execution ID` | The detail of one execution |
+| `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, or `running` executions |
+| `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
+| `/filter off` | Remove both filters |
+| `/reveal ID [RUN]` | Show a run's output in Finder (default: the last run with an output) |
+| `/clear` | Clear the messages |
+| `/quit` | Quit; while a job runs, asks to stop it first |
+
+- `JOB` is a file name in the data directory (`walk.yaml`), or the name
+  without its suffix when only one file has it. Quote a name with spaces,
+  or escape them: `/run '[b] walk.yaml'` or `/run my\ job.yaml`. Tab
+  completes such names in the style you started. A line that does not begin with `/` runs nothing.
+- The data directory (default: `data/` in the project, whatever the working
+  directory) holds the jobs: each `*.yaml` and `*.yml` file (any letter case)
+  directly in it, sorted by name. `/jobs` shows each one's name, mode, and
+  run count, or the first error of an invalid one. Sub-directories,
+  dot-directories, and dotfiles are ignored. `/jobs`, `/job`, and `/run`
+  read the files again each time, so edit a job in your editor and run the
+  command again.
+- `/job` prints what `validate-job` and `run-job --dry-run` print. For a job
+  that sets no seed, the plan uses the placeholder seed `0`, so it is the
+  same each time; a run draws a real seed. If `draw-things-cli` or `ffmpeg`
+  is missing, the plan says why and the rest still shows.
 - `--executable` is the `draw-things-cli` the plan names and a run uses, and
   `--shutdown-grace` is how long a stopped run may take before it is killed
   (default 10 seconds), as for `run-job`.
-- `x` on the list or in the detail view reads the job file again and asks
-  to confirm, showing the job, mode, runs, cooldown, seed, output directory,
-  and executable (`y` or Enter runs, `n` or Escape cancels). The job then
-  runs as `run-job` would run it: it takes the run lock, is recorded in the
-  execution history, and writes its manifest and log when
-  `write_job_records` is true. If another run holds the lock, or the job
-  cannot start (for example `draw-things-cli` is missing), the live view
-  says why and nothing runs. One job runs at a time; the list shows it as
-  `running`.
-- The live view shows each run's status and seconds, the running run's
-  elapsed time, output file, step progress, and command (credentials
-  redacted), the cooldown countdown, the last 2000 lines `draw-things-cli`
-  printed (stderr in red; progress-bar lines update the progress instead),
-  and, at the end, the status, completed runs, exit code, and the manifest
-  and log paths. Escape goes back to the list and the job keeps running; `l`
-  on the list opens the live view of the running job, or of the last one.
-- `s` in the live view stops the job after you confirm, as Ctrl-C stops
-  `run-job`: the run and any cooldown end, no later run starts, and the job
-  is `interrupted` with exit code 130.
-- `q` or Ctrl-C while a job runs asks whether to stop the job and quit, or
-  stay; the TUI quits only once the job has stopped. If `dtc tui` receives
-  `SIGTERM`, `SIGHUP` (the terminal closed), or `SIGINT`, it stops the job
-  the same way and exits with 128+N (143 for `SIGTERM`). A signal while the
-  job is already stopping changes nothing.
-- The list is read when the TUI starts and when you press `r`, which also
-  recomputes any plan you already opened. Edit a job in your editor, then
-  press `r`.
-- Browsing only reads files. Running a job writes what `run-job` writes (its
-  outputs and last frames, its manifest and log when `write_job_records` is
-  true, `state/dtc.db`, and `state/run.lock`) and nothing else; the TUI never
-  changes a job file, `dt-config/`, or the global configuration.
-- An invalid global configuration is reported before the TUI starts, and the
-  command exits with 2. If the TUI itself fails, it prints the error and the
-  command exits with 1.
+- `/run` asks to confirm, showing the job, mode, runs, cooldown, seed,
+  output directory, and executable. Only `y` runs it; Enter does not, so a
+  second Enter after `/run` cannot start a job by accident. `n` or Escape
+  cancels. The job then runs as `run-job` would run it: it takes the run
+  lock, is recorded in the execution history, and writes its manifest and
+  log when `write_job_records` is true. If another run holds the lock, or
+  the job cannot start (for example, `draw-things-cli` is missing), Messages
+  says why and nothing runs. One job runs at a time.
+- `/stop` stops the job after you confirm, as Ctrl-C stops `run-job`: the
+  run and any cooldown end, no later run starts, and the job is
+  `interrupted` with exit code 130.
+- The history pane is read when the TUI starts, on `/history`, when a filter
+  changes, and as the TUI's own job progresses. While another process runs a
+  job (for example, `run-job` in another terminal), it is checked every 5
+  seconds, so that job appears and updates whatever the filter. When no process holds the run lock, an execution left `running`
+  by a crash is shown as `interrupted`. More rows load as you move to the
+  last one.
+- `/execution ID`, or Enter on a history row, prints the execution as it
+  ran, from the stored record rather than the current job file: its
+  settings, and each run's prompts, input, output, last frame, seconds,
+  exit code, and command. A file that no longer exists is marked
+  `(missing)`. Executions brought in by `import-history` are marked
+  `imported`.
+- `/reveal` runs `open -R` on the output (macOS). If the file is missing,
+  or `open` fails, Messages says so.
 
 | Key | Action |
 |-----|--------|
-| Up/Down, `j`/`k` | Move in the list |
-| Enter | Open the detail view |
-| `x` | Run the job, after confirmation (list, detail) |
-| `l` | Open the live view of the running or last job (list) |
-| `s` | Stop the job, after confirmation (live view) |
-| Escape | Back to the list (a running job continues) |
-| `r` | Refresh the list |
-| `?` | Help |
-| `q`, Ctrl-C | Quit; while a job runs, asks to stop it first |
+| Enter | Run the command; in the history, show the selected execution |
+| Tab | Complete a command, job file name, or filter word; with nothing to complete, move to the history |
+| Up/Down | Recall the commands typed in this session; in the history, move |
+| Escape | Clear the command line; in the history, go back to the command line |
+| Ctrl-C | Clear the command line; on an empty line, press twice within 2 seconds to quit |
+
+- Ctrl-C twice while a job runs asks whether to stop the job and quit; the
+  TUI quits only once the job has stopped. Ctrl-C does nothing while a
+  confirmation is open. If `dtc tui` receives `SIGTERM`, `SIGHUP` (the
+  terminal closed), or `SIGINT`, it stops the job the same way and exits
+  with 128+N (143 for `SIGTERM`). A signal while the job is already stopping
+  changes nothing.
+- Browsing only reads files. Running a job writes what `run-job` writes (its
+  outputs and last frames, its manifest and log when `write_job_records` is
+  true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
+  changes a job file, `dt-config/`, or the global configuration, and it
+  does not create `state/dtc.db` just to show an empty history.
+- An invalid global configuration is reported before the TUI starts, and the
+  command exits with 2. If the TUI itself fails, it prints the error and the
+  command exits with 1.
 
 ## Execution history and the run lock
 

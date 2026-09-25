@@ -96,6 +96,34 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in self.store.list_executions(name="older")], [older])
         self.assertEqual([row["id"] for row in self.store.list_executions(limit=1, offset=1)], [older])
 
+    def test_name_contains_matches_the_job_name_or_the_file_name_as_written(self) -> None:
+        walk = self.add("Sunset-Walk", started=iso(3), finished=iso(3))
+        bare = self.store.start_execution(job_name="dawn", job_file="evening_1.yaml", mode="i2v", started_at=iso(2))
+        nested = self.store.start_execution(job_name="dusk", job_file="/walk/night.yaml", mode="i2v", started_at=iso(1))
+        self.assertEqual([row["id"] for row in self.store.list_executions(name_contains="walk")], [walk])
+        self.assertEqual([row["id"] for row in self.store.list_executions(name_contains="EVENING")], [bare])
+        self.assertEqual([row["id"] for row in self.store.list_executions(name_contains="g_1")], [bare])
+        # % and _ are literal, and the directory is not part of the file name.
+        self.assertEqual(self.store.list_executions(name_contains="t_w"), [])
+        self.assertEqual(self.store.list_executions(name_contains="%"), [])
+        self.assertEqual([row["id"] for row in self.store.list_executions(name_contains="night")], [nested])
+        self.assertEqual(self.store.list_executions(name_contains="walk/"), [])
+
+    def test_executions_are_read_by_id(self) -> None:
+        done = self.add("done", started=iso(2), finished=iso(2))
+        running = self.add("running", started=iso(1))
+        rows = {row["id"]: row for row in self.store.executions_by_id([running, done, 999], running_as_interrupted=True)}
+        self.assertEqual(sorted(rows), sorted([done, running]))
+        self.assertEqual((rows[done]["status"], rows[running]["status"], rows[done]["settings"]), ("succeeded", "interrupted", {"output_directory": "/out"}))
+        self.assertEqual(self.store.executions_by_id([]), [])
+
+    def test_succeeded_runs_are_counted_per_execution(self) -> None:
+        done = self.add("done", started=iso(1), finished=iso(1), runs=3)
+        running = self.add("running", started=iso(1), runs=2)
+        self.store.finish_run(done, 2, status="failed", exit_code=1, seconds=1.0, output=None, last_frame=None)
+        self.assertEqual(self.store.succeeded_runs([done, running, 999]), {done: 2})
+        self.assertEqual(self.store.succeeded_runs([]), {})
+
     def test_the_sweep_closes_running_rows_and_their_runs_as_interrupted(self) -> None:
         crashed = self.add("crashed", started=iso(1))
         done = self.add("done", started=iso(1), finished=iso(1))

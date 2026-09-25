@@ -28,7 +28,7 @@ way, from front ends down to `core`.
 ```
 src/draw_things_control/
 ├── core/        # runner, arguments, generation, configuration      (phase 1)
-├── jobs/        # job definition and service, manifests, inputs     (phase 1; events, queue later)
+├── jobs/        # job definition and service, manifests, inputs     (phase 1; events phase 2, queue phase 3)
 ├── cli/         # Typer app: the `dtc` command                      (phase 1)
 ├── state/       # SQLite store and recorder                         (phase 2)
 ├── tui/         # Textual app                                       (phase 2)
@@ -98,18 +98,31 @@ Adds what every later front end needs, without changing the CLI's behavior:
   `ChildStartCallback` (`JobService.run(on_child_start=)`,
   `GenerationService.execute(on_start=)`, then the `RunnerFactory`'s
   `on_start`), so no module state is involved.
-- `tui/` (Textual, Milestones 03 and 04 done): `app.py` takes its settings,
-  data directory, executable, shutdown grace, and a `JobService` built with
-  `handle_signals=False` as arguments; `screens.py` has the job list, detail
-  view, live run view, confirmation dialog, and help; `widgets.py` renders
-  `jobs/job_report.py` text and the live view's text. A job runs on a thread
-  worker that takes `RunLock("tui")`, opens its own `Store`, and runs
-  `JobService.run` with the `ExecutionRecorder`; its events reach the main
-  thread through `App.post_message` and update a `LiveRun` model
-  (`live_run.py`) that screens render from. The app registers `SIGHUP`,
-  `SIGTERM`, and `SIGINT` on the asyncio loop and cancels any running job
-  when it unmounts, so no `draw-things-cli` outlives it. Browsing writes
-  nothing. Execution history follows in Milestone 05.
+- `tui/` (Textual, Milestones 03 to 05 done). Textual code stays in the
+  modules that need it; the rest are plain functions that run on worker
+  threads and are tested without an app.
+
+  | Module | Responsibility |
+  |--------|----------------|
+  | `app.py` | The app: its collaborators (settings, data directory, executable, shutdown grace, a `JobService` built with `handle_signals=False`), the job worker, signals, and the two-press Ctrl-C |
+  | `screens.py` | `MainScreen` (layout, `/` command dispatch, wiring job events to the panes) and the confirmation dialog |
+  | `panes.py` | `CliPane` (run line and output) and `HistoryPane` (paging, filters, polling, in-place row updates), each owning its state |
+  | `widgets.py` | `CommandInput` (completion, recall) and `MessageLog` |
+  | `commands.py` | The command table: parsing, usage, help, completion |
+  | `history.py` | `HistoryReader` (one store, never raises, never creates or prunes the database), output paths, reveal |
+  | `job_files.py` | Reading and planning the job files in the data directory |
+  | `text.py` | Every text the TUI shows, from `jobs/job_report.py` where the CLI prints the same |
+  | `live_run.py` | `LiveRun`, the running job's state, built from its events on the main thread |
+
+  A job runs on a thread worker that takes `RunLock("tui")`, opens its own
+  `Store`, and runs `JobService.run` with the `ExecutionRecorder`. Its
+  events reach the main thread through `App.post_message`, update the
+  `LiveRun`, and are passed to the panes; a finished run updates only its
+  history row, named by the recorder's `execution_id`. The app registers
+  `SIGHUP`, `SIGTERM`, and `SIGINT` on the asyncio loop and cancels any
+  running job when it unmounts, so no `draw-things-cli` outlives it. No
+  Textual worker may raise, since a failed worker closes the app: store
+  reads and `open` failures become messages. Browsing writes nothing.
 
 ## Phase 3: API and MCP for agents (planned)
 

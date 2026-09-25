@@ -194,26 +194,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     cooldown_seconds, cooldown_source = _cooldown(fail, data, global_config)
 
     desired = _desired_size(fail, data, mode)
-    plan: ResizePlan | None = None
-    ignored_size: list[tuple[str, str, Any]] = []
-    if input_path is not None:
-        image_size, orientation = read_image_info(input_path)
-        if desired is None:
-            job_size, source = _job_size(fail, override, base_config, config_file)
-            check_input_size(input_path, image_size, job_size, source)
-        else:
-            desired_width, desired_height, max_crop_percent = desired
-            try:
-                plan = resize_plan(input_path.name, image_size, orientation, desired_width, desired_height, max_crop_percent)
-            except ValueError as error:
-                raise ValueError(f"{path}: {error}") from error
-            if decode_input and plan.needs_copy:
-                decode_image(input_path)
-            for key in ("width", "height"):
-                if getattr(override, key) is not None:
-                    ignored_size.append(("config_override", key, getattr(override, key)))
-                if key in base_config:
-                    ignored_size.append(("config_file", key, base_config[key]))
+    plan, ignored_size = _input_size(fail, path, input_path, desired, override, base_config, config_file, decode_input=decode_input)
 
     return JobDefinition(
         path=path,
@@ -234,7 +215,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         ignored_config=ignored_config,
         size=plan.target_size if plan is not None else None,
         input_resize=plan,
-        ignored_size=tuple(ignored_size),
+        ignored_size=ignored_size,
         source_text=source_text,
     )
 
@@ -290,6 +271,34 @@ def _desired_size(fail: _Failure, data: dict[str, Any], mode: GenerationMode) ->
     if not given:
         return None
     return data.get("desired_input_width"), data.get("desired_input_height"), max_crop
+
+
+def _input_size(fail: _Failure, path: Path, input_path: Path | None, desired: tuple[int | None, int | None, float | None] | None, override: ConfigOverride, base_config: dict[str, Any], config_file: str, *, decode_input: bool) -> tuple[ResizePlan | None, tuple[tuple[str, str, Any], ...]]:
+    """Check the input image against the job's size, or plan its resize to the desired size.
+
+    Returns the resize plan (None without a desired size or input) and each width or height the desired size replaces.
+    """
+    if input_path is None:
+        return None, ()
+    image_size, orientation = read_image_info(input_path)
+    if desired is None:
+        job_size, source = _job_size(fail, override, base_config, config_file)
+        check_input_size(input_path, image_size, job_size, source)
+        return None, ()
+    desired_width, desired_height, max_crop_percent = desired
+    try:
+        plan = resize_plan(input_path.name, image_size, orientation, desired_width, desired_height, max_crop_percent)
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
+    if decode_input and plan.needs_copy:
+        decode_image(input_path)
+    ignored: list[tuple[str, str, Any]] = []
+    for key in ("width", "height"):
+        if getattr(override, key) is not None:
+            ignored.append(("config_override", key, getattr(override, key)))
+        if key in base_config:
+            ignored.append(("config_file", key, base_config[key]))
+    return plan, tuple(ignored)
 
 
 def _cooldown(fail: _Failure, data: dict[str, Any], global_config: GlobalConfig) -> tuple[float, str]:

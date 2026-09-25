@@ -21,13 +21,13 @@ cp config/global-config.example.yaml config/global-config.yaml   # then edit the
 uv run dtc validate-job data/example-job.yaml
 uv run dtc run-job data/example-job.yaml
 
-# Browse, run, and watch jobs in a terminal UI
+# Browse, run, and watch jobs, and review past runs, in a terminal UI
 uv run dtc tui
 ```
 
 ## Documentation
 
-- [User guide](docs/user-guide.md): commands, jobs, and outputs
+- [User guide](docs/user-guide.md): commands, jobs, outputs, and the terminal UI
 - [Architecture](docs/architecture.md): modules, process supervision, exit codes
 - [Development rules](docs/development-rules.md): style, checks, docs, git
 - [Plans and changelogs](docs/README.md): phases 1 to 3

@@ -15,8 +15,8 @@ from loguru import logger
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.screens import ConfirmScreen, JobListScreen, LiveRunScreen
-from draw_things_control.tui.widgets import JobTable
+from draw_things_control.tui.screens import ConfirmScreen, MainScreen
+from draw_things_control.tui.widgets import CommandInput
 from tests.tui.fake_runs import FakeRuns
 
 
@@ -28,13 +28,14 @@ def main() -> int:
     app = DrawThingsApp(settings=GlobalConfig(input_directory=root / "input", output_directory=root / "output"), data_directory=root / "data", executable="draw-things-cli", job_service=runs.service)
 
     async def start_job(pilot) -> None:
-        while not (isinstance(app.screen, JobListScreen) and app.screen.query_one(JobTable).row_count):
+        while not isinstance(app.screen, MainScreen):
             await asyncio.sleep(0.02)
-        await pilot.press("x")
+        app.screen.query_one(CommandInput).value = "/run walk"
+        await pilot.press("enter")
         while not isinstance(app.screen, ConfirmScreen):
             await asyncio.sleep(0.02)
         await pilot.press("y")
-        while not isinstance(app.screen, LiveRunScreen):
+        while app.live is None:
             await asyncio.sleep(0.02)
 
     with mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", root / "dt-config"), mock.patch("draw_things_control.core.run_lock.STATE_DIRECTORY", root / "state"):

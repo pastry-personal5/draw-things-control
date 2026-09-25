@@ -11,14 +11,9 @@ import subprocess
 import sys
 import threading
 import time
-import unittest
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest import mock
-
-from loguru import logger
-from textual.widgets import RichLog, Static
 
 from draw_things_control.core import run_lock
 from draw_things_control.core.generation_service import GenerationService
@@ -28,70 +23,39 @@ from draw_things_control.jobs.job_definition import load_job
 from draw_things_control.jobs.job_events import RunStarted
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
+from draw_things_control.tui.history import HistoryReader
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, JobEventMessage, LiveRun
-from draw_things_control.tui.screens import ConfirmScreen, JobListScreen, LiveRunScreen
-from draw_things_control.tui.widgets import JobTable
+from draw_things_control.tui.panes import HistoryPane
+from draw_things_control.tui.screens import ConfirmScreen, MainScreen
+from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import JobTestCase, job_data
 from tests.tui.fake_runs import FakeRuns
+from tests.tui.tui_case import TuiTestCase
 
 TWO_RUNS = {"run_count": 2, "prompt_pairs": [{"name": "walk", "positive": "walk", "runs": [1, 2]}], "cooldown_seconds": 0}
 
 
-class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.data = self.root / "data"
-        self.data.mkdir()
-        self.state = self.root / "state"
-        for target, value in (("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config), ("draw_things_control.core.run_lock.STATE_DIRECTORY", self.state)):
-            patcher = mock.patch(target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        # As dtc tui leaves it: no sink writes to the terminal while the app runs.
-        logger.remove()
-        self.addCleanup(logger.add, sys.stderr)
-
+class LiveRunTests(TuiTestCase):
     def write_data_job(self, name: str = "walk.yaml", **changes: object) -> Path:
-        self.write_job(job_data(**{**TWO_RUNS, **changes}), name=f"data/{name}")
-        return self.data / name
+        return super().write_data_job(name, **{**TWO_RUNS, **changes})
 
     def app(self, runs: FakeRuns, settings: GlobalConfig | None = None) -> DrawThingsApp:
-        return DrawThingsApp(settings=settings or self.global_config, data_directory=self.data, executable="draw-things-cli", job_service=runs.service, shutdown_grace=3)
+        return self.make_app(runs.service, settings=settings, shutdown_grace=3)
 
-    async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
-        deadline = time.monotonic() + timeout
-        while not condition():
-            if time.monotonic() > deadline:
-                self.fail(f"timed out waiting for {what}")
-            await pilot.pause(0.02)
-
-    async def start(self, pilot: Any, key: str = "x") -> None:
-        """Wait for the list, run its selected job, and confirm."""
+    async def start(self, pilot: Any, name: str = "walk") -> None:
+        """Run the job and confirm."""
         app = pilot.app
-        await self.wait_for(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen.query_one(JobTable).row_count > 0, "the job list")
-        await pilot.press(key)
+        await self.command(pilot, f"/run {name}", settle=False)
         await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
         await pilot.press("y")
-        await self.wait_for(pilot, lambda: isinstance(app.screen, LiveRunScreen), "the live view")
+        await self.wait_for(pilot, lambda: app.live is not None, "the job to start")
 
     async def finish(self, pilot: Any) -> None:
         await self.wait_for(pilot, lambda: not pilot.app.job_running, "the job worker to end")
         await pilot.pause()
 
-    @staticmethod
-    def text(app: DrawThingsApp, widget_id: str) -> str:
-        return str(app.screen.query_one(f"#{widget_id}", Static).content)
-
-    @staticmethod
-    def pane(app: DrawThingsApp) -> list[str]:
-        return [strip.text.rstrip() for strip in app.screen.query_one(RichLog).lines]
-
-    def executions(self) -> list[dict[str, Any]]:
-        store = Store()
-        try:
-            return [store.get_execution(row["id"]) for row in store.list_executions()]  # type: ignore[misc]
-        finally:
-            store.close()
+    def log(self) -> str:
+        return "\n".join(self.said)
 
     async def test_a_job_runs_with_progress_and_ends_with_its_result(self) -> None:
         self.write_data_job()
@@ -110,23 +74,28 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
                 await self.start(pilot)
                 await self.wait_for(pilot, lambda: app.live is not None and app.live.progress == (4, 8), "run 1's progress")
                 await pilot.pause()
-                header, active = self.text(app, "live-header"), self.text(app, "live-active")
-                table = app.screen.query_one("#live-runs")
-                statuses = [str(table.get_row_at(index)[2]) for index in range(table.row_count)]
+                status, line = self.text(app, "run-line"), self.text(app, "status-line")
+                await self.wait_for(pilot, lambda: self.history(app) and self.history(app)[0][2] == "running", "the running row")
                 gate.set()
                 await self.finish(pilot)
-                result, pane = self.text(app, "live-result"), self.pane(app)
-        self.assertIn("sunset-walk  i2v  seed 42 (config_file)  running", header)
-        self.assertIn("Run 1/2", active)
-        self.assertIn("progress: 4/8, 50%", active)
-        self.assertIn("draw-things-cli generate", active)
-        self.assertEqual(statuses, ["running", "pending"])
+                await self.settle(pilot)
+                pane, history, after = self.pane(app), self.history(app), self.text(app, "status-line")
+        self.assertIn("Run 1/2", status)
+        self.assertIn("progress 4/8, 50%", status)
+        self.assertIn("walk.yaml running run 1/2", line)
+        log = self.log()
+        self.assertIn("Job started: sunset-walk (i2v, 2 runs, seed 42 (config_file), model base.ckpt)", log)
+        self.assertIn("Run 1/2 started (pair walk)", log)
+        self.assertIn("command: draw-things-cli generate", log)
+        self.assertIn("Run 2 succeeded in", log)
+        self.assertIn("Job succeeded: 2/2 runs completed, exit code 0", log)
         self.assertEqual(applied[0], "JobStarted")
         self.assertEqual([name for name in applied if not name.startswith("RunOutput")], ["JobStarted", "RunStarted", "RunFinished succeeded", "RunStarted", "RunFinished succeeded", "JobFinished succeeded"])
-        self.assertIn("Job succeeded: 2/2 runs completed, exit code 0", result)
         self.assertIn("warning: [cache] missing [/bold]", pane)
         self.assertEqual(pane.count("Loading model base.ckpt"), 2)
         self.assertFalse(any("Sampling" in line for line in pane), pane)
+        self.assertEqual([row[1:3] + row[4:] for row in history], [["sunset-walk", "succeeded", "2/2"]])
+        self.assertIn("walk.yaml finished (succeeded)", after)
         [execution] = self.executions()
         self.assertEqual((execution["status"], execution["exit_code"], execution["seed"]), ("succeeded", 0, 42))
         self.assertEqual([run["status"] for run in execution["runs"]], ["succeeded", "succeeded"])
@@ -138,13 +107,13 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.wait_for(pilot, lambda: app.screen.query_one(JobTable).row_count > 0, "the job list")
-            await pilot.press("x")
+            await self.command(pilot, "/run walk", settle=False)
             await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
             confirm = self.text(app, "confirm")
             await pilot.press("n")
             await pilot.pause()
-            self.assertIsInstance(app.screen, JobListScreen)
+            self.assertIsInstance(app.screen, MainScreen)
+            self.assertIsNone(app.live)
         self.assertIn("Job: sunset-walk", confirm)
         self.assertIn("Mode: i2v", confirm)
         self.assertIn("Runs: 2", confirm)
@@ -155,24 +124,84 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runs.runners, [])
         self.assertFalse((self.state / "run.lock").exists())
 
-    async def test_the_job_is_read_again_when_x_is_pressed(self) -> None:
+    async def test_enter_does_not_confirm_a_run(self) -> None:
+        self.write_data_job()
+        runs = FakeRuns()
+        app = self.app(runs)
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.command(pilot, "/run walk", settle=False)
+            await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
+            confirm = self.text(app, "confirm")
+            # The Enter that submitted /run, pressed again or held, must not start the job.
+            await pilot.press("enter", "enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ConfirmScreen)
+            self.assertIsNone(app.live)
+            await pilot.press("y")
+            await self.wait_for(pilot, lambda: app.live is not None, "the job to start")
+            await self.finish(pilot)
+        self.assertIn("y: run    n or Escape: cancel", confirm)
+        self.assertNotIn("Enter: run", confirm)
+        self.assertEqual(len(runs.runners), 2)
+
+    async def test_stop_and_quit_still_take_enter(self) -> None:
+        self.write_data_job()
+        runs = FakeRuns(block=True)
+        app = self.app(runs)
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.start(pilot)
+            await self.wait_for(pilot, runs.started.is_set, "run 1")
+            await self.command(pilot, "/stop", settle=False)
+            self.assertIsInstance(app.screen, ConfirmScreen)
+            await pilot.press("enter")
+            await self.finish(pilot)
+        self.assertEqual(self.executions()[0]["status"], "interrupted")
+
+    async def test_a_finished_run_updates_its_row_without_reading_the_whole_history(self) -> None:
+        self.write_data_job(run_count=3, prompt_pairs=[{"name": "walk", "positive": "walk"}])
+        runs = FakeRuns()
+        app = self.app(runs)
+        pages, updates = [], []
+        page, update = HistoryReader.page, HistoryPane.update_rows
+
+        def count_page(reader: HistoryReader, *arguments: Any, **options: Any) -> Any:
+            pages.append(arguments)
+            return page(reader, *arguments, **options)
+
+        def count_update(pane: HistoryPane, request: int, rows: list[dict[str, Any]]) -> None:
+            updates.append([row["id"] for row in rows])
+            update(pane, request, rows)
+
+        with mock.patch.object(HistoryReader, "page", count_page), mock.patch.object(HistoryPane, "update_rows", count_update):
+            async with app.run_test(size=(160, 60)) as pilot:
+                await self.settle(pilot)
+                before = len(pages)
+                await self.start(pilot)
+                await self.finish(pilot)
+                await self.settle(pilot)
+                history = self.history(app)
+        # One read for the new execution, one when the job ends; each run updates its row in place.
+        self.assertEqual(len(pages) - before, 2)
+        # The fake runs finish faster than the reads, so what each update found varies; that it read only this row does not.
+        self.assertEqual(updates, [[self.executions()[0]["id"]]] * 3)
+        self.assertEqual([row[2:] for row in history], [["succeeded", history[0][3], "3/3"]])
+
+    async def test_the_job_is_read_again_when_it_is_run(self) -> None:
         path = self.write_data_job()
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.wait_for(pilot, lambda: app.screen.query_one(JobTable).row_count > 0, "the job list")
+            await self.settle(pilot)
             path.write_text("name: [broken\n", encoding="utf-8")
-            with mock.patch.object(app, "notify", wraps=app.notify) as notify:
-                await pilot.press("x")
-                await self.wait_for(pilot, lambda: notify.called, "the error")
-            self.assertIsInstance(app.screen, JobListScreen)
-        self.assertEqual(notify.call_args.kwargs["severity"], "error")
-        self.assertIn("walk.yaml", notify.call_args.args[0])
+            await self.command(pilot, "/run walk")
+            self.assertIsInstance(app.screen, MainScreen)
+            [message] = self.since("/run walk")
+        self.assertTrue(message.startswith("Invalid job walk.yaml: "), message)
         self.assertEqual(runs.runners, [])
 
-    async def test_s_stops_a_run_once(self) -> None:
+    async def test_stop_stops_a_run_once(self) -> None:
         self.write_data_job()
-        # The gate holds the run after the stop, so "Stopping..." can be seen.
+        # The gate holds the run after the stop, so stopping can be seen.
         gate = threading.Event()
         runs = FakeRuns(block=True, gate=gate)
         app = self.app(runs)
@@ -180,29 +209,28 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
             await self.start(pilot)
             await self.wait_for(pilot, runs.started.is_set, "run 1")
             with mock.patch.object(runs.service, "cancel", wraps=runs.service.cancel) as cancel:
-                await pilot.press("s")
+                await self.command(pilot, "/stop", settle=False)
                 self.assertIsInstance(app.screen, ConfirmScreen)
                 await pilot.press("y")
                 await pilot.pause()
-                self.assertIn("Stopping...", self.text(app, "live-header"))
-                with mock.patch.object(app, "notify", wraps=app.notify) as notify:
-                    await pilot.press("s")
-                self.assertEqual([call.args[0] for call in notify.call_args_list], ["Already stopping"])
-                self.assertIsInstance(app.screen, LiveRunScreen)
+                self.assertIn("stopping", self.text(app, "status-line"))
+                await self.command(pilot, "/stop", settle=False)
+                self.assertEqual(self.since("/stop"), ["Already stopping"])
+                self.assertIsInstance(app.screen, MainScreen)
                 gate.set()
                 await self.finish(pilot)
-                await pilot.press("s")
-                self.assertIsInstance(app.screen, LiveRunScreen)
-            result = self.text(app, "live-result")
+                await self.command(pilot, "/stop", settle=False)
+                self.assertEqual(self.since("/stop"), ["No job is running"])
         cancel.assert_called_once_with(signal.SIGINT)
-        self.assertIn("Job interrupted: 0/2 runs completed, exit code 130, stopped by SIGINT", result)
+        self.assertIn("Stopping the job (SIGINT)", self.said)
+        self.assertIn("Job interrupted: 0/2 runs completed, exit code 130, stopped by SIGINT", self.log())
         self.assertEqual(len(runs.runners), 1)
         [execution] = self.executions()
         self.assertEqual((execution["status"], execution["exit_code"]), ("interrupted", 130))
         self.assertEqual([run["status"] for run in execution["runs"]], ["interrupted"])
         self.assertTrue(run_lock_is_free())
 
-    async def test_s_during_a_cooldown_ends_it_at_once(self) -> None:
+    async def test_stop_during_a_cooldown_ends_it_at_once(self) -> None:
         self.write_data_job(cooldown_seconds=600)
         runs = FakeRuns()
         app = self.app(runs)
@@ -210,21 +238,23 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
             await self.start(pilot)
             await self.wait_for(pilot, lambda: app.live is not None and app.live.cooldown is not None, "the cooldown")
             await pilot.pause()
-            cooldown, header = self.text(app, "live-cooldown"), self.text(app, "live-header")
+            cooldown, line = self.text(app, "run-line"), self.text(app, "status-line")
             started = time.monotonic()
-            await pilot.press("s", "y")
+            await self.command(pilot, "/stop", settle=False)
+            await pilot.press("y")
             await self.finish(pilot)
             elapsed = time.monotonic() - started
-            result = self.text(app, "live-result")
-        self.assertIn("cooling down", header)
+        self.assertIn("cooling down", line)
         self.assertRegex(cooldown, r"Cooldown before run 2: (10 min|9 min 59 s) left, until \d\d:\d\d:\d\d")
+        self.assertRegex(self.log(), r"Cooldown 10 min before run 2, until \d\d:\d\d:\d\d")
+        self.assertIn("Cooldown cut short after", self.log())
         self.assertLess(elapsed, 5)
-        self.assertIn("Job interrupted: 1/2 runs completed, exit code 130", result)
+        self.assertIn("Job interrupted: 1/2 runs completed, exit code 130", self.log())
         self.assertEqual(len(runs.runners), 1)
         [execution] = self.executions()
         self.assertEqual((execution["status"], execution["exit_code"]), ("interrupted", 130))
 
-    async def test_a_busy_lock_starts_nothing_and_the_next_x_runs(self) -> None:
+    async def test_a_busy_lock_starts_nothing_and_the_next_run_runs(self) -> None:
         self.write_data_job()
         self.state.mkdir()
         other = RunLock("run-job")
@@ -234,15 +264,13 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.start(pilot)
             await self.finish(pilot)
-            result, header = self.text(app, "live-result"), self.text(app, "live-header")
+            status = self.text(app, "run-line")
             other.release()
-            await pilot.press("escape")
             await self.start(pilot)
             await self.finish(pilot)
-            second = self.text(app, "live-result")
-        self.assertIn(f"Did not start: Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.", result)
-        self.assertIn("did not start", header)
-        self.assertIn("Job succeeded", second)
+        self.assertIn(f"Did not start: Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.", self.said)
+        self.assertIn("did not start", status)
+        self.assertIn("Job succeeded", self.log())
         self.assertEqual(len(runs.runners), 2)
         self.assertEqual(len(self.executions()), 1)
         self.assertTrue(run_lock_is_free())
@@ -254,13 +282,12 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.start(pilot)
             await self.finish(pilot)
-            result = self.text(app, "live-result")
-        self.assertIn("Did not start: Could not find 'draw-things-cli' on PATH", result)
+        self.assertIn("Did not start: Could not find 'draw-things-cli' on PATH", self.log())
         self.assertEqual(self.executions(), [])
         self.assertTrue(run_lock_is_free())
         self.assertFalse(self.output_directory.exists())
 
-    async def test_x_during_a_run_and_the_list_status(self) -> None:
+    async def test_run_during_a_run_and_the_jobs_status(self) -> None:
         self.write_data_job()
         self.write_data_job("z-other.yaml")
         runs = FakeRuns(block=True)
@@ -268,58 +295,32 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.start(pilot)
             await self.wait_for(pilot, runs.started.is_set, "run 1")
-            await pilot.press("escape")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, JobListScreen)
-            table = app.screen.query_one(JobTable)
-            statuses = {str(table.get_row_at(index)[0]): str(table.get_row_at(index)[4]) for index in range(table.row_count)}
-            with mock.patch.object(app, "notify", wraps=app.notify) as notify:
-                await pilot.press("x")
-                await pilot.pause()
-            self.assertIsInstance(app.screen, JobListScreen)
+            await self.command(pilot, "/jobs")
+            [during] = [text for text in self.since("/jobs") if text.startswith("Jobs")]
+            await self.command(pilot, "/run z-other")
+            refused = self.since("/run z-other")
+            self.assertIsInstance(app.screen, MainScreen)
             app.request_stop()
             await self.finish(pilot)
-            after = str(table.get_row_at(0)[4])
-        self.assertEqual(statuses, {"walk.yaml": "running", "z-other.yaml": "valid"})
-        notify.assert_called_once_with("A job is already running", severity="warning")
-        self.assertEqual(after, "valid")
+            await self.command(pilot, "/jobs")
+            [after] = self.since("/jobs")
+        self.assertRegex(during, r"walk\.yaml .* running")
+        self.assertRegex(during, r"z-other\.yaml .* valid")
+        self.assertEqual(refused, ["A job is already running"])
+        self.assertNotIn("running", after)
 
-    async def test_escape_and_l_keep_the_state_and_output(self) -> None:
-        self.write_data_job()
-        gate = threading.Event()
-        runs = FakeRuns(gate=gate)
+    async def test_a_new_job_replaces_the_last_ones_output(self) -> None:
+        self.write_data_job(run_count=1, prompt_pairs=[{"name": "walk", "positive": "walk"}])
+        runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.wait_for(pilot, lambda: app.screen.query_one(JobTable).row_count > 0, "the job list")
-            with mock.patch.object(app, "notify", wraps=app.notify) as notify:
-                await pilot.press("l")
-            notify.assert_called_once_with("No job has run in this session")
-            # Started from the detail view, the live view still goes back to the list.
-            await pilot.press("enter")
-            await pilot.pause()
-            await pilot.press("x")
-            await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
-            await pilot.press("y")
-            await self.wait_for(pilot, runs.started.is_set, "run 1")
-            await pilot.pause()
-            before = (self.text(app, "live-header"), self.pane(app))
-            await pilot.press("escape")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, JobListScreen)
-            await pilot.press("l")
-            await pilot.pause()
-            self.assertIsInstance(app.screen, LiveRunScreen)
-            again = (self.text(app, "live-header"), self.pane(app))
-            await pilot.press("escape")
-            gate.set()
-            await self.finish(pilot)
-            await pilot.press("l")
-            await pilot.pause()
-            final, pane = self.text(app, "live-result"), self.pane(app)
-        self.assertEqual(before, again)
-        self.assertIn("Loading model base.ckpt", before[1])
-        self.assertIn("Job succeeded: 2/2 runs completed", final)
-        self.assertEqual(pane.count("Loading model base.ckpt"), 2)
+            self.assertIn("No job has run in this session", self.text(app, "run-line"))
+            for _ in range(2):
+                await self.start(pilot)
+                await self.finish(pilot)
+                pane = self.pane(app)
+                self.assertEqual(pane.count("Loading model base.ckpt"), 1, pane)
+            self.assertIn("sunset-walk: finished", self.text(app, "run-line"))
 
     async def test_the_output_pane_keeps_the_last_lines_as_written(self) -> None:
         from draw_things_control.core.process_output import OutputStream
@@ -339,29 +340,41 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("line 0 [x]", pane)
         self.assertFalse(any("/8" in line for line in pane))
 
-    async def test_q_and_ctrl_c_during_a_run_offer_to_stop_it(self) -> None:
+    async def test_quit_and_ctrl_c_twice_during_a_run_offer_to_stop_it(self) -> None:
         self.write_data_job()
-        for key in ("q", "ctrl+c"):
-            with self.subTest(key=key):
+        for how in ("/quit", "ctrl+c"):
+            with self.subTest(how=how):
+
+                async def ask(pilot: Any, how: str = how) -> None:
+                    if how == "ctrl+c":
+                        await pilot.press("ctrl+c", "ctrl+c")
+                    else:
+                        await self.command(pilot, "/quit", settle=False)
+                    await pilot.pause()
+
                 gate = threading.Event()
                 runs = FakeRuns(block=True, gate=gate)
                 app = self.app(runs)
                 async with app.run_test(size=(160, 60)) as pilot:
                     await self.start(pilot)
                     await self.wait_for(pilot, runs.started.is_set, "run 1")
-                    await pilot.press(key)
-                    await pilot.pause()
+                    await ask(pilot)
                     self.assertIsInstance(app.screen, ConfirmScreen)
-                    await pilot.press(key)
+                    # Ctrl-C does nothing while a dialog is open.
+                    await pilot.press("ctrl+c", "ctrl+c")
                     await pilot.pause()
                     self.assertEqual(sum(isinstance(screen, ConfirmScreen) for screen in app.screen_stack), 1)
                     await pilot.press("n")
                     await pilot.pause()
                     self.assertTrue(app.job_running)
-                    await pilot.press(key, "y")
-                    with mock.patch.object(app, "notify", wraps=app.notify) as notify:
-                        await pilot.press(key)
-                    notify.assert_called_once_with("Waiting for the job to stop")
+                    self.assertIsInstance(app.focused, CommandInput)
+                    await ask(pilot)
+                    await pilot.press("y")
+                    await pilot.pause()
+                    self.said.clear()
+                    await pilot.press("ctrl+c")
+                    await pilot.pause()
+                    self.assertEqual(self.said, ["Waiting for the job to stop"])
                     self.assertTrue(app.is_running)
                     gate.set()
                     await self.wait_for(pilot, lambda: not pilot.app.is_running, "the app to exit")
@@ -477,53 +490,29 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.start(pilot)
             await self.wait_for(pilot, runs.started.is_set, "run 1")
-            await pilot.press("s", "y")
+            await self.command(pilot, "/stop", settle=False)
+            await pilot.press("y")
             app.handle_signal(signal.SIGTERM)
             gate.set()
             await self.wait_for(pilot, lambda: not pilot.app.is_running, "the app to exit")
         self.assertEqual(app.return_code, 130)
         self.assertEqual(self.executions()[0]["signal"], "SIGINT")
 
-    async def test_the_tables_update_in_place(self) -> None:
-        self.write_data_job(run_count=20, prompt_pairs=[{"name": "walk", "positive": "walk"}])
-        runs = FakeRuns()
-        app = self.app(runs)
-        with mock.patch("draw_things_control.tui.widgets.RunTable.clear") as clear:
-            async with app.run_test(size=(160, 60)) as pilot:
-                await self.wait_for(pilot, lambda: app.screen.query_one(JobTable).row_count > 0, "the job list")
-                jobs = app.screen.query_one(JobTable)
-                with mock.patch.object(runs, "gate", threading.Event()):
-                    await self.start(pilot)
-                    await self.wait_for(pilot, runs.started.is_set, "run 1")
-                    await pilot.press("escape")
-                    await pilot.pause()
-                    status_width = jobs.columns[app.screen.status_column].content_width
-                    await pilot.press("l")
-                    runs.gate.set()
-                    await self.finish(pilot)
-                table = app.screen.query_one("#live-runs")
-                statuses = {str(table.get_row_at(index)[2]) for index in range(table.row_count)}
-        # Clearing the run table would scroll it back to the top on every event.
-        clear.assert_not_called()
-        self.assertEqual((table.row_count, statuses), (20, {"succeeded"}))
-        self.assertGreaterEqual(status_width, len("running"))
-
-    async def test_the_screen_shows_the_redacted_command(self) -> None:
+    async def test_the_log_shows_the_redacted_command(self) -> None:
         self.write_data_job()
         runs = FakeRuns()
         app = self.app(runs)
         command = GenerationService.redact_command(["draw-things-cli", "generate", "--api-key", "sekret-value", "--remote-shared-secret", "hush-value"])
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.wait_for(pilot, lambda: app.screen.query_one(JobTable).row_count > 0, "the job list")
+            await self.settle(pilot)
             app.live = LiveRun(load_job(self.data / "walk.yaml", self.global_config), self.data / "walk.yaml")
-            app.open_live()
-            await pilot.pause()
             app.post_message(JobEventMessage(RunStarted(at="", number=1, total=2, pair="walk", positive="walk", negative=None, input=None, resized_input=None, output="out.mov", last_frame=None, command=tuple(command))))
             await pilot.pause()
-            active = self.text(app, "live-active")
-        self.assertIn("--api-key", active)
-        self.assertNotIn("sekret-value", active)
-        self.assertNotIn("hush-value", active)
+            status = self.text(app, "run-line")
+        self.assertIn("--api-key", self.log())
+        for widget in (self.log(), status):
+            self.assertNotIn("sekret-value", widget)
+            self.assertNotIn("hush-value", widget)
 
     async def test_nothing_reaches_stdout_or_stderr_and_only_run_job_files_are_written(self) -> None:
         self.write_data_job()
@@ -536,10 +525,10 @@ class LiveRunTests(JobTestCase, unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.start(pilot)
                 await self.finish(pilot)
-                result = self.text(app, "live-result")
+                await self.settle(pilot)
         self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", ""))
-        self.assertIn("manifest: ", result)
-        self.assertIn("log: ", result)
+        self.assertIn("manifest: ", self.log())
+        self.assertIn("log: ", self.log())
         written = sorted(path.relative_to(self.root).as_posix() for path in set(self.root.rglob("*")) - before if path.is_file())
         allowed = ("state/dtc.db", "state/run.lock", "output/")
         self.assertTrue(all(name.startswith(allowed) for name in written), written)

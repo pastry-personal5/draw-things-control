@@ -23,6 +23,11 @@ class ExecutionRecorder:
         self._last_run: int | None = None
         self._failed = False
 
+    @property
+    def execution_id(self) -> int | None:
+        """The row of the execution being recorded, once JobStarted has created it; None before, or if that failed."""
+        return None if self._failed else self._execution_id
+
     def __call__(self, event: JobEvent) -> None:
         if self._failed:
             return

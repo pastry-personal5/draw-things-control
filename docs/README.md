@@ -1,6 +1,6 @@
 # Documentation
 
-- [User guide](user-guide.md): using the CLI
+- [User guide](user-guide.md): using the CLI and the terminal UI
 - [Architecture](architecture.md): modules, process supervision, exit codes
 - [Development rules](development-rules.md): style, checks, documentation, git
 - Plans and decisions, by phase:

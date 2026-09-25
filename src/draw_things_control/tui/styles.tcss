@@ -1,34 +1,79 @@
-#list-message {
-    padding: 1 2;
-    color: $warning;
-}
-
-#jobs {
+#main {
     height: 1fr;
 }
 
-#detail {
-    padding: 0 2;
+#left {
+    width: 2fr;
 }
 
-#detail Static {
-    margin: 1 0;
+/* Owner decision: every widget but the command line and the history is on black. */
+#cli, #run-line, #cli-output, #messages, #status-line {
+    background: black;
 }
 
-#summary.error {
-    color: $error;
+#cli {
+    height: 15;
+    border: round $panel;
+    border-title-color: $accent;
 }
 
-HelpScreen {
-    align: center middle;
+#run-line {
+    height: 1;
+    padding: 0 1;
 }
 
-#help {
-    width: auto;
-    height: auto;
-    padding: 1 3;
+#cli-output {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#messages {
+    height: 1fr;
+    padding: 0 1;
+    border: round $panel;
+    border-title-color: $accent;
+}
+
+#history {
+    width: 1fr;
+    min-width: 36;
+    height: 1fr;
+    border: round $panel;
+    border-title-color: $accent;
+    border-subtitle-color: $warning;
+}
+
+#history:focus {
     border: round $accent;
-    background: $surface;
+}
+
+Rule.command-rule {
+    margin: 0;
+    color: $foreground;
+}
+
+#command-line {
+    height: 1;
+}
+
+#prompt {
+    width: 2;
+    color: $accent;
+    text-style: bold;
+}
+
+#command {
+    width: 1fr;
+}
+
+#command > .input--cursor {
+    background: white;
+    color: black;
+    text-style: none;
+}
+
+#status-line {
+    height: 1;
 }
 
 ConfirmScreen {
@@ -42,27 +87,4 @@ ConfirmScreen {
     padding: 1 3;
     border: round $warning;
     background: $surface;
-}
-
-#live {
-    padding: 0 2;
-}
-
-#live-header {
-    margin: 1 0;
-}
-
-#live-runs {
-    height: auto;
-    max-height: 12;
-}
-
-#live-active, #live-cooldown, #live-result {
-    margin: 1 0 0 0;
-}
-
-#live-output {
-    height: 1fr;
-    margin: 1 0 0 0;
-    border: round $panel;
 }

@@ -107,6 +107,16 @@ class RecorderTests(JobTestCase):
         [execution] = self.store.list_executions()
         self.assertEqual(execution["status"], "running")
 
+    def test_the_execution_id_is_known_once_job_started_is_recorded_and_forgotten_on_failure(self) -> None:
+        recorder = ExecutionRecorder(self.store)
+        self.assertIsNone(recorder.execution_id)
+        self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False, recorder=recorder)
+        self.assertEqual(recorder.execution_id, self.store.list_executions()[0]["id"])
+        failing = ExecutionRecorder(self.store)
+        with mock.patch.object(self.store, "start_run", side_effect=RuntimeError("disk full")), mock.patch("draw_things_control.state.recorder.logger"):
+            self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False, recorder=failing)
+        self.assertIsNone(failing.execution_id)
+
     def test_the_recorder_combines_with_another_observer(self) -> None:
         seen: list[object] = []
         self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False, recorder=combine_observers(ExecutionRecorder(self.store), seen.append))

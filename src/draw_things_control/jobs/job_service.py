@@ -78,6 +78,31 @@ class JobPreview:
     command_previews: tuple[str, ...]
 
 
+@dataclass
+class _Execution:
+    """One run of ``JobService.run``: what every step of the chain reads, passed as one value instead of a long argument list."""
+
+    job: JobDefinition
+    manifest: JobManifest
+    # Both None unless records are written beside the outputs.
+    manifest_path: Path | None
+    log_path: Path | None
+    executable: str
+    shutdown_grace: float
+    # Run 1's resized or upright copy of the input, removed after run 1.
+    temporary_input: TemporaryInput | None
+    schedule: tuple[PromptPair, ...]
+
+    @property
+    def total(self) -> int:
+        return len(self.schedule)
+
+    def save(self) -> None:
+        """Write the manifest, when records are written."""
+        if self.manifest_path is not None:
+            write_manifest(self.manifest_path, self.manifest)
+
+
 @dataclass(frozen=True)
 class JobOutcome:
     """The result of running a job."""
@@ -262,21 +287,22 @@ class JobService:
                 log_file=log_path.name if log_path is not None else None,
                 input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
             )
-            return self._run_chain(job, manifest, manifest_path, log_path, executable=executable, shutdown_grace=shutdown_grace, temporary_input=temporary_input)
+            execution = _Execution(job, manifest, manifest_path, log_path, executable, shutdown_grace, temporary_input, job.schedule())
+            return self._run_chain(execution)
         except BaseException:
             if manifest is not None and manifest.status == "running":
                 manifest.status = "failed"
                 manifest.finished_at = self._timestamp()
-                self._save(manifest_path, manifest)
+                if manifest_path is not None:
+                    write_manifest(manifest_path, manifest)
             raise
         finally:
             restore_signal_handlers(previous_handlers)
             if log_sink is not None:
                 remove_job_log(log_sink)
 
-    def _run_chain(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, *, executable: str, shutdown_grace: float, temporary_input: TemporaryInput | None) -> JobOutcome:
-        schedule = job.schedule()
-        total = len(schedule)
+    def _run_chain(self, execution: _Execution) -> JobOutcome:
+        job, manifest = execution.job, execution.manifest
         self._emit(
             JobStarted(
                 at=manifest.started_at,
@@ -284,7 +310,7 @@ class JobService:
                 job_file=manifest.job_file,
                 source_text=job.source_text,
                 mode=manifest.mode,
-                total_runs=total,
+                total_runs=execution.total,
                 output_directory=str(job.output_directory),
                 input=str(job.input) if job.input is not None else None,
                 model=job.model,
@@ -292,41 +318,41 @@ class JobService:
                 seed_source=manifest.seed_source,
                 cooldown_seconds=job.cooldown_seconds,
                 cooldown_source=job.cooldown_source,
-                manifest=str(manifest_path) if manifest_path is not None else None,
-                log=str(log_path) if log_path is not None else None,
+                manifest=str(execution.manifest_path) if execution.manifest_path is not None else None,
+                log=str(execution.log_path) if execution.log_path is not None else None,
                 config_file=manifest.config_file,
                 config_override=manifest.config_override,
                 input_resize=manifest.input_resize,
             )
         )
         try:
-            return self._run_runs(job, manifest, manifest_path, log_path, schedule, executable=executable, shutdown_grace=shutdown_grace, temporary_input=temporary_input)
+            return self._run_runs(execution)
         except BaseException:
             # Every started job ends with JobFinished, so a front end never waits on one that raised.
             completed = sum(1 for record in manifest.runs if record.status == "succeeded")
-            self._emit(JobFinished(at=self._timestamp(), status="failed", exit_code=None, completed_runs=completed, total_runs=total, signal=None))
+            self._emit(JobFinished(at=self._timestamp(), status="failed", exit_code=None, completed_runs=completed, total_runs=execution.total, signal=None))
             raise
 
-    def _run_runs(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, schedule: tuple[PromptPair, ...], *, executable: str, shutdown_grace: float, temporary_input: TemporaryInput | None) -> JobOutcome:
-        total = len(schedule)
-        records = f"; manifest {manifest_path}; log {log_path}" if manifest_path is not None else ""
+    def _run_runs(self, execution: _Execution) -> JobOutcome:
+        job, manifest, total = execution.job, execution.manifest, execution.total
+        records = f"; manifest {execution.manifest_path}; log {execution.log_path}" if execution.manifest_path is not None else ""
         logger.info("Job {} ({}): {} runs, seed {} (from {}), {}{}", job.name, job.mode, total, manifest.seed, manifest.seed_source, cooldown_summary(job, "from "), records)
         report_ignored_config(job)
-        self._save(manifest_path, manifest)
+        execution.save()
         current_input = job.input
-        if temporary_input is not None:
-            logger.info("Run 1 input: temporary copy {} (removed after run 1)", temporary_input.path)
-            current_input = temporary_input.path
+        if execution.temporary_input is not None:
+            logger.info("Run 1 input: temporary copy {} (removed after run 1)", execution.temporary_input.path)
+            current_input = execution.temporary_input.path
         completed = 0
         exit_code = 0
-        for number, pair in enumerate(schedule, start=1):
+        for number, pair in enumerate(execution.schedule, start=1):
             if self._interrupt is not None:
                 exit_code = self._stop(manifest, self._interrupt, f"before run {number}/{total}")
                 break
-            run = self._plan_run(job, number, pair, current_input, manifest.seed, executable, set())
-            record = self._start_run(job, manifest, manifest_path, run, number, total, temporary_input)
+            run = self._plan_run(job, number, pair, current_input, manifest.seed, execution.executable, set())
+            record = self._start_run(execution, run)
             try:
-                status, exit_code = self._execute_run(job, run, record, shutdown_grace, number)
+                status, exit_code = self._execute_run(job, run, record, execution.shutdown_grace, number)
             except BaseException:
                 record.status = "failed"
                 # The run raised, so a file counts as kept only if it exists; the record itself is left as the manifest has it.
@@ -337,54 +363,54 @@ class JobService:
             if status != "succeeded" and not run.output.exists():
                 record.output = None
             self._finish_run(number, record, exit_code, output=record.output)
-            if number == 1 and temporary_input is not None:
-                temporary_input.cleanup()
+            if number == 1 and execution.temporary_input is not None:
+                execution.temporary_input.cleanup()
             if status != "succeeded":
                 partial = f"; partial output kept: {run.output}" if run.output.exists() else ""
                 logger.error("Run {}/{} {} with exit code {}{}", number, total, status.replace("_", " "), exit_code, partial)
                 manifest.status = "interrupted" if status == "interrupted" else "failed"
-                self._save(manifest_path, manifest)
+                execution.save()
                 break
             completed += 1
-            self._save(manifest_path, manifest)
+            execution.save()
             current_input = run.last_frame or run.output
             wait = number < total and job.cooldown_seconds > 0 and self._interrupt is None
-            stop = self._cool_down(job, manifest, manifest_path, record, number + 1, total) if wait else None
+            stop = self._cool_down(execution, record, number + 1) if wait else None
             if stop is not None:
                 exit_code = self._stop(manifest, *stop)
                 break
         else:
             manifest.status = "succeeded"
         manifest.finished_at = self._timestamp()
-        self._save(manifest_path, manifest)
+        execution.save()
         logger.info("Job {} {}: {}/{} runs completed{}", job.name, manifest.status, completed, total, records)
         stopped_by = self._exit_signal(exit_code) if manifest.status == "interrupted" else None
         self._emit(JobFinished(at=manifest.finished_at, status=manifest.status, exit_code=exit_code, completed_runs=completed, total_runs=total, signal=stopped_by))
-        return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=manifest_path, log=log_path)
+        return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=execution.manifest_path, log=execution.log_path)
 
-    def _start_run(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, run: PlannedRun, number: int, total: int, temporary_input: TemporaryInput | None) -> RunRecord:
+    def _start_run(self, execution: _Execution, run: PlannedRun) -> RunRecord:
         """Record ``run`` in the manifest, log it, and announce it; return its record."""
-        pair = run.pair
+        pair, number, temporary_input = run.pair, run.number, execution.temporary_input
         record = RunRecord(
             pair=pair.name,
             positive=pair.positive,
             negative=pair.negative,
             # Run 1's temporary copy is gone after the run, so record the job's own input.
-            input=str(job.input if number == 1 else run.input) if run.input is not None else None,
+            input=str(execution.job.input if number == 1 else run.input) if run.input is not None else None,
             output=run.output.name,
             last_frame=None,
             command=GenerationService.redact_command(run.arguments.command),
             started_at=self._timestamp(),
             resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
         )
-        manifest.runs.append(record)
-        self._save(manifest_path, manifest)
-        logger.info("Run {}/{} (pair {}): input={}, output={}", number, total, pair.name, run.input or "(none, text only)", run.output)
+        execution.manifest.runs.append(record)
+        execution.save()
+        logger.info("Run {}/{} (pair {}): input={}, output={}", number, execution.total, pair.name, run.input or "(none, text only)", run.output)
         self._emit(
             RunStarted(
                 at=record.started_at,
                 number=number,
-                total=total,
+                total=execution.total,
                 pair=pair.name,
                 positive=pair.positive,
                 negative=pair.negative,
@@ -397,20 +423,20 @@ class JobService:
         )
         return record
 
-    def _cool_down(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, record: RunRecord, next_run: int, total: int) -> tuple[signal.Signals, str] | None:
+    def _cool_down(self, execution: _Execution, record: RunRecord, next_run: int) -> tuple[signal.Signals, str] | None:
         """Wait the job's cooldown after ``record``'s run; return the signal that cut it short and where, or None."""
-        seconds = job.cooldown_seconds
+        seconds, total = execution.job.cooldown_seconds, execution.total
         until = (self._clock().astimezone() + timedelta(seconds=seconds)).strftime("%H:%M:%S")
         logger.info("Cooldown: waiting {} before run {}/{} (until {})", seconds_text(seconds), next_run, total, until)
         self._emit(CooldownStarted(at=self._timestamp(), after_run=next_run - 1, seconds=seconds, until=until))
         # Saved at 0 first, so the manifest shows the job is cooling down rather than stuck.
         record.cooldown_after_seconds = 0.0
-        self._save(manifest_path, manifest)
+        execution.save()
         waited = self._cooldown(seconds)
         # Only a wait that ended early was cut short; a signal after a full wait stops the job before the next run.
         stopped = self._interrupt if waited < seconds else None
         record.cooldown_after_seconds = round(waited, 1)
-        self._save(manifest_path, manifest)
+        execution.save()
         self._emit(CooldownEnded(at=self._timestamp(), waited_seconds=record.cooldown_after_seconds, cut_short=stopped is not None))
         if stopped is not None:
             return stopped, f"during the cooldown before run {next_run}/{total} (waited {seconds_text(round(waited, 1))} of {seconds_text(seconds)})"
@@ -427,11 +453,6 @@ class JobService:
         logger.warning("Job stopped by {} {}", received_signal.name, where)
         manifest.status = "interrupted"
         return 128 + received_signal.value
-
-    @staticmethod
-    def _save(manifest_path: Path | None, manifest: JobManifest) -> None:
-        if manifest_path is not None:
-            write_manifest(manifest_path, manifest)
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
         self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame))

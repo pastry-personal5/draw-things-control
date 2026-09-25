@@ -139,9 +139,10 @@ class Store:
         with self._transaction() as connection:
             connection.execute("UPDATE executions SET status = ?, exit_code = ?, signal = ?, finished_at = ?, finished_epoch = ? WHERE id = ?", (status, exit_code, signal, finished_at, epoch(finished_at), execution_id))
 
-    def list_executions(self, *, limit: int = 50, offset: int = 0, status: str | None = None, name: str | None = None, running_as_interrupted: bool = False) -> list[dict[str, Any]]:
-        """Executions, newest first, without their runs. ``running_as_interrupted`` is for read-only screens
-        that know no runner is alive: it changes the display only, never the database."""
+    def list_executions(self, *, limit: int = 50, offset: int = 0, status: str | None = None, name: str | None = None, name_contains: str | None = None, running_as_interrupted: bool = False) -> list[dict[str, Any]]:
+        """Executions, newest first, without their runs. ``name`` matches the job name exactly; ``name_contains`` matches
+        the job name or the job file's name as a substring, in any ASCII letter case. ``running_as_interrupted`` is for
+        read-only screens that know no runner is alive: it changes the display only, never the database."""
         clauses: list[str] = []
         values: list[Any] = []
         if status is not None:
@@ -155,6 +156,11 @@ class Store:
         if name is not None:
             clauses.append("job_name = ?")
             values.append(name)
+        if name_contains is not None:
+            pattern = "%" + name_contains.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            # The file name is what follows the last '/': rtrim strips the non-slash characters from the end.
+            clauses.append("(job_name LIKE ? ESCAPE '\\' OR substr(job_file, length(rtrim(job_file, replace(job_file, '/', ''))) + 1) LIKE ? ESCAPE '\\')")
+            values.extend((pattern, pattern))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._connection().execute(f"SELECT * FROM executions {where} ORDER BY started_epoch DESC, id DESC LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
         return [self._execution(row, running_as_interrupted) for row in rows]
@@ -169,6 +175,20 @@ class Store:
         runs = connection.execute("SELECT * FROM runs WHERE execution_id = ? ORDER BY number", (execution_id,)).fetchall()
         execution["runs"] = [self._run(run, running_as_interrupted) for run in runs]
         return execution
+
+    def executions_by_id(self, execution_ids: list[int], *, running_as_interrupted: bool = False) -> list[dict[str, Any]]:
+        """The executions with these IDs, without their runs, in no set order; a missing ID is left out."""
+        if not execution_ids:
+            return []
+        rows = self._connection().execute(f"SELECT * FROM executions WHERE id IN ({', '.join('?' for _ in execution_ids)})", execution_ids).fetchall()
+        return [self._execution(row, running_as_interrupted) for row in rows]
+
+    def succeeded_runs(self, execution_ids: list[int]) -> dict[int, int]:
+        """How many runs of each execution succeeded; an execution with none is absent."""
+        if not execution_ids:
+            return {}
+        rows = self._connection().execute(f"SELECT execution_id, COUNT(*) FROM runs WHERE status = 'succeeded' AND execution_id IN ({', '.join('?' for _ in execution_ids)}) GROUP BY execution_id", execution_ids).fetchall()
+        return {int(row[0]): int(row[1]) for row in rows}
 
     def has_manifest(self, manifest_path: str) -> bool:
         return self._connection().execute("SELECT 1 FROM executions WHERE manifest_path = ?", (manifest_path,)).fetchone() is not None
