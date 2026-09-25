@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import signal
 import sqlite3
 import sys
 from collections.abc import Iterator, Sequence
@@ -105,9 +106,9 @@ def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | N
     return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
 
 
-def create_job_service() -> JobService:
-    """The JobService every front end uses to run jobs with the real tools."""
-    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors)
+def create_job_service(*, handle_signals: bool = True) -> JobService:
+    """The JobService every front end uses to run jobs with the real tools; ``handle_signals`` must be False for jobs run off the main thread."""
+    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors, handle_signals=handle_signals)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
@@ -260,19 +261,27 @@ def import_history_command(
 def tui_command(
     data_dir: Annotated[Path, typer.Option("--data-dir", help="Directory of job files.")] = DEFAULT_DATA_DIRECTORY,
     executable: ExecutableOption = "draw-things-cli",
+    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
     global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
 ) -> None:
-    """Browse the jobs in the data directory in a terminal UI."""
+    """Browse, run, and watch the jobs in the data directory in a terminal UI."""
+    if shutdown_grace < 0:
+        logger.error("--shutdown-grace must not be negative")
+        raise typer.Exit(code=2)
     settings = load_settings(global_config)
     # Imported here, so the other commands do not load Textual.
     from draw_things_control.tui.app import DrawThingsApp
 
-    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_service=create_job_service())
+    # Jobs run on a worker thread, where signal handlers cannot be installed; the app handles signals itself.
+    tui_service = create_job_service(handle_signals=False)
+    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_service=tui_service, shutdown_grace=shutdown_grace)
     # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
     logger.remove()
     try:
         tui.run()
     finally:
+        # A backstop: the app stops a running job when it unmounts; this does nothing when no job runs.
+        tui_service.cancel(signal.SIGINT)
         configure_logging()
     # Textual sets a nonzero return code when the app ends on an error, after printing the traceback.
     if tui.return_code:

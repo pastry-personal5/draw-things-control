@@ -21,7 +21,7 @@ cp config/global-config.example.yaml config/global-config.yaml   # then edit the
 uv run dtc validate-job data/example-job.yaml
 uv run dtc run-job data/example-job.yaml
 
-# Browse jobs and their dry-run plans in a terminal UI
+# Browse, run, and watch jobs in a terminal UI
 uv run dtc tui
 ```
 

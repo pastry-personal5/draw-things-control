@@ -98,11 +98,18 @@ Adds what every later front end needs, without changing the CLI's behavior:
   `ChildStartCallback` (`JobService.run(on_child_start=)`,
   `GenerationService.execute(on_start=)`, then the `RunnerFactory`'s
   `on_start`), so no module state is involved.
-- `tui/` (Textual, Milestone 03 done): `app.py` takes its settings, data
-  directory, executable, and `JobService` as arguments; `screens.py` has the
-  job list, detail view, and help; `widgets.py` renders `jobs/job_report.py`
-  text. Files are read on worker threads and never written. The live run view
-  and execution history follow in Milestones 04 and 05.
+- `tui/` (Textual, Milestones 03 and 04 done): `app.py` takes its settings,
+  data directory, executable, shutdown grace, and a `JobService` built with
+  `handle_signals=False` as arguments; `screens.py` has the job list, detail
+  view, live run view, confirmation dialog, and help; `widgets.py` renders
+  `jobs/job_report.py` text and the live view's text. A job runs on a thread
+  worker that takes `RunLock("tui")`, opens its own `Store`, and runs
+  `JobService.run` with the `ExecutionRecorder`; its events reach the main
+  thread through `App.post_message` and update a `LiveRun` model
+  (`live_run.py`) that screens render from. The app registers `SIGHUP`,
+  `SIGTERM`, and `SIGINT` on the asyncio loop and cancels any running job
+  when it unmounts, so no `draw-things-cli` outlives it. Browsing writes
+  nothing. Execution history follows in Milestone 05.
 
 ## Phase 3: API and MCP for agents (planned)
 

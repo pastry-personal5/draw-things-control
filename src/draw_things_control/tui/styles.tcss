@@ -1,0 +1,68 @@
+#list-message {
+    padding: 1 2;
+    color: $warning;
+}
+
+#jobs {
+    height: 1fr;
+}
+
+#detail {
+    padding: 0 2;
+}
+
+#detail Static {
+    margin: 1 0;
+}
+
+#summary.error {
+    color: $error;
+}
+
+HelpScreen {
+    align: center middle;
+}
+
+#help {
+    width: auto;
+    height: auto;
+    padding: 1 3;
+    border: round $accent;
+    background: $surface;
+}
+
+ConfirmScreen {
+    align: center middle;
+}
+
+#confirm {
+    width: auto;
+    max-width: 90%;
+    height: auto;
+    padding: 1 3;
+    border: round $warning;
+    background: $surface;
+}
+
+#live {
+    padding: 0 2;
+}
+
+#live-header {
+    margin: 1 0;
+}
+
+#live-runs {
+    height: auto;
+    max-height: 12;
+}
+
+#live-active, #live-cooldown, #live-result {
+    margin: 1 0 0 0;
+}
+
+#live-output {
+    height: 1fr;
+    margin: 1 0 0 0;
+    border: round $panel;
+}

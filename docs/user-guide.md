@@ -60,7 +60,7 @@ different file.
 | `validate-job FILE` | Check a job file; runs nothing |
 | `run-job FILE` | Run every generation in a job, chained |
 | `import-history` | Import phase 1 job manifests into the execution history |
-| `tui` | Browse jobs, their settings, and their dry-run plans in a terminal UI |
+| `tui` | Browse, run, and watch jobs in a terminal UI |
 
 Add `--help` to any command for its full option list.
 
@@ -223,14 +223,14 @@ wait. Ctrl-C ends a wait at once and stops the job.
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
 
-## Browse jobs in the terminal UI
+## Browse and run jobs in the terminal UI
 
-`dtc tui` lists every job file in `data/` and shows what running one would do,
-without leaving the terminal:
+`dtc tui` lists every job file in `data/`, shows what running one would do,
+and runs one while you watch, without leaving the terminal:
 
 ```bash
 uv run dtc tui
-uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli
+uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli --shutdown-grace 10
 ```
 
 - The list shows each `*.yaml` and `*.yml` file (any letter case) directly in the data directory
@@ -243,12 +243,40 @@ uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli
   job that sets no seed, the plan uses the placeholder seed `0`, so it is
   the same each time; a run draws a real seed. If `draw-things-cli` or
   `ffmpeg` is missing, the plan shows why and the rest still shows.
-- `--executable` is the `draw-things-cli` the plan names, as for `run-job`.
+- `--executable` is the `draw-things-cli` the plan names and a run uses, and
+  `--shutdown-grace` is how long a stopped run may take before it is killed
+  (default 10 seconds), as for `run-job`.
+- `x` on the list or in the detail view reads the job file again and asks
+  to confirm, showing the job, mode, runs, cooldown, seed, output directory,
+  and executable (`y` or Enter runs, `n` or Escape cancels). The job then
+  runs as `run-job` would run it: it takes the run lock, is recorded in the
+  execution history, and writes its manifest and log when
+  `write_job_records` is true. If another run holds the lock, or the job
+  cannot start (for example `draw-things-cli` is missing), the live view
+  says why and nothing runs. One job runs at a time; the list shows it as
+  `running`.
+- The live view shows each run's status and seconds, the running run's
+  elapsed time, output file, step progress, and command (credentials
+  redacted), the cooldown countdown, the last 2000 lines `draw-things-cli`
+  printed (stderr in red; progress-bar lines update the progress instead),
+  and, at the end, the status, completed runs, exit code, and the manifest
+  and log paths. Escape goes back to the list and the job keeps running; `l`
+  on the list opens the live view of the running job, or of the last one.
+- `s` in the live view stops the job after you confirm, as Ctrl-C stops
+  `run-job`: the run and any cooldown end, no later run starts, and the job
+  is `interrupted` with exit code 130.
+- `q` or Ctrl-C while a job runs asks whether to stop the job and quit, or
+  stay; the TUI quits only once the job has stopped. If `dtc tui` receives
+  `SIGTERM`, `SIGHUP` (the terminal closed), or `SIGINT`, it stops the job
+  the same way and exits with 128+N (143 for `SIGTERM`). A signal while the
+  job is already stopping changes nothing.
 - The list is read when the TUI starts and when you press `r`, which also
   recomputes any plan you already opened. Edit a job in your editor, then
   press `r`.
-- The TUI only reads files; it never changes a job, a configuration, or
-  `state/`, and in this version it runs nothing.
+- Browsing only reads files. Running a job writes what `run-job` writes (its
+  outputs and last frames, its manifest and log when `write_job_records` is
+  true, `state/dtc.db`, and `state/run.lock`) and nothing else; the TUI never
+  changes a job file, `dt-config/`, or the global configuration.
 - An invalid global configuration is reported before the TUI starts, and the
   command exits with 2. If the TUI itself fails, it prints the error and the
   command exits with 1.
@@ -257,10 +285,13 @@ uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli
 |-----|--------|
 | Up/Down, `j`/`k` | Move in the list |
 | Enter | Open the detail view |
-| Escape | Back from the detail view |
+| `x` | Run the job, after confirmation (list, detail) |
+| `l` | Open the live view of the running or last job (list) |
+| `s` | Stop the job, after confirmation (live view) |
+| Escape | Back to the list (a running job continues) |
 | `r` | Refresh the list |
 | `?` | Help |
-| `q`, Ctrl-C | Quit |
+| `q`, Ctrl-C | Quit; while a job runs, asks to stop it first |
 
 ## Execution history and the run lock
 

@@ -7,7 +7,7 @@ before changing anything.
 ## Project overview
 
 A Python 3.12 project that controls the Draw Things image generation
-application through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) is in progress (Milestones 01 to 03 done); Phase 3 (API and MCP servers) is planned. See
+application through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) is in progress (Milestones 01 to 04 done); Phase 3 (API and MCP servers) is planned. See
 [docs/architecture.md](docs/architecture.md) for the modules across all three phases and
 [docs/user-guide.md](docs/user-guide.md) for usage.
 

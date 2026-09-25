@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import signal
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -330,8 +331,28 @@ class TuiCommandTests(JobTestCase):
             self.assertEqual(options["executable"], "/opt/dtc/cli")
             self.assertEqual(options["settings"].output_directory, self.output_directory)
             self.assertIsInstance(options["job_service"], JobService)
-            self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--data-dir", str(self.root)])
+            # Jobs run on a worker thread, where a service that installs signal handlers would raise.
+            self.assertFalse(options["job_service"]._handle_signals)
+            self.assertEqual(options["shutdown_grace"], 10.0)
+            self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--data-dir", str(self.root), "--shutdown-grace", "2.5"])
             self.assertEqual(init.call_args.kwargs["data_directory"], self.root)
+            self.assertEqual(init.call_args.kwargs["shutdown_grace"], 2.5)
+
+    def test_a_negative_shutdown_grace_exits_with_2(self) -> None:
+        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run:
+            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--shutdown-grace", "-1"])
+        self.assertEqual(result.exit_code, 2)
+        run.assert_not_called()
+
+    def test_any_running_job_is_cancelled_after_the_app_returns(self) -> None:
+        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")), mock.patch.object(JobService, "cancel") as cancel:
+            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
+        self.assertIsInstance(result.exception, RuntimeError)
+        cancel.assert_called_once_with(signal.SIGINT)
+        cli.configure_logging.assert_called_once_with()
+
+    def test_run_job_keeps_a_service_that_handles_signals(self) -> None:
+        self.assertTrue(cli.job_service._handle_signals)
 
     def test_a_failed_app_exits_with_its_return_code_and_logging_is_restored(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):
