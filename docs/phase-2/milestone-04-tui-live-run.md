@@ -72,8 +72,9 @@ The view shows:
 `q` while a job runs asks whether to stop the job and quit, or stay. It never
 leaves a generation running after the UI is gone. If the terminal closes or
 the app is killed, the run lock is released by the operating system and the
-child is stopped by the runner's own cleanup; the state store marks the job
-`interrupted` the next time it opens (Milestone 02).
+child is stopped by the runner's own cleanup; the next run marks the job
+`interrupted` in the state store (screens show it as `interrupted` before
+that; Milestone 02).
 
 ### Logging
 

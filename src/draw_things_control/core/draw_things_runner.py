@@ -127,6 +127,7 @@ class DrawThingsProcessRunner:
         kill_wait_seconds: float = 5.0,
         handle_signals: bool = True,
         capture_output: bool = True,
+        on_start: Callable[[int], None] | None = None,
     ) -> None:
         if shutdown_grace_seconds < 0:
             raise ValueError("shutdown_grace_seconds must not be negative")
@@ -146,6 +147,8 @@ class DrawThingsProcessRunner:
         self._kill_wait_seconds = kill_wait_seconds
         self._handle_signals = handle_signals
         self._capture_output = capture_output
+        # Told the child's PID (its process group id) once it exists, so the run lock can name it.
+        self._on_start = on_start
         self._shutdown_requested = threading.Event()
         self._requested_signal: signal.Signals | None = None
         self._timed_out = False
@@ -164,6 +167,7 @@ class DrawThingsProcessRunner:
         try:
             process = self._start_process()
             logger.info("Started subprocess (PID {})", process.pid)
+            self._report_start(process.pid)
             process_group_id = process.pid
             if self._capture_output:
                 readers = self._start_readers(process, output_queue)
@@ -222,6 +226,14 @@ class DrawThingsProcessRunner:
                 if not completed:
                     self._join_readers(readers)
             restore_signal_handlers(previous_handlers)
+
+    def _report_start(self, pid: int) -> None:
+        if self._on_start is None:
+            return
+        try:
+            self._on_start(pid)
+        except Exception:
+            logger.exception("Could not report the started subprocess")
 
     def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None:
         """Request graceful shutdown programmatically or from a signal handler."""

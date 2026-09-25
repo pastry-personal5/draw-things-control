@@ -42,7 +42,7 @@ processes from driving the GPU at once.
 | # | Milestone | Status |
 |---|-----------|--------|
 | 01 | [Job events and cancellation](milestone-01-job-events-cancel.md) | done |
-| 02 | [State store and run lock](milestone-02-state-store-run-lock.md) | planned |
+| 02 | [State store and run lock](milestone-02-state-store-run-lock.md) | done |
 | 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | planned |
 | 04 | [Live run view](milestone-04-tui-live-run.md) | planned |
 | 05 | [Execution history](milestone-05-tui-run-history.md) | planned |
@@ -65,7 +65,8 @@ as AGENTS.md requires.
 All code lives in the `src/draw_things_control/` package (see
 [architecture](../architecture.md)). The TUI lives in `tui/`. Shared new
 modules: `jobs/job_events.py` (Milestone 01), and `state/store.py`,
-`state/recorder.py`, and `core/run_lock.py` (Milestone 02).
+`state/recorder.py`, `state/history_import.py`, and `core/run_lock.py`
+(Milestone 02).
 
 ## Changelog
 

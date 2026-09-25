@@ -11,7 +11,9 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.yaml"
 EXAMPLE_GLOBAL_CONFIG = PROJECT_ROOT / "config" / "global-config.example.yaml"
-GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown_seconds"}
+GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown_seconds", "history_retention_days"}
+DEFAULT_HISTORY_RETENTION_DAYS = 14
+MAX_HISTORY_RETENTION_DAYS = 3650
 REQUIRED_GLOBAL_CONFIG_KEYS = ("input_directory", "output_directory", "version")
 MAX_COOLDOWN_SECONDS = 3600
 COOLDOWN_ERROR = f"must be a number of seconds from 0 to {MAX_COOLDOWN_SECONDS}"
@@ -26,6 +28,8 @@ class GlobalConfig:
     write_job_records: bool = False
     # Seconds to wait between runs, unless a job sets its own cooldown_seconds.
     cooldown_seconds: float | None = None
+    # Execution history older than this many days is pruned from the state store; 0 keeps it forever.
+    history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
 
 
 def load_yaml_mapping(path: Path, description: str) -> dict[str, Any]:
@@ -76,7 +80,10 @@ def load_global_config(path: Path = DEFAULT_GLOBAL_CONFIG) -> GlobalConfig:
     cooldown_seconds = data.get("cooldown_seconds")
     if cooldown_seconds is not None and not is_cooldown(cooldown_seconds):
         raise ValueError(f"{path}: 'cooldown_seconds' {COOLDOWN_ERROR}")
-    return GlobalConfig(input_directory=input_directory, output_directory=output_directory, write_job_records=write_job_records, cooldown_seconds=float(cooldown_seconds) if cooldown_seconds is not None else None)
+    retention = data.get("history_retention_days", DEFAULT_HISTORY_RETENTION_DAYS)
+    if not isinstance(retention, int) or isinstance(retention, bool) or not 0 <= retention <= MAX_HISTORY_RETENTION_DAYS:
+        raise ValueError(f"{path}: 'history_retention_days' must be a whole number of days from 0 to {MAX_HISTORY_RETENTION_DAYS}")
+    return GlobalConfig(input_directory=input_directory, output_directory=output_directory, write_job_records=write_job_records, cooldown_seconds=float(cooldown_seconds) if cooldown_seconds is not None else None, history_retention_days=retention)
 
 
 def is_number(value: Any) -> bool:

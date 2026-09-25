@@ -35,8 +35,8 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 - Subpackages: `core/` (runner, arguments, generation, configuration), `jobs/`
   (job definition, service, manifests, input handling), `cli/` (Typer app),
   and, as phases land, `state/`, `tui/`, `server/`, `mcp_server/`.
-- Dependencies point one way: `cli`, `tui`, `server`, `mcp_server` -> `jobs`,
-  `state` -> `core`. Front ends never import each other; `mcp_server` talks to
+- Dependencies point one way: `cli`, `tui`, `server` -> `state` -> `jobs` ->
+  `core`. Front ends never import each other; `mcp_server` talks to
   `server` over HTTP only.
 - Imports are absolute (`from draw_things_control.core... import ...`).
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.

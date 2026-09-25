@@ -52,3 +52,6 @@ Thumbs.db
 config/global-config.yaml
 
 dt-config/image-to-video-wan-2-2-default.json
+
+# Execution history database and run lock (created at run time)
+/state/

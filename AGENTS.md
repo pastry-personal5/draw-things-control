@@ -16,7 +16,7 @@ application through the locally installed `draw-things-cli`. Phase 1 (CLI and jo
 - **Language and tools**: Python 3.12+, uv (`uv.lock`, `pyproject.toml`), `.venv` managed by uv
 - **Layout**: no source in the project root. One package, `src/draw_things_control/`, with `core/`, `jobs/`, `cli/` and, later, `state/`, `tui/`, `server/`, `mcp_server/`; tests mirror it in `tests/`
 - **Entry point**: `dtc` (Typer, `cli/app.py`) or `python -m draw_things_control`
-- **Imports**: absolute; `cli`/`tui`/`server` -> `jobs`, `state` -> `core`; front ends never import each other
+- **Imports**: absolute; `cli`/`tui`/`server` -> `state` -> `jobs` -> `core`; front ends never import each other
 - **Logging**: Loguru
 - **Lint and format**: Ruff lints, Black formats (both configured in `pyproject.toml`)
 

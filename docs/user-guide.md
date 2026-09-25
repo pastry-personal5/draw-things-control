@@ -12,6 +12,7 @@ the project root as `uv run dtc <command>`.
 - [Jobs: chained runs](#jobs-chained-runs)
 - [Job file reference](#job-file-reference)
 - [Where outputs go](#where-outputs-go)
+- [Execution history and the run lock](#execution-history-and-the-run-lock)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
 
@@ -44,6 +45,7 @@ Then edit it. Paths must be absolute (a leading `~` is fine).
 | `output_directory` | yes | Root for job outputs; created if missing |
 | `write_job_records` | no | `true` also saves a manifest and a log per run (default `false`) |
 | `cooldown_seconds` | no | Default wait between a job's runs, 0 to 3600 (default 0) |
+| `history_retention_days` | no | Days of execution history to keep, 0 to 3650; 0 keeps it forever (default 14) |
 
 Use `--global-config PATH` with `run-job` or `validate-job` to read a
 different file.
@@ -56,6 +58,7 @@ different file.
 | `validate-config FILE` | Check a Draw Things JSON configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
 | `run-job FILE` | Run every generation in a job, chained |
+| `import-history` | Import phase 1 job manifests into the execution history |
 
 Add `--help` to any command for its full option list.
 
@@ -203,12 +206,58 @@ wait. Ctrl-C ends a wait at once and stops the job.
 
 - Files go to `<output_directory>/<name>/`, or `output.directory` under the
   global `output_directory` if the job sets it.
-- Names are `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`. Video runs also save
+- Names are `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`. Draw Things writes video
+  with no color tags, so each finished video in a job is tagged in place with a
+  `colr` box (BT.709 primaries, sRGB transfer, BT.709 matrix); only that box is
+  added, and the frames and timing stay byte-identical. A video that already
+  has color tags, or that cannot be tagged, is left as it is (with a warning in
+  the second case). Video runs also save
   `<name>-…-last-frame.png`, taken from the final second of the video with
-  `ffmpeg`. Nothing is ever overwritten.
+  `ffmpeg` and labeled sRGB (`sRGB`, `cHRM`, and `gAMA` chunks). Draw Things'
+  current H.264 videos carry no color tags, so the frame is decoded as BT.709
+  limited range, which is how Draw Things encodes them; a video that does state
+  its matrix is decoded with it. The label itself changes no pixel. Nothing is ever overwritten.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
+
+## Execution history and the run lock
+
+Every `run-job` (not `--dry-run`) is recorded in a SQLite database,
+`state/dtc.db` in the project, whatever `write_job_records` says: the job
+file's exact text, the settings it ran with, and each run's prompts, files,
+redacted command, timing, and result. `state/` is git-ignored, created on first
+use, and readable only by you. `generate` is not recorded.
+
+- History older than `history_retention_days` (default 14) is pruned whenever a
+  command opens the database. Only database rows are removed, never outputs,
+  manifests, or logs.
+- If a run is killed, its record stays `running` until the next run starts,
+  which closes it as `interrupted`.
+- To bring in manifests written before the database existed (jobs run with
+  `write_job_records: true`), run `uv run dtc import-history`. It searches the
+  output directory, or `--directory PATH`, for `*.json` manifests, skips any
+  already imported or past the retention period, and reports how many it
+  imported, skipped, and could not read. It is safe to repeat and never changes
+  a manifest.
+
+Only one run drives the GPU at a time. `run-job` and `generate` take a lock
+(`state/run.lock`) after validating their input and hold it until they finish,
+cooldowns included. If another run holds it, the command exits with 75 and
+says who does, and nothing starts:
+
+```text
+Another run is in progress (run-job, PID 4123). Try again when it finishes.
+```
+
+The operating system releases the lock when its holder exits, however it
+exits. If `dtc` itself was killed with `SIGKILL` while `draw-things-cli` was
+running, the next start also refuses (exit 75) until that `draw-things-cli`
+ends, and never stops it for you. `--dry-run`, `validate-job`,
+`validate-config`, and `import-history` never take the lock. If `state/` cannot
+be used (unwritable, a filesystem without SQLite WAL support, or a database
+written by a newer version), `run-job` exits with 1 and the reason, and starts
+nothing.
 
 ## Stopping, failures, and exit codes
 
@@ -219,8 +268,9 @@ keeps any partial output, and exits with that run's exit code.
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | A run exited with 0 but wrote no output, or last-frame extraction failed |
+| 1 | A run exited with 0 but wrote no output, last-frame extraction failed, or the `state/` database or lock cannot be used |
 | 2 | Invalid input: options, configuration, or job file |
+| 75 | Another run holds the run lock; try again when it finishes |
 | 124 | A run exceeded `--timeout` or `run_timeout_seconds` |
 | 130 | Stopped with Ctrl-C (`128 + signal`; 143 for `SIGTERM`, 129 for `SIGHUP`) |
 | other | The exit code of `draw-things-cli` |

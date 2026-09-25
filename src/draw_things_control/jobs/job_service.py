@@ -6,6 +6,7 @@ import json
 import os
 import random
 import signal
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -45,6 +46,8 @@ class RunnerFactory(Protocol):
 
 
 FrameExtractor = Callable[[Path, Path], None]
+# Writes color tags into a finished video's container; returns whether it changed the file.
+VideoTagger = Callable[[Path], bool]
 # Waits up to the given seconds between runs and returns the seconds actually waited.
 Cooldown = Callable[[float], float]
 
@@ -97,6 +100,7 @@ class JobService:
         random_seed: Callable[[], int] = lambda: random.randint(0, 2**32 - 1),
         handle_signals: bool = True,
         cooldown: Cooldown | None = None,
+        video_tagger: VideoTagger | None = None,
     ) -> None:
         self._runner_factory = runner_factory
         self._find_executable = find_executable
@@ -107,6 +111,7 @@ class JobService:
         self._random_seed = random_seed
         self._handle_signals = handle_signals
         self._cooldown = cooldown or self._wait_for_cooldown
+        self._video_tagger = video_tagger
         self._generation = GenerationService(runner_factory=self._create_runner, find_executable=find_executable, config_loader=load_config)
         self._current_runner: StoppableRunner | None = None
         self._interrupt: signal.Signals | None = None
@@ -278,6 +283,9 @@ class JobService:
                 cooldown_source=job.cooldown_source,
                 manifest=str(manifest_path) if manifest_path is not None else None,
                 log=str(log_path) if log_path is not None else None,
+                config_file=manifest.config_file,
+                config_override=manifest.config_override,
+                input_resize=manifest.input_resize,
             )
         )
         try:
@@ -445,6 +453,8 @@ class JobService:
         if not run.output.is_file():
             logger.error("draw-things-cli exited with 0 but did not write {}", run.output)
             return "failed", 1
+        if self._video_tagger is not None and job.mode.is_video:
+            self._tag_video(run.output)
         if run.last_frame is not None:
             try:
                 self._frame_extractor(run.output, run.last_frame)
@@ -455,6 +465,14 @@ class JobService:
                 return "failed", 1
             record.last_frame = run.last_frame.name
         return "succeeded", 0
+
+    def _tag_video(self, video: Path) -> None:
+        """Label the video's colors; a video that cannot be tagged is kept as Draw Things wrote it, and the run still succeeds."""
+        assert self._video_tagger is not None
+        try:
+            self._video_tagger(video)
+        except (ValueError, OSError, struct.error) as error:
+            logger.warning("Could not write color tags into {}; it keeps the tags Draw Things wrote: {}", video.name, error)
 
     def _plan_run(self, job: JobDefinition, number: int, pair: PromptPair, run_input: Path | None, seed: int, executable: str, reserved: set[Path]) -> PlannedRun:
         output = next_output_path(job.output_directory, job.name, job.extension, self._clock, self._random_number, reserved)

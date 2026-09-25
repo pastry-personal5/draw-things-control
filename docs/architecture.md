@@ -7,7 +7,7 @@ Only one `draw-things-cli` runs at a time on the machine.
 ## Overview
 
 ```
-Phase 1 (done)       Phase 2 (planned)      Phase 3 (planned)
+Phase 1 (done)       Phase 2 (in progress)   Phase 3 (planned)
 CLI ─────────┐       TUI ────────┐          MCP server ─▶ HTTP API ┐
              ▼                   ▼                                 ▼
         JobService ◀── events, cancel() ──────────────────── queue worker
@@ -37,7 +37,7 @@ src/draw_things_control/
 tests/           # mirrors the package: tests/core, tests/jobs, tests/cli, ...
 ```
 
-Import direction: `cli`, `tui`, `server` -> `jobs`, `state` -> `core`;
+Import direction: `cli`, `tui`, `server` -> `state` -> `jobs` -> `core`;
 `mcp_server` -> `server` over HTTP only. Front ends never import each other.
 Launch with `dtc` or `python -m draw_things_control`.
 
@@ -58,7 +58,8 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 | `jobs/job_service.py` | `run-job` use case: chain a job's runs, cooldown |
 | `jobs/job_definition.py` | Job file loading and validation |
 | `jobs/input_size.py`, `jobs/input_resize.py` | Input image check and resize |
-| `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg` |
+| `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg`, labeled sRGB |
+| `jobs/video_color.py` | Adds a `colr` color-tag box to a finished video, without touching frames or timing |
 | `jobs/job_manifest.py`, `jobs/job_log.py` | Per-job JSON manifest and log file |
 
 Services receive their runner and executable lookup as dependencies, so tests
@@ -70,22 +71,28 @@ reads stdout and stderr concurrently. `SIGHUP`, `SIGINT`, and `SIGTERM` send
 `--timeout` uses the same sequence. Without `--output`, the child inherits the
 terminal for inline preview.
 
-**Exit codes.** 0 success; 1 run wrote no output or last-frame extraction
-failed; 2 invalid input; 124 timeout; 128+N stopped by signal N (130 for
+**Exit codes.** 0 success; 1 run wrote no output, last-frame extraction
+failed, or the state database or lock cannot be used; 2 invalid input; 75 run
+lock held by another run; 124 timeout; 128+N stopped by signal N (130 for
 Ctrl-C); otherwise the CLI's own code.
 
-## Phase 2: TUI and shared state (planned)
+## Phase 2: TUI and shared state (in progress)
 
 Adds what every later front end needs, without changing the CLI's behavior:
 
 - `jobs/job_events.py`: structured job events and `JobService.cancel()`. Events
   are additive: `JobService` still writes the log lines. Child output feeds
   `RunOutput` events through `OutputProcessor`'s callback.
-- `state/store.py`, `state/recorder.py`: SQLite execution history (standard
-  library), recording every `run-job` run with its YAML text and resolved
-  settings. Rows older than 14 days are pruned; output files never are.
-- `core/run_lock.py`: `fcntl.flock` lock taken by `run-job`, `generate`, and the
-  TUI. A second starter fails immediately; nothing queues silently.
+- `state/store.py`, `state/recorder.py`, `state/history_import.py` (Milestone
+  02, done): SQLite execution history (standard library) in `state/dtc.db`,
+  recording every `run-job` run with its YAML text and resolved settings. Rows
+  older than 14 days are pruned; output files never are. `dtc import-history`
+  loads phase 1 manifests.
+- `core/run_lock.py` (Milestone 02, done): `fcntl.flock` on `state/run.lock`
+  taken by `run-job`, `generate`, and the TUI. A second starter fails
+  immediately with exit code 75; nothing queues silently. The file also names
+  the running `draw-things-cli`, so a run refuses to start while one survives a
+  `SIGKILLed` `dtc`.
 - `tui/` (Textual): job browser, live run view, execution history. Read-only for
   job files.
 

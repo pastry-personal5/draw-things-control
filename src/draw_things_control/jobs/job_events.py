@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from loguru import logger
 
@@ -31,6 +32,10 @@ class JobStarted:
     # Set only when records are written beside the outputs.
     manifest: str | None
     log: str | None
+    # What the state store keeps so history shows which configuration ran.
+    config_file: str = ""
+    config_override: dict[str, Any] = field(default_factory=dict)
+    input_resize: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

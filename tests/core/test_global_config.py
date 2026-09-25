@@ -67,3 +67,17 @@ class GlobalConfigTests(unittest.TestCase):
                 self.write(base + f"cooldown_seconds: {text}\n")
                 with self.assertRaisesRegex(ValueError, r"'cooldown_seconds' must be a number of seconds from 0 to 3600"):
                     load_global_config(self.path)
+
+    def test_history_retention_days_defaults_to_14_and_is_a_whole_number_from_0_to_3650(self) -> None:
+        base = f"version: 1\ninput_directory: {self.root / 'input'}\noutput_directory: /tmp/out\n"
+        self.write(base)
+        self.assertEqual(load_global_config(self.path).history_retention_days, 14)
+        for text, expected in (("0", 0), ("14", 14), ("3650", 3650)):
+            with self.subTest(text):
+                self.write(base + f"history_retention_days: {text}\n")
+                self.assertEqual(load_global_config(self.path).history_retention_days, expected)
+        for text in ("-1", "3651", "1.5", "true", "forever", "null"):
+            with self.subTest(text):
+                self.write(base + f"history_retention_days: {text}\n")
+                with self.assertRaisesRegex(ValueError, rf"{self.path}: 'history_retention_days' must be a whole number of days from 0 to 3650"):
+                    load_global_config(self.path)

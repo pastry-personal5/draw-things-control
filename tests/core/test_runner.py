@@ -158,3 +158,18 @@ class InterruptibleWaitTests(unittest.TestCase):
             os.close(write_end)
         self.assertGreaterEqual(waited, 0.1)
         self.assertLess(waited, 1)
+
+
+class RunnerStartHookTests(unittest.TestCase):
+    def test_on_start_is_told_the_childs_pid_and_a_failing_hook_does_not_stop_the_run(self) -> None:
+        pids: list[int] = []
+        command = ProcessCommand((sys.executable, "-c", "print('ok')"))
+        result = DrawThingsProcessRunner(command, handle_signals=False, on_start=pids.append).run()
+        self.assertTrue(result.succeeded)
+        self.assertEqual(len(pids), 1)
+        self.assertGreater(pids[0], 1)
+
+        def broken(_pid: int) -> None:
+            raise RuntimeError("lock file is gone")
+
+        self.assertTrue(DrawThingsProcessRunner(command, handle_signals=False, on_start=broken).run().succeeded)

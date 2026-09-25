@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -17,18 +19,59 @@ from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
 from draw_things_control.core.generation_service import GenerationService
 from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
 from draw_things_control.core.process_output import MessageCallback, OutputProcessor
+from draw_things_control.core.run_lock import EX_TEMPFAIL, RunLock, RunLockBusy, RunLockError
 from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg
 from draw_things_control.jobs.job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
 from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.video_color import tag_video_colors
+from draw_things_control.state.history_import import import_history
+from draw_things_control.state.recorder import ExecutionRecorder
+from draw_things_control.state.store import StateError, Store
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
+
+
+# The run lock this process holds, if any; the runners it starts report their child's PID to it.
+_active_lock: RunLock | None = None
+
+
+@contextmanager
+def held_run_lock(command: str) -> Iterator[RunLock]:
+    """Hold the machine-wide run lock for ``command``, or exit 75 if a run is in progress, 1 if it cannot be taken."""
+    global _active_lock
+    lock = RunLock(command)
+    try:
+        lock.acquire()
+    except RunLockBusy as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=EX_TEMPFAIL) from error
+    except RunLockError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=1) from error
+    _active_lock = lock
+    try:
+        yield lock
+    finally:
+        _active_lock = None
+        lock.release()
+
+
+def open_store(settings: GlobalConfig) -> Store:
+    """Open the state store, exiting with code 1 and the cause if it cannot be used."""
+    try:
+        return Store(retention_days=settings.history_retention_days)
+    except (StateError, RunLockError, sqlite3.Error) as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=1) from error
 
 
 def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
     """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints."""
     # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
     capture_output = arguments.output is not None and not arguments.terminal_image
-    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals)
+    lock = _active_lock
+    on_start = (lambda pid: lock.record_child(pid, Path(arguments.executable).name)) if lock is not None else None
+    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_start)
 
 
 def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> DrawThingsProcessRunner:
@@ -37,7 +80,7 @@ def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | N
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
-job_service = JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg)
+job_service = JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors)
 
 JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
 GlobalConfigOption = Annotated[Path, typer.Option("--global-config", help="Global configuration file.")]
@@ -100,7 +143,11 @@ def generate(
         options.pop(wrapper_option)
     try:
         arguments = service.prepare(options)
-        outcome = service.execute(arguments, dry_run=dry_run, timeout=timeout, shutdown_grace=shutdown_grace)
+        if dry_run:
+            outcome = service.execute(arguments, dry_run=True, timeout=timeout, shutdown_grace=shutdown_grace)
+        else:
+            with held_run_lock("generate"):
+                outcome = service.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace)
     except ValueError as error:
         logger.error("{}", error)
         raise typer.Exit(code=2) from error
@@ -176,12 +223,49 @@ def run_job(
                 typer.echo(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
                 typer.echo(command)
             return
-        outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records)
+        with held_run_lock("run-job"):
+            store = open_store(settings)
+            try:
+                try:
+                    # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
+                    store.sweep_interrupted()
+                except sqlite3.Error as error:
+                    logger.error("Cannot use the state database {}: {}", store.path, error)
+                    raise typer.Exit(code=1) from error
+                outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store))
+            finally:
+                store.close()
     except ValueError as error:
         logger.error("{}", error)
         raise typer.Exit(code=2) from error
     if outcome.exit_code:
         raise typer.Exit(code=outcome.exit_code)
+
+
+@app.command("import-history")
+def import_history_command(
+    directory: Annotated[Path | None, typer.Option(help="Directory to search for job manifests; default: the configured output directory.")] = None,
+    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+) -> None:
+    """Import phase 1 job manifests into the execution history; safe to repeat."""
+    try:
+        settings = load_global_config(global_config.expanduser())
+    except ValueError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=2) from error
+    search = (directory or settings.output_directory).expanduser()
+    if not search.is_dir():
+        logger.error("Not a directory: {}", search)
+        raise typer.Exit(code=2)
+    store = open_store(settings)
+    try:
+        report = import_history(store, search)
+    except sqlite3.Error as error:
+        logger.error("Cannot use the state database {}: {}", store.path, error)
+        raise typer.Exit(code=1) from error
+    finally:
+        store.close()
+    typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
