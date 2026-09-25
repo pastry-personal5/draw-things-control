@@ -86,7 +86,7 @@ class JobCliTests(JobTestCase):
         lines = result.stdout.splitlines()
         self.assertTrue(lines[0].endswith(", cooldown 900 s (global_config)"), lines[0])
         comments = [line for line in lines if line.startswith("# Run ") or line.startswith("# Cooldown")]
-        self.assertEqual(comments, ["# Run 1/5 (batch 1, pair walk)", "# Cooldown 900 s", "# Run 2/5 (batch 2, pair wave)", "# Cooldown 900 s", "# Run 3/5 (batch 3, pair walk)", "# Cooldown 900 s", "# Run 4/5 (batch 4, pair wave)", "# Cooldown 900 s", "# Run 5/5 (batch 5, pair walk)"])
+        self.assertEqual(comments, ["# Run 1/5 (pair walk)", "# Cooldown 900 s", "# Run 2/5 (pair wave)", "# Cooldown 900 s", "# Run 3/5 (pair walk)", "# Cooldown 900 s", "# Run 4/5 (pair wave)", "# Cooldown 900 s", "# Run 5/5 (pair walk)"])
 
     def test_job_can_turn_off_the_global_cooldown(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 900\n", encoding="utf-8")

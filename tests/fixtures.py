@@ -23,10 +23,10 @@ def job_data(**changes: Any) -> dict[str, Any]:
         "name": "sunset-walk",
         "mode": "i2v",
         "input": "first-frame.png",
-        "batch_count": 5,
+        "run_count": 5,
         "prompt_pairs": [
-            {"name": "walk", "positive": "walk", "negative": "blurry", "batches": [1, 3, 5]},
-            {"name": "wave", "positive": "wave", "batches": [2, 4]},
+            {"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3, 5]},
+            {"name": "wave", "positive": "wave", "runs": [2, 4]},
         ],
         "config_file": "base.json",
     }

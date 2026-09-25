@@ -50,3 +50,5 @@ Thumbs.db
 
 # Machine-specific global configuration (copy from config/global-config.example.yaml)
 config/global-config.yaml
+
+dt-config/image-to-video-wan-2-2-default.json

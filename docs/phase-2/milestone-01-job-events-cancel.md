@@ -41,8 +41,8 @@ read the clock itself.
 | Event | When | Main fields |
 |-------|------|-------------|
 | `JobStarted` | After the seed is drawn and the output directory exists, before run 1 | job name, job file, `source_text`, mode, total runs, output directory, input, model, seed and its source, cooldown seconds and its source, manifest path and log path (or `None`) |
-| `RunStarted` | A run's command is launched | run number, total, batch, pair name, positive, negative, input, output, last frame path (video) or `None`, redacted command |
-| `RunOutput` | The child prints a line | run number, stream (`stdout` or `stderr`), text, `progress` as `(current, total)` or `None` |
+| `RunStarted` | A run's command is launched | run number, total, pair name, positive, negative, input, output, last frame path (video) or `None`, redacted command |
+| `RunOutput` | The child prints a line | run number, stream (`stdout` or `stderr`), text, `progress` as `(step, steps)` or `None`, `percent` (0-100) or `None` |
 | `RunFinished` | A run ends, by any path | run number, status (`succeeded`, `failed`, `timed_out`, `interrupted`), exit code, seconds, output name kept or `None`, last frame name or `None` |
 | `CooldownStarted` | A wait begins | after run number, seconds, local "until" time |
 | `CooldownEnded` | A wait ends | seconds waited, whether it was cut short |
@@ -78,9 +78,17 @@ if the file is edited later.
 
 ### Child output
 
+`draw-things-cli` draws its progress bar with terminal codes: one bare newline
+before the first bar, then `ESC[1A ESC[K` (cursor up, clear line) and a line
+such as `Sampling... 3 / 20 [█] 15%` for every update. Model downloads redraw
+one line with `\r`. `OutputProcessor` strips these codes, drops lines that are
+empty afterwards, and parses the step counter (`progress`) and the percentage
+(`percent`) from the clean text, so logs, manifests, and events never hold raw
+escape sequences. A `[1/3]` file counter is not read as a step counter.
+
 Events must not be built by parsing log text. `OutputProcessor` already takes a
 `callback` (a `MessageCallback`) that it calls with each `ProcessMessage`
-(stream, text, elapsed, and parsed `progress`) right where it logs the line. So
+(stream, text, elapsed, and parsed `progress` and `percent`) right where it logs the line. So
 the runner needs no new hook. What is missing is a way to give the factory the
 callback:
 
@@ -172,7 +180,7 @@ day it lands.
 - A test with a fake runner receives the expected event sequence for a
   three-run job with a cooldown, for a failed run, for a timed-out run, and
   for a cancelled job (during a run and during a cooldown).
-- Events carry every field Milestone 02 stores per job run and per run, except
+- Events carry every field Milestone 02 stores per execution and per run, except
   what the store computes itself.
 - When the runner raises, the observer still receives `RunFinished` (failed)
   and `JobFinished` (failed), and the exception propagates.

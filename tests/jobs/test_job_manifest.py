@@ -14,7 +14,7 @@ class JobManifestTests(unittest.TestCase):
             path = Path(directory) / "job-20260924-153012-job.json"
             manifest = JobManifest(job_file="job.yaml", name="job", mode="i2v", config_file="base.json", config_override={}, seed=1, seed_source="random", cooldown_seconds=0.0, cooldown_source="default", started_at="t", log_file="job.log")
             write_manifest(path, manifest)
-            manifest.runs.append(RunRecord(batch=1, pair="walk", positive="p", negative=None, input=None, output="o.mov", last_frame=None, command=["x"], started_at="t"))
+            manifest.runs.append(RunRecord(pair="walk", positive="p", negative=None, input=None, output="o.mov", last_frame=None, command=["x"], started_at="t"))
             manifest.status = "succeeded"
             write_manifest(path, manifest)
             data = json.loads(path.read_text(encoding="utf-8"))

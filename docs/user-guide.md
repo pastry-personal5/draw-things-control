@@ -9,7 +9,7 @@ the project root as `uv run dtc <command>`.
 - [Commands at a glance](#commands-at-a-glance)
 - [Generate one image or video](#generate-one-image-or-video)
 - [Check a configuration file](#check-a-configuration-file)
-- [Jobs: chained batch runs](#jobs-chained-batch-runs)
+- [Jobs: chained runs](#jobs-chained-runs)
 - [Job file reference](#job-file-reference)
 - [Where outputs go](#where-outputs-go)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
@@ -107,10 +107,10 @@ uv run dtc validate-config dt-config/image-to-video-wan-2-2.example.json
 The files in `dt-config/` are yours: this tool reads them and never changes
 them.
 
-## Jobs: chained batch runs
+## Jobs: chained runs
 
 A job is a YAML file in `data/` describing a chain of generations. It runs
-`batch_count` times, and every run starts from the previous run's output (the
+`run_count` times, and every run starts from the previous run's output (the
 last frame, for video). Each run uses one of your named prompt pairs.
 
 The workflow is always the same three steps:
@@ -139,7 +139,7 @@ jobs are rejected before any generation starts.
 | `name` | Base of output file names; `a-z`, `0-9`, `-` only |
 | `mode` | `i2i` (image to image), `t2v` (text to video), or `i2v` (image to video) |
 | `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
-| `batch_count` | Total number of runs |
+| `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
 | `config_file` | A file name in `dt-config/`, the base configuration |
 | `config_override` | Settings applied to every run on top of `config_file` |
@@ -152,9 +152,12 @@ jobs are rejected before any generation starts.
 ### Prompt pairs
 
 Each pair has a `name`, a `positive` prompt, an optional `negative` prompt,
-and either `batches: [1, 3, 5]` (the runs that use it) or `default: true`
+and either `runs: [1, 3, 5]` (the runs that use it) or `default: true`
 (every run no other pair lists). A pair with no `negative` leaves Draw
 Things' recommended one in effect.
+
+Job files written before the rename used `batch_count` and `batches`; they now
+fail validation with a message naming the new key (`run_count`, `runs`).
 
 ### Configuration overrides
 

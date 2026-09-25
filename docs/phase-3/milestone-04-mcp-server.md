@@ -53,7 +53,7 @@ Read and run (always registered):
 | `cancel_job` | `POST /queue/{id}/cancel` |
 | `resume_job` | `POST /queue/{id}/resume` |
 | `get_history` | `GET /history`, `GET /history/{id}` |
-| `list_outputs` | `GET /outputs/{job_run_id}` |
+| `list_outputs` | `GET /outputs/{execution_id}` |
 
 Write (registered only when `GET /capabilities` reports writes on):
 

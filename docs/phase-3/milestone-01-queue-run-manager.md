@@ -32,8 +32,8 @@ Out of scope:
 
 - A `queue` table in the state store: id, job name, job file, the job's
   exact YAML text and the settings it was resolved with (as in Phase 2's
-  `job_runs`), state, position, submitted at, started at, finished at,
-  the linked `job_runs` id, resume-of (a queue id or null), and an error
+  `executions`), state, position, submitted at, started at, finished at,
+  the linked `executions` id, resume-of (a queue id or null), and an error
   message. Schema is a forward migration of the Phase 2 store.
 - Submitting takes a job file name, validates it, and stores the text and
   settings. The stored text, not the file, is what runs: the worker parses it
@@ -92,7 +92,7 @@ Out of scope:
 On startup, before the worker starts:
 
 - Entries `running` become `interrupted`, and their
-  `job_runs` row is closed as `interrupted`.
+  `executions` row is closed as `interrupted`.
 - Entries `queued` stay queued and run in order.
 - Nothing runs that was interrupted, until someone resumes it.
 

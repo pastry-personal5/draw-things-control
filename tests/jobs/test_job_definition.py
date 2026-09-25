@@ -21,6 +21,10 @@ class JobDefinitionTests(JobTestCase):
         with self.assertRaisesRegex(ValueError, field):
             self.load(**changes)
 
+    def test_renamed_batch_keys_name_their_replacements(self) -> None:
+        self.assert_invalid("'batch_count' was renamed to run_count", batch_count=5)
+        self.assert_invalid(r"'prompt_pairs\[0\]\.batches' was renamed to runs", prompt_pairs=[{"name": "a", "positive": "x", "batches": [1]}])
+
     def test_valid_job_resolves_paths_and_defaults(self) -> None:
         job = self.load()
         self.assertEqual(job.mode, GenerationMode.I2V)
@@ -29,17 +33,17 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(job.extension, "mov")
         self.assertEqual(job.model, "base.ckpt")
 
-    def test_schedule_uses_explicit_batches_then_the_default_pair(self) -> None:
+    def test_schedule_uses_explicit_runs_then_the_default_pair(self) -> None:
         pairs = [
-            {"name": "walk", "positive": "walk", "batches": [1, 3, 5]},
-            {"name": "wave", "positive": "wave", "batches": [2, 4]},
+            {"name": "walk", "positive": "walk", "runs": [1, 3, 5]},
+            {"name": "wave", "positive": "wave", "runs": [2, 4]},
             {"name": "idle", "positive": "idle", "default": True},
         ]
-        job = self.load(batch_count=7, prompt_pairs=pairs)
+        job = self.load(run_count=7, prompt_pairs=pairs)
         self.assertEqual([pair.name for pair in job.schedule()], ["walk", "wave", "walk", "wave", "walk", "idle", "idle"])
 
     def test_single_pair_is_the_default(self) -> None:
-        job = self.load(batch_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])
+        job = self.load(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])
         self.assertEqual([pair.name for pair in job.schedule()], ["only"] * 3)
 
     def test_output_directory_is_relative_to_global_output(self) -> None:
@@ -66,14 +70,14 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("'input'", input=None)
         self.assert_invalid("'input'", mode="t2v")
         self.assert_invalid("'input' file does not exist", input="missing.png")
-        self.assert_invalid("batch_count", batch_count=0)
+        self.assert_invalid("run_count", run_count=0)
         self.assert_invalid("prompt_pairs", prompt_pairs=[])
         self.assert_invalid("positive", prompt_pairs=[{"name": "a"}])
         self.assert_invalid("duplicates", prompt_pairs=[{"name": "a", "positive": "x"}, {"name": "a", "positive": "y", "default": True}])
         self.assert_invalid("at most one", prompt_pairs=[{"name": "a", "positive": "x", "default": True}, {"name": "b", "positive": "y", "default": True}])
-        self.assert_invalid("batch 5", batch_count=5, prompt_pairs=[{"name": "a", "positive": "x", "batches": [1, 2, 3, 4]}, {"name": "b", "positive": "y"}])
-        self.assert_invalid("outside 1..5", prompt_pairs=[{"name": "a", "positive": "x", "batches": [6]}, {"name": "b", "positive": "y", "default": True}])
-        self.assert_invalid("already assigned", prompt_pairs=[{"name": "a", "positive": "x", "batches": [1]}, {"name": "b", "positive": "y", "batches": [1], "default": True}])
+        self.assert_invalid("run 5", run_count=5, prompt_pairs=[{"name": "a", "positive": "x", "runs": [1, 2, 3, 4]}, {"name": "b", "positive": "y"}])
+        self.assert_invalid("outside 1..5", prompt_pairs=[{"name": "a", "positive": "x", "runs": [6]}, {"name": "b", "positive": "y", "default": True}])
+        self.assert_invalid("already assigned", prompt_pairs=[{"name": "a", "positive": "x", "runs": [1]}, {"name": "b", "positive": "y", "runs": [1], "default": True}])
         self.assert_invalid("output.extension", output={"extension": "png"})
         self.assert_invalid("output.extension", mode="i2i", output={"extension": "mov"})
         self.assert_invalid("config_file", config_file=None)
@@ -115,7 +119,7 @@ class JobDefinitionTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "seed": 2**32}, name="bigseed.json")
         self.assert_invalid("config_file", config_file="bigseed.json")
 
-    def test_i2v_ignores_batch_count_from_the_config_file(self) -> None:
+    def test_i2v_ignores_run_count_from_the_config_file(self) -> None:
         self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.json")
         job = self.load(config_file="batch.json")
         self.assertNotIn("batchCount", job.base_config)
@@ -129,7 +133,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(len(messages), 1)
         self.assertTrue(messages[0].startswith("INFO Ignoring batchCount (4) from config_file batch.json"))
 
-    def test_other_modes_keep_batch_count(self) -> None:
+    def test_other_modes_keep_run_count(self) -> None:
         self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.json")
         for mode, changes in (("i2i", {}), ("t2v", {"input": None})):
             with self.subTest(mode):
@@ -250,9 +254,9 @@ class JobDefinitionTests(JobTestCase):
 
     def test_cooldown_details(self) -> None:
         self.global_config = replace(self.global_config, cooldown_seconds=900.0)
-        self.assertEqual(cooldown_details(self.load(batch_count=7, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (6 waits, 1 h 30 min total)")
-        self.assertEqual(cooldown_details(self.load(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown_seconds=90)), "90 s between runs, from job (1 wait, 1 min 30 s total)")
-        self.assertEqual(cooldown_details(self.load(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (no waits: 1 run)")
+        self.assertEqual(cooldown_details(self.load(run_count=7, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (6 waits, 1 h 30 min total)")
+        self.assertEqual(cooldown_details(self.load(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown_seconds=90)), "90 s between runs, from job (1 wait, 1 min 30 s total)")
+        self.assertEqual(cooldown_details(self.load(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (no waits: 1 run)")
         self.assertEqual(cooldown_details(self.load(cooldown_seconds=0)), "none (job)")
 
     def test_seconds_and_durations_read_as_written(self) -> None:

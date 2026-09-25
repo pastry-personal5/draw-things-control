@@ -1,4 +1,4 @@
-"""Build unique, timestamped output file names for job runs."""
+"""Build unique, timestamped output file names for the runs of a job."""
 
 from __future__ import annotations
 

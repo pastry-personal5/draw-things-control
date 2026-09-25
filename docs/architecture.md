@@ -52,7 +52,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 | `core/generation_service.py` | `generate` use case: validate, resolve, preview or run |
 | `core/draw_things_arguments.py` | Validated options and argument-vector building (no shell) |
 | `core/draw_things_runner.py` | Process group, signals, timeout, graceful-then-forced shutdown |
-| `core/process_output.py` | Classify and log child output; structured progress |
+| `core/process_output.py` | Classify and log child output; strip terminal codes; structured progress (step counter and percent) |
 | `core/global_config.py` | Global config loading |
 | `core/configuration.py`, `core/generation_config.py` | JSON overrides, `dt-config/` lookup and merging |
 | `jobs/job_service.py` | `run-job` use case: chain a job's runs, cooldown |
@@ -81,12 +81,12 @@ Adds what every later front end needs, without changing the CLI's behavior:
 - `jobs/job_events.py`: structured job events and `JobService.cancel()`. Events
   are additive: `JobService` still writes the log lines. Child output feeds
   `RunOutput` events through `OutputProcessor`'s callback.
-- `state/store.py`, `state/recorder.py`: SQLite run history (standard
+- `state/store.py`, `state/recorder.py`: SQLite execution history (standard
   library), recording every `run-job` run with its YAML text and resolved
   settings. Rows older than 14 days are pruned; output files never are.
 - `core/run_lock.py`: `fcntl.flock` lock taken by `run-job`, `generate`, and the
   TUI. A second starter fails immediately; nothing queues silently.
-- `tui/` (Textual): job browser, live run view, run history. Read-only for
+- `tui/` (Textual): job browser, live run view, execution history. Read-only for
   job files.
 
 ## Phase 3: API and MCP for agents (planned)

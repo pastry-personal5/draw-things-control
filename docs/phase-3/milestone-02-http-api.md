@@ -65,9 +65,9 @@ Out of scope:
 | `GET /queue/{id}` | One entry: state, current run, cooldown end, error |
 | `POST /queue/{id}/cancel` | Cancel (Milestone 01 rules) |
 | `POST /queue/{id}/resume` | Resume an interrupted or failed entry |
-| `GET /history` | Job runs, paged, filterable by name and status |
-| `GET /history/{id}` | One job run with its runs, redacted |
-| `GET /outputs/{job_run_id}` | Output paths and metadata (existence, size), no content |
+| `GET /history` | Executions, paged, filterable by name and status |
+| `GET /history/{id}` | One execution with its runs, redacted |
+| `GET /outputs/{execution_id}` | Output paths and metadata (existence, size), no content |
 | `GET /events` | Server-sent events for queue and run events |
 | `GET /audit` | The audit log, paged (see Audit log below) |
 
@@ -96,8 +96,8 @@ global configuration keys, validated like the existing ones and documented in
 | Key | Meaning | Default |
 |-----|---------|---------|
 | `max_queued_jobs` | Entries in `queued`, at once | 20 |
-| `max_job_runs` | `batch_count` a job submitted through the API may have | 50 |
-| `max_job_seconds` | Worst case for one job: `batch_count` times `run_timeout_seconds`, plus cooldowns between runs | 43200 (12 h) |
+| `max_job_runs` | `run_count` a job submitted through the API may have | 50 |
+| `max_job_seconds` | Worst case for one job: `run_count` times `run_timeout_seconds`, plus cooldowns between runs | 43200 (12 h) |
 | `max_job_file_bytes` | Size of a job YAML written through the API (Milestone 03) | 65536 |
 
 - The limits apply to `POST /queue` and, for the size, to `PUT /jobs/{name}`,

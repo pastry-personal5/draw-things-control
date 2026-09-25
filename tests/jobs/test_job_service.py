@@ -126,8 +126,8 @@ class JobServiceTests(JobTestCase):
     def manifest(self, outcome) -> dict:
         return json.loads(outcome.manifest.read_text(encoding="utf-8"))
 
-    def test_i2v_runs_chain_last_frames_in_batch_order(self) -> None:
-        job = self.job(batch_count=4, prompt_pairs=[{"name": "walk", "positive": "walk", "batches": [1, 3]}, {"name": "wave", "positive": "wave", "batches": [2, 4]}], run_timeout_seconds=60)
+    def test_i2v_runs_chain_last_frames_in_run_order(self) -> None:
+        job = self.job(run_count=4, prompt_pairs=[{"name": "walk", "positive": "walk", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "runs": [2, 4]}], run_timeout_seconds=60)
         outcome = self.run_job(job)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 4))
         prompts = [arguments.prompt for arguments, _timeout, _grace in self.calls]
@@ -143,23 +143,23 @@ class JobServiceTests(JobTestCase):
         self.assertTrue(all(name.startswith("sunset-walk-20260924-153012-") for name in names))
         manifest = self.manifest(outcome)
         self.assertEqual(manifest["status"], "succeeded")
-        self.assertEqual([(run["batch"], run["pair"], run["status"]) for run in manifest["runs"]], [(1, "walk", "succeeded"), (2, "wave", "succeeded"), (3, "walk", "succeeded"), (4, "wave", "succeeded")])
-        self.assertIn("Run 4/4 (batch 4, pair wave)", outcome.log.read_text(encoding="utf-8"))
+        self.assertEqual([(index, run["pair"], run["status"]) for index, run in enumerate(manifest["runs"], 1)], [(1, "walk", "succeeded"), (2, "wave", "succeeded"), (3, "walk", "succeeded"), (4, "wave", "succeeded")])
+        self.assertIn("Run 4/4 (pair wave)", outcome.log.read_text(encoding="utf-8"))
         self.assertEqual(manifest["log_file"], outcome.log.name)
 
     def test_t2v_first_run_has_no_image(self) -> None:
-        self.run_job(self.job(mode="t2v", input=None, batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.run_job(self.job(mode="t2v", input=None, run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertIsNone(self.calls[0][0].image)
         self.assertEqual(self.calls[1][0].image, self.extracted[0][1])
 
     def test_i2i_chains_png_outputs_without_extraction(self) -> None:
-        self.run_job(self.job(mode="i2i", batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.run_job(self.job(mode="i2i", run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertEqual(self.calls[0][0].output.suffix, ".png")
         self.assertEqual(self.calls[1][0].image, self.calls[0][0].output)
         self.assertEqual(self.extracted, [])
 
     def test_arguments_carry_overrides_and_config_json(self) -> None:
-        self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text", "negative": "blur"}], config_override={"steps": 40, "guidance_scale": 5.0, "refiner_model": "job-refiner.ckpt", "refiner_start": 0.1, "shift": 3.99}))
+        self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text", "negative": "blur"}], config_override={"steps": 40, "guidance_scale": 5.0, "refiner_model": "job-refiner.ckpt", "refiner_start": 0.1, "shift": 3.99}))
         arguments = self.calls[0][0]
         self.assertEqual((arguments.steps, arguments.cfg, arguments.seed, arguments.negative_prompt), (40, 5.0, 42, "blur"))
         config = json.loads(arguments.config_json or "{}")
@@ -265,14 +265,14 @@ class JobServiceTests(JobTestCase):
         remove.assert_called_once()
         self.assertEqual(self.calls, [])
 
-    def test_i2v_config_json_omits_batch_count_and_the_log_says_so(self) -> None:
+    def test_i2v_config_json_omits_run_count_and_the_log_says_so(self) -> None:
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "batchCount": 3}, name="batch.json")
-        outcome = self.run_job(self.job(config_file="batch.json", batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        outcome = self.run_job(self.job(config_file="batch.json", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertNotIn("batchCount", json.loads(self.calls[0][0].config_json or "{}"))
         self.assertIn("Ignoring batchCount (3) from config_file batch.json", outcome.log.read_text(encoding="utf-8"))
 
     def test_records_are_off_by_default(self) -> None:
-        job = self.job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
+        job = self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
         outcome = self.service.run(job, executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.manifest, outcome.log), (0, None, None))
         names = sorted(path.name for path in job.output_directory.iterdir())
@@ -302,7 +302,7 @@ class JobServiceTests(JobTestCase):
             return self.create_runner(arguments, timeout, grace, on_message)
 
         self.service._runner_factory = create_runner
-        job = self.resize_job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
+        job = self.resize_job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
         outcome = self.run_job(job)
         self.assertEqual(outcome.exit_code, 0)
         first, second = self.calls[0][0], self.calls[1][0]
@@ -379,7 +379,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(seen, [((832, 448), None)])
 
     def test_jobs_without_desired_keys_build_the_same_commands(self) -> None:
-        outcome = self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         arguments = self.calls[0][0]
         self.assertEqual((arguments.width, arguments.height), (None, None))
         self.assertNotIn("--width", arguments.command)
@@ -408,7 +408,7 @@ class JobServiceTests(JobTestCase):
     # Cooldown between runs.
 
     def cooldown_job(self, **changes: object) -> JobDefinition:
-        return self.job(**{"batch_count": 3, "prompt_pairs": [{"name": "only", "positive": "text"}], **changes})
+        return self.job(**{"run_count": 3, "prompt_pairs": [{"name": "only", "positive": "text"}], **changes})
 
     def fake_cooldown(self, interrupt_on: int | None = None, waited: float | None = None):
         """A wait that sleeps for no time; it records each wait and the manifest as saved when the wait starts."""
@@ -525,7 +525,7 @@ class JobServiceTests(JobTestCase):
     def test_cooldown_end_time_is_local_like_the_other_timestamps(self) -> None:
         utc_now = datetime(2026, 9, 24, 6, 30, 12, tzinfo=timezone.utc)
         self.service._clock = lambda: utc_now
-        outcome = self.run_job(self.cooldown_job(batch_count=2, cooldown_seconds=90))
+        outcome = self.run_job(self.cooldown_job(run_count=2, cooldown_seconds=90))
         expected = (utc_now.astimezone() + timedelta(seconds=90)).strftime("%H:%M:%S")
         self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", outcome.log.read_text(encoding="utf-8"))
 
@@ -571,7 +571,7 @@ class JobServiceTests(JobTestCase):
         self.assertNotIn(started.source_text, repr(job))
         self.assertEqual(job, replace(job, source_text="# a comment\n"))
         arguments = self.calls[0][0]
-        self.assertEqual((first.number, first.total, first.batch, first.pair, first.positive, first.negative), (1, 3, 1, "only", "text", None))
+        self.assertEqual((first.number, first.total, first.pair, first.positive, first.negative), (1, 3, "only", "text", None))
         self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), arguments.output.name, arguments.output.stem + "-last-frame.png"))
         self.assertEqual(first.command, tuple(GenerationService.redact_command(arguments.command)))
         self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, arguments.output.name, first.last_frame))
@@ -606,7 +606,7 @@ class JobServiceTests(JobTestCase):
             return TalkingRunner(arguments, on_message, lines)
 
         self.service._runner_factory = factory
-        _outcome, events = self.observed(self.job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        _outcome, events = self.observed(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
         output = [event for event in events if isinstance(event, RunOutput)]
         self.assertEqual([(event.number, event.stream, event.text, event.progress) for event in output], [(run, stream.value, text, (3, 8) if "3/8" in text else None) for run in (1, 2) for stream, text in lines])
         # Output arrives between its run's start and finish.
@@ -614,9 +614,9 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(kinds[:6], [JobStarted, RunStarted, RunOutput, RunOutput, RunOutput, RunFinished])
 
     def test_without_an_observer_the_factory_gets_no_callback(self) -> None:
-        self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertEqual(self.callbacks, [None])
-        self.observed(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.observed(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertTrue(callable(self.callbacks[1]))
 
     def test_a_runner_that_raises_still_closes_the_events(self) -> None:
@@ -720,7 +720,7 @@ class JobServiceTests(JobTestCase):
             return self.create_runner(arguments, timeout, grace, on_message)
 
         self.service._runner_factory = factory
-        outcome = self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertEqual(outcome.exit_code, 0)
         self.assertEqual(len(refusals), 1)
         # The refused call left the running job's state alone, and the service is free again afterwards.

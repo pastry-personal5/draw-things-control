@@ -13,7 +13,7 @@ version: 1
 name: sunset-walk                      # job name, the base of output file names; [a-z0-9-]
 mode: i2v                              # i2i, t2v, or i2v
 input: first-frame.png                 # first input, run 1 only (i2i/i2v; not allowed for t2v)
-batch_count: 7                         # total runs; run k+1 starts from run k's last frame
+run_count: 7                           # total runs; run k+1 starts from run k's last frame
 
 # Optional (i2i/i2v): resize the first input before run 1, and generate every
 # run at that size instead of width/height below. Each value is 1 to 8192 and
@@ -24,20 +24,20 @@ batch_count: 7                         # total runs; run k+1 starts from run k's
 # desired_input_height: 470
 # max_input_crop_percent: 10           # one key only; refuse a larger crop (default 10)
 
-# Each batch uses the pair that lists it, or the default pair.
-# With batch_count 7: walk, wave, walk, wave, walk, idle, idle.
+# Each run uses the pair that lists it, or the default pair.
+# With run_count 7: walk, wave, walk, wave, walk, idle, idle.
 prompt_pairs:
   - name: walk
     positive: "a woman walks along the beach at sunset, cinematic, gentle camera tracking"
     negative: "blurry, distorted, extra limbs, flickering"
-    batches: [1, 3, 5]
+    runs: [1, 3, 5]
   - name: wave
     positive: "she turns and waves at the camera, warm golden light"
     negative: "blurry, distorted, extra limbs, flickering"
-    batches: [2, 4]
+    runs: [2, 4]
   - name: idle
     positive: "she stands still at the water's edge, gentle breeze in her hair"
-    default: true                      # every batch not listed above; no negative, so the model's recommended one applies
+    default: true                      # every run not listed above; no negative, so the model's recommended one applies
 
 output:
   # directory: sunset-walk             # under the global output_directory; omitted: <output_directory>/<name>

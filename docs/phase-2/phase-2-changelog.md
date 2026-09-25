@@ -5,6 +5,11 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-25
 
+- **Owner decision**: One start-to-finish invocation of a job is an "execution"; "run" keeps meaning one generation inside it. This replaces "job run" in the Phase 2 and Phase 3 plans: the `job_runs` table is `executions`, the `/outputs/{job_run_id}` endpoint is `/outputs/{execution_id}`, and `runs` rows point at their execution. The name "run history" and the run lock (which guards the whole process) are unchanged. Only planning documents used the old term; no code or stored data is affected. Follows the run/batch decision above.
+  Milestone 02 and 05 now say "execution history" (the `history` screen and store keep their names); the milestone 05 file keeps its name so links stay valid.
+- **Change** [M01]: `OutputProcessor` now strips the terminal codes `draw-things-cli` uses to redraw its progress bar (`ESC[1A ESC[K`, `\r`, and inline-image sequences) and drops lines left empty, so logs and events carry clean text such as `Sampling... 3 / 20 [█] 15%`. `ProcessMessage` and `RunOutput` gain `percent` (0-100 or `None`), which covers stages with no step counter (`Processing...`, `Generated`) and model downloads. A `[i/n]` file counter is no longer taken as `progress`. Blank child lines are no longer recorded.
+- **Owner decision**: "run" is the only word for one generation in a job; "batch" no longer names a run's position. The job key `batch_count` is now `run_count`, and a prompt pair's `batches` list is now `runs`, with no alias for the old keys: validation rejects them with "was renamed to `run_count`" (or `runs`), so job files must be updated. `RunRecord.batch` (the manifest's per-run `batch` field) and `RunStarted.batch` are removed because they always equalled the run number, and log and `--dry-run` lines read `Run 3/7 (pair walk)`. "Batch" stays free for Draw Things' own `batchCount` and `batchSize`, which the job format does not use. Output file names never carried a batch suffix, so they are unchanged. The archived Phase 1 documents and changelog keep the old wording.
+
 - **Change** [M01]: `JobService.run()` takes an `observer` and sends typed
   events (`jobs/job_events.py`); `cancel()` stops a running job from any
   thread and returns whether it did; `combine_observers` joins observers;
@@ -61,7 +66,7 @@ Owner decisions, design decisions, and notable changes for
   documents are written; no code yet. AGENTS.md's project layout line is
   amended for the new subpackages (see the owner decision below).
 
-- **Design decision** [M02]: A job run stores its exact YAML text and the
+- **Design decision** [M02]: An execution stores its exact YAML text and the
   settings it was resolved with (directories, cooldown and source), not a
   serialized `JobDefinition`. The parsed object holds paths and a resize
   plan and is not meant to be serialized; the text is enough to show, and

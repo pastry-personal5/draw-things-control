@@ -40,7 +40,6 @@ class RunStarted:
     at: str
     number: int
     total: int
-    batch: int
     pair: str
     positive: str
     negative: str | None
@@ -63,6 +62,8 @@ class RunOutput:
     text: str
     # (current, total) when the line reports progress.
     progress: tuple[int, int] | None
+    # 0-100 when the line shows a percentage, such as the progress bar's.
+    percent: int | None = None
 
 
 @dataclass(frozen=True)

@@ -54,7 +54,6 @@ class PlannedRun:
     """One run of a job, with its predicted input and output files."""
 
     number: int
-    batch: int
     pair: PromptPair
     input: Path | None
     output: Path
@@ -139,7 +138,7 @@ class JobService:
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), command_previews=previews)
 
     def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None) -> JobOutcome:
-        """Run every batch in order; stop at the first failed, timed-out, or interrupted run.
+        """Run the job's runs in order; stop at the first failed, timed-out, or interrupted run.
 
         With ``write_records``, a JSON manifest and a log file are saved beside the outputs. ``observer``
         receives a JobEvent for each step, on this thread; one that raises is logged and ignored. Only one
@@ -307,7 +306,6 @@ class JobService:
                 break
             run = self._plan_run(job, number, pair, current_input, manifest.seed, executable, set())
             record = RunRecord(
-                batch=run.batch,
                 pair=pair.name,
                 positive=pair.positive,
                 negative=pair.negative,
@@ -321,13 +319,12 @@ class JobService:
             )
             manifest.runs.append(record)
             self._save(manifest_path, manifest)
-            logger.info("Run {}/{} (batch {}, pair {}): input={}, output={}", number, total, run.batch, pair.name, run.input or "(none, text only)", run.output)
+            logger.info("Run {}/{} (pair {}): input={}, output={}", number, total, pair.name, run.input or "(none, text only)", run.output)
             self._emit(
                 RunStarted(
                     at=record.started_at,
                     number=number,
                     total=total,
-                    batch=run.batch,
                     pair=pair.name,
                     positive=pair.positive,
                     negative=pair.negative,
@@ -428,7 +425,7 @@ class JobService:
             return None
 
         def on_message(message: ProcessMessage) -> None:
-            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress))
+            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent))
 
         return on_message
 
@@ -485,7 +482,7 @@ class JobService:
             image=run_input,
             output=output,
         )
-        return PlannedRun(number=number, batch=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments)
+        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments)
 
     def _check_tools(self, job: JobDefinition, executable: str) -> None:
         if self._find_executable(executable) is None:

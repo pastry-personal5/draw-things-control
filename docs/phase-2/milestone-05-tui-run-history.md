@@ -1,4 +1,4 @@
-# Milestone 05: Run History
+# Milestone 05: Execution History
 
 **Phase:** [Phase 2: Terminal UI for Humans](README.md)
 **Status:** planned
@@ -6,15 +6,15 @@
 
 ## Goal
 
-Show what ran before: every job run, its result, its runs, and where the
+Show what ran before: every execution, its result, its runs, and where the
 outputs are, read from the state store.
 
 ## Scope
 
 In scope:
 
-- A history screen listing job runs, newest first
-- A detail view for one job run and its runs
+- A history screen listing executions, newest first
+- A detail view for one execution and its runs
 - Revealing an output file in Finder
 - Filtering by job name and status
 
@@ -39,14 +39,14 @@ Out of scope:
 - The list refreshes when opened and on a refresh key, and while a job
   runs from this TUI it is updated from that job's events.
 - While the list shows a `running` row that this TUI did not start (for
-  example, a job run by the Phase 3 server or by `run-job` in another
+  example, an execution by the Phase 3 server or by `run-job` in another
   terminal), it re-reads the store every 5 seconds, so its runs appear as
   they finish. There are no live events across processes; the store is the
   only channel.
 
 ### Detail view
 
-For the selected job run:
+For the selected execution:
 
 - The job snapshot summary as it was when it ran (seed, cooldown, mode),
   from the stored snapshot, not from the current file.
@@ -63,13 +63,13 @@ file is missing, the key shows a message and does nothing.
 
 ### Imported history
 
-Runs imported by `import-history` (Milestone 02) appear like any other,
+Executions imported by `import-history` (Milestone 02) appear like any other,
 marked `imported`, because they have no stored job snapshot and may lack
 fields the app records now.
 
 ## Acceptance criteria
 
-- History shows runs from `run-job`, from the TUI, and from an import,
+- History shows executions from `run-job`, from the TUI, and from an import,
   newest first.
 - A filter by status and by name narrows the list and clears again.
 - The detail view shows the stored snapshot even after the job file is
@@ -79,5 +79,5 @@ fields the app records now.
 - The list opens quickly with several thousand rows (paged reads).
 - No credential value appears in any history view.
 - Headless tests cover the list, both filters, the detail view, an imported
-  run, a missing output, and an empty history.
+  execution, a missing output, and an empty history.
 - `make check` passes.

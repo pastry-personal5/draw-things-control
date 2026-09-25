@@ -144,7 +144,7 @@ def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = 
     typer.echo(f"Valid job: {job.path}")
     typer.echo(f"  name: {job.name}")
     typer.echo(f"  mode: {job.mode}")
-    typer.echo(f"  runs: {job.batch_count} ({', '.join(pair.name for pair in job.schedule())})")
+    typer.echo(f"  runs: {job.run_count} ({', '.join(pair.name for pair in job.schedule())})")
     typer.echo(f"  cooldown: {cooldown_details(job)}")
     typer.echo(f"  input: {job.input or '(none, text only)'}")
     typer.echo(f"  output directory: {job.output_directory}")
@@ -173,7 +173,7 @@ def run_job(
             for run, command in zip(preview.runs, preview.command_previews, strict=True):
                 if run.number > 1 and job.cooldown_seconds > 0:
                     typer.echo(f"# Cooldown {seconds_text(job.cooldown_seconds)}")
-                typer.echo(f"# Run {run.number}/{len(preview.runs)} (batch {run.batch}, pair {run.pair.name})")
+                typer.echo(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
                 typer.echo(command)
             return
         outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records)

@@ -16,7 +16,7 @@ processes from driving the GPU at once.
   front end can observe and stop a job without parsing logs or raising
   signals. The CLI's behavior and log output do not change.
 - A SQLite state store (`sqlite3` from the standard library) holding job
-  runs and per-run records: the source of truth for run history
+  executions and per-run records: the source of truth for execution history
 - An OS-level run lock (`fcntl.flock`) taken by every command that starts a
   generation: `run-job`, `generate`, and the TUI
 - A Textual TUI, started with `dtc tui`, to browse jobs, run and stop a
@@ -45,7 +45,7 @@ processes from driving the GPU at once.
 | 02 | [State store and run lock](milestone-02-state-store-run-lock.md) | planned |
 | 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | planned |
 | 04 | [Live run view](milestone-04-tui-live-run.md) | planned |
-| 05 | [Run history](milestone-05-tui-run-history.md) | planned |
+| 05 | [Execution history](milestone-05-tui-run-history.md) | planned |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
 both.
@@ -81,8 +81,9 @@ Decisions and notable changes are recorded in
 - Starting a run while another process holds the run lock fails immediately
   with a clear message and a distinct exit code; it never queues silently and
   never runs two `draw-things-cli` processes at once.
-- Run history in the TUI comes from the state store, including runs started
-  from the CLI and runs imported from phase 1 manifests.
+- Execution history in the TUI comes from the state store, including
+  executions started from the CLI and executions imported from phase 1
+  manifests.
 - No credential value (`--api-key`, `--remote-shared-secret`) reaches the
   state store or an event.
 - TUI screens are covered by headless tests; no test starts the real

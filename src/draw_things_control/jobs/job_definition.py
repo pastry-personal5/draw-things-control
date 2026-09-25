@@ -17,9 +17,11 @@ from draw_things_control.jobs.input_size import MAX_DESIRED_SIZE, ResizePlan, ch
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "batch_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown_seconds"}
-REQUIRED_JOB_KEYS = ("version", "name", "mode", "batch_count", "prompt_pairs", "config_file")
-PAIR_KEYS = {"name", "positive", "negative", "batches", "default"}
+JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown_seconds"}
+REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs", "config_file")
+PAIR_KEYS = {"name", "positive", "negative", "runs", "default"}
+# Keys from job files written before "batch" was dropped as a second word for "run"; named in the error so the fix is obvious.
+RENAMED_KEYS = {"batch_count": "run_count", "batches": "runs"}
 OUTPUT_KEYS = {"directory", "extension"}
 # Base configuration keys each mode drops, because the job itself decides them.
 IGNORED_CONFIG_KEYS = {"i2v": ("batchCount",)}
@@ -53,12 +55,12 @@ class GenerationMode(StrEnum):
 
 @dataclass(frozen=True)
 class PromptPair:
-    """A named positive and optional negative prompt, and the batches that use it."""
+    """A named positive and optional negative prompt, and the runs that use it."""
 
     name: str
     positive: str
     negative: str | None
-    batches: tuple[int, ...]
+    runs: tuple[int, ...]
     default: bool
 
 
@@ -94,7 +96,7 @@ class JobDefinition:
     name: str
     mode: GenerationMode
     input: Path | None
-    batch_count: int
+    run_count: int
     prompt_pairs: tuple[PromptPair, ...]
     output_directory: Path
     extension: str
@@ -124,10 +126,10 @@ class JobDefinition:
         return None
 
     def schedule(self) -> tuple[PromptPair, ...]:
-        """Return the prompt pair used by each batch, in batch order."""
-        assigned = {batch: pair for pair in self.prompt_pairs for batch in pair.batches}
+        """Return the prompt pair used by each run, in run order."""
+        assigned = {number: pair for pair in self.prompt_pairs for number in pair.runs}
         default = next((pair for pair in self.prompt_pairs if pair.default), None)
-        return tuple(assigned.get(batch, default) for batch in range(1, self.batch_count + 1))  # type: ignore[misc]
+        return tuple(assigned.get(number, default) for number in range(1, self.run_count + 1))  # type: ignore[misc]
 
     def configured_seed(self) -> tuple[int | None, str]:
         """Return the seed from the job or base configuration and where it came from."""
@@ -165,10 +167,10 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         fail("mode", "must be one of i2i, t2v, or i2v")
 
     input_path = _input_path(fail, data, mode, global_config)
-    batch_count = data["batch_count"]
-    if not _is_int(batch_count) or batch_count < 1:
-        fail("batch_count", "must be an integer >= 1")
-    prompt_pairs = _prompt_pairs(fail, data["prompt_pairs"], batch_count)
+    run_count = data["run_count"]
+    if not _is_int(run_count) or run_count < 1:
+        fail("run_count", "must be an integer >= 1")
+    prompt_pairs = _prompt_pairs(fail, data["prompt_pairs"], run_count)
     output_directory, extension = _output(fail, data.get("output", {}), mode, name, global_config)
 
     config_file = data["config_file"]
@@ -221,7 +223,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         name=name,
         mode=mode,
         input=input_path,
-        batch_count=batch_count,
+        run_count=run_count,
         prompt_pairs=prompt_pairs,
         output_directory=output_directory,
         extension=extension,
@@ -272,7 +274,7 @@ def cooldown_details(job: JobDefinition) -> str:
     """The cooldown line of validate-job: the value, its source, and the waits it adds."""
     if job.cooldown_seconds <= 0:
         return f"none ({job.cooldown_source})"
-    waits = job.batch_count - 1
+    waits = job.run_count - 1
     if waits == 0:
         extent = "no waits: 1 run"
     else:
@@ -283,7 +285,7 @@ def cooldown_details(job: JobDefinition) -> str:
 def report_ignored_config(job: JobDefinition) -> None:
     """Tell the user which base configuration keys the job's mode ignores."""
     for key, value in job.ignored_config.items():
-        logger.info("Ignoring {} ({}) from config_file {}: not used in {} jobs; the job's batch_count sets the number of runs", key, value, job.config_file, job.mode)
+        logger.info("Ignoring {} ({}) from config_file {}: not used in {} jobs; the job's run_count sets the number of runs", key, value, job.config_file, job.mode)
     if job.size is not None:
         size = f"{job.size[0]}x{job.size[1]}"
         for source, key, value in job.ignored_size:
@@ -308,7 +310,7 @@ class _Failure:
 def _check_keys(fail: _Failure, data: dict[str, Any], allowed: set[str], prefix: str) -> None:
     for key in data:
         if key not in allowed:
-            fail(f"{prefix}{key}", "is not a known key")
+            fail(f"{prefix}{key}", f"was renamed to {RENAMED_KEYS[key]}" if key in RENAMED_KEYS else "is not a known key")
 
 
 def _input_path(fail: _Failure, data: dict[str, Any], mode: GenerationMode, global_config: GlobalConfig) -> Path | None:
@@ -359,7 +361,7 @@ def _cooldown(fail: _Failure, data: dict[str, Any], global_config: GlobalConfig)
     return 0.0, "default"
 
 
-def _prompt_pairs(fail: _Failure, value: Any, batch_count: int) -> tuple[PromptPair, ...]:
+def _prompt_pairs(fail: _Failure, value: Any, run_count: int) -> tuple[PromptPair, ...]:
     if not isinstance(value, list) or not value:
         fail("prompt_pairs", "must be a list with at least one pair")
     pairs: list[PromptPair] = []
@@ -379,31 +381,31 @@ def _prompt_pairs(fail: _Failure, value: Any, batch_count: int) -> tuple[PromptP
         negative = item.get("negative")
         if negative is not None and not isinstance(negative, str):
             fail(f"{field}.negative", "must be text")
-        batches = item.get("batches", [])
-        if not isinstance(batches, list) or not all(_is_int(batch) for batch in batches):
-            fail(f"{field}.batches", "must be a list of batch numbers")
+        runs = item.get("runs", [])
+        if not isinstance(runs, list) or not all(_is_int(number) for number in runs):
+            fail(f"{field}.runs", "must be a list of run numbers")
         default = item.get("default", False)
         if not isinstance(default, bool):
             fail(f"{field}.default", "must be true or false")
-        pairs.append(PromptPair(name=name, positive=positive, negative=negative, batches=tuple(batches), default=default))
+        pairs.append(PromptPair(name=name, positive=positive, negative=negative, runs=tuple(runs), default=default))
 
     if sum(pair.default for pair in pairs) > 1:
         fail("prompt_pairs", "may mark at most one pair as default")
     if len(pairs) == 1 and not pairs[0].default:
         only = pairs[0]
-        pairs[0] = PromptPair(name=only.name, positive=only.positive, negative=only.negative, batches=only.batches, default=True)
+        pairs[0] = PromptPair(name=only.name, positive=only.positive, negative=only.negative, runs=only.runs, default=True)
     assigned: dict[int, str] = {}
     for index, pair in enumerate(pairs):
-        for batch in pair.batches:
-            if not 1 <= batch <= batch_count:
-                fail(f"prompt_pairs[{index}].batches", f"lists batch {batch}, outside 1..{batch_count}")
-            if batch in assigned:
-                fail(f"prompt_pairs[{index}].batches", f"lists batch {batch}, already assigned to pair '{assigned[batch]}'")
-            assigned[batch] = pair.name
+        for number in pair.runs:
+            if not 1 <= number <= run_count:
+                fail(f"prompt_pairs[{index}].runs", f"lists run {number}, outside 1..{run_count}")
+            if number in assigned:
+                fail(f"prompt_pairs[{index}].runs", f"lists run {number}, already assigned to pair '{assigned[number]}'")
+            assigned[number] = pair.name
     if not any(pair.default for pair in pairs):
-        for batch in range(1, batch_count + 1):
-            if batch not in assigned:
-                fail("prompt_pairs", f"assign batch {batch} to a pair, or mark one pair 'default: true'")
+        for number in range(1, run_count + 1):
+            if number not in assigned:
+                fail("prompt_pairs", f"assign run {number} to a pair, or mark one pair 'default: true'")
     return tuple(pairs)
 
 

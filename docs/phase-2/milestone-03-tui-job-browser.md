@@ -55,7 +55,7 @@ For the selected job:
 
 - The summary `validate-job` prints (mode, runs, seed, cooldown and its
   source, output extension).
-- The prompt pairs, with which batches use each.
+- The prompt pairs, with which runs use each.
 - The dry-run plan: each planned run and its redacted command, as
   `run-job --dry-run` prints it.
 - For an invalid job, the error and nothing else.

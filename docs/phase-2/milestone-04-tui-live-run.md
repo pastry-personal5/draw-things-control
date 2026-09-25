@@ -89,7 +89,7 @@ goes back. The last job's result is one key away from the job list.
 
 ## Acceptance criteria
 
-- With a fake runner, a job run from the TUI shows each run's state change
+- With a fake runner, an execution from the TUI shows each run's state change
   in order, streams output, shows a cooldown countdown, and ends with the
   final status.
 - `s` during a run and during a cooldown ends the job, with the job

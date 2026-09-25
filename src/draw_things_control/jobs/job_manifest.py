@@ -14,7 +14,6 @@ from typing import Any
 class RunRecord:
     """One run: its prompts, files, command, and result."""
 
-    batch: int
     pair: str
     positive: str
     negative: str | None
