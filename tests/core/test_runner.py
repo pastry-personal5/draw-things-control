@@ -138,3 +138,23 @@ class InterruptibleWaitTests(unittest.TestCase):
         # stopped() turning true between wake-ups ends the wait at the next one.
         deadline = time.monotonic() + 0.1
         self.assertLess(interruptible_wait(0.3, lambda: time.monotonic() >= deadline, wake_on_signal=False), 0.35)
+
+    def test_a_byte_on_the_callers_pipe_ends_the_wait_from_another_thread(self) -> None:
+        read_end, write_end = os.pipe()
+        os.set_blocking(read_end, False)
+        stop = threading.Event()
+
+        def cancel() -> None:
+            stop.set()
+            os.write(write_end, b"\0")
+
+        timer = threading.Timer(0.1, cancel)
+        try:
+            timer.start()
+            waited = interruptible_wait(5, stop.is_set, wake_on_signal=False, wake_fd=read_end)
+        finally:
+            timer.cancel()
+            os.close(read_end)
+            os.close(write_end)
+        self.assertGreaterEqual(waited, 0.1)
+        self.assertLess(waited, 1)

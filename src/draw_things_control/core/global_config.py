@@ -30,6 +30,11 @@ class GlobalConfig:
 
 def load_yaml_mapping(path: Path, description: str) -> dict[str, Any]:
     """Read a YAML file whose top level must be a mapping."""
+    return read_yaml_mapping(path, description)[0]
+
+
+def read_yaml_mapping(path: Path, description: str) -> tuple[dict[str, Any], str]:
+    """Read a YAML file whose top level must be a mapping; return the mapping and the file's text."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as error:
@@ -42,7 +47,7 @@ def load_yaml_mapping(path: Path, description: str) -> dict[str, Any]:
         raise ValueError(f"{description} is not valid YAML: {path} ({error})") from error
     if not isinstance(data, dict):
         raise ValueError(f"{description} must contain a YAML mapping: {path}")
-    return data
+    return data, text
 
 
 def load_global_config(path: Path = DEFAULT_GLOBAL_CONFIG) -> GlobalConfig:

@@ -71,7 +71,7 @@ Out of scope:
   usable for browsing and history, and the busy message names `serve` as
   the holder.
 - It takes the oldest `queued` entry and runs it with
-  `JobService.run(observer=..., install_signals=False)`, recording runs
+  `JobService.run(observer=...)`, recording runs
   through the Phase 2 recorder.
 - After a job finishes, the worker waits the finished job's resolved
   `cooldown_seconds` (from the snapshot) before starting the next one, using

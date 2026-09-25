@@ -6,7 +6,7 @@ from unittest import mock
 
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import app, create_runner
+from draw_things_control.cli.app import app, create_job_runner, create_runner
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from tests.fixtures import JobTestCase, job_data
 
@@ -50,6 +50,15 @@ class JobCliTests(JobTestCase):
         self.assertFalse(create_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._capture_output)
         self.assertFalse(create_runner(DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png"), terminal_image=True), None, 1)._capture_output)
         self.assertTrue(create_runner(DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png")), None, 1)._capture_output)
+
+    def test_runners_pass_the_child_output_callback_to_the_output_processor(self) -> None:
+        def callback(_message: object) -> None:
+            pass
+
+        arguments = DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png"))
+        self.assertIs(create_job_runner(arguments, None, 1, callback)._output_processor._callback, callback)
+        self.assertIs(create_runner(arguments, None, 1, callback)._output_processor._callback, callback)
+        self.assertIsNone(create_job_runner(arguments, None, 1)._output_processor._callback)
 
     def test_dry_run_with_desired_size_shows_the_placeholder(self) -> None:
         self.write_image("photo.jpg", (1920, 1080))

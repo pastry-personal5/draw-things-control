@@ -44,8 +44,11 @@ def restore_signal_handlers(previous_handlers: SignalHandlers | None) -> None:
             signal.signal(signum, handler)
 
 
-def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_signal: bool = True) -> float:
+def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_signal: bool = True, wake_fd: int | None = None) -> float:
     """Wait ``seconds``, ending early once ``stopped()`` is true; return the seconds waited.
+
+    ``wake_fd`` is the non-blocking read end of a pipe the caller owns. Another thread ends the wait by
+    making ``stopped()`` true and then writing a byte to the pipe; a byte already there ends it at once.
 
     With ``wake_on_signal``, a wake-up pipe ends the wait as soon as a signal with a Python handler
     arrives (such as those from install_signal_handlers): Python's C-level handler writes a byte to
@@ -72,9 +75,10 @@ def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_s
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            readable, _, _ = select.select([read_end], [], [], remaining)
-            if readable:
-                _drain(read_end)
+            watched = [read_end] if wake_fd is None else [read_end, wake_fd]
+            readable, _, _ = select.select(watched, [], [], remaining)
+            for ready in readable:
+                _drain(ready)
     finally:
         if registered:
             signal.set_wakeup_fd(previous_fd)

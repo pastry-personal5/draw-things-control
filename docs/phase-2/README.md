@@ -1,6 +1,6 @@
 # Phase 2: Terminal UI for Humans
 
-**Status:** planned
+**Status:** in-progress
 
 ## Goal
 
@@ -14,7 +14,7 @@ processes from driving the GPU at once.
 
 - Structured job events and a `cancel()` method on `JobService`, so a
   front end can observe and stop a job without parsing logs or raising
-  signals. The CLI keeps its current behavior as one event observer.
+  signals. The CLI's behavior and log output do not change.
 - A SQLite state store (`sqlite3` from the standard library) holding job
   runs and per-run records: the source of truth for run history
 - An OS-level run lock (`fcntl.flock`) taken by every command that starts a
@@ -41,7 +41,7 @@ processes from driving the GPU at once.
 
 | # | Milestone | Status |
 |---|-----------|--------|
-| 01 | [Job events and cancellation](milestone-01-job-events-cancel.md) | planned |
+| 01 | [Job events and cancellation](milestone-01-job-events-cancel.md) | done |
 | 02 | [State store and run lock](milestone-02-state-store-run-lock.md) | planned |
 | 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | planned |
 | 04 | [Live run view](milestone-04-tui-live-run.md) | planned |
@@ -64,8 +64,7 @@ as AGENTS.md requires.
 
 All code lives in the `src/draw_things_control/` package (see
 [architecture](../architecture.md)). The TUI lives in `tui/`. Shared new
-modules: `jobs/job_events.py` (Milestone 01; it also holds the CLI's log
-observer, or that moves to `jobs/job_log_observer.py`), and `state/store.py`,
+modules: `jobs/job_events.py` (Milestone 01), and `state/store.py`,
 `state/recorder.py`, and `core/run_lock.py` (Milestone 02).
 
 ## Changelog

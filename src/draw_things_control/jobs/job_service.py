@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import signal
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,7 +21,9 @@ from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArg
 from draw_things_control.core.draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
 from draw_things_control.core.generation_config import build_config_json
 from draw_things_control.core.generation_service import GenerationService, Runner
+from draw_things_control.core.process_output import MessageCallback, ProcessMessage
 from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, cooldown_summary, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, RunFinished, RunOutput, RunStarted, notify
 from draw_things_control.jobs.job_log import add_job_log, remove_job_log
 from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
 from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
@@ -34,7 +38,12 @@ class StoppableRunner(Runner, Protocol):
     def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None: ...
 
 
-RunnerFactory = Callable[[DrawThingsGenerateArguments, float | None, float], StoppableRunner]
+class RunnerFactory(Protocol):
+    """Creates a run's runner; ``on_message`` receives each line the child prints, or is None when nothing observes the job."""
+
+    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> StoppableRunner: ...
+
+
 FrameExtractor = Callable[[Path, Path], None]
 # Waits up to the given seconds between runs and returns the seconds actually waited.
 Cooldown = Callable[[float], float]
@@ -102,6 +111,13 @@ class JobService:
         self._generation = GenerationService(runner_factory=self._create_runner, find_executable=find_executable, config_loader=load_config)
         self._current_runner: StoppableRunner | None = None
         self._interrupt: signal.Signals | None = None
+        # Guards the running flag and the wake-up pipe, so cancel() from another thread never writes to a closed or reused descriptor.
+        # The signal handler takes no lock: it only sets a flag and asks the runner to stop.
+        self._state_lock = threading.Lock()
+        self._running = False
+        self._observer: JobObserver | None = None
+        self._wake_read: int | None = None
+        self._wake_write: int | None = None
 
     def preview(self, job: JobDefinition, *, executable: str) -> JobPreview:
         """Validate that the job can start and describe every run without running anything."""
@@ -122,11 +138,68 @@ class JobService:
         previews = tuple(self._generation.execute(run.arguments, dry_run=True, timeout=job.run_timeout_seconds, shutdown_grace=0).command_preview or "" for run in runs)
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), command_previews=previews)
 
-    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False) -> JobOutcome:
+    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None) -> JobOutcome:
         """Run every batch in order; stop at the first failed, timed-out, or interrupted run.
 
-        With ``write_records``, a JSON manifest and a log file are saved beside the outputs.
+        With ``write_records``, a JSON manifest and a log file are saved beside the outputs. ``observer``
+        receives a JobEvent for each step, on this thread; one that raises is logged and ignored. Only one
+        job runs at a time on a service: a second concurrent call raises RuntimeError.
         """
+        self._begin(observer)
+        try:
+            return self._run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records)
+        finally:
+            self._end()
+
+    def cancel(self, received_signal: signal.Signals = signal.SIGTERM) -> bool:
+        """Stop the running job as ``received_signal`` would; safe from any thread.
+
+        Returns False, and does nothing, when no job is running. True means the stop was requested, as
+        with a signal: it ends the current run and any cooldown, and starts no later run. A cancel that
+        lands after the last run has finished changes nothing, so the job still ends as it did.
+        """
+        with self._state_lock:
+            if not self._running:
+                return False
+            self._interrupt = received_signal
+            if self._wake_write is not None:
+                try:
+                    os.write(self._wake_write, b"\0")
+                except OSError:
+                    # A full pipe already holds a byte, and one is enough.
+                    pass
+            runner = self._current_runner
+        # The flag is set before the runner is read; _create_runner stores the runner before it reads the flag, so a cancel landing between the two still reaches the runner.
+        if runner is not None:
+            runner.request_shutdown(received_signal)
+        return True
+
+    def _begin(self, observer: JobObserver | None) -> None:
+        with self._state_lock:
+            if self._running:
+                raise RuntimeError("This JobService is already running a job")
+            read_end, write_end = os.pipe()
+            os.set_blocking(read_end, False)
+            os.set_blocking(write_end, False)
+            self._wake_read, self._wake_write = read_end, write_end
+            self._running = True
+            self._interrupt = None
+            self._observer = observer
+
+    def _end(self) -> None:
+        with self._state_lock:
+            self._running = False
+            self._observer = None
+            for descriptor in (self._wake_read, self._wake_write):
+                if descriptor is not None:
+                    os.close(descriptor)
+            self._wake_read = self._wake_write = None
+
+    def _emit(self, event: JobEvent) -> None:
+        if self._observer is not None:
+            notify(self._observer, event)
+
+    def _run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool) -> JobOutcome:
         if shutdown_grace < 0:
             raise ValueError("--shutdown-grace must not be negative")
         self._check_tools(job, executable)
@@ -151,7 +224,6 @@ class JobService:
         log_path: Path | None = None
         log_sink: int | None = None
         manifest: JobManifest | None = None
-        self._interrupt = None
         previous_handlers = None
         try:
             if write_records:
@@ -190,6 +262,35 @@ class JobService:
     def _run_chain(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, *, executable: str, shutdown_grace: float, temporary_input: TemporaryInput | None) -> JobOutcome:
         schedule = job.schedule()
         total = len(schedule)
+        self._emit(
+            JobStarted(
+                at=manifest.started_at,
+                job_name=job.name,
+                job_file=manifest.job_file,
+                source_text=job.source_text,
+                mode=manifest.mode,
+                total_runs=total,
+                output_directory=str(job.output_directory),
+                input=str(job.input) if job.input is not None else None,
+                model=job.model,
+                seed=manifest.seed,
+                seed_source=manifest.seed_source,
+                cooldown_seconds=job.cooldown_seconds,
+                cooldown_source=job.cooldown_source,
+                manifest=str(manifest_path) if manifest_path is not None else None,
+                log=str(log_path) if log_path is not None else None,
+            )
+        )
+        try:
+            return self._run_runs(job, manifest, manifest_path, log_path, schedule, executable=executable, shutdown_grace=shutdown_grace, temporary_input=temporary_input)
+        except BaseException:
+            # Every started job ends with JobFinished, so a front end never waits on one that raised.
+            completed = sum(1 for record in manifest.runs if record.status == "succeeded")
+            self._emit(JobFinished(at=self._timestamp(), status="failed", exit_code=None, completed_runs=completed, total_runs=total, signal=None))
+            raise
+
+    def _run_runs(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, schedule: tuple[PromptPair, ...], *, executable: str, shutdown_grace: float, temporary_input: TemporaryInput | None) -> JobOutcome:
+        total = len(schedule)
         records = f"; manifest {manifest_path}; log {log_path}" if manifest_path is not None else ""
         logger.info("Job {} ({}): {} runs, seed {} (from {}), {}{}", job.name, job.mode, total, manifest.seed, manifest.seed_source, cooldown_summary(job, "from "), records)
         report_ignored_config(job)
@@ -221,20 +322,39 @@ class JobService:
             manifest.runs.append(record)
             self._save(manifest_path, manifest)
             logger.info("Run {}/{} (batch {}, pair {}): input={}, output={}", number, total, run.batch, pair.name, run.input or "(none, text only)", run.output)
+            self._emit(
+                RunStarted(
+                    at=record.started_at,
+                    number=number,
+                    total=total,
+                    batch=run.batch,
+                    pair=pair.name,
+                    positive=pair.positive,
+                    negative=pair.negative,
+                    input=record.input,
+                    resized_input=record.resized_input,
+                    output=run.output.name,
+                    last_frame=run.last_frame.name if run.last_frame is not None else None,
+                    command=tuple(record.command),
+                )
+            )
             try:
-                status, exit_code = self._execute_run(job, run, record, shutdown_grace)
+                status, exit_code = self._execute_run(job, run, record, shutdown_grace, number)
             except BaseException:
                 record.status = "failed"
+                # The run raised, so a file counts as kept only if it exists; the record itself is left as the manifest has it.
+                self._finish_run(number, record, None, output=record.output if run.output.exists() else None)
                 raise
-            if number == 1 and temporary_input is not None:
-                temporary_input.cleanup()
             record.status = status
             record.exit_code = exit_code
+            if status != "succeeded" and not run.output.exists():
+                record.output = None
+            self._finish_run(number, record, exit_code, output=record.output)
+            if number == 1 and temporary_input is not None:
+                temporary_input.cleanup()
             if status != "succeeded":
                 partial = f"; partial output kept: {run.output}" if run.output.exists() else ""
                 logger.error("Run {}/{} {} with exit code {}{}", number, total, status.replace("_", " "), exit_code, partial)
-                if not run.output.exists():
-                    record.output = None
                 manifest.status = "interrupted" if status == "interrupted" else "failed"
                 self._save(manifest_path, manifest)
                 break
@@ -251,6 +371,8 @@ class JobService:
         manifest.finished_at = self._timestamp()
         self._save(manifest_path, manifest)
         logger.info("Job {} {}: {}/{} runs completed{}", job.name, manifest.status, completed, total, records)
+        stopped_by = self._exit_signal(exit_code) if manifest.status == "interrupted" else None
+        self._emit(JobFinished(at=manifest.finished_at, status=manifest.status, exit_code=exit_code, completed_runs=completed, total_runs=total, signal=stopped_by))
         return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=manifest_path, log=log_path)
 
     def _cool_down(self, job: JobDefinition, manifest: JobManifest, manifest_path: Path | None, record: RunRecord, next_run: int, total: int) -> tuple[signal.Signals, str] | None:
@@ -258,6 +380,7 @@ class JobService:
         seconds = job.cooldown_seconds
         until = (self._clock().astimezone() + timedelta(seconds=seconds)).strftime("%H:%M:%S")
         logger.info("Cooldown: waiting {} before run {}/{} (until {})", seconds_text(seconds), next_run, total, until)
+        self._emit(CooldownStarted(at=self._timestamp(), after_run=next_run - 1, seconds=seconds, until=until))
         # Saved at 0 first, so the manifest shows the job is cooling down rather than stuck.
         record.cooldown_after_seconds = 0.0
         self._save(manifest_path, manifest)
@@ -266,6 +389,7 @@ class JobService:
         stopped = self._interrupt if waited < seconds else None
         record.cooldown_after_seconds = round(waited, 1)
         self._save(manifest_path, manifest)
+        self._emit(CooldownEnded(at=self._timestamp(), waited_seconds=record.cooldown_after_seconds, cut_short=stopped is not None))
         if stopped is not None:
             return stopped, f"during the cooldown before run {next_run}/{total} (waited {seconds_text(round(waited, 1))} of {seconds_text(seconds)})"
         logger.info("Cooldown finished; starting run {}/{}", next_run, total)
@@ -273,7 +397,7 @@ class JobService:
 
     def _wait_for_cooldown(self, seconds: float) -> float:
         """The default cooldown: a wait that the job's signal handler ends at once."""
-        return interruptible_wait(seconds, lambda: self._interrupt is not None, wake_on_signal=self._handle_signals)
+        return interruptible_wait(seconds, lambda: self._interrupt is not None, wake_on_signal=self._handle_signals, wake_fd=self._wake_read)
 
     @staticmethod
     def _stop(manifest: JobManifest, received_signal: signal.Signals, where: str) -> int:
@@ -287,10 +411,31 @@ class JobService:
         if manifest_path is not None:
             write_manifest(manifest_path, manifest)
 
-    def _execute_run(self, job: JobDefinition, run: PlannedRun, record: RunRecord, shutdown_grace: float) -> tuple[str, int]:
+    def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
+        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame))
+
+    @staticmethod
+    def _exit_signal(exit_code: int) -> str | None:
+        """The name of the signal a 128+N exit code stands for, or None."""
+        try:
+            return signal.Signals(exit_code - 128).name if exit_code > 128 else None
+        except ValueError:
+            return None
+
+    def _output_callback(self, number: int) -> MessageCallback | None:
+        """A callback that turns each child line of run ``number`` into a RunOutput, or None without an observer."""
+        if self._observer is None:
+            return None
+
+        def on_message(message: ProcessMessage) -> None:
+            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress))
+
+        return on_message
+
+    def _execute_run(self, job: JobDefinition, run: PlannedRun, record: RunRecord, shutdown_grace: float, number: int) -> tuple[str, int]:
         started = time.monotonic()
         try:
-            outcome = self._generation.execute(run.arguments, dry_run=False, timeout=job.run_timeout_seconds, shutdown_grace=shutdown_grace)
+            outcome = self._generation.execute(run.arguments, dry_run=False, timeout=job.run_timeout_seconds, shutdown_grace=shutdown_grace, on_message=self._output_callback(number))
         finally:
             self._current_runner = None
             record.seconds = round(time.monotonic() - started, 1)
@@ -352,8 +497,8 @@ class JobService:
         seed, source = job.configured_seed()
         return (seed, source) if seed is not None else (self._random_seed(), "random")
 
-    def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float) -> StoppableRunner:
-        runner = self._runner_factory(arguments, timeout, shutdown_grace)
+    def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> StoppableRunner:
+        runner = self._runner_factory(arguments, timeout, shutdown_grace, on_message)
         self._current_runner = runner
         if self._interrupt is not None:
             runner.request_shutdown(self._interrupt)

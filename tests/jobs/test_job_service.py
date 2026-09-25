@@ -18,8 +18,11 @@ from PIL import Image
 
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_runner import install_signal_handlers, restore_signal_handlers
+from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.process_output import OutputStream, ProcessMessage
 from draw_things_control.jobs import job_service
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
+from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
 from draw_things_control.jobs.job_service import JobService
 from tests.fixtures import JobTestCase, job_data
 
@@ -50,10 +53,42 @@ class FakeRunner:
         self.shutdown_signal = received_signal
 
 
+class TalkingRunner(FakeRunner):
+    """A runner that reports child lines through its on_message callback, as the process runner does."""
+
+    def __init__(self, arguments: DrawThingsGenerateArguments, on_message: object, lines: tuple[tuple[OutputStream, str], ...]) -> None:
+        super().__init__(arguments, FakeResult(), write_output=True)
+        self.on_message = on_message
+        self.lines = lines
+
+    def run(self) -> FakeResult:
+        for stream, text in self.lines:
+            self.on_message(ProcessMessage(stream=stream, text=text, elapsed_seconds=0.5, progress=(3, 8) if "3/8" in text else None))
+        return super().run()
+
+
+class BlockingRunner(FakeRunner):
+    """A runner that runs until it is asked to shut down, like a long generation."""
+
+    def __init__(self, arguments: DrawThingsGenerateArguments) -> None:
+        super().__init__(arguments, FakeResult(), write_output=True)
+        self.stopped = threading.Event()
+
+    def run(self) -> FakeResult:
+        assert self.stopped.wait(5), "the job never asked the runner to stop"
+        super().run()
+        return FakeResult(return_code=-15, termination_signal=self.shutdown_signal)
+
+    def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None:
+        super().request_shutdown(received_signal)
+        self.stopped.set()
+
+
 class JobServiceTests(JobTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.calls: list[tuple[DrawThingsGenerateArguments, float | None, float]] = []
+        self.callbacks: list[object] = []
         self.results: dict[int, FakeResult] = {}
         self.missing_output: set[int] = set()
         self.extracted: list[tuple[Path, Path]] = []
@@ -72,8 +107,9 @@ class JobServiceTests(JobTestCase):
         # Replaced by fake_cooldown; a job without a cooldown never calls it.
         self.cooldown = lambda seconds: seconds
 
-    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+    def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
         self.calls.append((arguments, timeout, grace))
+        self.callbacks.append(on_message)
         number = len(self.calls)
         return FakeRunner(arguments, self.results.get(number, FakeResult()), write_output=number not in self.missing_output)
 
@@ -207,7 +243,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(self.calls, [])
 
     def test_run_that_cannot_start_is_marked_failed(self) -> None:
-        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
             raise ValueError("Could not start executable draw-things-cli: Permission denied")
 
         self.service._runner_factory = cannot_start
@@ -258,12 +294,12 @@ class JobServiceTests(JobTestCase):
     def test_run_one_gets_the_resized_copy_and_it_is_removed_after_run_one(self) -> None:
         seen: list[tuple[int, int]] = []
 
-        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
             # Look at the image while the run is happening, since the copy is gone afterwards.
             if not self.calls:
                 with Image.open(arguments.image) as image:
                     seen.append(image.size)
-            return self.create_runner(arguments, timeout, grace)
+            return self.create_runner(arguments, timeout, grace, on_message)
 
         self.service._runner_factory = create_runner
         job = self.resize_job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
@@ -298,7 +334,7 @@ class JobServiceTests(JobTestCase):
                 self.assertFalse(self.calls[0][0].image.parent.exists())
 
     def test_temporary_copy_is_removed_when_the_job_raises(self) -> None:
-        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
             self.calls.append((arguments, timeout, grace))
             raise KeyboardInterrupt
 
@@ -330,11 +366,11 @@ class JobServiceTests(JobTestCase):
         self.write_image("rotated.jpg", (448, 832), orientation=6)
         seen: list[tuple[int, int]] = []
 
-        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+        def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
             if not self.calls:
                 with Image.open(arguments.image) as image:
                     seen.append((image.size, image.getexif().get(0x0112)))
-            return self.create_runner(arguments, timeout, grace)
+            return self.create_runner(arguments, timeout, grace, on_message)
 
         self.service._runner_factory = create_runner
         job = self.job(input="rotated.jpg", desired_input_width=832)
@@ -492,3 +528,200 @@ class JobServiceTests(JobTestCase):
         outcome = self.run_job(self.cooldown_job(batch_count=2, cooldown_seconds=90))
         expected = (utc_now.astimezone() + timedelta(seconds=90)).strftime("%H:%M:%S")
         self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", outcome.log.read_text(encoding="utf-8"))
+
+    # Events and cancellation.
+
+    def observed(self, job: JobDefinition) -> tuple:
+        events: list = []
+        outcome = self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        return outcome, events
+
+    def start_in_thread(self, job: JobDefinition) -> tuple[threading.Thread, dict]:
+        """Run the job on a worker thread, as the TUI does, collecting its events in self.events."""
+        self.events: list = []
+        result: dict = {}
+
+        def work() -> None:
+            try:
+                result["outcome"] = self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=self.events.append)
+            except BaseException as error:
+                result["error"] = error
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        self.addCleanup(thread.join, 10)
+        return thread, result
+
+    def wait_for_event(self, kind: type) -> None:
+        deadline = time.monotonic() + 5
+        while not any(isinstance(event, kind) for event in list(self.events)):
+            self.assertLess(time.monotonic(), deadline, f"no {kind.__name__} event")
+            time.sleep(0.01)
+
+    def test_events_for_a_three_run_job_with_a_cooldown(self) -> None:
+        self.fake_cooldown()
+        job = self.cooldown_job(cooldown_seconds=900)
+        outcome, events = self.observed(job)
+        self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, CooldownStarted, CooldownEnded, RunStarted, RunFinished, CooldownStarted, CooldownEnded, RunStarted, RunFinished, JobFinished])
+        started, first, first_done, cooldown, cooled = events[:5]
+        self.assertEqual((started.job_name, started.mode, started.total_runs, started.seed, started.seed_source), ("sunset-walk", "i2v", 3, 42, "config_file"))
+        self.assertEqual((started.cooldown_seconds, started.cooldown_source, started.model, started.input), (900.0, "job", "base.ckpt", str(job.input)))
+        self.assertEqual((started.job_file, started.manifest, started.log, started.at), (str(job.path), str(outcome.manifest), str(outcome.log), "2026-09-24T15:30:12" + started.at[19:]))
+        self.assertEqual(started.source_text, job.path.read_text(encoding="utf-8"))
+        self.assertNotIn(started.source_text, repr(job))
+        self.assertEqual(job, replace(job, source_text="# a comment\n"))
+        arguments = self.calls[0][0]
+        self.assertEqual((first.number, first.total, first.batch, first.pair, first.positive, first.negative), (1, 3, 1, "only", "text", None))
+        self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), arguments.output.name, arguments.output.stem + "-last-frame.png"))
+        self.assertEqual(first.command, tuple(GenerationService.redact_command(arguments.command)))
+        self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, arguments.output.name, first.last_frame))
+        self.assertEqual((cooldown.after_run, cooldown.seconds, cooldown.until), (1, 900.0, "15:45:12"))
+        self.assertEqual((cooled.waited_seconds, cooled.cut_short), (900.0, False))
+        finished = events[-1]
+        self.assertEqual((finished.status, finished.exit_code, finished.completed_runs, finished.total_runs, finished.signal), ("succeeded", 0, 3, 3, None))
+
+    def test_events_for_failed_and_timed_out_runs(self) -> None:
+        for result, status, exit_code in ((FakeResult(return_code=3), "failed", 3), (FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM), "timed_out", 124)):
+            with self.subTest(status=status):
+                self.calls.clear()
+                self.results[1] = result
+                self.missing_output.add(1)
+                _outcome, events = self.observed(self.job())
+                self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, JobFinished])
+                self.assertEqual((events[2].status, events[2].exit_code, events[2].output), (status, exit_code, None))
+                self.assertEqual((events[3].status, events[3].exit_code, events[3].completed_runs, events[3].signal), ("failed", exit_code, 0, None))
+
+    def test_interrupted_run_names_the_signal(self) -> None:
+        self.results[1] = FakeResult(return_code=0, termination_signal=signal.SIGINT)
+        _outcome, events = self.observed(self.job())
+        self.assertEqual((events[2].status, events[2].output is not None), ("interrupted", True))
+        self.assertEqual((events[3].status, events[3].exit_code, events[3].signal), ("interrupted", 130, "SIGINT"))
+
+    def test_run_output_carries_the_childs_lines_in_order(self) -> None:
+        lines = ((OutputStream.STDOUT, "loading"), (OutputStream.STDERR, "step 3/8"), (OutputStream.STDOUT, "done"))
+        seen_arguments: list = []
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> TalkingRunner:
+            seen_arguments.append(on_message)
+            return TalkingRunner(arguments, on_message, lines)
+
+        self.service._runner_factory = factory
+        _outcome, events = self.observed(self.job(batch_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        output = [event for event in events if isinstance(event, RunOutput)]
+        self.assertEqual([(event.number, event.stream, event.text, event.progress) for event in output], [(run, stream.value, text, (3, 8) if "3/8" in text else None) for run in (1, 2) for stream, text in lines])
+        # Output arrives between its run's start and finish.
+        kinds = [type(event) for event in events]
+        self.assertEqual(kinds[:6], [JobStarted, RunStarted, RunOutput, RunOutput, RunOutput, RunFinished])
+
+    def test_without_an_observer_the_factory_gets_no_callback(self) -> None:
+        self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.assertEqual(self.callbacks, [None])
+        self.observed(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.assertTrue(callable(self.callbacks[1]))
+
+    def test_a_runner_that_raises_still_closes_the_events(self) -> None:
+        def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+            raise ValueError("Could not start executable draw-things-cli: Permission denied")
+
+        self.service._runner_factory = cannot_start
+        events: list = []
+        with self.assertRaisesRegex(ValueError, "Could not start"):
+            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
+        self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, JobFinished])
+        # The runner never wrote the file, so the event does not name it, though the manifest record still does.
+        self.assertEqual((events[2].status, events[2].exit_code, events[2].output), ("failed", None, None))
+        self.assertEqual((events[3].status, events[3].exit_code, events[3].completed_runs), ("failed", None, 0))
+
+    def test_errors_before_the_job_starts_send_no_events(self) -> None:
+        self.service._find_executable = lambda _executable: None
+        events: list = []
+        with self.assertRaisesRegex(ValueError, "Could not find"):
+            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
+        self.assertEqual(events, [])
+
+    def test_an_observer_that_raises_does_not_change_the_outcome(self) -> None:
+        def broken(_event: object) -> None:
+            raise RuntimeError("display failed")
+
+        expected = self.run_job(self.job(), write_records=False)
+        recorded: list = []
+        outcome = self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=combine_observers(broken, recorded.append))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (expected.exit_code, expected.completed_runs))
+        # The observer after the broken one still saw every event.
+        self.assertEqual((type(recorded[0]), type(recorded[-1])), (JobStarted, JobFinished))
+
+    def test_cancel_from_another_thread_stops_a_running_run(self) -> None:
+        runners: list[BlockingRunner] = []
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> BlockingRunner:
+            runners.append(BlockingRunner(arguments))
+            return runners[-1]
+
+        self.service._runner_factory = factory
+        thread, result = self.start_in_thread(self.job())
+        self.wait_for_event(RunStarted)
+        self.assertTrue(self.service.cancel())
+        thread.join(10)
+        self.assertNotIn("error", result)
+        self.assertEqual((result["outcome"].exit_code, result["outcome"].completed_runs, len(runners)), (143, 0, 1))
+        self.assertEqual(runners[0].shutdown_signal, signal.SIGTERM)
+        self.assertEqual([type(event) for event in self.events], [JobStarted, RunStarted, RunFinished, JobFinished])
+        self.assertEqual((self.events[2].status, self.events[3].status, self.events[3].signal), ("interrupted", "interrupted", "SIGTERM"))
+        self.assertEqual(self.manifest(result["outcome"])["status"], "interrupted")
+
+    def test_cancel_ends_a_real_cooldown_wait_at_once(self) -> None:
+        self.service._cooldown = self.service._wait_for_cooldown
+        open_fds = set(os.listdir("/dev/fd"))
+        thread, result = self.start_in_thread(self.cooldown_job(cooldown_seconds=60))
+        self.wait_for_event(CooldownStarted)
+        started = time.monotonic()
+        self.assertTrue(self.service.cancel(signal.SIGINT))
+        thread.join(10)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual((result["outcome"].exit_code, result["outcome"].completed_runs, len(self.calls)), (130, 1, 1))
+        ended = next(event for event in self.events if isinstance(event, CooldownEnded))
+        self.assertTrue(ended.cut_short)
+        self.assertLess(ended.waited_seconds, 3)
+        self.assertEqual((self.events[-1].status, self.events[-1].signal), ("interrupted", "SIGINT"))
+        self.assertIn("Job stopped by SIGINT during the cooldown before run 2/3", result["outcome"].log.read_text(encoding="utf-8"))
+        # The wake-up pipe is closed with the job.
+        self.assertEqual(set(os.listdir("/dev/fd")), open_fds)
+
+    def test_cancel_with_no_job_running_does_nothing(self) -> None:
+        self.assertFalse(self.service.cancel())
+        outcome = self.run_job(self.job())
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 5))
+        self.assertFalse(self.service.cancel())
+
+    def test_cancel_between_runner_creation_and_run_still_stops_that_run(self) -> None:
+        runners: list[FakeRunner] = []
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+            # The cancel lands before the service has stored the runner, so it can only reach it through the flag.
+            self.assertTrue(self.service.cancel())
+            runners.append(FakeRunner(arguments, FakeResult(), write_output=True))
+            return runners[-1]
+
+        self.service._runner_factory = factory
+        outcome = self.run_job(self.job())
+        self.assertEqual(runners[0].shutdown_signal, signal.SIGTERM)
+        self.assertEqual(len(runners), 1)
+        # The fake run itself succeeds, so the job stops at the flag before run 2.
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (143, 1))
+
+    def test_a_second_concurrent_run_is_refused(self) -> None:
+        refusals: list[Exception] = []
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
+            try:
+                self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2)
+            except RuntimeError as error:
+                refusals.append(error)
+            return self.create_runner(arguments, timeout, grace, on_message)
+
+        self.service._runner_factory = factory
+        outcome = self.run_job(self.job(batch_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(len(refusals), 1)
+        # The refused call left the running job's state alone, and the service is free again afterwards.
+        self.assertEqual(self.run_job(self.job()).exit_code, 0)

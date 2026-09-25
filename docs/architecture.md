@@ -78,9 +78,9 @@ Ctrl-C); otherwise the CLI's own code.
 
 Adds what every later front end needs, without changing the CLI's behavior:
 
-- `jobs/job_events.py`: structured job events and `JobService.cancel()`. The CLI's
-  log output becomes one event observer. Runner output feeds `RunOutput`
-  events through an `on_output` callback.
+- `jobs/job_events.py`: structured job events and `JobService.cancel()`. Events
+  are additive: `JobService` still writes the log lines. Child output feeds
+  `RunOutput` events through `OutputProcessor`'s callback.
 - `state/store.py`, `state/recorder.py`: SQLite run history (standard
   library), recording every `run-job` run with its YAML text and resolved
   settings. Rows older than 14 days are pruned; output files never are.

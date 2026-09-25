@@ -16,6 +16,7 @@ from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArg
 from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
 from draw_things_control.core.generation_service import GenerationService
 from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig, load_global_config
+from draw_things_control.core.process_output import MessageCallback, OutputProcessor
 from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg
 from draw_things_control.jobs.job_definition import JobDefinition, cooldown_details, cooldown_summary, load_job, report_ignored_config, seconds_text
 from draw_things_control.jobs.job_service import JobService
@@ -23,16 +24,16 @@ from draw_things_control.jobs.job_service import JobService
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
 
-def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
-    """Connect the generation use case to its process adapter."""
+def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
+    """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints."""
     # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
     capture_output = arguments.output is not None and not arguments.terminal_image
-    return DrawThingsProcessRunner(arguments, timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals)
+    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals)
 
 
-def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float) -> DrawThingsProcessRunner:
+def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> DrawThingsProcessRunner:
     """Create a run's runner; JobService owns signal handling and forwards signals to it."""
-    return create_runner(arguments, timeout, shutdown_grace, handle_signals=False)
+    return create_runner(arguments, timeout, shutdown_grace, on_message, handle_signals=False)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)

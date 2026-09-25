@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.process_output import MessageCallback
 
 
 class RunResult(Protocol):
@@ -27,7 +28,10 @@ class Runner(Protocol):
     def run(self) -> RunResult: ...
 
 
-RunnerFactory = Callable[[DrawThingsGenerateArguments, float | None, float], Runner]
+class RunnerFactory(Protocol):
+    """Creates the runner for one request; ``on_message`` receives each line the child prints, or is None."""
+
+    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> Runner: ...
 
 
 @dataclass(frozen=True)
@@ -118,8 +122,8 @@ class GenerationService:
             cloud_api_base_url=options["cloud_api_base_url"],
         )
 
-    def execute(self, arguments: DrawThingsGenerateArguments, *, dry_run: bool, timeout: float | None, shutdown_grace: float) -> GenerationOutcome:
-        """Preview or execute a prepared request."""
+    def execute(self, arguments: DrawThingsGenerateArguments, *, dry_run: bool, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None) -> GenerationOutcome:
+        """Preview or execute a prepared request; ``on_message`` receives each line the child prints."""
         if timeout is not None and timeout <= 0:
             raise ValueError("--timeout must be positive")
         if shutdown_grace < 0:
@@ -128,7 +132,7 @@ class GenerationService:
             return GenerationOutcome(exit_code=0, command_preview=self._format_preview(arguments.command))
         if self._find_executable(arguments.executable) is None:
             raise ValueError(f"Could not find '{arguments.executable}' on PATH. Install Draw Things CLI or pass --executable with its path.")
-        result = self._runner_factory(arguments, timeout, shutdown_grace).run()
+        result = self._runner_factory(arguments, timeout, shutdown_grace, on_message).run()
         return GenerationOutcome(
             exit_code=self._exit_code(result),
             timed_out=result.timed_out,

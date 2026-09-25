@@ -12,7 +12,7 @@ from typing import Any
 from loguru import logger
 
 from draw_things_control.core import generation_config
-from draw_things_control.core.global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, load_yaml_mapping
+from draw_things_control.core.global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, read_yaml_mapping
 from draw_things_control.jobs.input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
@@ -112,6 +112,9 @@ class JobDefinition:
     # Seconds to wait between runs, and where that came from: job, global_config, or default.
     cooldown_seconds: float = 0.0
     cooldown_source: str = "default"
+    # The job file's text as it was loaded, so a record shows exactly what ran. Job files reject unknown keys, so it cannot hold a credential.
+    # Left out of equality and repr: comments must not make two jobs differ, and a repr must not dump the file.
+    source_text: str = field(default="", repr=False, compare=False)
 
     @property
     def input_copy(self) -> ResizePlan | None:
@@ -144,7 +147,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     """
     dt_config_directory = dt_config_directory or generation_config.DT_CONFIG_DIRECTORY
     path = path.expanduser().resolve()
-    data = load_yaml_mapping(path, "Job file")
+    data, source_text = read_yaml_mapping(path, "Job file")
     fail = _Failure(path)
     _check_keys(fail, data, JOB_KEYS, "")
     for key in REQUIRED_JOB_KEYS:
@@ -233,6 +236,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         size=plan.target_size if plan is not None else None,
         input_resize=plan,
         ignored_size=tuple(ignored_size),
+        source_text=source_text,
     )
 
 

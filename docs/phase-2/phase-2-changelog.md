@@ -5,6 +5,38 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-25
 
+- **Change** [M01]: `JobService.run()` takes an `observer` and sends typed
+  events (`jobs/job_events.py`); `cancel()` stops a running job from any
+  thread and returns whether it did; `combine_observers` joins observers;
+  `JobDefinition.source_text` holds the job file's text. `run-job` output,
+  logs, manifests, and exit codes are unchanged. `RunnerFactory` may take an
+  `on_message` fourth argument, always passed and typed as a `Protocol`
+  (`cli/app.py` passes it to `OutputProcessor`),
+  and `interruptible_wait` takes a `wake_fd`. One `JobService` runs one job at
+  a time; a second concurrent `run()` raises `RuntimeError`.
+- **Change**: Last-frame extraction now runs ffmpeg with `-sseof -1`, `-update 1`, and `-q:v 1` (it was `-sseof -3` without `-q:v`), so it seeks to the final second and requests top quality. The Phase 1 documents are archived and keep the old wording.
+- **Owner decision** [M01]: `JobService` keeps writing every job and run log
+  line; events are additive. Supersedes the earlier design decision that the
+  CLI's log lines come from one observer. Alternatives: a `LogObserver` only
+  the CLI installs (rejected: TUI and server job log files would lack the job
+  lines, and many lines have no event), and a `LogObserver` the service always
+  installs (rejected: a wider event surface and a risk of output drift).
+- **Owner decision** [M01]: `cancel()` returns `False` and does nothing when no
+  job is running, so a stale cancel cannot stop a later job. Latching the
+  cancel until the next run was rejected.
+- **Design decision** [M01]: `JobDefinition` keeps `source_text`, read once in
+  `load_job` and carried by `JobStarted`, so Milestone 02 stores the exact text
+  that ran. Re-reading the file in the recorder was rejected because an edit
+  in between would store the wrong text.
+- **Design decision** [M01]: Child lines reach `RunOutput` through the
+  existing `OutputProcessor` callback, with the factory gaining an optional
+  `on_message` argument, instead of a new runner `on_output` hook. Events
+  also carry the run's parsed `progress`. `JobFinished` and `RunFinished` are
+  sent on every exit path, including exceptions, so a `running` history row
+  means a crash. Cancelling a cooldown uses a `wake_fd` the service owns and
+  passes to `interruptible_wait`; the pipe used to be private to the wait.
+  The `install_signals` parameter on `run()` is dropped: the existing
+  `handle_signals` constructor argument already covers it.
 - **Owner decision**: No source files in the project root. Supersedes the
   "core stays flat" part of the subpackage decision below. All code moves to
   one package, `src/draw_things_control/` (uv `src` layout, `uv_build`

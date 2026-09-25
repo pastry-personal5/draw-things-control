@@ -85,7 +85,8 @@ History older than `history_retention_days` (default 14) is pruned.
 An event observer (`state/recorder.py`) writes to the store as events
 arrive: `JobStarted` creates the `job_runs` row, `RunStarted` and
 `RunFinished` write the `runs` row, and `JobFinished` closes the job run.
-It is composed with the CLI's log observer, so `run-job` does both.
+It is combined with any other observer (such as a UI's) with
+`combine_observers`.
 
 - Recording happens for every `run-job` run, regardless of
   `write_job_records`. That key still controls only the manifest and log

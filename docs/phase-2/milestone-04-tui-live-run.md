@@ -32,7 +32,8 @@ Out of scope:
 - `r` on a valid job asks for confirmation (job name, run count, total
   cooldown time), then starts it. Invalid jobs cannot be started.
 - The job runs on a worker thread, using
-  `JobService.run(..., observer=..., install_signals=False)` from
+  `JobService.run(..., observer=...)` (on a service built with
+  `handle_signals=False`, one per job) from
   [Milestone 01](milestone-01-job-events-cancel.md). The TUI takes the run
   lock ([Milestone 02](milestone-02-state-store-run-lock.md)) before it
   starts the worker and releases it when the worker ends.

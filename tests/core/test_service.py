@@ -38,7 +38,7 @@ class GenerationServiceTests(unittest.TestCase):
     def test_timeout_maps_to_shell_exit_code_124(self) -> None:
         captured: list[tuple[float | None, float]] = []
 
-        def create_runner(_arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float) -> FakeRunner:
+        def create_runner(_arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None) -> FakeRunner:
             captured.append((timeout, grace))
             return FakeRunner(FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM))
 
@@ -61,3 +61,17 @@ class GenerationServiceTests(unittest.TestCase):
                 service = GenerationService(runner_factory=lambda *_args, result=result: FakeRunner(result), find_executable=lambda executable: executable, config_loader=lambda _path: {})
                 outcome = service.execute(DrawThingsGenerateArguments(model="example.ckpt"), dry_run=False, timeout=None, shutdown_grace=1)
                 self.assertEqual(outcome.exit_code, expected)
+
+    def test_on_message_reaches_the_factory(self) -> None:
+        received: list[tuple] = []
+
+        def factory(*args: object) -> FakeRunner:
+            received.append(args)
+            return FakeRunner(FakeResult(return_code=0, timed_out=False))
+
+        service = GenerationService(runner_factory=factory, find_executable=lambda executable: executable, config_loader=lambda _path: {})
+        arguments = DrawThingsGenerateArguments(model="m.ckpt")
+        callback = lambda _message: None  # noqa: E731
+        service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1)
+        service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1, on_message=callback)
+        self.assertEqual(received, [(arguments, None, 1, None), (arguments, None, 1, callback)])
