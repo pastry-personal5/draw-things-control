@@ -14,11 +14,12 @@ from typing import Annotated
 import typer
 from loguru import logger
 
+from draw_things_control.core import generation_config
 from draw_things_control.core.configuration import load_config
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
 from draw_things_control.core.generation_service import ChildStartCallback, GenerationService
-from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, PROJECT_ROOT, GlobalConfig
+from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig
 from draw_things_control.core.process_output import MessageCallback, OutputProcessor
 from draw_things_control.core.run_lock import EX_TEMPFAIL, RunLock, RunLockBusy, RunLockError
 from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg, require_ffprobe
@@ -34,7 +35,7 @@ from draw_things_control.state.store import StateError, Store
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
-DEFAULT_DATA_DIRECTORY = PROJECT_ROOT / "data" / "jobs"
+DEFAULT_DATA_DIRECTORY = generation_config.JOBS_DIRECTORY
 
 
 @contextmanager
@@ -237,7 +238,13 @@ def run_job(
         with held_run_lock("run-job") as lock, open_state(settings) as store:
             # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
             store.sweep_interrupted()
-            outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=ExecutionRecorder(store), on_child_start=lock.record_child)
+            recorder = ExecutionRecorder(store)
+            try:
+                # The execution's ID is reserved before the job starts; a job that cannot get one does not start.
+                outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=recorder, on_child_start=lock.record_child, reserve_execution_id=recorder.reserve)
+            except StateError as error:
+                logger.error("{}; the job was not started", error)
+                raise typer.Exit(code=1) from error
     if outcome.exit_code:
         raise typer.Exit(code=outcome.exit_code)
 
@@ -255,6 +262,8 @@ def import_history_command(
         raise typer.Exit(code=2)
     with open_state(settings) as store:
         report = import_history(store, search)
+    for given, recorded, manifest in report.given:
+        typer.echo(f"  {given}: {manifest}{f' (its manifest says {recorded})' if recorded is not None else ''}")
     typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
 
 

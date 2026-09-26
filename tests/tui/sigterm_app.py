@@ -30,7 +30,7 @@ def main() -> int:
     async def start_job(pilot) -> None:
         while not isinstance(app.screen, MainScreen):
             await asyncio.sleep(0.02)
-        app.screen.query_one(CommandInput).value = "/run walk"
+        app.screen.query_one(CommandInput).value = "/apply walk"
         await pilot.press("enter")
         while not isinstance(app.screen, ConfirmScreen):
             await asyncio.sleep(0.02)

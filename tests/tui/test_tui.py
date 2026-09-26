@@ -19,7 +19,7 @@ from draw_things_control.jobs.job_report import plan_header, plan_steps
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
-from draw_things_control.tui.panes import HistoryPane
+from draw_things_control.tui.panes import JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 from tests.fixtures import JobTestCase
@@ -55,14 +55,14 @@ class TuiTests(TuiTestCase):
         return "\n".join(self.since(f"/describe job {name}"))
 
     async def test_the_widgets_are_laid_out_around_the_history(self) -> None:
-        # 80x30 is the smallest size: Status 7 lines, draw-things-cli 13, Messages 6.
-        for size, cli_height, messages in (((120, 40), 15, (22, 36)), ((80, 30), 13, (20, 26))):
+        # 80x34 is the smallest size: Status 7 lines, draw-things-cli 15, Messages 8.
+        for size, cli_height, messages in (((120, 40), 15, (22, 36)), ((80, 34), 15, (22, 30))):
             with self.subTest(size=size):
                 app = self.app()
                 async with app.run_test(size=size) as pilot:
                     await self.settle(pilot)
                     width, height = size
-                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "history", "execution", "command-line", "status-line")}
+                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "jobs", "history", "execution", "command-line", "status-line")}
                     rules = [rule.region for rule in app.screen.query(".command-rule")]
                     focused = app.focused
                     status = self.text(app, "status-line")
@@ -70,9 +70,11 @@ class TuiTests(TuiTestCase):
                 self.assertEqual((regions["cli"].x, regions["cli"].y, regions["cli"].height), (0, 7, cli_height))
                 self.assertEqual((regions["messages"].x, regions["messages"].y, regions["messages"].bottom), (0, *messages))
                 self.assertGreaterEqual(regions["messages"].height, 6)
-                # History shows 5 rows (8 lines with its border and header); the detail fills the rest of the column.
-                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (0, width, 8))
-                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 8, width, height - 4))
+                # Job Definition shows 8 rows (11 lines with its border and header), Execution History 5 (8 lines); the
+                # detail fills the rest of the column.
+                self.assertEqual((regions["jobs"].x, regions["jobs"].y, regions["jobs"].right, regions["jobs"].height), (regions["history"].x, 0, width, 11))
+                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (11, width, 8))
+                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 19, width, height - 4))
                 self.assertEqual(regions["history"].x, regions["cli"].right)
                 # A third of the width, at least 36 columns.
                 self.assertEqual(regions["history"].width, max(36, width // 3))
@@ -306,30 +308,42 @@ class TuiTests(TuiTestCase):
                 ("run walk", "Commands begin with /; type /help"),
                 ("/launch walk", "Unknown command '/launch'; type /help"),
                 ("/exit", "Unknown command '/exit'; type /help"),
-                ("/run 'walk", "Cannot read the command: No closing quotation"),
+                ("/apply 'walk", "Cannot read the command: No closing quotation"),
                 ("/job walk", "/job is now /describe job JOB; type /help"),
                 ("/jobs", "/jobs is now /get jobs; type /help"),
                 ("/history", "/history is now /get history; type /help"),
                 ("/describe job", "Usage: /describe job JOB"),
-                ("/describe jobs walk", "Usage: /describe job JOB"),
+                ("/describe jobs walk", "Usage: /describe job JOB | /describe execution ID"),
+                ("/describe execution", "Usage: /describe execution ID"),
+                ("/describe execution x", "Usage: /describe execution ID"),
+                ("/describe execution 12", "Use E0012: an execution ID begins with E"),
+                ("/describe execution J12", "Usage: /describe execution ID"),
+                ("/execution E0012", "/execution is now /describe execution ID; type /help"),
+                ("/sort jobs size", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
+                ("/sort jobs name up", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
+                ("/apply J0099", f"No job file has the ID J0099 in {self.data}"),
                 ("/get history 3", "Usage: /get history"),
                 ("/get jobs all", "Usage: /get jobs"),
                 ("/get positive x", "Usage: /get positive ID [RUN]"),
-                ("/get param 1 2 3", "Usage: /get param ID [RUN]"),
+                ("/get param E1 2 3", "Usage: /get param ID [RUN]"),
+                ("/get param 1", "Use E0001: an execution ID begins with E"),
                 ("/get everything", f"Usage: {usage('get')}"),
-                ("/run a b", "Usage: /run JOB"),
+                ("/apply a b", "Usage: /apply JOB"),
                 ("/stop now", "Usage: /stop"),
-                ("/execution x", "Usage: /execution ID"),
                 ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, running"),
                 ("/filter clear", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
                 ("/filter name ''", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
                 ("/reveal x", "Usage: /reveal ID [RUN]"),
                 # IDs SQLite cannot hold, and digits int() or SQLite would refuse, are usage errors, not crashes.
-                ("/execution 99999999999999999999", "Usage: /execution ID"),
-                ("/execution ²", "Usage: /execution ID"),
-                ("/execution 0", "Usage: /execution ID"),
-                ("/reveal 99999999999999999999", "Usage: /reveal ID [RUN]"),
-                ("/reveal 1 ²", "Usage: /reveal ID [RUN]"),
+                ("/describe execution E99999999999999999999", "Usage: /describe execution ID"),
+                ("/describe execution E²", "Usage: /describe execution ID"),
+                ("/describe execution E0", "Usage: /describe execution ID"),
+                ("/reveal E99999999999999999999", "Usage: /reveal ID [RUN]"),
+                ("/reveal E1 ²", "Usage: /reveal ID [RUN]"),
+                # Thousands of digits, which int() itself refuses, are usage errors too.
+                ("/describe execution E" + "1" * 5000, "Usage: /describe execution ID"),
+                ("/reveal E1 " + "1" * 5000, "Usage: /reveal ID [RUN]"),
+                ("/apply J" + "1" * 5000, f"No job file 'J{'1' * 5000}' in {self.data}"),
                 ("/stop", "No job is running"),
             ):
                 with self.subTest(line=line):
@@ -379,7 +393,7 @@ class TuiTests(TuiTestCase):
             await self.settle(pilot)
             self.assertIn("  runs: 5", "\n".join(self.since("/describe job walk.yaml")))
             await pilot.press("tab")
-            self.assertIsInstance(app.focused, HistoryPane)
+            self.assertIsInstance(app.focused, JobDefinitionPane)
             await pilot.press("escape")
             self.assertIs(app.focused, field)
 
@@ -456,7 +470,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            for line in ("/get jobs", "/describe job walk", "/describe job resize", "/get history", "/execution 1", "/filter status failed", "/filter name walk", "/filter off", "/reveal 1"):
+            for line in ("/get jobs", "/describe job walk", "/describe job resize", "/get history", "/describe execution E0001", "/filter status failed", "/filter name walk", "/filter off", "/reveal E0001", "/get jobs"):
                 await self.command(pilot, line)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.output_directory.exists())

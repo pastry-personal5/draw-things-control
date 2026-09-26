@@ -5,6 +5,80 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-26
 
+- **Owner decision** [M10]: The TUI command `/run` is renamed `/apply`. It still reads the job again, confirms, and runs it, and takes a job ID or a file name. `/run` is no longer a command.
+
+- **Change** [M10]: The Job Definition widget no longer polls.
+  - It watches `data/jobs/`, and the input images and base configurations that valid jobs read, with `watchdog` (FSEvents on macOS). `tui/job_watch.py` is new, and `watchdog` is a dependency.
+  - A change is read after a 0.3-second pause, since one save can report several events. The 5-second check remains only while a directory cannot be watched or an invalid job is listed, whose inputs are not known.
+  - The Execution History pane still checks the run lock every 5 seconds while another process runs a job.
+
+- **Owner decision** [M10]: From an interview after a code review of Milestone 10.
+  - All ten findings are fixed.
+  - The Job Definition widget reads a valid job again when its input image or its base configuration changes, not only its own file. Re-validating every file at every check, and leaving it to `/get jobs`, were offered.
+  - A name that is both a file's name and another file's job ID is an error that names both ("Show errors to users"). Letting the file name win, and letting the ID win, were offered.
+  - The latest sort choice wins: a choice made before the saved sort has loaded is kept, and saves are written in order. Reading the saved sort before accepting keys was offered.
+- **Change** [M10]: Fixes from the same review.
+  - The job catalog catches every error, as the history reader does. An uncreatable state directory is reported instead of closing the TUI and any running job.
+  - An ID or run number of more digits than SQLite can hold is refused before `int()`, which raises on thousands of digits.
+  - A job ID is looked up in the state store when the list has not been read yet, as right after the TUI opens. `Store.job_definition` is used for it, and `Store.job_numbers`, which nothing used, is removed.
+  - `assign_job_ids` writes nothing when the listing changes nothing, so the 5-second check does not take the write lock. The widget redraws only when its rows or its sort changed, so a view scrolled with the mouse stays put.
+  - `Store.import_execution` returns the execution number with the row, and the recorder reads only the number. The catalog forgets deleted files.
+
+- **Change** [M10]: Milestone 10 is done.
+  - The TUI's right column has a Job Definition widget above the Execution History widget. It shows the job files with their job IDs (`J0001`), sorts by any column with `s`, `r`, or `/sort jobs`, and keeps the sort. Enter describes a job, `a` asks to run it, and changed files show within 5 seconds.
+  - Every execution has an execution ID (`E0012`), reserved before the job starts. It is shown in the TUI, `run-job`'s log line, the manifest, and `import-history`'s report. A job that cannot get one does not start.
+  - `/describe execution ID` replaces `/execution ID`, and the History widget is `Execution History`.
+  - Messages adds blank lines between blocks.
+  - State store schema version 3 is migrated on any open.
+- **Design decision** [M10]: Where the build differs from the plan.
+  - There is no size notice to show below 80x34, as the plan's acceptance criteria said; the TUI has never had one. 80x34 is the documented minimum, as 80x30 was.
+  - `/filter` reports `Execution History: ...`, after the widget's new title.
+  - Messages trims a message's own trailing newlines and adds its blank lines itself. The blank line after the last prompt of `/get prompts` now comes from the rule "after a message of several lines", so the owner decision on the prompt layout still holds, and two blank lines never follow each other.
+  - Reading the kept sort never creates `state/dtc.db`. Only giving job IDs (in `data/jobs/` only) and keeping a sort do.
+  - `/get jobs` reads every file again; the 5-second check reads only the files whose time or size changed.
+  - Like Execution History, the widget grows a line when it scrolls sideways, so 8 rows still show. At the minimum width, the Mode and Runs columns are reached by scrolling.
+
+- **Owner decision** [M10]: From a second review of the plan. Tab completes execution IDs after the commands that take one, from the executions the Execution History widget has loaded; typing them without completion was offered. An import of a manifest that records an execution ID no longer in the store gets the next free number and names both (`E0040 (its manifest says E0003)`). Keeping the manifest's number, and saying nothing, were offered.
+- **Design decision** [M10]: Fixes from the same review.
+  - The store's row number stays internal (the reads and the reveal click use it), and is never shown or typed.
+  - Reserving the execution number and writing its row are two steps. A row that cannot be written after the reservation is a later state-store failure: the job runs on.
+  - Manifests gain `execution_id`; older ones import as before.
+  - In the Job Definition widget:
+    - `/sort jobs KEY` without a direction takes the natural one: newest first for `changed`, ascending for the others;
+    - ties fall back to the ID, and invalid files sort after valid ones;
+    - the selection stays on the same job after a sort or a check;
+    - a file changed in an earlier year shows its date with the year.
+
+- **Owner decision** [M10]: Job IDs and execution IDs are shown with four digits: `J0001`, `E0012`. After `9999` they continue as `J10000` and `E10000`. This supersedes the three digits (`J001`, `E012`) in the earlier [M10] entries. Typing is unchanged: the letter is case-ignored and the leading zeros are optional, so `j1` is `J0001` and `e12` is `E0012`.
+
+- **Owner decision** [M10]: From a review of the plan.
+  - Job IDs are given only to the files in the project's `data/jobs/`; another `--data-dir` lists its files without IDs. An ID for a file name in any data directory, and one for each full path, were offered.
+  - Both kinds of ID last as long as `state/` does, and the user guide says so. Rebuilding execution IDs from manifests was offered.
+  - The minimum terminal size rises from 80x30 to 80x34, so the Execution widget keeps about 9 lines under the new widget. Keeping 80x30, and shrinking the job list on a short terminal, were offered.
+  - No extras: showing a job's ID in an execution, marking the running job's row, and sorting `/get jobs` like the widget were offered and left out.
+- **Design decision** [M10]: Fixes to the plan from the same review.
+  - `jobs/` cannot reach the state store, so `JobService.run` takes a `reserve_execution_id` callback from the front end. It calls it after the checks that can refuse a job and before the manifest and the log are created, and puts the ID in `JobStarted`, the manifest, and the log. The plan had the recorder write the row at `JobStarted`, which comes after the manifest and the log, so a job could not have refused to start without leaving them behind. A job that fails after taking its number, before run 1, leaves a harmless gap.
+  - The Job Definition widget's 5-second check reads and validates again only a file whose changed time or size differs.
+  - `a` while a job runs says so and runs nothing. `/get jobs` and `/describe job` show the job ID. The out-of-scope list now names a *job* ID column in Execution History, since that widget gains an execution ID column. It also says the CLI shows execution IDs but still takes paths.
+
+- **Owner decision** [M10]: The `J` and `E` of an ID are case-ignored when typed. Both kinds of ID follow one rule, which also lets a job ID be typed without its leading zeros (`j1` is `J001`), as an execution ID already could. Both are always shown in upper case.
+
+- **Owner decision** [M10]: Milestone 10 also gives every execution a permanent ID, `E` and three digits, and is renamed "Job Definition widget, job IDs, and execution IDs". From the interview:
+  - The ID is a new number of its own in the state store, not the row number, which was offered. Migration 3 numbers the existing executions by start time; row order was offered. The number only goes up: a pruned one is never reused, and an imported execution gets the next free number when it is imported.
+  - It is typed only in the `E` form, in any letter case (`E012`, `e12`); a bare number is refused. Accepting bare numbers too was offered.
+  - It is shown in the TUI, the CLI's output, manifests, and logs.
+  - A job that cannot get an execution ID does not start. Leaving the ID out of the manifest and the log was offered.
+- **Design decision** [M10]: A job refuses to start only when it cannot get its ID, and with exit code 1, the code for an unusable state store; a dry run needs no ID. Once the job has its ID, a later state-store failure keeps today's behavior: the job runs on. Stopping a running job over its record was not offered, and would lose the work in progress.
+
+- **Owner decision** [M10]: Milestone 10, "Job Definition widget and job IDs", is added to Phase 2. From the interview:
+  - A job file gets a permanent ID, `J` and three digits, kept in the state store; a job file with an `id` key was offered, as was a registry file in `data/jobs/`. The ID belongs to the file name: editing keeps it, a rename gets a new one, and a deleted file's ID comes back with the same name. Following renames by content was offered. IDs are numbered in order and never reused, continuing as `J1000` after `J999`; filling gaps was offered.
+  - `/run` and `/describe job` take an ID in any letter case, and Tab completes IDs. An ID column or an ID filter in the Execution History widget was offered and left out.
+  - A `Job Definition` widget above the Execution History widget shows 8 job rows. Its columns are the ID, the file name without its extension, the changed time, the mode, and the runs. An invalid file is listed in dim red; hiding it was offered.
+  - Sorting is by any column, both ways: `s` and `r` in the widget, or `/sort jobs KEY [asc|desc]`. The choice is kept across sessions, and the default is changed time, newest first. Enter describes the selected job, `a` asks to run it, and the list is read again every 5 seconds. Tab goes command line, Job Definition, Execution History, Execution.
+  - `/describe execution ID` replaces `/execution ID`, which is removed and names its new form; keeping an alias was offered. The History widget is renamed `Execution History`.
+  - Messages adds a blank line before each command echo, around each message longer than one line, and before each run and the job's result. It never adds two in a row, nor one at the top.
+- **Design decision** [M10]: Two files that differ only in their extension (`walk.yaml`, `walk.yml`) show their extension in the widget, so the rows stay apart. The IDs and the sort are the only state-store writes that browsing makes, in two new tables.
+
 - **Change** [M08, M09]: Fixes from a third code review, all made at the owner's request.
   - A `--config-json` value is written one to one: every list is in brackets and every mapping in braces, and an empty list is `[]` and an empty mapping `{}`. A mapping key that is not a plain name is quoted. This supersedes the earlier forms, where a one-item list read like its item and null, `[]`, and `{}` all read `(none)`. Because of those forms, "only what changed" could hide a change such as `[]` becoming null.
   - `JobPreview` holds each run's redacted command once, in `commands`, which is required. `command_previews` is derived from it with `shlex.join`, so `preview` no longer runs a dry-run `execute` per run.

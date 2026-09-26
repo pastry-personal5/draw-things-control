@@ -282,8 +282,8 @@ class EstimateTests(JobTestCase):
         lines = [str(line) for line in status_lines(live, False, 60)]
         self.assertEqual(lines[0], f"running  {live.path.stem}  run 1/2")
         # Once the state store has recorded it, the execution's ID leads.
-        live.execution_id = 12
-        self.assertEqual(str(status_lines(live, False, 60)[0]), f"running  execution 12: {live.path.stem}  run 1/2")
+        live.execution_id = "E0012"
+        self.assertEqual(str(status_lines(live, False, 60)[0]), f"running  E0012: {live.path.stem}  run 1/2")
         live.execution_id = None
         # 380 s left in run 1, the 100 s wait, and run 2 at run 1's 420 s so far: 900 s from 14:00:40.
         self.assertTrue(lines[1].startswith("Job ") and lines[1].endswith("4%  ends ~14:15 (in 15 min)"), lines[1])

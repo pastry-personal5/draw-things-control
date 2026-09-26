@@ -40,9 +40,10 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.said: list[str] = []
         original = MessageLog.say
 
-        def say(log: MessageLog, text: Text | str, style: str = "") -> None:
-            self.said.append(str(text))
-            original(log, text, style)
+        def say(log: MessageLog, text: Text | str, style: str = "", *, block: bool = False) -> None:
+            # As Messages shows it: its own trailing newlines give way to the blank lines Messages adds.
+            self.said.append(str(text).rstrip())
+            original(log, text, style, block=block)
 
         patcher = mock.patch.object(MessageLog, "say", say)
         patcher.start()

@@ -91,7 +91,14 @@ Adds what every later front end needs, without changing the CLI's behavior:
   02, done): SQLite execution history (standard library) in `state/dtc.db`,
   recording every `run-job` run with its YAML text and resolved settings. Rows
   older than 14 days are pruned; output files never are. `dtc import-history`
-  loads phase 1 manifests.
+  loads phase 1 manifests. Since Milestone 10, schema 3 gives each execution
+  an execution number of its own and each job file name in `data/jobs/` a job
+  number, from counters that only go up, and keeps the TUI's settings.
+  `state/ids.py` writes them as `E0012` and `J0001` and reads them as typed.
+  The front end reserves the execution number (`ExecutionRecorder.reserve`)
+  and passes it to `JobService.run(reserve_execution_id=)`, which takes it
+  after the checks that can refuse the job and before the manifest and the
+  log exist; `jobs/` never imports `state/`.
 - `core/run_lock.py` (Milestone 02, done): `fcntl.flock` on `state/run.lock`
   taken by `run-job`, `generate`, and the TUI. A second starter fails
   immediately with exit code 75; nothing queues silently. The file also names
@@ -138,11 +145,11 @@ Adds what every later front end needs, without changing the CLI's behavior:
   |--------|----------------|
   | `app.py` | The app: its collaborators (settings, data directory, executable, shutdown grace, a `JobService` built with `handle_signals=False`), the job worker, signals, and the two-press Ctrl-C |
   | `screens.py` | `MainScreen` (layout, `/` command dispatch, wiring job events to the panes) and the confirmation dialog |
-  | `panes.py` | `StatusPane` (the job at a glance), `CliPane` (run line and output), `HistoryPane` (paging, filters, polling, in-place row updates, the other-process lock check), and `ExecutionPane` (the execution under the cursor, its successful runs, selection, and reveal), each owning its state |
-  | `widgets.py` | `CommandInput` (completion, recall) and `MessageLog` |
+  | `panes.py` | `StatusPane` (the job at a glance), `CliPane` (run line and output), `JobDefinitionPane` (the job files with their job IDs, sorting, the file watcher, and the 5-second fallback check), `HistoryPane` (paging, filters, polling, in-place row updates, the other-process lock check), and `ExecutionPane` (the execution under the cursor, its successful runs, selection, and reveal), each owning its state |
+  | `widgets.py` | `CommandInput` (completion, recall) and `MessageLog` (the blank lines between blocks) |
   | `commands.py` | The command table (including the `/get` and `/describe` forms): parsing, usage, help, completion |
-  | `history.py` | `HistoryReader` (one store, never raises, never creates or prunes the database), output paths, reveal |
-  | `job_files.py` | Reading and planning the job files in the data directory |
+  | `history.py` | `HistoryReader` (one store, never raises, never creates or prunes the database; reads an execution by its row or its execution number), output paths, reveal |
+  | `job_files.py` | `JobCatalog` (the data directory's job files, read again only when changed, their job IDs, and the kept sort; the only browsing writes to the store), and planning a job |
   | `text.py` | Every text the TUI shows, from `jobs/job_report.py` where the CLI prints the same |
   | `live_run.py` | `LiveRun`, the running job's state, built from its events on the main thread, with the step readings and run times the estimates use |
   | `estimate.py` | The run estimate (a past run's time, then its time per step at the first report, then the live step rate) and the job estimate (runs timed by their full time, waits by the cooldown policy), as plain functions of a `LiveRun` |

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from draw_things_control.core.numbers import positive_whole
+from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.store import Store, epoch
 
 MANIFEST_KEYS = ("job_file", "name", "mode", "seed", "started_at", "runs")
@@ -23,6 +24,9 @@ class ImportReport:
     skipped: int = 0
     expired: int = 0
     unreadable: int = 0
+    # Each imported execution: the ID it was given, the ID its manifest records (None for one written before execution
+    # IDs, or the same as given), and the manifest.
+    given: list[tuple[str, str | None, Path]] = field(default_factory=list)
 
 
 def import_history(store: Store, directory: Path, *, clock: datetime | None = None) -> ImportReport:
@@ -46,8 +50,15 @@ def import_history(store: Store, directory: Path, *, clock: datetime | None = No
         except (OSError, ValueError, TypeError, KeyError):
             report.unreadable += 1
             continue
-        store.import_execution(execution, runs)
+        _row, number = store.import_execution(execution, runs)
         report.imported += 1
+        # The next free number, whatever the start time; a manifest's own ID (its execution was pruned, or state/ was
+        # deleted) is reported beside it, so the two can be matched, and never reused.
+        recorded = manifest.get("execution_id")
+        recorded_number = parse_typed_id(recorded, EXECUTION_LETTER) if isinstance(recorded, str) else None
+        own = execution_id_text(recorded_number) if recorded_number is not None else None
+        given = execution_id_text(number)
+        report.given.append((given, own if own != given else None, path))
     return report
 
 

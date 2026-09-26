@@ -9,6 +9,8 @@ from draw_things_control.core.configuration import YAML_SUFFIXES, is_yaml_file, 
 
 # The Draw Things configurations a job names in config_file: data/params/ in the repository.
 PARAMS_DIRECTORY = Path(__file__).resolve().parents[3] / "data" / "params"
+# The job files: the TUI's default data directory, and the only one whose files get job IDs (J0001).
+JOBS_DIRECTORY = Path(__file__).resolve().parents[3] / "data" / "jobs"
 
 # Job override keys that draw-things-cli has no flag for, and their Draw Things names.
 CONFIG_ONLY_KEYS = {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift"}

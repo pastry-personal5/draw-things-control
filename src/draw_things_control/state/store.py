@@ -75,12 +75,25 @@ ALTER TABLE runs ADD COLUMN output_height INTEGER;
 ALTER TABLE runs ADD COLUMN output_frames INTEGER
 """
 
+# Milestone 10: an execution ID of its own (E0012), numbered by start time for the rows already there; counters that only
+# go up, so a pruned execution's number or a retired job's is never given again; each job file name's ID (J0001); and the
+# TUI's remembered settings, such as the Job Definition widget's sort.
+SCHEMA_V3 = """
+ALTER TABLE executions ADD COLUMN execution_number INTEGER;
+UPDATE executions SET execution_number = (SELECT COUNT(*) FROM executions AS earlier WHERE earlier.started_epoch < executions.started_epoch OR (earlier.started_epoch = executions.started_epoch AND earlier.id <= executions.id));
+CREATE UNIQUE INDEX executions_number ON executions (execution_number);
+CREATE TABLE counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+INSERT INTO counters (name, value) VALUES ('execution', (SELECT COALESCE(MAX(execution_number), 0) FROM executions)), ('job', 0);
+CREATE TABLE job_definitions (number INTEGER PRIMARY KEY, file_name TEXT NOT NULL UNIQUE, first_seen_at TEXT NOT NULL, present INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3)
 SCHEMA_VERSION = len(MIGRATIONS)
 
-EXECUTION_COLUMNS = ("job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at")
+EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at")
 RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames")
 
 
@@ -125,10 +138,16 @@ class Store:
             connection.close()
         self._local = threading.local()
 
-    def start_execution(self, **fields: Any) -> int:
-        """Insert a ``running`` execution from ``EXECUTION_COLUMNS`` keywords plus ``settings``; return its id."""
+    def reserve_execution_number(self) -> int:
+        """The next execution number, taken for good: the counter only goes up, so a number is never given twice."""
         with self._transaction() as connection:
-            return self._insert_execution(connection, fields)
+            return _next_number(connection, "execution")
+
+    def start_execution(self, **fields: Any) -> int:
+        """Insert a ``running`` execution from ``EXECUTION_COLUMNS`` keywords plus ``settings``; return its row id. Without
+        an ``execution_number`` (one ``reserve_execution_number`` gave), the next one is taken."""
+        with self._transaction() as connection:
+            return self._insert_execution(connection, fields)[0]
 
     def start_run(self, execution_id: int, number: int, **fields: Any) -> None:
         """Insert a ``running`` run from ``RUN_COLUMNS`` keywords plus ``command``."""
@@ -187,6 +206,55 @@ class Store:
         execution["runs"] = [self._run(run, running_as_interrupted) for run in runs]
         return execution
 
+    def execution_number(self, execution_row: int) -> int | None:
+        """The execution number of the row with this id, or None when there is no such row."""
+        row = self._connection().execute("SELECT execution_number FROM executions WHERE id = ?", (execution_row,)).fetchone()
+        return int(row[0]) if row is not None and row[0] is not None else None
+
+    def execution_row(self, execution_number: int) -> int | None:
+        """The row id of the execution with this number, or None when there is none (never given, or pruned)."""
+        row = self._connection().execute("SELECT id FROM executions WHERE execution_number = ?", (execution_number,)).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def assign_job_ids(self, file_names: list[str], seen_at: str) -> dict[str, int]:
+        """Each job file name's number, giving a new one to a name never seen: the number after the highest ever given.
+
+        ``file_names`` is the whole listing of the job directory: a name missing from it is marked absent (its number is
+        retired, and comes back with the name), and a name in it is marked present. One transaction, so two processes
+        listing the same new file at once give it one number. A listing that changes nothing writes nothing, so the
+        TUI's 5-second check does not take the write lock from a job recording its runs.
+        """
+        known_now = {str(row[0]): (int(row[1]), bool(row[2])) for row in self._connection().execute("SELECT file_name, number, present FROM job_definitions")}
+        listed = set(file_names)
+        if all(name in known_now for name in listed) and all(present == (name in listed) for name, (_, present) in known_now.items()):
+            return {name: known_now[name][0] for name in file_names}
+        with self._transaction() as connection:
+            known = {str(row[0]): int(row[1]) for row in connection.execute("SELECT file_name, number FROM job_definitions")}
+            connection.execute("UPDATE job_definitions SET present = 0")
+            numbers = {}
+            for name in file_names:
+                number = known.get(name)
+                if number is None:
+                    number = _next_number(connection, "job")
+                    connection.execute("INSERT INTO job_definitions (number, file_name, first_seen_at) VALUES (?, ?, ?)", (number, name, seen_at))
+                numbers[name] = number
+            if numbers:
+                connection.execute(f"UPDATE job_definitions SET present = 1 WHERE file_name IN ({', '.join('?' for _ in numbers)})", list(numbers))
+            return numbers
+
+    def job_definition(self, number: int) -> tuple[str, bool] | None:
+        """The file name a job number belongs to and whether the file was there at the last listing; None if never given."""
+        row = self._connection().execute("SELECT file_name, present FROM job_definitions WHERE number = ?", (number,)).fetchone()
+        return (str(row[0]), bool(row[1])) if row is not None else None
+
+    def setting(self, key: str) -> str | None:
+        row = self._connection().execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._transaction() as connection:
+            connection.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+
     def executions_by_id(self, execution_ids: list[int], *, running_as_interrupted: bool = False) -> list[dict[str, Any]]:
         """The executions with these IDs, without their runs, in no set order; a missing ID is left out."""
         if not execution_ids:
@@ -209,13 +277,14 @@ class Store:
     def has_manifest(self, manifest_path: str) -> bool:
         return self._connection().execute("SELECT 1 FROM executions WHERE manifest_path = ?", (manifest_path,)).fetchone() is not None
 
-    def import_execution(self, execution: dict[str, Any], runs: list[dict[str, Any]]) -> int:
-        """Insert a finished execution and its runs in one transaction (used by the phase 1 import)."""
+    def import_execution(self, execution: dict[str, Any], runs: list[dict[str, Any]]) -> tuple[int, int]:
+        """Insert a finished execution and its runs in one transaction (used by the phase 1 import); return its row id and
+        the execution number it was given."""
         with self._transaction() as connection:
-            execution_id = self._insert_execution(connection, execution)
+            execution_id, execution_number = self._insert_execution(connection, execution)
             for number, run in enumerate(runs, start=1):
                 self._insert_run(connection, execution_id, number, run)
-            return execution_id
+            return execution_id, execution_number
 
     def sweep_interrupted(self) -> int:
         """Close every ``running`` execution, and its ``running`` runs, as ``interrupted``.
@@ -308,8 +377,11 @@ class Store:
             raise
 
     @staticmethod
-    def _insert_execution(connection: sqlite3.Connection, fields: dict[str, Any]) -> int:
+    def _insert_execution(connection: sqlite3.Connection, fields: dict[str, Any]) -> tuple[int, int]:
+        """Insert the execution; return its row id and its execution number (the next one, when none was given)."""
         values = {column: fields.get(column) for column in EXECUTION_COLUMNS}
+        if values["execution_number"] is None:
+            values["execution_number"] = _next_number(connection, "execution")
         values["status"] = values["status"] or "running"
         values["settings"] = json.dumps(fields.get("settings") or {}, ensure_ascii=False)
         values["started_epoch"] = epoch(values["started_at"])
@@ -317,7 +389,7 @@ class Store:
         values["finished_epoch"] = epoch(finished) if finished is not None else None
         columns = ", ".join(values)
         cursor = connection.execute(f"INSERT INTO executions ({columns}) VALUES ({', '.join('?' for _ in values)})", tuple(values.values()))
-        return int(cursor.lastrowid or 0)
+        return int(cursor.lastrowid or 0), int(values["execution_number"])
 
     @staticmethod
     def _insert_run(connection: sqlite3.Connection, execution_id: int, number: int, fields: dict[str, Any]) -> None:
@@ -342,3 +414,9 @@ class Store:
         if running_as_interrupted and run["status"] == "running":
             run["status"] = "interrupted"
         return run
+
+
+def _next_number(connection: sqlite3.Connection, counter: str) -> int:
+    """Take the next number of ``counter`` inside the caller's transaction."""
+    connection.execute("UPDATE counters SET value = value + 1 WHERE name = ?", (counter,))
+    return int(connection.execute("SELECT value FROM counters WHERE name = ?", (counter,)).fetchone()[0])

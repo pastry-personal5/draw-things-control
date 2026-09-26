@@ -47,6 +47,14 @@
     min-width: 36;
 }
 
+/* Owner decision: 8 job rows show, so 11 lines with the border and the header (panes.JOB_DEFINITION_LINES). */
+#jobs {
+    height: 11;
+    border: round $panel;
+    border-title-color: $accent;
+    border-subtitle-color: $text-muted;
+}
+
 /* Owner decision: 5 rows show, so 8 lines with the border and the header. */
 #history {
     height: 8;
@@ -55,7 +63,7 @@
     border-subtitle-color: $warning;
 }
 
-#history:focus, #execution:focus {
+#jobs:focus, #history:focus, #execution:focus {
     border: round $accent;
 }
 

@@ -160,7 +160,7 @@ cooldown:
 
 | Where | `manual` (unchanged) | `auto` | `off` |
 |-------|----------------------|--------|-------|
-| `validate-job`, TUI `/job` and `/run` confirmation | `900 s between runs, from global_config (2 waits, 30 min total)` | `auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)` | `off (job)` |
+| `validate-job`, TUI `/job` and `/apply` confirmation | `900 s between runs, from global_config (2 waits, 30 min total)` | `auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)` | `off (job)` |
 | `run-job --dry-run` header | `cooldown 900 s (global_config)` | `cooldown auto, half of each run, 5 min to 30 min (global_config)` | `no cooldown (job)` |
 | `run-job --dry-run`, between runs | `# Cooldown 900 s` | `# Cooldown auto: half of run 1's time, 5 min to 30 min` | nothing |
 | Job log, before a wait | `Cooldown: waiting 15 min before run 2/3 (until 14:05:00)` | `Cooldown: waiting 12 min, half of run 1's 24 min, before run 2/3 (until 14:05:00)` | nothing |

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
 from rich.text import Text
 from textual.binding import Binding
@@ -57,10 +57,34 @@ class CommandInput(Input):
 
 
 class MessageLog(RichLog):
-    """Command output and the job's log, each entry under the local time it was written."""
+    """Command output and the job's log, each entry under the local time it was written.
 
-    def say(self, text: Text | str, style: str = "") -> None:
+    A blank line is added before a block (``block``: a command echo, the job's result) and before and after a message
+    longer than one line, so each command's output and each run read apart. Two blank lines never follow each other, and
+    none is added at the top, or right after ``clear``.
+    """
+
+    def __init__(self, *args: Any, **options: Any) -> None:
+        super().__init__(*args, **options)
+        # Whether the last line written is blank (the top counts as one), and whether the last message was a block.
+        self.blank_last = True
+        self.after_block = False
+
+    def say(self, text: Text | str, style: str = "", *, block: bool = False) -> None:
         # Text, never markup: job files, prompts, and errors contain brackets.
+        body = text.copy() if isinstance(text, Text) else Text(text, style=style)
+        # The spacing is added here, so a message's own trailing newlines would only double it.
+        body.rstrip()
+        several = "\n" in body.plain
+        if (block or several or self.after_block) and not self.blank_last:
+            self.write(Text(""))
         line = Text(datetime.now().strftime("%H:%M:%S "), style="dim")
-        line.append_text(text if isinstance(text, Text) else Text(text, style=style))
+        line.append_text(body)
         self.write(line)
+        self.blank_last = False
+        self.after_block = several
+
+    def clear(self) -> Self:
+        self.blank_last = True
+        self.after_block = False
+        return super().clear()

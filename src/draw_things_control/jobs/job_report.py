@@ -33,12 +33,16 @@ def read_job(job_file: Path, global_config: Path | GlobalConfig, *, decode_input
     return load_job(job_file, settings, decode_input=decode_input), settings
 
 
+# The suffixes of job files, compared in lower case.
+JOB_SUFFIXES = frozenset({".yaml", ".yml"})
+
+
 def job_files(directory: Path) -> list[Path]:
     """The ``*.yaml`` and ``*.yml`` files (in any letter case) directly in ``directory``, by file name; dotfiles and sub-directories are skipped.
 
     Raises OSError if the directory cannot be read.
     """
-    return sorted((path for path in directory.iterdir() if path.suffix.lower() in {".yaml", ".yml"} and not path.name.startswith(".") and path.is_file()), key=lambda path: path.name)
+    return sorted((path for path in directory.iterdir() if path.suffix.lower() in JOB_SUFFIXES and not path.name.startswith(".") and path.is_file()), key=lambda path: path.name)
 
 
 def seconds_text(seconds: float) -> str:

@@ -258,6 +258,40 @@ class JobServiceTests(JobTestCase):
         self.service.preview(self.job(mode="i2i"), executable="draw-things-cli")
         self.assertEqual(self.calls, [])
 
+    def test_the_execution_id_is_reserved_after_the_checks_and_goes_into_the_records(self) -> None:
+        reserved: list[str] = []
+
+        def reserve() -> str:
+            # Taken before the output directory, the manifest, or the log exist.
+            self.assertFalse(self.output_directory.exists())
+            reserved.append("E0012")
+            return "E0012"
+
+        events: list[object] = []
+        outcome = self.service.run(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}]), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
+        self.assertEqual((outcome.exit_code, reserved), (0, ["E0012"]))
+        self.assertEqual(self.manifest(outcome)["execution_id"], "E0012")
+        self.assertEqual([event.execution_id for event in events if isinstance(event, JobStarted)], ["E0012"])
+        self.assertIn("execution E0012", outcome.log.read_text(encoding="utf-8"))
+        # A job the checks refuse never takes a number.
+        self.service._find_executable = lambda _executable: None
+        with self.assertRaises(ValueError):
+            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, reserve_execution_id=reserve)
+        self.assertEqual(reserved, ["E0012"])
+
+    def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
+        class NoStore(Exception):
+            pass
+
+        def reserve() -> str:
+            raise NoStore("the state store is unusable")
+
+        events: list[object] = []
+        with self.assertRaises(NoStore):
+            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
+        self.assertEqual((events, self.calls), ([], []))
+        self.assertFalse(self.output_directory.exists())
+
     def test_a_video_job_without_ffprobe_fails_before_anything_runs(self) -> None:
         def no_ffprobe() -> str:
             raise ValueError("Could not find 'ffprobe' beside ffmpeg or on PATH")

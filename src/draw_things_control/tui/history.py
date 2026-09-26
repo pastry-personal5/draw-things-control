@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from draw_things_control.core.run_lock import run_lock_is_free, state_directory
+from draw_things_control.state.ids import MAX_DIGITS, execution_id_text
 from draw_things_control.state.store import DATABASE_FILE_NAME, StateError, Store
 
 PAGE_SIZE = 200
@@ -90,9 +91,19 @@ class HistoryReader:
         return rows if isinstance(rows, str) else (rows[0]["id"] if rows else None)
 
     def execution(self, execution_id: int) -> dict[str, Any] | str:
-        """One execution with its runs, or why it cannot be shown."""
+        """One execution with its runs, by its row in the store, or why it cannot be shown."""
         execution = self._read(lambda store: store.get_execution(execution_id, running_as_interrupted=run_lock_is_free()))
-        return execution if execution is not None else f"No execution {execution_id}"
+        return execution if execution is not None else "That execution is no longer in the history"
+
+    def numbered(self, number: int) -> dict[str, Any] | str:
+        """One execution with its runs, by the number of its ID (E0012), or why it cannot be shown."""
+
+        def read(store: Store) -> dict[str, Any] | None:
+            row = store.execution_row(number)
+            return store.get_execution(row, running_as_interrupted=run_lock_is_free()) if row is not None else None
+
+        execution = self._read(read)
+        return execution if execution is not None else f"No execution {execution_id_text(number)}"
 
     @staticmethod
     def _with_counts(store: Store, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -124,11 +135,20 @@ class HistoryReader:
             return self._store
 
 
+def execution_label(execution: dict[str, Any]) -> str:
+    """The execution's ID as people see it (E0012); the store's row id stays internal."""
+    return execution_id_text(int(execution["execution_number"]))
+
+
 def parse_id(text: str) -> int | None:
     """An execution or run number as typed, or None when it is not one: ASCII digits only, and small enough for SQLite."""
     if not (text.isascii() and text.isdecimal()):
         return None
-    number = int(text)
+    # int() raises on thousands of digits; nothing that long names a run.
+    digits = text.lstrip("0") or "0"
+    if len(digits) > MAX_DIGITS:
+        return None
+    number = int(digits)
     return number if 0 < number <= MAX_ID else None
 
 
@@ -162,16 +182,16 @@ def reveal_target(execution: dict[str, Any], run_number: int | None) -> Path | s
     if run_number is None:
         with_output = [run for run in runs if run.get("output")]
         if not with_output:
-            return f"Execution {execution['id']} has no output"
+            return f"Execution {execution_label(execution)} has no output"
         run = with_output[-1]
     else:
         matches = [run for run in runs if run["number"] == run_number]
         if not matches:
-            return f"Execution {execution['id']} has no run {run_number}"
+            return f"Execution {execution_label(execution)} has no run {run_number}"
         run = matches[0]
     path = run_file(execution, run.get("output"))
     if path is None:
-        return f"Run {run['number']} of execution {execution['id']} has no output" if not run.get("output") else f"The output directory of execution {execution['id']} was not recorded"
+        return f"Run {run['number']} of execution {execution_label(execution)} has no output" if not run.get("output") else f"The output directory of execution {execution_label(execution)} was not recorded"
     if not path.exists():
         return f"{path} is missing"
     return path

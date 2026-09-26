@@ -21,8 +21,8 @@ from draw_things_control.jobs.job_definition import GenerationMode, JobDefinitio
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
-from draw_things_control.tui.history import is_imported, run_file
-from draw_things_control.tui.job_files import JobDetails
+from draw_things_control.tui.history import execution_label, is_imported, run_file
+from draw_things_control.tui.job_files import JobDetails, JobRow
 from draw_things_control.tui.live_run import LiveRun
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start"}
@@ -38,29 +38,80 @@ def history_cells(row: dict[str, Any]) -> tuple[Text, ...]:
         started = str(row["started_at"])
     total = row["total_runs"] if row["total_runs"] is not None else "?"
     status = row["status"]
-    return (Text(str(row["id"])), Text(row["job_name"]), Text(status, style=STATUS_STYLE.get(status, "")), Text(started), Text(f"{row.get('succeeded', 0)}/{total}"))
+    return (Text(execution_label(row)), Text(row["job_name"]), Text(status, style=STATUS_STYLE.get(status, "")), Text(started), Text(f"{row.get('succeeded', 0)}/{total}"))
 
 
-def jobs_text(rows: list[tuple[str, JobDefinition | None, str | None]], running: str | None, message: str | None) -> Text:
-    """The job files: name, job name, mode, runs, and status (valid, running, or the first error)."""
+def jobs_text(rows: list[JobRow], running: str | None, message: str | None) -> Text:
+    """The job files: job ID, file name, job name, mode, runs, and status (valid, running, or the first error)."""
     if message is not None:
         return Text(message, style="yellow")
     text = Text("Jobs\n", style="bold")
-    width = max(len(name) for name, _, _ in rows)
-    for name, job, error in rows:
-        text.append(f"  {name.ljust(width)}  ", style="bold")
+    width = max(len(row.path.name) for row in rows)
+    id_width = max((len(row.job_id) for row in rows if row.job_id is not None), default=0)
+    for row in rows:
+        if id_width:
+            text.append(f"  {(row.job_id or '-').ljust(id_width)}", style="bold")
+        text.append(f"  {row.path.name.ljust(width)}  ", style="bold")
+        job = row.job
         if job is None:
-            text.append(f"invalid: {error}\n", style="red")
+            text.append(f"invalid: {row.error}\n", style="red")
             continue
         text.append(f"{job.name}  {job.mode}  {job.run_count} run{'s' if job.run_count != 1 else ''}  ")
-        text.append("running\n" if name == running else "valid\n", style="bold cyan" if name == running else "green")
+        running_here = row.path.name == running
+        text.append("running\n" if running_here else "valid\n", style="bold cyan" if running_here else "green")
     text.rstrip()
     return text
 
 
-def summary_text(job: JobDefinition) -> Text:
-    """validate-job's summary, with a random seed described as the plan uses it, and any ignored configuration."""
+def job_display_names(paths: list[Path]) -> dict[Path, str]:
+    """Each job file's name in the Job Definition widget: without its extension, unless another file has the same stem
+    (``walk.yaml``, ``walk.yml``), when both keep it so they stay apart."""
+    stems: dict[str, int] = {}
+    for path in paths:
+        stems[path.stem] = stems.get(path.stem, 0) + 1
+    return {path: path.stem if stems[path.stem] == 1 else path.name for path in paths}
+
+
+def changed_text(changed: float | None, now: datetime | None = None) -> str:
+    """A file's modification time: ``09-26 14:05`` this year, or the date with its year (``2025-09-26``) before it."""
+    if changed is None:
+        return "-"
+    when = datetime.fromtimestamp(changed).astimezone()
+    return when.strftime("%m-%d %H:%M") if when.year == (now or datetime.now().astimezone()).year else when.strftime("%Y-%m-%d")
+
+
+def job_definition_cells(row: JobRow, name: str) -> tuple[Text, ...]:
+    """The Job Definition widget's row: ID, name, changed time, mode, and runs; an invalid file in dim red."""
+    style = "dim red" if row.job is None else ""
+    mode = str(row.job.mode) if row.job is not None else "invalid"
+    runs = str(row.job.run_count) if row.job is not None else "invalid"
+    return tuple(Text(cell, style=style) for cell in (row.job_id or "-", name, changed_text(row.changed), mode, runs))
+
+
+def sort_job_rows(rows: list[JobRow], key: str, descending: bool) -> list[JobRow]:
+    """The rows sorted by ``key``, ties by job ID (a row without one last); invalid files after valid ones by mode and runs."""
+    names = job_display_names([row.path for row in rows])
+    by_id = sorted(rows, key=lambda row: (row.number is None, row.number or 0))
+    if key in ("mode", "runs"):
+        valid = [row for row in by_id if row.job is not None]
+        invalid = [row for row in by_id if row.job is None]
+        value = (lambda row: str(row.job.mode)) if key == "mode" else (lambda row: row.job.run_count)
+        return sorted(valid, key=value, reverse=descending) + invalid
+    values = {
+        "id": lambda row: (row.number is None, row.number or 0),
+        "name": lambda row: names[row.path].lower(),
+        "changed": lambda row: row.changed or 0.0,
+    }
+    return sorted(by_id, key=values.get(key, values["id"]), reverse=descending)
+
+
+def summary_text(job: JobDefinition, job_id: str | None = None) -> Text:
+    """validate-job's summary, with the job ID when it has one, a random seed described as the plan uses it, and any
+    ignored configuration."""
     text = Text()
+    if job_id is not None:
+        text.append("Job ID: ", style="bold")
+        text.append(f"{job_id}\n")
     text.append("Job file: ", style="bold")
     text.append(f"{job.path}\n")
     for label, value in job_summary(job, random_seed_text=RANDOM_SEED_TEXT):
@@ -110,10 +161,10 @@ def plan_text(job: JobDefinition, details: JobDetails) -> Text:
     return text
 
 
-def details_text(job: JobDefinition, details: JobDetails) -> Text:
+def details_text(job: JobDefinition, details: JobDetails, job_id: str | None = None) -> Text:
     """What /describe job prints for a valid job (the caller shows an invalid one's error): the summary, the prompt
     pairs, and the dry-run plan."""
-    text = summary_text(job)
+    text = summary_text(job, job_id)
     text.append("\n")
     text.append_text(pairs_text(job))
     text.append("\n")
@@ -137,7 +188,7 @@ def confirm_run_text(job: JobDefinition, executable: str) -> Text:
     ):
         text.append(f"  {label}: ", style="bold")
         text.append(f"{value}\n")
-    # Not Enter: the Enter that submitted /run must not also answer this.
+    # Not Enter: the Enter that submitted /apply must not also answer this.
     text.append("\ny: run    n or Escape: cancel", style="dim")
     return text
 
@@ -283,8 +334,8 @@ def _phase_line(live: LiveRun) -> Text:
     else:
         phase = live.phase
         text = Text(PHASE_TEXT[phase], style="bold yellow" if phase in ("starting", "stopping", "not_started") else "bold cyan")
-    # The execution's ID once the state store has recorded it, as the history and /get write it: ``execution 12: walk``.
-    text.append(f"  execution {live.execution_id}: " if live.execution_id is not None else "  ")
+    # The execution's ID once the state store has recorded it, as the history and every message write it: ``E0012: walk``.
+    text.append(f"  {live.execution_id}: " if live.execution_id is not None else "  ")
     text.append(job_display_name(live.path))
     if live.finished is None and not live.worker_ended:
         if live.active_run is not None:
@@ -415,7 +466,7 @@ def stored_cooldown_text(execution: dict[str, Any]) -> str:
 
 def execution_text(execution: dict[str, Any]) -> Text:
     """One execution as it ran, from the stored row, and each of its runs; never the current job file."""
-    text = Text(f"Execution {execution['id']}: {execution['job_name']}", style="bold")
+    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}", style="bold")
     if is_imported(execution):
         text.append("  imported", style="yellow")
     text.append("\n")
@@ -629,9 +680,9 @@ def find_run(execution: dict[str, Any], run_number: int | None) -> dict[str, Any
     runs = execution.get("runs") or []
     if run_number is not None:
         match = next((run for run in runs if run["number"] == run_number), None)
-        return match if match is not None else f"Execution {execution['id']} has no run {run_number}"
+        return match if match is not None else f"Execution {execution_label(execution)} has no run {run_number}"
     first = next((run for run in runs if run.get("command")), None)
-    return first if first is not None else f"Execution {execution['id']} has no run with a saved command"
+    return first if first is not None else f"Execution {execution_label(execution)} has no run with a saved command"
 
 
 def prompt_block(text: Text, label: str, style: str, value: str | None) -> str:
@@ -651,7 +702,7 @@ def prompts_text(execution: dict[str, Any], which: str, run_number: int | None) 
     reads and selects as a block. Also returns what to copy to the clipboard and what to call it: the prompts alone for
     ``positive`` or ``negative``, the labelled prompts for ``prompts``; None when there is no prompt.
     """
-    text = Text(f"Execution {execution['id']}: {execution['job_name']}", style="bold")
+    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}", style="bold")
     if run_number is not None:
         run = find_run(execution, run_number)
         if isinstance(run, str):
@@ -688,9 +739,9 @@ def parameters_text(execution: dict[str, Any], run_number: int | None) -> Text:
         return Text(run, style="red")
     command = run.get("command") or []
     if not command:
-        return Text(f"Run {run['number']} of execution {execution['id']} has no saved command", style="red")
+        return Text(f"Run {run['number']} of execution {execution_label(execution)} has no saved command", style="red")
     total = len(execution.get("runs") or [])
-    text = Text(f"Execution {execution['id']}: {execution['job_name']}, run {run['number']} of {total}: draw-things-cli arguments", style="bold")
+    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}, run {run['number']} of {total}: draw-things-cli arguments", style="bold")
     if execution.get("config_file"):
         text.append(f" (configuration {execution['config_file']})")
     text.append("\n")

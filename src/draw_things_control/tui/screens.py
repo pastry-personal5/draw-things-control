@@ -13,15 +13,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
-from textual.worker import get_current_worker
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.job_service import JobService
-from draw_things_control.tui.commands import GET_WORDS, CommandError, CommandSuggester, help_text, parse, usage
-from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, parse_id, reveal_run
-from draw_things_control.tui.job_files import JobDetails, JobRow, add_plan, find_job, read_details, read_rows
-from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, StatusPane
+from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
+from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
+from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, execution_label, parse_id, reveal_run
+from draw_things_control.tui.job_files import JobCatalog, JobDetails, JobListing, add_plan, read_details
+from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, JobDefinitionPane, StatusPane, natural_descending
 from draw_things_control.tui.text import Arguments, PreviousRun, argument_rows, details_text, event_text, execution_text, jobs_text, override_notes, parameters_text, prompts_text, question_text, result_text, status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
@@ -46,8 +46,8 @@ class MainScreen(Screen[None]):
 
     def __init__(self) -> None:
         super().__init__()
-        # Job file names for completion, from the last read of the data directory.
-        self.job_names: list[str] = []
+        # The data directory's job files and their IDs; the Job Definition widget reads through it.
+        self.catalog: JobCatalog | None = None
         self.reader: HistoryReader | None = None
 
     @property
@@ -57,6 +57,10 @@ class MainScreen(Screen[None]):
     @property
     def command_line(self) -> CommandInput:
         return self.query_one(CommandInput)
+
+    @property
+    def jobs(self) -> JobDefinitionPane:
+        return self.query_one(JobDefinitionPane)
 
     @property
     def history(self) -> HistoryPane:
@@ -83,12 +87,15 @@ class MainScreen(Screen[None]):
                 yield CliPane(id="cli")
                 yield MessageLog(id="messages", max_lines=MAX_MESSAGE_LINES, wrap=True, min_width=20)
             with Vertical(id="right"):
+                # First in the right column, so Tab goes command line, Job Definition, Execution History, Execution.
+                self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings)
+                yield JobDefinitionPane(self.catalog, describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
                 yield HistoryPane(self.reader, busy=lambda: self.dtc.job_running, leave=self.focus_command_line, id="history")
                 yield ExecutionPane(self.reader, say=self.say, leave=self.focus_command_line, id="execution")
         yield Rule(line_style="solid", classes="command-rule")
         with Horizontal(id="command-line"):
             yield Static("> ", id="prompt")
-            yield CommandInput(id="command", compact=True, suggester=CommandSuggester(lambda: self.job_names))
+            yield CommandInput(id="command", compact=True, suggester=CommandSuggester(lambda: self.jobs.job_names, lambda: self.jobs.job_ids, self.execution_ids))
         yield Rule(line_style="solid", classes="command-rule")
         yield Static(id="status-line")
 
@@ -101,19 +108,25 @@ class MainScreen(Screen[None]):
         self.say(Text("Type /help for the commands.", style="dim"))
         self.set_interval(1, self.tick)
         self.render_live()
-        self.read_jobs(self.dtc.data_directory, self.dtc.settings, announce=False)
 
     def on_unmount(self) -> None:
         if self.reader is not None:
             self.reader.close()
+        if self.catalog is not None:
+            self.catalog.close()
 
     def on_resize(self, event: events.Resize) -> None:
         # The draw-things-cli pane gives up lines, down to its least, so Messages keeps its least on a short terminal.
         left = event.size.height - BOTTOM_LINES - STATUS_LINES
         self.cli.styles.height = max(CLI_PANE_MIN_LINES, min(CLI_PANE_LINES, left - MESSAGES_MIN_LINES))
 
-    def say(self, text: Text | str, style: str = "") -> None:
-        self.query_one(MessageLog).say(text, style)
+    def say(self, text: Text | str, style: str = "", *, block: bool = False) -> None:
+        """Write to Messages; ``block`` starts a block of its own (a command echo, the job's result) after a blank line."""
+        self.query_one(MessageLog).say(text, style, block=block)
+
+    def execution_ids(self) -> list[str]:
+        """The loaded executions' IDs, newest first, for completion."""
+        return [execution_label(row) for row in self.history.executions.values()]
 
     def focus_command_line(self) -> None:
         self.command_line.focus()
@@ -126,7 +139,7 @@ class MainScreen(Screen[None]):
         if not line:
             return
         self.command_line.remember(line)
-        self.say(Text(f"> {line}", style="bold"))
+        self.say(Text(f"> {line}", style="bold"), block=True)
         try:
             command = parse(line)
         except CommandError as error:
@@ -161,23 +174,40 @@ class MainScreen(Screen[None]):
         """/get jobs, /get history, and an execution's prompts or draw-things-cli arguments."""
         word = what.lower()
         if word == "jobs" and not arguments:
-            self.read_jobs(self.dtc.data_directory, self.dtc.settings, announce=True)
+            self.jobs.load(fresh=True, announce=True)
         elif word == "history" and not arguments:
             self.history.load()
         elif word in ("prompts", "positive", "negative", "param", "parameters") and 1 <= len(arguments) <= 2:
-            execution_id = self.number(arguments[0], "get", word)
+            execution = self.execution_number(arguments[0], "get", word)
             run = self.number(arguments[1], "get", word) if len(arguments) == 2 else None
-            self.show_part(word, execution_id, run)
+            self.show_part(word, execution, run)
         else:
             raise CommandError(f"Usage: {usage('get', word if word in GET_WORDS else None)}")
 
     def command_describe(self, what: str, *arguments: str) -> None:
-        """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file."""
-        if what.lower() != "job" or len(arguments) != 1:
-            raise CommandError(f"Usage: {usage('describe')}")
-        self.load_details(self.job_path(arguments[0]), self.dtc.settings, self.dtc.job_service, self.dtc.executable)
+        """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file; /describe execution ID: one
+        execution as it ran."""
+        word = what.lower()
+        if word == "job" and len(arguments) == 1:
+            self.describe_job(self.job_path(arguments[0]))
+        elif word == "execution" and len(arguments) == 1:
+            self.show_execution(self.execution_number(arguments[0], "describe", "execution"))
+        else:
+            raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution') else None)}")
 
-    def command_run(self, name: str) -> None:
+    def describe_job(self, path: Path) -> None:
+        self.load_details(path, self.dtc.settings, self.dtc.job_service, self.dtc.executable)
+
+    def command_sort(self, what: str, key: str, direction: str | None = None) -> None:
+        """/sort jobs KEY [asc|desc]: the Job Definition widget's order, kept across sessions."""
+        key = key.lower()
+        if what.lower() != "jobs" or key not in SORT_KEYS or (direction is not None and direction.lower() not in SORT_DIRECTIONS):
+            raise CommandError(f"Usage: {usage('sort')}; KEY is {', '.join(SORT_KEYS)}")
+        descending = direction.lower() == "desc" if direction is not None else natural_descending(key)
+        self.jobs.set_sort(key, descending)
+        self.say(f"Job Definition: by {key}, {'descending' if descending else 'ascending'}")
+
+    def command_apply(self, name: str) -> None:
         self.dtc.start_flow(self.job_path(name))
 
     def command_stop(self) -> None:
@@ -196,9 +226,6 @@ class MainScreen(Screen[None]):
         if stop:
             self.dtc.request_stop()
 
-    def command_execution(self, execution_id: str) -> None:
-        self.show_execution(self.number(execution_id, "execution"))
-
     def command_filter(self, *arguments: str) -> None:
         current = self.history.history_filter
         if arguments == ("off",):
@@ -211,21 +238,33 @@ class MainScreen(Screen[None]):
             history_filter = HistoryFilter(current.status, arguments[1])
         else:
             raise CommandError(f"Usage: {usage('filter')}")
-        self.say(f"History: {history_filter.text() or 'all executions'}")
+        self.say(f"Execution History: {history_filter.text() or 'all executions'}")
         self.history.set_filter(history_filter)
 
     def command_reveal(self, execution_id: str, run: str | None = None) -> None:
-        self.reveal(self.number(execution_id, "reveal"), self.number(run, "reveal") if run is not None else None)
+        self.reveal(self.execution_number(execution_id, "reveal"), self.number(run, "reveal") if run is not None else None)
 
     def job_path(self, name: str) -> Path:
-        path = find_job(self.dtc.data_directory, name)
+        assert self.catalog is not None
+        path = self.catalog.find(name, self.jobs.job_rows)
         if isinstance(path, str):
             raise CommandError(path)
         return path
 
     @staticmethod
+    def execution_number(text: str, command: str, word: str | None = None) -> int:
+        """The number of an execution ID as typed (E0012, e12), or why not: a bare number names the E form."""
+        number = parse_typed_id(text, EXECUTION_LETTER)
+        if number is not None:
+            return number
+        bare = parse_id(text)
+        if bare is not None:
+            raise CommandError(f"Use {execution_id_text(bare)}: an execution ID begins with {EXECUTION_LETTER}")
+        raise CommandError(f"Usage: {usage(command, word)}")
+
+    @staticmethod
     def number(text: str, command: str, word: str | None = None) -> int:
-        """An execution or run number, or a usage error for ``command`` (and its ``word``, for /get)."""
+        """A run number, or a usage error for ``command`` (and its ``word``, for /get)."""
         number = parse_id(text)
         if number is None:
             raise CommandError(f"Usage: {usage(command, word)}")
@@ -233,19 +272,12 @@ class MainScreen(Screen[None]):
 
     # Workers: jobs, the detail, and reveal
 
-    @work(thread=True, exclusive=True, group="jobs")
-    def read_jobs(self, directory: Path, settings: GlobalConfig, *, announce: bool) -> None:
-        rows, message = read_rows(directory, settings)
-        if not get_current_worker().is_cancelled:
-            self.app.call_from_thread(self.show_jobs, rows, message, announce)
-
-    def show_jobs(self, rows: list[JobRow], message: str | None, announce: bool) -> None:
-        if not self.is_attached:
-            return
-        self.job_names = [row.path.name for row in rows]
-        if announce or message is not None:
-            running = self.dtc.live.path.name if self.dtc.job_running and self.dtc.live is not None else None
-            self.say(jobs_text([(row.path.name, row.job, row.error) for row in rows], running, message))
+    def announce_jobs(self, listing: JobListing) -> None:
+        """/get jobs: the listing the Job Definition widget just read, in Messages."""
+        running = self.dtc.live.path.name if self.dtc.job_running and self.dtc.live is not None else None
+        self.say(jobs_text(listing.rows, running, listing.message))
+        if listing.id_error is not None:
+            self.say(listing.id_error, "yellow")
 
     @work(thread=True, group="details")
     def load_details(self, path: Path, settings: GlobalConfig, service: JobService, executable: str) -> None:
@@ -260,17 +292,20 @@ class MainScreen(Screen[None]):
         if details.job is None:
             self.say(Text(f"Invalid job: {path}\n{details.error}", style="red"))
             return
-        self.say(details_text(details.job, details))
+        row = next((row for row in self.jobs.job_rows if row.path == path), None)
+        self.say(details_text(details.job, details, row.job_id if row is not None else None))
 
     # The history and the detail
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        # The detail follows the cursor, after a pause.
-        if event.row_key.value is not None:
+        # The detail follows the history's cursor, after a pause.
+        if event.data_table is self.history and event.row_key.value is not None:
             self.detail.follow(int(str(event.row_key.value)))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        # Enter moves to the detail, at its first run; /execution still writes the full detail to Messages.
+        # Enter on the history moves to the detail, at its first run; /describe execution still writes the full detail to Messages.
+        if event.data_table is not self.history:
+            return
         execution_id = int(str(event.row_key.value))
         detail = self.detail
         detail.focus()
@@ -295,16 +330,16 @@ class MainScreen(Screen[None]):
         self.render_status()
 
     @work(thread=True, group="execution")
-    def show_execution(self, execution_id: int) -> None:
+    def show_execution(self, number: int) -> None:
         assert self.reader is not None
-        execution = self.reader.execution(execution_id)
+        execution = self.reader.numbered(number)
         self.app.call_from_thread(self.say, execution_text(execution) if isinstance(execution, dict) else Text(execution, style="red"))
 
     @work(thread=True, group="execution")
-    def show_part(self, word: str, execution_id: int, run: int | None) -> None:
+    def show_part(self, word: str, number: int, run: int | None) -> None:
         """An execution's prompts (``prompts``, ``positive``, ``negative``) or its arguments (``param``, ``parameters``)."""
         assert self.reader is not None
-        execution = self.reader.execution(execution_id)
+        execution = self.reader.numbered(number)
         if isinstance(execution, str):
             self.app.call_from_thread(self.say, execution, "red")
             return
@@ -324,9 +359,9 @@ class MainScreen(Screen[None]):
                 self.app.call_from_thread(self.say, f"Asked the terminal to copy the {what} ({error})", "dim")
 
     @work(thread=True, group="reveal")
-    def reveal(self, execution_id: int, run: int | None) -> None:
+    def reveal(self, number: int, run: int | None) -> None:
         assert self.reader is not None
-        self.app.call_from_thread(self.say, *reveal_run(self.reader.execution(execution_id), run))
+        self.app.call_from_thread(self.say, *reveal_run(self.reader.numbered(number), run))
 
     # The running job
 
@@ -368,7 +403,7 @@ class MainScreen(Screen[None]):
     def job_ended(self) -> None:
         live = self.dtc.live
         if live is not None:
-            self.say(result_text(live))
+            self.say(result_text(live), block=True)
         self.render_live()
         self.history.load()
 

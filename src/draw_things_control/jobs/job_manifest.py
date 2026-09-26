@@ -53,6 +53,9 @@ class JobManifest:
     cooldown: dict[str, Any] | None
     started_at: str
     log_file: str | None
+    # The execution's ID in the state store (E0012); None in a manifest written before execution IDs, or by a job run
+    # without one.
+    execution_id: str | None = None
     input_resize: dict[str, Any] | None = None
     finished_at: str | None = None
     status: str = "running"

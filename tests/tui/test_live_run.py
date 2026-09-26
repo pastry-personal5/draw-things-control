@@ -7,6 +7,7 @@ import contextlib
 import io
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -45,7 +46,7 @@ class LiveRunTests(TuiTestCase):
     async def start(self, pilot: Any, name: str = "walk") -> None:
         """Run the job and confirm."""
         app = pilot.app
-        await self.command(pilot, f"/run {name}", settle=False)
+        await self.command(pilot, f"/apply {name}", settle=False)
         await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
         await pilot.press("y")
         await self.wait_for(pilot, lambda: app.live is not None, "the job to start")
@@ -125,12 +126,12 @@ class LiveRunTests(TuiTestCase):
             await pilot.pause()
             ended = self.text(app, "status").split("\n")
         self.assertEqual(idle, "\n\n\n\n")
-        self.assertEqual(running[0], "running  execution 1: walk  run 1/2")
+        self.assertEqual(running[0], "running  E0001: walk  run 1/2")
         self.assertTrue(running[1].startswith("Job "), running)
         self.assertTrue(running[2].startswith("Run ") and " 50% " in running[2], running)
         self.assertTrue(running[3].startswith("step 4/8  "), running)
         self.assertEqual(running[4], "")
-        self.assertEqual(ended[:2], ["finished (succeeded)  execution 1: walk", "2/2 runs succeeded"])
+        self.assertEqual(ended[:2], ["finished (succeeded)  E0001: walk", "2/2 runs succeeded"])
         self.assertTrue(ended[3].startswith("job took ") and ended[4].startswith("last run took "), ended)
 
     async def test_a_new_job_moves_the_history_cursor_unless_the_history_is_being_browsed(self) -> None:
@@ -212,7 +213,7 @@ class LiveRunTests(TuiTestCase):
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.command(pilot, "/run walk", settle=False)
+            await self.command(pilot, "/apply walk", settle=False)
             await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
             confirm = self.text(app, "confirm")
             await pilot.press("n")
@@ -234,10 +235,10 @@ class LiveRunTests(TuiTestCase):
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
-            await self.command(pilot, "/run walk", settle=False)
+            await self.command(pilot, "/apply walk", settle=False)
             await self.wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), "the run confirmation")
             confirm = self.text(app, "confirm")
-            # The Enter that submitted /run, pressed again or held, must not start the job.
+            # The Enter that submitted /apply, pressed again or held, must not start the job.
             await pilot.press("enter", "enter")
             await pilot.pause()
             self.assertIsInstance(app.screen, ConfirmScreen)
@@ -298,9 +299,9 @@ class LiveRunTests(TuiTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             path.write_text("name: [broken\n", encoding="utf-8")
-            await self.command(pilot, "/run walk")
+            await self.command(pilot, "/apply walk")
             self.assertIsInstance(app.screen, MainScreen)
-            [message] = self.since("/run walk")
+            [message] = self.since("/apply walk")
         self.assertTrue(message.startswith("Invalid job walk.yaml: "), message)
         self.assertEqual(runs.runners, [])
 
@@ -392,6 +393,19 @@ class LiveRunTests(TuiTestCase):
         self.assertTrue(run_lock_is_free())
         self.assertFalse(self.output_directory.exists())
 
+    async def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
+        self.write_data_job()
+        runs = FakeRuns()
+        app = self.app(runs)
+        with mock.patch.object(Store, "reserve_execution_number", side_effect=sqlite3.OperationalError("database is locked")):
+            async with app.run_test(size=(160, 60)) as pilot:
+                await self.start(pilot)
+                await self.finish(pilot)
+        self.assertIn("Did not start: Cannot give the execution an ID in the state database", self.log())
+        self.assertEqual(self.executions(), [])
+        self.assertFalse(runs.started.is_set())
+        self.assertFalse(self.output_directory.exists())
+
     async def test_run_during_a_run_and_the_jobs_status(self) -> None:
         self.write_data_job()
         self.write_data_job("z-other.yaml")
@@ -402,8 +416,8 @@ class LiveRunTests(TuiTestCase):
             await self.wait_for(pilot, runs.started.is_set, "run 1")
             await self.command(pilot, "/get jobs")
             [during] = [text for text in self.since("/get jobs") if text.startswith("Jobs")]
-            await self.command(pilot, "/run z-other")
-            refused = self.since("/run z-other")
+            await self.command(pilot, "/apply z-other")
+            refused = self.since("/apply z-other")
             self.assertIsInstance(app.screen, MainScreen)
             app.request_stop()
             await self.finish(pilot)

@@ -42,7 +42,7 @@ Out of scope:
 │                                       ││ 11 walk    succeeded   │
 └───────────────────────────────────────┘│                        │
 ┌ Messages ─────────────────────────────┐│                        │
-│ 14:03:01 > /run walk                  ││                        │
+│ 14:03:01 > /apply walk                  ││                        │
 │ 14:03:02 Job started: sunset-walk ... ││                        │
 │ (command output and job log)          ││                        │
 └───────────────────────────────────────┘└────────────────────────┘
@@ -70,7 +70,7 @@ the full width, come a rule, the command line, a rule, and the status line.
     instead). A new job's output replaces the last job's.
 - **Messages** (left, the rest of the height), capped at 5000 lines. It
   holds:
-  - the echo of each command (`> /run walk`)
+  - the echo of each command (`> /apply walk`)
   - its output: job lists, job details and dry-run plans, execution
     details, and errors
   - a readable log of the job: started, each run started (with its
@@ -137,7 +137,7 @@ them. These keys remain:
 | Enter | History | Show the execution's detail, as `/execution` |
 | Escape | History | Back to the command line |
 | Ctrl-C | Anywhere but a dialog | Clear the command line, or quit on a second press (below) |
-| `y`, `n`/Escape | Dialog | Answer the confirmation; Enter also answers yes to `/stop` and `/quit`, but not to `/run` |
+| `y`, `n`/Escape | Dialog | Answer the confirmation; Enter also answers yes to `/stop` and `/quit`, but not to `/apply` |
 
 The logs are not focusable; they scroll with the mouse wheel.
 
@@ -173,7 +173,7 @@ Every command begins with `/`, and its name says what it acts on.
 | `/help` | List the commands and keys |
 | `/jobs` | List the job files and whether each is valid (reads the directory again) |
 | `/job JOB` | The summary, prompt pairs, and dry-run plan of a job (reads the file again) |
-| `/run JOB` | Read the job again, confirm, and run it |
+| `/apply JOB` | Read the job again, confirm, and run it |
 | `/stop` | Stop the running job, after confirmation |
 | `/history` | Read the history pane again |
 | `/execution ID` | The detail of one execution |
@@ -201,7 +201,7 @@ Every command begins with `/`, and its name says what it acts on.
 - An empty line does nothing.
 - Tab completes:
   - command names after `/`
-  - job file names after `/job` and `/run`
+  - job file names after `/job` and `/apply`
   - `status`, `name`, and `off` after `/filter`
   - the statuses after `/filter status`
 
@@ -311,7 +311,7 @@ Textual app. Tests replace `open` with a fake.
   - `tests/tui/test_live_run.py` for running and signals
   - `tests/tui/test_history.py` for the history pane
   - shared helpers in `tests/tui/tui_case.py`
-  - `tests/tui/sigterm_app.py` types `/run walk`
+  - `tests/tui/sigterm_app.py` types `/apply walk`
 - Docs:
   - `docs/user-guide.md`: the TUI section and its key table rewritten
     around the commands

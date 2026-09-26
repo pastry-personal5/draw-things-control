@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from draw_things_control.state import store as store_module
-from draw_things_control.state.store import SCHEMA_V1, SCHEMA_VERSION, StateError, Store
+from draw_things_control.state.store import SCHEMA_V1, SCHEMA_V2, SCHEMA_VERSION, StateError, Store
 
 NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -17,7 +17,7 @@ def iso(days_ago: float, offset: str = "+00:00") -> str:
     return (NOW - timedelta(days=days_ago)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + offset
 
 
-class StoreTests(unittest.TestCase):
+class StoreCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
@@ -39,6 +39,8 @@ class StoreTests(unittest.TestCase):
             self.store.finish_execution(execution_id, status=status, exit_code=0, signal=None, finished_at=finished)
         return execution_id
 
+
+class StoreTests(StoreCase):
     def test_a_new_database_uses_wal_foreign_keys_and_the_current_schema(self) -> None:
         connection = self.store._connection()
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
@@ -251,3 +253,65 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(StateError):
                 Store(self.path)
         self.assertEqual(closed, [True])
+
+
+class IdTests(StoreCase):
+    """Milestone 10: execution numbers and job numbers, which only go up, and the remembered settings."""
+
+    def number(self, execution_id: int) -> int:
+        execution = self.store.get_execution(execution_id)
+        assert execution is not None
+        return int(execution["execution_number"])
+
+    def test_a_version_2_database_numbers_its_executions_by_start_time(self) -> None:
+        path = self.path.with_name("v2.db")
+        connection = sqlite3.connect(path)
+        for schema in (SCHEMA_V1, SCHEMA_V2):
+            for statement in schema.split(";\n"):
+                if statement.strip():
+                    connection.execute(statement)
+        connection.execute("PRAGMA user_version = 2")
+        # Row order is not start order: an imported phase 1 execution started before the rows written first.
+        for name, started in (("second", 200.0), ("third", 300.0), ("first", 100.0), ("tie", 300.0)):
+            connection.execute("INSERT INTO executions (job_name, job_file, mode, status, started_at, started_epoch) VALUES (?, 'x.yaml', 'i2v', 'succeeded', '2026-09-01T09:00:00+00:00', ?)", (name, started))
+        connection.commit()
+        connection.close()
+        store = Store(path, clock=lambda: NOW, prune_on_open=False)
+        self.addCleanup(store.close)
+        numbers = {row["job_name"]: row["execution_number"] for row in store.list_executions()}
+        # By start time, ties by row order; the next execution continues after them.
+        self.assertEqual(numbers, {"first": 1, "second": 2, "third": 3, "tie": 4})
+        self.assertEqual(store.reserve_execution_number(), 5)
+
+    def test_numbers_are_never_given_twice_after_pruning_or_a_reservation(self) -> None:
+        old = self.add("old", started=iso(20), finished=iso(20))
+        reserved = self.store.reserve_execution_number()
+        recent = self.store.start_execution(execution_number=reserved, job_name="recent", job_file="r.yaml", mode="i2v", started_at=iso(1))
+        self.assertEqual((self.number(old), self.number(recent)), (1, 2))
+        self.assertEqual(self.store.prune(), 1)
+        # A reservation whose job never started leaves a gap; the pruned 1 is not given again either.
+        self.assertEqual(self.store.reserve_execution_number(), 3)
+        imported, imported_number = self.store.import_execution({"job_name": "imported", "job_file": "i.yaml", "mode": "i2v", "status": "succeeded", "started_at": iso(30), "finished_at": iso(1)}, [])
+        self.assertEqual((self.number(imported), imported_number), (4, 4))
+        self.assertEqual((self.store.execution_row(4), self.store.execution_row(1), self.store.execution_number(recent)), (imported, None, 2))
+
+    def test_a_job_file_name_keeps_its_number_and_a_retired_number_is_never_reused(self) -> None:
+        self.assertEqual(self.store.assign_job_ids(["walk.yaml", "wave.yaml"], iso(0)), {"walk.yaml": 1, "wave.yaml": 2})
+        # Deleted: wave is retired; a new name takes the next number, not wave's.
+        self.assertEqual(self.store.assign_job_ids(["walk.yaml", "run.yaml"], iso(0)), {"walk.yaml": 1, "run.yaml": 3})
+        self.assertEqual(self.store.job_definition(2), ("wave.yaml", False))
+        # Restored under the same name: its number comes back.
+        self.assertEqual(self.store.assign_job_ids(["wave.yaml", "walk.yaml"], iso(0)), {"wave.yaml": 2, "walk.yaml": 1})
+        self.assertEqual((self.store.job_definition(2), self.store.job_definition(3), self.store.job_definition(9)), (("wave.yaml", True), ("run.yaml", False), None))
+        # A listing that changes nothing writes nothing.
+        with mock.patch.object(self.store, "_transaction", side_effect=AssertionError("no write expected")):
+            self.assertEqual(self.store.assign_job_ids(["walk.yaml", "wave.yaml"], iso(0)), {"walk.yaml": 1, "wave.yaml": 2})
+        # A second process sees the same numbers.
+        self.assertEqual(self.open().assign_job_ids(["walk.yaml", "new.yaml"], iso(0)), {"walk.yaml": 1, "new.yaml": 4})
+
+    def test_a_setting_is_kept_and_replaced(self) -> None:
+        self.assertIsNone(self.store.setting("job_definition.sort"))
+        self.store.set_setting("job_definition.sort", "name asc")
+        self.store.set_setting("job_definition.sort", "id desc")
+        self.store.close()
+        self.assertEqual(self.open().setting("job_definition.sort"), "id desc")

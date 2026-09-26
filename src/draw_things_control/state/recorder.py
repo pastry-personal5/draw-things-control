@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from loguru import logger
 
 from draw_things_control.jobs.job_events import CooldownEnded, JobEvent, JobFinished, JobStarted, RunFinished, RunStarted
-from draw_things_control.state.store import Store
+from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
+from draw_things_control.state.store import StateError, Store
 
 
 class ExecutionRecorder:
@@ -20,6 +22,7 @@ class ExecutionRecorder:
     def __init__(self, store: Store) -> None:
         self._store = store
         self._execution_id: int | None = None
+        self._label: str | None = None
         self._last_run: int | None = None
         self._failed = False
 
@@ -27,6 +30,20 @@ class ExecutionRecorder:
     def execution_id(self) -> int | None:
         """The row of the execution being recorded, once JobStarted has created it; None before, or if that failed."""
         return None if self._failed else self._execution_id
+
+    @property
+    def execution_label(self) -> str | None:
+        """The execution's ID as people see it (E0012), once it is recorded; None before, or once recording failed."""
+        return None if self._failed or self._execution_id is None else self._label
+
+    def reserve(self) -> str:
+        """Reserve the execution's ID for JobService.run; raises StateError when the store cannot give one, so the job
+        does not start."""
+        try:
+            self._label = execution_id_text(self._store.reserve_execution_number())
+        except sqlite3.Error as error:
+            raise StateError(f"Cannot give the execution an ID in the state database {self._store.path}: {error}") from error
+        return self._label
 
     def __call__(self, event: JobEvent) -> None:
         if self._failed:
@@ -39,7 +56,10 @@ class ExecutionRecorder:
 
     def _record(self, event: JobEvent) -> None:
         if isinstance(event, JobStarted):
+            # The number reserved before the job started; a job run without one takes the next when it is recorded.
+            number = parse_typed_id(event.execution_id, EXECUTION_LETTER) if event.execution_id is not None else None
             self._execution_id = self._store.start_execution(
+                execution_number=number,
                 job_name=event.job_name,
                 job_file=event.job_file,
                 mode=event.mode,
@@ -66,6 +86,9 @@ class ExecutionRecorder:
                     "input_resize": event.input_resize,
                 },
             )
+            if number is None:
+                given = self._store.execution_number(self._execution_id)
+                self._label = execution_id_text(given) if given is not None else None
         elif self._execution_id is None:
             return
         elif isinstance(event, RunStarted):

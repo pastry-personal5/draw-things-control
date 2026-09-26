@@ -61,9 +61,11 @@ processes from driving the GPU at once.
 | 07 | [Automatic cooldown](milestone-07-cooldown-auto.md) | done |
 | 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | done |
 | 09 | [Get and describe commands](milestone-09-tui-get-describe.md) | done |
+| 10 | [Job Definition widget, job IDs, and execution IDs](milestone-10-tui-job-definitions.md) | done |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
-both. 06 and 07 stand alone. 08 builds on 04 and 05, and 09 on 05 and 08.
+both. 06 and 07 stand alone. 08 builds on 04 and 05, 09 on 05 and 08, and
+10 on 05 and 09.
 
 ## New dependencies
 

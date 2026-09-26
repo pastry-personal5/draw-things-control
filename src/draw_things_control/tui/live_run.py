@@ -105,8 +105,8 @@ class LiveRun:
         self._wall_clock = wall_clock
         self.job_name = job.name
         self.path = path
-        # The state store's row for this job, once JobStarted has been recorded; None before, or when it is not recorded.
-        self.execution_id: int | None = None
+        # The execution's ID (E0012), once JobStarted has been recorded; None before, or when it is not recorded.
+        self.execution_id: str | None = None
         # The last run with a command (its number and argument rows), which the next run's message is compared with.
         self.previous_arguments: tuple[int, Any] | None = None
         self.started: JobStarted | None = None

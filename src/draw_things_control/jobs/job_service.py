@@ -191,8 +191,13 @@ class JobService:
         commands = tuple(tuple(GenerationService.redact_command(run.arguments.command)) for run in runs)
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), commands=commands)
 
-    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None, on_child_start: ChildStartCallback | None = None) -> JobOutcome:
+    def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None, on_child_start: ChildStartCallback | None = None, reserve_execution_id: Callable[[], str] | None = None) -> JobOutcome:
         """Run the job's runs in order; stop at the first failed, timed-out, or interrupted run.
+
+        ``reserve_execution_id`` gives the execution its ID (E0012) from the state store, which this layer cannot reach.
+        It is called once, after the checks that can refuse the job and before the output directory, the manifest, or
+        the log exist; when it raises, the job does not start and the error propagates. The ID goes into JobStarted, the
+        manifest, and the log.
 
         With ``write_records``, a JSON manifest and a log file are saved beside the outputs. ``observer``
         receives a JobEvent for each step, on this thread; one that raises is logged and ignored.
@@ -201,7 +206,7 @@ class JobService:
         """
         self._begin(observer, on_child_start)
         try:
-            return self._run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records)
+            return self._run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records, reserve_execution_id=reserve_execution_id)
         finally:
             self._end()
 
@@ -255,7 +260,7 @@ class JobService:
         if self._observer is not None:
             notify(self._observer, event)
 
-    def _run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool) -> JobOutcome:
+    def _run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool, reserve_execution_id: Callable[[], str] | None) -> JobOutcome:
         if shutdown_grace < 0:
             raise ValueError("--shutdown-grace must not be negative")
         self._check_tools(job, executable)
@@ -269,12 +274,14 @@ class JobService:
 
             temporary_input = TemporaryInput(job.input, plan)
         try:
-            return self._run_with_records(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records, seed=seed, seed_source=seed_source, temporary_input=temporary_input)
+            # Taken last of the checks, so a job refused above never uses up a number; a job that cannot get one does not start.
+            execution_id = reserve_execution_id() if reserve_execution_id is not None else None
+            return self._run_with_records(job, executable=executable, shutdown_grace=shutdown_grace, write_records=write_records, seed=seed, seed_source=seed_source, temporary_input=temporary_input, execution_id=execution_id)
         finally:
             if temporary_input is not None:
                 temporary_input.cleanup()
 
-    def _run_with_records(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool, seed: int, seed_source: str, temporary_input: TemporaryInput | None) -> JobOutcome:
+    def _run_with_records(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool, seed: int, seed_source: str, temporary_input: TemporaryInput | None, execution_id: str | None) -> JobOutcome:
         job.output_directory.mkdir(parents=True, exist_ok=True)
         manifest_path: Path | None = None
         log_path: Path | None = None
@@ -302,6 +309,7 @@ class JobService:
                 cooldown=job.cooldown.as_dict(),
                 started_at=self._timestamp(),
                 log_file=log_path.name if log_path is not None else None,
+                execution_id=execution_id,
                 input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
             )
             execution = _Execution(job, manifest, manifest_path, log_path, executable, shutdown_grace, temporary_input, job.schedule())
@@ -340,6 +348,7 @@ class JobService:
                 config_file=manifest.config_file,
                 config_override=manifest.config_override,
                 input_resize=manifest.input_resize,
+                execution_id=manifest.execution_id,
             )
         )
         try:
@@ -353,7 +362,8 @@ class JobService:
     def _run_runs(self, execution: _Execution) -> JobOutcome:
         job, manifest, total = execution.job, execution.manifest, execution.total
         records = f"; manifest {execution.manifest_path}; log {execution.log_path}" if execution.manifest_path is not None else ""
-        logger.info("Job {} ({}): {} runs, seed {} (from {}), {}{}", job.name, job.mode, total, manifest.seed, manifest.seed_source, cooldown_summary(job, "from "), records)
+        execution_id = f", execution {manifest.execution_id}" if manifest.execution_id is not None else ""
+        logger.info("Job {} ({}{}): {} runs, seed {} (from {}), {}{}", job.name, job.mode, execution_id, total, manifest.seed, manifest.seed_source, cooldown_summary(job, "from "), records)
         report_ignored_config(job)
         execution.save()
         current_input = job.input

@@ -38,6 +38,8 @@ class JobStarted:
     config_file: str = ""
     config_override: dict[str, Any] = field(default_factory=dict)
     input_resize: dict[str, Any] | None = None
+    # The execution's ID (E0012), which the front end reserved in the state store before the job started.
+    execution_id: str | None = None
 
 
 @dataclass(frozen=True)

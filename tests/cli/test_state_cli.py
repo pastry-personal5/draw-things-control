@@ -3,6 +3,7 @@
 import itertools
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -201,6 +202,35 @@ class StateCliTests(JobTestCase):
         self.assertIn("Imported 0, skipped 1", second.stdout)
         self.assertEqual(len(self.store().list_executions()), 1)
         self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["name"], "sunset-walk")
+        # The run recorded its ID in the manifest; imported again into a fresh database, the execution takes the next
+        # free number (E0001 again here, so there is nothing to add).
+        self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["execution_id"], "E0001")
+        self.assertIn(f"  E0001: {manifest}\n", first.stdout)
+
+    def test_an_import_names_the_id_its_manifest_records_when_it_differs(self) -> None:
+        self.write_global_config("write_job_records: true\n")
+        self.assertEqual(self.run_job().exit_code, 0)
+        [manifest] = self.output_directory.rglob("*-job.json")
+        # A fresh database whose numbering has moved on: the import takes the next free number and names the old one.
+        (self.state / "dtc.db").unlink()
+        store = self.store()
+        for _ in range(4):
+            store.reserve_execution_number()
+        store.close()
+        imported = self.invoke("import-history")
+        self.assertIn(f"  E0005: {manifest} (its manifest says E0001)\n", imported.stdout)
+        [row] = self.store().list_executions()
+        self.assertEqual(row["execution_number"], 5)
+
+    def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
+        self.write_global_config("write_job_records: true\n")
+        with mock.patch.object(Store, "reserve_execution_number", side_effect=sqlite3.OperationalError("database is locked")):
+            result = self.run_job()
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(self.runs_started, 0)
+        self.assertFalse(self.output_directory.exists())
+        self.assertEqual(self.store().list_executions(), [])
+        self.assertTrue(any("Cannot give the execution an ID" in message and "the job was not started" in message for message in self.messages), self.messages)
 
     def test_import_history_reads_another_directory_and_rejects_a_missing_one(self) -> None:
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root / "absent")).exit_code, 2)

@@ -26,7 +26,7 @@ In scope (owner decision):
 
 Out of scope:
 
-- Renaming the other commands (`/run`, `/stop`, `/execution`, `/filter`,
+- Renaming the other commands (`/apply`, `/stop`, `/execution`, `/filter`,
   `/reveal`, `/clear`, `/quit`, `/help`); they stay as they are (owner
   decision).
 - Keeping `/jobs`, `/job`, and `/history` as aliases.

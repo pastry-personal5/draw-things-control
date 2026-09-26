@@ -21,7 +21,7 @@ from draw_things_control.jobs.job_events import CooldownStarted, RunStarted
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader, copy_to_pasteboard
-from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryPane
+from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryPane, JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.text import argument_rows, confirm_run_text, event_text, override_notes, parameters_text, reveal_action, stored_cooldown_text
 from draw_things_control.tui.widgets import CommandInput
@@ -79,8 +79,8 @@ class HistoryCase(TuiTestCase):
         return [[row[index] for index in indexes] for row in self.history(app)]
 
     async def detail(self, pilot: Any, execution_id: int) -> str:
-        await self.command(pilot, f"/execution {execution_id}")
-        return "\n".join(self.since(f"/execution {execution_id}"))
+        await self.command(pilot, f"/describe execution E{execution_id:04d}")
+        return "\n".join(self.since(f"/describe execution E{execution_id:04d}"))
 
 
 class HistoryTests(HistoryCase):
@@ -89,7 +89,7 @@ class HistoryTests(HistoryCase):
         async with app.run_test() as pilot:
             await self.settle(pilot)
             table = app.screen.query_one(HistoryPane)
-            self.assertEqual((table.row_count, table.border_title, table.border_subtitle), (0, "History", "No execution history yet"))
+            self.assertEqual((table.row_count, table.border_title, table.border_subtitle), (0, "Execution History", "No execution history yet"))
             detail = await self.detail(pilot, 1)
         self.assertEqual(detail, "No execution history yet")
         self.assertFalse(self.state.exists())
@@ -101,7 +101,7 @@ class HistoryTests(HistoryCase):
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
             rows = self.history(app)
-        self.assertEqual(rows, [[str(newer), "wave", "succeeded", START.strftime("%m-%d ") + "09:30", "1/1"], [str(older), "walk", "failed", START.strftime("%m-%d %H:%M"), "2/3"]])
+        self.assertEqual(rows, [[f"E{newer:04d}", "wave", "succeeded", START.strftime("%m-%d ") + "09:30", "1/1"], [f"E{older:04d}", "walk", "failed", START.strftime("%m-%d %H:%M"), "2/3"]])
 
     async def test_the_filters_narrow_combine_and_come_off(self) -> None:
         self.add("sunset-walk", 0, job_file="/jobs/evening.yaml")
@@ -119,7 +119,7 @@ class HistoryTests(HistoryCase):
         # A name matches the job name or the job file's name, in any case; never the directory.
         self.assertEqual(results["/filter name WALK"][0], [["sunset-walk", "failed"], ["sunset-walk", "succeeded"]])
         self.assertEqual(results["/filter status failed"][0], [["sunset-walk", "failed"]])
-        self.assertEqual(results["/filter status failed"][1], "History: status failed, name WALK")
+        self.assertEqual(results["/filter status failed"][1], "Execution History: status failed, name WALK")
         self.assertEqual(results["/filter name even"][0], [["sunset-walk", "failed"]])
         self.assertEqual(results["/filter status succeeded"][0], [["sunset-walk", "succeeded"]])
         # % and _ are matched as written, not as wildcards.
@@ -127,9 +127,9 @@ class HistoryTests(HistoryCase):
         self.assertEqual(results["/filter name 100%"][0], [["wave_100%", "succeeded"]])
         self.assertEqual(results["/filter name t_"][0], [])
         self.assertEqual(results["/filter name t_"][2], "No executions match the filter")
-        self.assertEqual((len(results["/filter off"][0]), results["/filter off"][1], results["/filter off"][2]), (4, "History", ""))
+        self.assertEqual((len(results["/filter off"][0]), results["/filter off"][1], results["/filter off"][2]), (4, "Execution History", ""))
         self.assertEqual(results["/filter status running"][0], [])
-        self.assertIn("History: status running, name walk", self.said)
+        self.assertIn("Execution History: status running, name walk", self.said)
 
     async def test_pages_load_at_the_last_row_and_a_refresh_keeps_them_and_the_selection(self) -> None:
         ids = [self.add(f"job{number}", number) for number in range(8)]
@@ -150,9 +150,9 @@ class HistoryTests(HistoryCase):
                 rows = [row[0] for row in self.history(app)]
                 selected = rows[table.cursor_row]
         self.assertEqual((first, second), (3, 6))
-        self.assertEqual(rows[0], str(max(ids) + 1))
+        self.assertEqual(rows[0], f"E{max(ids) + 1:04d}")
         self.assertGreaterEqual(len(rows), 7)
-        self.assertEqual(selected, str(ids[-5]))
+        self.assertEqual(selected, f"E{ids[-5]:04d}")
 
     async def test_running_rows_read_as_interrupted_when_the_lock_is_free_and_are_polled_when_held(self) -> None:
         running = self.add("walk", 0, status=None, runs=("running",))
@@ -186,14 +186,14 @@ class HistoryTests(HistoryCase):
             await self.settle(pilot)
             detail = await self.detail(pilot, execution_id)
             unknown = await self.detail(pilot, 99)
-        self.assertTrue(detail.startswith(f"Execution {execution_id}: sunset-walk\n"), detail)
+        self.assertTrue(detail.startswith(f"Execution E{execution_id:04d}: sunset-walk\n"), detail)
         self.assertNotIn("imported", detail)
         for line in ("  status: succeeded, exit code 0", f"  job file: {job_file}", "  mode: i2v", "  model: base.ckpt", "  seed: 42 (config_file)", "  cooldown: 5 s (job)", f"  started: {at(0)}", f"  finished: {at(1)}", "  manifest: -", "Run 1 succeeded (pair walk, 12.5 s, exit code 0)", "Run 2 failed (pair walk, 12.5 s, exit code 1)", "\npositive:\na walk [slow]\n", "\nnegative:\nblurry\n", "  input: in.png", f"  output: {self.outputs / 'kept.mov'}\n", f"  output: {self.outputs / 'gone.mov'} (missing)"):
             self.assertIn(line, detail)
         # The arguments as a table, the key redacted, and never the command line.
         self.assertRegex(detail, r"\n  --api-key\s+\[redacted\]")
         self.assertNotIn("draw-things-cli generate", detail)
-        self.assertEqual(unknown, "No execution 99")
+        self.assertEqual(unknown, "No execution E0099")
 
     def test_the_cooldown_detail_for_each_mode_and_for_old_rows(self) -> None:
         def row(cooldown_seconds: float | None, source: str, mapping: dict | None) -> dict[str, Any]:
@@ -224,7 +224,7 @@ class HistoryTests(HistoryCase):
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
         (self.outputs / "old-1.mov").write_bytes(b"video")
-        execution_id = self.store().import_execution(
+        execution_id, _number = self.store().import_execution(
             {"job_name": "old", "job_file": "/jobs/old.yaml", "mode": "t2v", "status": "succeeded", "seed": 7, "total_runs": 1, "started_at": at(0), "finished_at": at(1), "manifest_path": str(self.outputs / "old.json")},
             [{"pair": "walk", "positive": "walk", "output": "old-1.mov", "started_at": at(0), "seconds": 3.0, "exit_code": 0, "status": "succeeded"}],
         )
@@ -234,8 +234,8 @@ class HistoryTests(HistoryCase):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 detail = await self.detail(pilot, execution_id)
-                await self.command(pilot, f"/reveal {execution_id}")
-        self.assertTrue(detail.startswith(f"Execution {execution_id}: old  imported\n"), detail)
+                await self.command(pilot, f"/reveal E{execution_id:04d}")
+        self.assertTrue(detail.startswith(f"Execution E{execution_id:04d}: old  imported\n"), detail)
         self.assertIn("  seed: 7 (-)", detail)
         self.assertTrue(detail.endswith(f"  output: {self.outputs / 'old-1.mov'}"), detail)
         reveal.assert_called_once_with(self.outputs / "old-1.mov")
@@ -250,17 +250,17 @@ class HistoryTests(HistoryCase):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 results = {}
-                for line in (f"/reveal {execution_id}", f"/reveal {execution_id} 1", f"/reveal {execution_id} 3", f"/reveal {execution_id} 9", "/reveal 99"):
+                for line in (f"/reveal E{execution_id:04d}", f"/reveal E{execution_id:04d} 1", f"/reveal E{execution_id:04d} 3", f"/reveal E{execution_id:04d} 9", "/reveal E0099"):
                     await self.command(pilot, line)
                     results[line] = self.since(line)
                 (self.outputs / "one.mov").unlink()
-                await self.command(pilot, f"/reveal {execution_id} 1")
-                missing = self.since(f"/reveal {execution_id} 1")
-        self.assertEqual(results[f"/reveal {execution_id}"], [f"Revealed {self.outputs / 'two.mov'}"])
-        self.assertEqual(results[f"/reveal {execution_id} 1"], [f"Revealed {self.outputs / 'one.mov'}"])
-        self.assertEqual(results[f"/reveal {execution_id} 3"], [f"Run 3 of execution {execution_id} has no output"])
-        self.assertEqual(results[f"/reveal {execution_id} 9"], [f"Execution {execution_id} has no run 9"])
-        self.assertEqual(results["/reveal 99"], ["No execution 99"])
+                await self.command(pilot, f"/reveal E{execution_id:04d} 1")
+                missing = self.since(f"/reveal E{execution_id:04d} 1")
+        self.assertEqual(results[f"/reveal E{execution_id:04d}"], [f"Revealed {self.outputs / 'two.mov'}"])
+        self.assertEqual(results[f"/reveal E{execution_id:04d} 1"], [f"Revealed {self.outputs / 'one.mov'}"])
+        self.assertEqual(results[f"/reveal E{execution_id:04d} 3"], [f"Run 3 of execution E{execution_id:04d} has no output"])
+        self.assertEqual(results[f"/reveal E{execution_id:04d} 9"], [f"Execution E{execution_id:04d} has no run 9"])
+        self.assertEqual(results["/reveal E0099"], ["No execution E0099"])
         self.assertEqual(missing, [f"{self.outputs / 'one.mov'} is missing"])
         self.assertEqual([call.args[0] for call in reveal.call_args_list], [self.outputs / "two.mov", self.outputs / "one.mov"])
 
@@ -276,8 +276,8 @@ class HistoryTests(HistoryCase):
                 with mock.patch("draw_things_control.tui.history.subprocess.run", run):
                     async with app.run_test(size=(140, 40)) as pilot:
                         await self.settle(pilot)
-                        await self.command(pilot, f"/reveal {execution_id}")
-                        [message] = self.since(f"/reveal {execution_id}")
+                        await self.command(pilot, f"/reveal E{execution_id:04d}")
+                        [message] = self.since(f"/reveal E{execution_id:04d}")
                         self.assertTrue(app.is_running)
                 app = self.app()
                 self.assertEqual(run.call_args.args[0], ["open", "-R", str(path)])
@@ -296,7 +296,7 @@ class HistoryTests(HistoryCase):
                 # The getter gives the title back as markup; read as markup, it must be the text as typed.
                 titles.append(Text.from_markup(table.border_title).plain)
             self.assertTrue(app.is_running)
-        self.assertEqual(titles, ["History: name [/]", "History: name [bold]x"])
+        self.assertEqual(titles, ["Execution History: name [/]", "Execution History: name [bold]x"])
 
     async def test_an_unreadable_row_is_reported_and_the_pane_keeps_working(self) -> None:
         execution_id = self.add("walk", 0)
@@ -367,7 +367,7 @@ class HistoryTests(HistoryCase):
         with mock.patch("draw_things_control.tui.history.Store", wraps=Store) as opened, mock.patch.object(HistoryReader, "close", autospec=True, side_effect=HistoryReader.close) as close:
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
-                for line in ("/get history", "/execution 1", "/filter name w", "/filter off"):
+                for line in ("/get history", "/describe execution E0001", "/filter name w", "/filter off"):
                     await self.command(pilot, line)
         self.assertEqual(opened.call_count, 1)
         close.assert_called_once()
@@ -406,7 +406,7 @@ class ExecutionDetailTests(HistoryCase):
                 await pilot.press("down")
                 await self.shown(pilot, older)
             second = self.detail_text(app)
-        self.assertEqual(title, f"Execution {newer}: wave interrupted")
+        self.assertEqual(title, f"Execution E{newer:04d}: wave interrupted")
         self.assertEqual(first, ["model wan_v2.2_a14b_hne_i2v_q8p.ckpt", "refiner wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "size -  CFG 5  shift 3.99", "No run finished successfully"])
         # Run 2 failed, so only runs 1 and 3 are listed; the size and frames are measured, never the 1000x600 and 17 asked for.
         self.assertEqual([line.rstrip() for line in second], ["model wan_v2.2_a14b_hne_i2v_q8p.ckpt", "refiner wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "832x448  CFG 5  shift 3.99", "#  Frames Steps Time", "1  81     40    7 min 12 s", "   one.mov", "3  81     40    7 min 12 s", "   three.mov"])
@@ -422,12 +422,12 @@ class ExecutionDetailTests(HistoryCase):
         store = self.store()
         store.finish_run(image, 2, status="succeeded", exit_code=0, seconds=1.0, output="b.png", last_frame=None, output_width=512, output_height=512, output_frames=None)
         app = self.app()
-        async with app.run_test(size=(80, 30)) as pilot:
+        async with app.run_test(size=(80, 34)) as pilot:
             await self.settle(pilot)
             await self.shown(pilot, image)
             images = self.detail_text(app)
             width = self.detail_pane(app).scrollable_content_region.width
-            await self.command(pilot, f"/execution {old}")
+            await self.command(pilot, f"/describe execution E{old:04d}")
             app.screen.query_one(HistoryPane).focus()
             await pilot.press("down")
             await self.shown(pilot, old)
@@ -479,7 +479,7 @@ class ExecutionDetailTests(HistoryCase):
         self.assertIsInstance(history_escape, CommandInput)
         self.assertEqual([call.args[0] for call in reveal.call_args_list], [self.outputs / "one.mov"])
         self.assertEqual(messages, [f"Revealed {self.outputs / 'one.mov'}", f"{self.outputs / 'two.mov'} is missing"])
-        # Only /execution writes the full detail to Messages; Enter did not.
+        # Only /describe execution writes the full detail to Messages; Enter did not.
         self.assertFalse(any(line.startswith("Execution ") for line in self.said))
 
     async def test_tab_reaches_the_detail_after_the_history(self) -> None:
@@ -488,10 +488,10 @@ class ExecutionDetailTests(HistoryCase):
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
             focused = []
-            for _ in range(3):
+            for _ in range(4):
                 await pilot.press("tab")
                 focused.append(type(app.focused).__name__)
-        self.assertEqual(focused, ["HistoryPane", "ExecutionPane", "CommandInput"])
+        self.assertEqual(focused, ["JobDefinitionPane", "HistoryPane", "ExecutionPane", "CommandInput"])
 
     async def test_a_click_on_a_file_name_reveals_it_and_a_click_on_a_run_selects_it(self) -> None:
         execution_id = self.add("walk", 0, runs=("succeeded", "succeeded"), outputs=("one [x].mov", "two.mov"), measured=(832, 448, 81))
@@ -528,7 +528,7 @@ class ExecutionDetailTests(HistoryCase):
     async def test_five_rows_show_even_when_the_history_scrolls_sideways(self) -> None:
         for number in range(7):
             self.add(f"a-long-job-name-{number}", number)
-        for size, scrolls in (((80, 30), True), ((200, 40), False)):
+        for size, scrolls in (((80, 34), True), ((200, 40), False)):
             with self.subTest(size=size):
                 app = self.app()
                 async with app.run_test(size=size) as pilot:
@@ -537,8 +537,10 @@ class ExecutionDetailTests(HistoryCase):
                     table = app.screen.query_one(HistoryPane)
                     shown, height = table.show_horizontal_scrollbar, table.region.height
                     execution_top = app.screen.query_one(ExecutionPane).region.y
-                # The border, the header, 5 rows, and a line for the sideways scrollbar when there is one.
-                self.assertEqual((shown, height, execution_top), (scrolls, 9 if scrolls else 8, height))
+                    jobs = app.screen.query_one(JobDefinitionPane).region.height
+                # The border, the header, 5 rows, and a line for the sideways scrollbar when there is one; the Job
+                # Definition widget above it, 8 rows high.
+                self.assertEqual((shown, height, execution_top), (scrolls, 9 if scrolls else 8, jobs + height))
 
     async def test_the_execution_command_shows_the_settings_steps_and_measured_output(self) -> None:
         execution_id = self.add("walk", 0, runs=("succeeded", "failed"), status="failed", command=WAN_COMMAND, measured=(832, 448, 81))
@@ -548,7 +550,7 @@ class ExecutionDetailTests(HistoryCase):
             detail = await self.detail(pilot, execution_id)
         for line in ("  refiner: wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "  CFG: 5", "  shift: 3.99", "  steps: 40, output 832x448, 81 frames", "  steps: 40, output not measured"):
             self.assertIn(line, detail)
-        # /execution lists every run, the failed one too.
+        # /describe execution lists every run, the failed one too.
         self.assertIn("Run 2 failed", detail)
 
 
@@ -581,32 +583,32 @@ class GetCommandTests(HistoryCase):
         execution_id = self.add_job()
         copied: list[str] = []
         with mock.patch("draw_things_control.tui.screens.copy_to_pasteboard", side_effect=lambda text: copied.append(text)):
-            results = await self.run_lines(f"/get prompts {execution_id}", f"/get positive {execution_id}", f"/get negative {execution_id} 2", f"/get negative {execution_id} 1", f"/get prompts {execution_id} 9", "/get positive 99")
+            results = await self.run_lines(f"/get prompts E{execution_id:04d}", f"/get positive E{execution_id:04d}", f"/get negative E{execution_id:04d} 2", f"/get negative E{execution_id:04d} 1", f"/get prompts E{execution_id:04d} 9", "/get positive E0099")
         # Each label on its own line after a blank one, its prompt on the next, and a blank line after the prompt.
-        self.assertEqual(results[f"/get prompts {execution_id}"], f"Execution {execution_id}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nnegative:\nblurry\n\nPair wave (run 2)\n\npositive:\na wave\n\nnegative:\n(none)\n\nCopied the prompts to the clipboard")
-        self.assertEqual(results[f"/get positive {execution_id}"], f"Execution {execution_id}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nPair wave (run 2)\n\npositive:\na wave\n\nCopied the positive prompts to the clipboard")
+        self.assertEqual(results[f"/get prompts E{execution_id:04d}"], f"Execution E{execution_id:04d}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nnegative:\nblurry\n\nPair wave (run 2)\n\npositive:\na wave\n\nnegative:\n(none)\nCopied the prompts to the clipboard")
+        self.assertEqual(results[f"/get positive E{execution_id:04d}"], f"Execution E{execution_id:04d}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nPair wave (run 2)\n\npositive:\na wave\nCopied the positive prompts to the clipboard")
         # No prompt, nothing copied.
-        self.assertEqual(results[f"/get negative {execution_id} 2"], f"Execution {execution_id}: walk\nRun 2 (pair wave)\n\nnegative:\n(none)\n")
-        self.assertEqual(results[f"/get negative {execution_id} 1"], f"Execution {execution_id}: walk\nRun 1 (pair walk)\n\nnegative:\nblurry\n\nCopied the negative prompt to the clipboard")
-        self.assertEqual(results[f"/get prompts {execution_id} 9"], f"Execution {execution_id} has no run 9")
-        self.assertEqual(results["/get positive 99"], "No execution 99")
+        self.assertEqual(results[f"/get negative E{execution_id:04d} 2"], f"Execution E{execution_id:04d}: walk\nRun 2 (pair wave)\n\nnegative:\n(none)")
+        self.assertEqual(results[f"/get negative E{execution_id:04d} 1"], f"Execution E{execution_id:04d}: walk\nRun 1 (pair walk)\n\nnegative:\nblurry\nCopied the negative prompt to the clipboard")
+        self.assertEqual(results[f"/get prompts E{execution_id:04d} 9"], f"Execution E{execution_id:04d} has no run 9")
+        self.assertEqual(results["/get positive E0099"], "No execution E0099")
         # The prompts alone for one side; labelled for both. A missing prompt is left out.
         self.assertEqual(copied, ["positive:\na walk [slow]\n\nnegative:\nblurry\n\npositive:\na wave", "a walk [slow]\n\na wave", "blurry"])
 
     async def test_without_pbcopy_the_terminal_is_asked_to_copy(self) -> None:
         execution_id = self.add_job()
         with mock.patch("draw_things_control.tui.screens.copy_to_pasteboard", return_value="pbcopy was not found"), mock.patch.object(DrawThingsApp, "copy_to_clipboard") as terminal:
-            results = await self.run_lines(f"/get positive {execution_id} 2")
+            results = await self.run_lines(f"/get positive E{execution_id:04d} 2")
         terminal.assert_called_once_with("a wave")
-        self.assertTrue(results[f"/get positive {execution_id} 2"].endswith("Asked the terminal to copy the positive prompt (pbcopy was not found)"))
+        self.assertTrue(results[f"/get positive E{execution_id:04d} 2"].endswith("Asked the terminal to copy the positive prompt (pbcopy was not found)"))
 
     async def test_the_parameters_table_leaves_out_the_prompts_and_marks_what_was_overridden(self) -> None:
         execution_id = self.add_job()
-        results = await self.run_lines(f"/get param {execution_id}", f"/get parameters {execution_id} 2")
-        table = results[f"/get param {execution_id}"]
+        results = await self.run_lines(f"/get param E{execution_id:04d}", f"/get parameters E{execution_id:04d} 2")
+        table = results[f"/get param E{execution_id:04d}"]
         # Every row by its first word; the rules under the headers are all dashes.
         rows = {line.split()[0]: line for line in table.splitlines() if line.startswith("  ") and set(line.strip()) - {"-", " "}}
-        self.assertTrue(table.startswith(f"Execution {execution_id}: walk, run 1 of 3: draw-things-cli arguments (configuration wan.yaml)\n"), table)
+        self.assertTrue(table.startswith(f"Execution E{execution_id:04d}: walk, run 1 of 3: draw-things-cli arguments (configuration wan.yaml)\n"), table)
         self.assertNotIn("--prompt", table)
         self.assertNotIn("a walk", table)
         self.assertNotIn("blurry", table)
@@ -621,23 +623,23 @@ class GetCommandTests(HistoryCase):
         self.assertRegex(rows["shift"], r"^  shift\s+3\.99\s+job override$")
         self.assertRegex(rows["faceRestoration"], r'^  faceRestoration\s+""$')
         self.assertRegex(rows["loras"], r"^  loras\s+\[\]$")
-        self.assertIn("run 2 of 3", results[f"/get parameters {execution_id} 2"])
-        self.assertIn("/out/walk-2.mov", results[f"/get parameters {execution_id} 2"])
+        self.assertIn("run 2 of 3", results[f"/get parameters E{execution_id:04d} 2"])
+        self.assertIn("/out/walk-2.mov", results[f"/get parameters E{execution_id:04d} 2"])
 
     async def test_an_execution_without_a_saved_command_says_so(self) -> None:
         execution_id = self.add("old", 0, command=[])
         store = self.store()
         store._connection().execute("UPDATE runs SET command = '[]' WHERE execution_id = ?", (execution_id,))
-        results = await self.run_lines(f"/get param {execution_id}", f"/get param {execution_id} 1")
-        self.assertEqual(results[f"/get param {execution_id}"], f"Execution {execution_id} has no run with a saved command")
-        self.assertEqual(results[f"/get param {execution_id} 1"], f"Run 1 of execution {execution_id} has no saved command")
+        results = await self.run_lines(f"/get param E{execution_id:04d}", f"/get param E{execution_id:04d} 1")
+        self.assertEqual(results[f"/get param E{execution_id:04d}"], f"Execution E{execution_id:04d} has no run with a saved command")
+        self.assertEqual(results[f"/get param E{execution_id:04d} 1"], f"Run 1 of execution E{execution_id:04d} has no saved command")
 
 
 class ParametersTextTests(unittest.TestCase):
     def test_a_flag_equal_to_its_config_json_value_as_a_number_replaces_nothing(self) -> None:
         config = json.dumps({"guidanceScale": 5, "strength": 1, "steps": 30})
         command = ["draw-things-cli", "generate", "--model", "m.ckpt", "--cfg", "5.0", "--strength", "1.0", "--steps", "20", "--config-json", config]
-        execution = {"id": 1, "job_name": "walk", "settings": {"config_override": {"guidance_scale": 5.0}}, "runs": [{"number": 1, "command": command}]}
+        execution = {"id": 1, "execution_number": 1, "job_name": "walk", "settings": {"config_override": {"guidance_scale": 5.0}}, "runs": [{"number": 1, "command": command}]}
         table = str(parameters_text(execution, 1))
         self.assertNotIn("replaces --config-json 5", table)
         self.assertNotIn("replaced by --cfg", table)

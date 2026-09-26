@@ -123,7 +123,7 @@ Out of scope:
 
 ### TUI
 
-- No change in code. `/job` shows the YAML `config_file`; `/run` goes
+- No change in code. `/job` shows the YAML `config_file`; `/apply` goes
   through `JobService`, which still passes inline JSON. A job naming a JSON
   file shows as invalid in `/jobs` with the message above.
 

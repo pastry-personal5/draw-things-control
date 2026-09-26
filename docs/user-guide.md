@@ -291,7 +291,7 @@ cooldown:
 - **Where it comes from:** a job's `cooldown` replaces the global one as a
   whole; keys are not merged across the two files. With neither set, `auto`
   applies with its defaults (half of each run, 0 s to 1 h). `validate-job`,
-  `run-job --dry-run`, and `/run` show the mode and its source (`job`,
+  `run-job --dry-run`, and `/apply` show the mode and its source (`job`,
   `global_config`, or `default`); for `auto` they show the most the waits can
   add up to.
 - **Validation is strict:** a missing or unknown `mode`, a key of another
@@ -357,11 +357,17 @@ The screen, top to bottom:
   on black): the output of each command and a readable log of
   the running job: when it started, each run's start (with its command,
   credentials redacted) and result, cooldowns, and the job's result with its
-  manifest and log paths. It keeps the last 5000 lines.
-- **History** (top of the right third, 5 rows): every execution recorded in
-  the state store, newest first: its ID, job name, status, start time, and
-  runs succeeded of total. On a narrow terminal it scrolls sideways, and its
-  scrollbar gets a line of its own.
+  manifest and log paths. It keeps the last 5000 lines. A blank line comes
+  before each command you type, before and after each message longer than
+  one line (a table, a detail, prompts), and before the job's result; never
+  two in a row, and none at the top.
+- **Job Definition** (top of the right third, 8 rows): the job files in the
+  data directory (see [Job Definition](#job-definition)).
+- **Execution History** (below it, 5 rows): every execution recorded in
+  the state store, newest first: its execution ID (`E0012`), job name,
+  status, start time, and runs succeeded of total. On a narrow terminal it
+  scrolls sideways, and its scrollbar gets a line of its own, as the Job
+  Definition widget's does.
 - **Execution** (the rest of the right third): the execution under the
   history cursor (see [The execution detail](#the-execution-detail)).
 - **The command line**, between two lines, showing `> ` and a white block
@@ -369,21 +375,23 @@ The screen, top to bottom:
   directory, and a reminder of `/help` and Ctrl-C.
 
 On a terminal shorter than 32 lines, the draw-things-cli pane shrinks (down
-to 7 lines) to leave Messages at least 6. The smallest usable size is 80x30.
+to 7 lines) to leave Messages at least 6. The smallest usable size is 80x34,
+so the Execution widget keeps about 9 lines under the other two.
 
 | Command | Action |
 |---------|--------|
 | `/help` | List the commands and keys |
 | `/get jobs` | List the job files and whether each is valid |
 | `/describe job JOB` | The summary, prompt pairs, and dry-run plan of a job |
-| `/run JOB` | Read the job again, confirm, and run it |
+| `/sort jobs KEY [asc\|desc]` | Sort the Job Definition widget by `id`, `name`, `changed`, `mode`, or `runs` |
+| `/apply JOB` | Read the job again, confirm, and run it |
 | `/stop` | Stop the running job, after confirmation |
 | `/get history` | Read the history again |
 | `/get prompts ID [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
 | `/get positive ID [RUN]` | Its positive prompts only |
 | `/get negative ID [RUN]` | Its negative prompts only |
 | `/get param ID [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
-| `/execution ID` | The detail of one execution |
+| `/describe execution ID` | The detail of one execution |
 | `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, or `running` executions |
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
 | `/filter off` | Remove both filters |
@@ -400,15 +408,15 @@ prompts for `/get prompts`. A missing prompt is not copied. Without
 `pbcopy`, the terminal is asked to copy them (OSC 52), which not every
 terminal does.
 
-- `JOB` is a file name in the data directory (`walk.yaml`), or the name
-  without its suffix when only one file has it. Quote a name with spaces,
-  or escape them: `/run '[b] walk.yaml'` or `/run my\ job.yaml`. Tab
+- `JOB` is a job ID (`J0001`), a file name in the data directory
+  (`walk.yaml`), or the name without its suffix when only one file has it. Quote a name with spaces,
+  or escape them: `/apply '[b] walk.yaml'` or `/apply my\ job.yaml`. Tab
   completes such names in the style you started. A line that does not begin with `/` runs nothing.
 - The data directory (default: `data/jobs/` in the project, whatever the working
   directory) holds the jobs: each `*.yaml` and `*.yml` file (any letter case)
   directly in it, sorted by name. `/get jobs` shows each one's name, mode, and
   run count, or the first error of an invalid one. Sub-directories,
-  dot-directories, and dotfiles are ignored. `/get jobs`, `/describe job`, and `/run`
+  dot-directories, and dotfiles are ignored. `/get jobs`, `/describe job`, and `/apply`
   read the files again each time, so edit a job in your editor and run the
   command again.
 - `/describe job` prints what `validate-job` and `run-job --dry-run` print,
@@ -421,9 +429,9 @@ terminal does.
 - `--executable` is the `draw-things-cli` the plan names and a run uses, and
   `--shutdown-grace` is how long a stopped run may take before it is killed
   (default 10 seconds), as for `run-job`.
-- `/run` asks to confirm, showing the job, mode, runs, cooldown, seed,
+- `/apply` asks to confirm, showing the job, mode, runs, cooldown, seed,
   output directory, and executable. Only `y` runs it; Enter does not, so a
-  second Enter after `/run` cannot start a job by accident. `n` or Escape
+  second Enter after `/apply` cannot start a job by accident. `n` or Escape
   cancels. The job then runs as `run-job` would run it: it takes the run
   lock, is recorded in the execution history, and writes its manifest and
   log when `write_job_records` is true. If another run holds the lock, or
@@ -453,8 +461,12 @@ terminal does.
   seconds, so that job appears and updates whatever the filter. When no process holds the run lock, an execution left `running`
   by a crash is shown as `interrupted`. More rows load as you move to the
   last one.
-- `ID` is an execution's ID in the history, and `RUN` one of its run
-  numbers. `/get` reads the stored execution, never the current job file.
+- `ID` is an execution ID (`E0012`), and `RUN` one of its run numbers. The
+  letter of an ID can be typed in either case and its leading zeros left
+  out: `e12` is `E0012`, and `j1` is `J0001`. A bare number (`12`) is
+  refused with `Use E0012`, so an execution ID and a run number never mix
+  up. Tab completes the execution IDs the Execution History widget has
+  loaded. `/get` reads the stored execution, never the current job file.
 - `/get param` shows the arguments the run's saved command passed, with
   credentials already redacted: first the flags (a flag that stands alone
   reads `yes`), then each `--config-json` key. The note column marks a
@@ -464,9 +476,9 @@ terminal does.
   that replaced a `--config-json` value, on both rows: `--width 832` says
   `replaces --config-json 1000`, and `width 1000` says
   `replaced by --width 832`.
-- `/jobs`, `/job`, and `/history` were renamed; typing one says what to type
-  instead.
-- `/execution ID` prints the execution as it ran, from the stored record
+- `/jobs`, `/job`, `/history`, and `/execution` were renamed; typing one
+  says what to type instead.
+- `/describe execution ID` prints the execution as it ran, from the stored record
   rather than the current job file: its settings (with the refiner, CFG,
   and shift from the saved command), and each run's prompts, steps,
   measured size and frames, input, output, last frame, seconds, exit code,
@@ -481,7 +493,7 @@ terminal does.
 
 | Line | What it shows |
 |------|---------------|
-| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  execution 12: walk  run 2/3` |
+| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  E0012: walk  run 2/3` |
 | 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)` |
 | 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
 | 4 | The step counter (`step 28/40`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
@@ -514,6 +526,45 @@ terminal does.
   another terminal), it says `A job is running in another process`, from
   the moment the TUI opens.
 
+### Job Definition
+
+The Job Definition widget lists the job files in the data directory, 8 rows
+at a time: each one's **job ID**, its file name without the extension (two
+files that differ only in their extension, such as `walk.yaml` and
+`walk.yml`, keep it), when the file last changed (`09-26 14:05`, or
+`2025-09-26` for an earlier year), and the job's mode and runs. An invalid
+file is dim red, and its mode and runs read `invalid`; `/describe job` shows
+why.
+
+- A job ID (`J0001`) belongs to a file name in the project's `data/jobs/`
+  for good. Editing the file keeps it; a renamed file gets a new one; a
+  deleted file's ID comes back if the same name returns. A new name takes
+  the number after the highest ever given, so an ID is never reused. A file
+  gets its ID when the TUI first lists it. With `--data-dir` pointing
+  elsewhere, the files are listed without IDs (`-`).
+- `s` sorts by the next column and `r` reverses the order, or type
+  `/sort jobs KEY [asc|desc]`. Without a direction, `changed` sorts newest
+  first and the others ascending. Ties go by ID, and invalid files come
+  after valid ones by mode and runs. The sort is kept across sessions; the
+  default is `changed`, newest first. The widget's subtitle names it.
+- Enter describes the selected job in Messages; `a` asks to run it, with
+  the same confirmation as `/apply`.
+- The directory is watched, so a file added, changed, renamed, or deleted
+  shows within a moment, without `/get jobs` and without polling. While a
+  directory cannot be watched, or an invalid job is listed, it is checked
+  every 5 seconds instead. A valid job is read again only when its
+  file, its input image, or its base configuration in `data/params/`
+  changed, so a job turns valid or invalid at the next check when its input
+  appears or goes (these files are watched too); an invalid one is read every time. `/get jobs` reads
+  every file.
+- A job ID works as soon as the TUI opens, before the list is shown. A name
+  that is both a file's name (without its suffix) and another file's job ID,
+  such as `j1` when `j1.yaml` exists and `J0001` is `walk.yaml`, runs
+  nothing and says so: type the full file name (`j1.yaml`) or the ID in
+  another form (`J0001`).
+- Job IDs and execution IDs live in `state/dtc.db` only. Deleting `state/`
+  starts both numberings over, and nothing rebuilds them, so keep it.
+
 ### The execution detail
 
 The Execution widget shows the execution under the history cursor, a moment
@@ -526,14 +577,14 @@ after the cursor stops:
 - one line per **successful** run: its number, frames, steps, and time
   (`draw-things-cli`'s own time, without the cooldown), with its output's
   file name under it. Failed, interrupted, and running runs are left out;
-  `/execution` lists them. An execution with none says
+  `/describe execution` lists them. An execution with none says
   `No run finished successfully`.
 
 The size and frames are the measured ones (see
 [Where outputs go](#where-outputs-go)), never the size or frame count the
 job asked for. `sizes vary` means its runs differ, and `size -` or `-` means
 nothing was measured, as for executions recorded before measuring began.
-Long names are cut in the middle with `…`; `/execution` shows them whole.
+Long names are cut in the middle with `…`; `/describe execution` shows them whole.
 
 Click a file name, or select its run and press Enter, to show it in Finder
 (`open -R`). A file that no longer exists is marked `(missing)`. When this
@@ -542,11 +593,13 @@ they succeed, unless you are in the history or the detail at that moment.
 
 | Key | Action |
 |-----|--------|
-| Enter | Run the command; in the history, move to the detail; in the detail, show the selected run's output in Finder |
-| Tab | Complete a command, job file name, or filter word; with nothing to complete, move to the history, then the detail |
-| Up/Down | Recall the commands typed in this session; in the history or the detail, move |
-| PageUp/PageDown, Home/End | In the history or the detail, move further |
-| Escape | Clear the command line; in the history or the detail, go back to the command line |
+| Enter | Run the command; in Job Definition, describe the job; in the history, move to the detail; in the detail, show the selected run's output in Finder |
+| Tab | Complete a command, job ID or file name, execution ID, or filter or sort word; with nothing to complete, move to Job Definition, then the history, then the detail |
+| Up/Down | Recall the commands typed in this session; in the widgets, move |
+| PageUp/PageDown, Home/End | In the widgets, move further |
+| `a` | In Job Definition, ask to run the selected job |
+| `s` / `r` | In Job Definition, sort by the next column / reverse the order |
+| Escape | Clear the command line; in the widgets, go back to the command line |
 | Ctrl-C | Clear the command line; on an empty line, press twice within 2 seconds to quit |
 
 - Ctrl-C twice while a job runs asks whether to stop the job and quit; the
@@ -559,10 +612,11 @@ they succeed, unless you are in the history or the detail at that moment.
   outputs and last frames, its manifest and log when `write_job_records` is
   true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
   changes a job file, `data/params/`, or the global configuration, and it
-  does not create `state/dtc.db` just to show an empty history. The one
-  write browsing may make is upgrading an existing `state/dtc.db` to the
-  current schema, which any `dtc` command does the first time it opens an
-  older one.
+  does not create `state/dtc.db` just to show an empty history. Browsing
+  writes to `state/dtc.db` only to give job IDs to the files in
+  `data/jobs/`, to keep the Job Definition widget's sort, and to upgrade an
+  existing database to the current schema, which any `dtc` command does the
+  first time it opens an older one.
 - An invalid global configuration is reported before the TUI starts, and the
   command exits with 2. If the TUI itself fails, it prints the error and the
   command exits with 1.
@@ -575,6 +629,14 @@ file's exact text, the settings it ran with, and each run's prompts, files,
 redacted command, timing, and result. `state/` is git-ignored, created on first
 use, and readable only by you. `generate` is not recorded.
 
+Each execution gets an **execution ID**, `E` and at least four digits
+(`E0012`), before it starts; it is named in `run-job`'s log line, in the
+manifest (`execution_id`), and in the TUI. The number only goes up: a pruned
+execution's number is never given again. If the database cannot give an ID,
+the job does not start: `run-job` exits with 1 and writes no manifest or
+log. A `--dry-run` needs no ID. The executions already recorded before
+execution IDs existed were numbered by start time, oldest first.
+
 - History older than `history_retention_days` (default 14) is pruned whenever a
   command opens the database. Only database rows are removed, never outputs,
   manifests, or logs.
@@ -585,7 +647,10 @@ use, and readable only by you. `generate` is not recorded.
   output directory, or `--directory PATH`, for `*.json` manifests, skips any
   already imported or past the retention period, and reports how many it
   imported, skipped, and could not read. It is safe to repeat and never changes
-  a manifest.
+  a manifest. Each imported execution gets the next free ID, whatever its start
+  time, and is listed with it; when its manifest records another ID (its
+  execution was pruned, or `state/` was deleted), both are named:
+  `E0040: /path/walk-job.json (its manifest says E0003)`.
 
 Only one run drives the GPU at a time. `run-job` and `generate` take a lock
 (`state/run.lock`) after validating their input and hold it until they finish,

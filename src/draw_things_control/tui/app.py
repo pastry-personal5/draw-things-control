@@ -310,7 +310,8 @@ class DrawThingsApp(App[None]):
                 # The recorder comes first, so its row exists before JobStarted is posted.
                 self._recorder = ExecutionRecorder(store)
                 observer = combine_observers(self._recorder, self.post_event, self.stop_if_requested)
-                self.job_service.run(job, executable=self.executable, shutdown_grace=self.shutdown_grace, write_records=self.settings.write_job_records, observer=observer, on_child_start=lock.record_child)
+                # The execution's ID is reserved before the job starts; a job that cannot get one does not start, and the worker says why.
+                self.job_service.run(job, executable=self.executable, shutdown_grace=self.shutdown_grace, write_records=self.settings.write_job_records, observer=observer, on_child_start=lock.record_child, reserve_execution_id=self._recorder.reserve)
             finally:
                 store.close()
         finally:
@@ -344,7 +345,7 @@ class DrawThingsApp(App[None]):
         if self.live is not None:
             # Read again at every event: the recorder wrote the row before JobStarted was posted, and it says None from the
             # moment the store fails, so the Status widget never names a row that stopped being recorded.
-            self.live.execution_id = self.execution_id
+            self.live.execution_id = self._recorder.execution_label if self._recorder is not None else None
             self.live.apply(message.event)
             if self.main is not None:
                 self.main.job_event(message.event)
