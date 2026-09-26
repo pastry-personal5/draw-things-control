@@ -51,7 +51,7 @@ def check_input_size(path: Path, image_size: tuple[int, int], job_size: tuple[in
         return
     image_width, image_height = image_size
     job_width, job_height = job_size
-    raise ValueError(f"Input image {path} is {image_width}x{image_height}, but the job size is {job_width}x{job_height} ({source}). " f"Resize the image to {job_width}x{job_height}, set desired_input_width or desired_input_height, or set config_override.width and config_override.height to {image_width} and {image_height}.")
+    raise ValueError(f"Input image {path} is {image_width}x{image_height}, but the job size is {job_width}x{job_height} ({source}). Resize the image to {job_width}x{job_height}, set desired_input_width or desired_input_height, or set config_override.width and config_override.height to {image_width} and {image_height}.")
 
 
 def floor_to_step(value: int | Fraction) -> int:

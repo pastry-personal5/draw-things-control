@@ -45,7 +45,7 @@ Then edit it. Paths must be absolute (a leading `~` is fine).
 | `input_directory` | yes | Where a job's `input` image is looked up; must exist |
 | `output_directory` | yes | Root for job outputs; created if missing |
 | `write_job_records` | no | `true` also saves a manifest and a log per run (default `false`) |
-| `cooldown_seconds` | no | Default wait between a job's runs, 0 to 3600 (default 0) |
+| `cooldown` | no | The wait between a job's runs: a mapping with `mode` `auto`, `manual`, or `off`; see [Cooldown](#cooldown) (default `auto`) |
 | `history_retention_days` | no | Days of execution history to keep, 0 to 3650; 0 keeps it forever (default 14) |
 
 Use `--global-config PATH` with `run-job` or `validate-job` to read a
@@ -56,7 +56,7 @@ different file.
 | Command | Purpose |
 |---------|---------|
 | `generate` | Generate one image or video |
-| `validate-config FILE` | Check a Draw Things JSON configuration |
+| `validate-config FILE` | Check a Draw Things YAML or JSON configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
 | `run-job FILE` | Run every generation in a job, chained |
 | `import-history` | Import phase 1 job manifests into the execution history |
@@ -79,7 +79,7 @@ Image to video with a bundled configuration:
 
 ```bash
 uv run dtc generate \
-  --config-file dt-config/image-to-video-wan-2-2.example.json \
+  --config-file dt-config/image-to-video-wan-2-2.example.yaml \
   --image /path/to/source.png \
   --output /path/to/output.mov \
   --timeout 3600
@@ -95,7 +95,7 @@ Common options:
 | `-m`, `--model` | Model file; may come from the configuration instead. An explicit `--model` wins |
 | `-p`, `--prompt`, `--negative-prompt` | Prompt text |
 | `--prompt-file`, `--negative-prompt-file` | Read from a file, or `-` for stdin (only one may use stdin) |
-| `--config-file` (alias `--config`) | JSON configuration file. None is used by default |
+| `--config-file` (alias `--config`) | YAML or JSON configuration file; see [base configurations](#base-configurations). None is used by default |
 | `--image` | Reference image; repeat for several, in order |
 | `--steps`, `--cfg`, `--width`, `--height`, `--frames`, `--strength`, `-s/--seed` | Generation settings; left out, Draw Things picks its recommended values |
 | `-o`, `--output` | Output file. Without it, the image previews in the terminal |
@@ -103,14 +103,61 @@ Common options:
 | `--timeout SECONDS` | Stop the run if it takes longer |
 | `--shutdown-grace SECONDS` | Wait this long after asking to stop before forcing it (default 10) |
 
-## Check a configuration file
+## Base configurations
 
-```bash
-uv run dtc validate-config dt-config/image-to-video-wan-2-2.example.json
+A base configuration holds Draw Things settings (`model`, `steps`,
+`sharpness`, and so on, under Draw Things' own key names). Write them as YAML
+files in `dt-config/`, one mapping of keys to values:
+
+```yaml
+# Wan 2.2 A14B image-to-video
+model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+refinerModel: wan_v2.2_a14b_lne_i2v_i8x.ckpt
+steps: 40
+shift: 3.99
+loras: []
 ```
 
-The files in `dt-config/` are yours: this tool reads them and never changes
-them.
+`draw-things-cli` reads only JSON, so `dtc` converts the YAML and passes it
+inline with `--config-json`. It never writes a JSON file.
+
+YAML is read strictly, and a file that breaks a rule is rejected (exit code 2)
+with its name and the line or key path, for example `loras[0].version`:
+
+- The file must hold exactly one mapping, and every key must be a string.
+- A key may not appear twice in one mapping; that is usually a typo.
+- Unquoted dates (`2026-09-25`), binary data, sets, `.inf`, `.nan`, and an
+  alias that contains itself are rejected, since JSON cannot hold them. Quote
+  a date when a string is meant.
+- Unquoted `yes`, `no`, `on`, and `off` are booleans (`true`, `false`). Quote
+  them when a string is meant (`'no'`). The same goes for
+  keys: `on:` is the boolean `true`, not a string, and is rejected.
+- Numbers read as JSON would read them: `1e-3` and `5e0` are numbers. YAML
+  1.1's other readings are rejected rather than guessed: a leading zero
+  (`010`, octal in YAML 1.1) and a colon (`1:30`, base 60). Write the number
+  in decimal, or quote it when a string is meant.
+- A value that cannot be read (`!!float abc`) or nesting too deep to read is
+  rejected too.
+- The keys a merge (`<<`) brings in follow the same rules, though the mapping
+  itself may override them.
+
+Where each format is accepted:
+
+| Used by | YAML (`.yaml`, `.yml`) | JSON (`.json`) |
+|---------|------------------------|----------------|
+| A job's `config_file` | Yes | No: rejected, naming the YAML file with the same name if there is one |
+| `generate --config-file` | Yes, passed inline with `--config-json`, any `--config-json` merged on top | Yes, passed to `draw-things-cli` as a file |
+| `validate-config` | Yes | Yes |
+
+Check a file before use:
+
+```bash
+uv run dtc validate-config dt-config/image-to-video-wan-2-2.example.yaml
+```
+
+The files in `dt-config/`, YAML and JSON alike, are yours: this tool reads
+them and never changes them. The JSON files from before YAML support are left
+as they are; each has a YAML copy with the same name (`.yaml`) for jobs to use.
 
 ## Jobs: chained runs
 
@@ -146,11 +193,11 @@ jobs are rejected before any generation starts.
 | `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
 | `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
-| `config_file` | A file name in `dt-config/`, the base configuration |
+| `config_file` | A YAML file name in `dt-config/`, the [base configuration](#base-configurations) |
 | `config_override` | Settings applied to every run on top of `config_file` |
 | `output` | `directory` and `extension` (`mov` or `mp4` for video) |
 | `run_timeout_seconds` | Limit for each run |
-| `cooldown_seconds` | Wait after each successful run except the last; overrides the global value; `0` turns it off |
+| `cooldown` | The wait after each successful run except the last; replaces the global `cooldown` as a whole; see [Cooldown](#cooldown) |
 | `desired_input_width`, `desired_input_height` | Resize the first input; see below |
 | `max_input_crop_percent` | With one desired size, refuse a larger crop (default 10) |
 
@@ -198,11 +245,64 @@ converted to sRGB. `--dry-run` shows the resized copy as
 
 ### Cooldown
 
-Long chains, especially video, can overheat the machine. `cooldown_seconds`
-(0 to 3600) makes the job wait after each successful run except the last. Set
-it in the global configuration as the default for all jobs, and override it
-in a job file; `0` in the job turns the wait off. With neither set, there is no
-wait. Ctrl-C ends a wait at once and stops the job.
+Long chains, especially video, can overheat the machine. The `cooldown`
+mapping makes a job wait after each successful run except the last, in one of
+three modes:
+
+```yaml
+# auto: a share of the run that just finished, kept between two bounds.
+cooldown:
+  mode: auto
+  ratio: 0.5               # optional, default 0.5
+  minimum_seconds: 300     # optional, default 0
+  maximum_seconds: 1800    # optional, default 3600
+```
+
+```yaml
+# manual: the same fixed wait after every run.
+cooldown:
+  mode: manual
+  seconds: 900
+```
+
+```yaml
+# off: no wait.
+cooldown:
+  mode: off
+```
+
+| Key | Modes | Meaning |
+|-----|-------|---------|
+| `mode` | all | `auto`, `manual`, or `off`; required |
+| `ratio` | `auto` | The share of the last run's time to wait, above 0 and up to 1 (default 0.5) |
+| `minimum_seconds` | `auto` | The shortest wait, 0 to 3600 (default 0) |
+| `maximum_seconds` | `auto` | The longest wait, 0 to 3600 (default 3600); not below `minimum_seconds` |
+| `seconds` | `manual` | The wait, 0 to 3600; required. `0` means no wait |
+
+- **The auto wait** after a run that took T seconds is
+  `min(maximum_seconds, max(minimum_seconds, ceil(T × ratio)))`. T is the
+  time `draw-things-cli` ran, the `seconds` the manifest records for the run;
+  extracting the last frame and tagging colors are not counted. The share is
+  rounded up to a whole second, so a 1201-second run waits 601 seconds at the
+  default ratio. A wait set by a bound says so in the log and the TUI, for
+  example `5 min (the minimum; half of run 1's 3 min is less)`.
+- **Where it comes from:** a job's `cooldown` replaces the global one as a
+  whole; keys are not merged across the two files. With neither set, `auto`
+  applies with its defaults (half of each run, 0 s to 1 h). `validate-job`,
+  `run-job --dry-run`, and `/run` show the mode and its source (`job`,
+  `global_config`, or `default`); for `auto` they show the most the waits can
+  add up to.
+- **Validation is strict:** a missing or unknown `mode`, a key of another
+  mode (`seconds` with `auto`, anything but `mode` with `off`), an unknown
+  key, a value out of range, or a non-number fails with exit code 2 and names
+  the key. An unquoted `mode: off`, which YAML reads as `false`, is accepted.
+- **The old key:** `cooldown_seconds` fails in both files with a message
+  giving the mapping for the same wait, for example
+  `write cooldown: {mode: manual, seconds: 1200} for the same wait` (or
+  `{mode: off}` for 0).
+
+No wait follows the last run or a failed run. Ctrl-C (or `/cancel` in the TUI)
+ends a wait at once and stops the job.
 
 ## Where outputs go
 

@@ -57,6 +57,16 @@ class ImportHistoryTests(unittest.TestCase):
     def run_import(self):
         return import_history(self.store, self.outputs, clock=NOW)
 
+    def test_the_cooldown_mapping_is_copied_and_old_manifests_still_read(self) -> None:
+        mapping = {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 1800.0}
+        self.write("new-job.json", manifest(cooldown_seconds=None, cooldown_source="global_config", cooldown=mapping))
+        self.write("old-job.json", manifest(days_ago=2, cooldown_seconds=900.0, cooldown_source="global_config"), folder="old")
+        self.assertEqual(self.run_import().imported, 2)
+        new, old = (self.store.get_execution(row["id"]) for row in self.store.list_executions())
+        self.assertEqual((new["cooldown_seconds"], new["settings"]["cooldown"]), (None, mapping))
+        self.assertEqual((old["cooldown_seconds"], old["settings"]["cooldown_seconds"]), (900.0, 900.0))
+        self.assertNotIn("cooldown", old["settings"])
+
     def test_manifests_in_job_subdirectories_are_imported_with_their_runs(self) -> None:
         path = self.write("walk-job.json", manifest())
         report = self.run_import()

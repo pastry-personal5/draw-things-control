@@ -23,23 +23,19 @@ build-backend = "uv_build"
 
 [project.optional-dependencies]
 dev = [
-    "black>=26.5.1",
     "ruff>=0.5.0",
 ]
 
 [tool.ruff]
-# Owner decision: this project intentionally has no maximum line length.
-# Ruff requires a positive value, so use its largest supported value.
+# Owner decision: this project intentionally has no maximum line length, for
+# linting and formatting alike. Ruff requires a positive value, so use a value
+# no line reaches.
 line-length = 65535
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "C4"]
 ignore = []
-
-[tool.black]
-# Owner decision: no maximum line length (same value as Ruff's line-length).
-line-length = 65535
-target-version = ["py312"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["draw_things_control", "tests"]

@@ -74,7 +74,8 @@ Out of scope:
   `JobService.run(observer=...)`, recording runs
   through the Phase 2 recorder.
 - After a job finishes, the worker waits the finished job's resolved
-  `cooldown_seconds` (from the snapshot) before starting the next one, using
+  `cooldown` (from the snapshot; since Phase 2 Milestone 07 a
+  `CooldownPolicy`, so `auto` waits a share of the job's last run) before starting the next one, using
   the interruptible wait. No wait when the queue is empty or the job failed
   or was cancelled. The wait ends at once on cancel or shutdown.
 - Failure of one job does not stop the queue.

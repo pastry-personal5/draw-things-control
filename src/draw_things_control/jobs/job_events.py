@@ -8,6 +8,8 @@ from typing import Any
 
 from loguru import logger
 
+from draw_things_control.core.global_config import CooldownPolicy
+
 # Every ``at`` is a local ISO 8601 timestamp with an offset, from the job service's clock.
 
 
@@ -27,7 +29,7 @@ class JobStarted:
     model: str
     seed: int
     seed_source: str
-    cooldown_seconds: float
+    cooldown: CooldownPolicy
     cooldown_source: str
     # Set only when records are written beside the outputs.
     manifest: str | None
@@ -95,6 +97,12 @@ class CooldownStarted:
     seconds: float
     # Local wall-clock time the wait ends, HH:MM:SS.
     until: str
+    # The cooldown mode and, for auto, its ratio; the time of the run the wait follows; and the bound that set the wait
+    # (minimum or maximum), if one did. Together they say why the wait is that long.
+    mode: str = "manual"
+    ratio: float | None = None
+    run_seconds: float | None = None
+    bound: str | None = None
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +10,7 @@ from typing import Any
 import yaml
 from PIL import Image
 
-from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.global_config import CooldownPolicy, GlobalConfig
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 
@@ -28,7 +27,7 @@ def job_data(**changes: Any) -> dict[str, Any]:
             {"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3, 5]},
             {"name": "wave", "positive": "wave", "runs": [2, 4]},
         ],
-        "config_file": "base.json",
+        "config_file": "base.yaml",
     }
     for key, value in changes.items():
         if value is None:
@@ -49,16 +48,17 @@ class JobTestCase(unittest.TestCase):
         self.dt_config = self.root / "dt-config"
         self.input_directory.mkdir()
         self.dt_config.mkdir()
-        self.global_config = GlobalConfig(input_directory=self.input_directory, output_directory=self.output_directory)
+        # No cooldown unless a test sets one: the default auto cooldown would follow a fake run with a wait of 0 or 1 second, by chance.
+        self.global_config = GlobalConfig(input_directory=self.input_directory, output_directory=self.output_directory, cooldown=CooldownPolicy(mode="off"))
         self.write_base_config(BASE_CONFIG)
         self.write_image("first-frame.png", (832, 448))
 
     def tearDown(self) -> None:
         self._temporary.cleanup()
 
-    def write_base_config(self, config: dict[str, Any], name: str = "base.json") -> Path:
+    def write_base_config(self, config: dict[str, Any], name: str = "base.yaml") -> Path:
         path = self.dt_config / name
-        path.write_text(json.dumps(config), encoding="utf-8")
+        path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
         return path
 
     def write_image(self, name: str, size: tuple[int, int], orientation: int | None = None) -> Path:

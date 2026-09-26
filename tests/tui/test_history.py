@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 from unittest import mock
 
 from rich.text import Text
 
+from draw_things_control.core.global_config import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
+from draw_things_control.jobs.job_definition import load_job
+from draw_things_control.jobs.job_events import CooldownStarted
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader
 from draw_things_control.tui.panes import HistoryPane
 from draw_things_control.tui.screens import MainScreen
+from draw_things_control.tui.text import confirm_run_text, event_text, stored_cooldown_text
+from tests.fixtures import job_data
 from tests.tui.fake_runs import FakeRuns
 from tests.tui.tui_case import TuiTestCase
 
@@ -175,6 +181,33 @@ class HistoryTests(TuiTestCase):
         for line in ("  status: succeeded, exit code 0", f"  job file: {job_file}", "  mode: i2v", "  model: base.ckpt", "  seed: 42 (config_file)", "  cooldown: 5 s (job)", f"  started: {at(0)}", f"  finished: {at(1)}", "  manifest: -", "Run 1 succeeded (pair walk, 12.5 s, exit code 0)", "Run 2 failed (pair walk, 12.5 s, exit code 1)", "  positive: a walk [slow]", "  negative: blurry", "  input: in.png", f"  output: {self.outputs / 'kept.mov'}\n", f"  output: {self.outputs / 'gone.mov'} (missing)", "  command: draw-things-cli generate --api-key [redacted]"):
             self.assertIn(line, detail)
         self.assertEqual(unknown, "No execution 99")
+
+    def test_the_cooldown_detail_for_each_mode_and_for_old_rows(self) -> None:
+        def row(cooldown_seconds: float | None, source: str, mapping: dict | None) -> dict[str, Any]:
+            return {"cooldown_seconds": cooldown_seconds, "cooldown_source": source, "settings": {"cooldown": mapping} if mapping is not None else {}}
+
+        self.assertEqual(stored_cooldown_text(row(None, "global_config", {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 1800.0})), "auto, half, 5 min to 30 min (global_config)")
+        self.assertEqual(stored_cooldown_text(row(None, "job", {"mode": "auto", "ratio": 0.4, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})), "auto, 40%, 0 s to 1 h (job)")
+        self.assertEqual(stored_cooldown_text(row(900.0, "global_config", {"mode": "manual", "seconds": 900.0})), "900 s (global_config)")
+        self.assertEqual(stored_cooldown_text(row(0.0, "job", {"mode": "off"})), "off (job)")
+        # Rows and manifests from before the mapping keep only the seconds, which mean manual.
+        self.assertEqual(stored_cooldown_text(row(900.0, "global_config", None)), "900 s (global_config)")
+        self.assertEqual(stored_cooldown_text(row(None, "default", None)), "-")
+
+    def test_the_cooldown_messages_and_the_confirmation(self) -> None:
+        def started(**changes: Any) -> str:
+            return str(event_text(CooldownStarted(**{"at": at(0), "after_run": 1, "seconds": 900.0, "until": "14:05:00", "run_seconds": 1440.0, **changes})))
+
+        self.assertEqual(started(), "Cooldown 15 min before run 2, until 14:05:00")
+        self.assertEqual(started(mode="auto", ratio=0.5, seconds=720.0), "Cooldown 12 min (half of run 1's 24 min) before run 2, until 14:05:00")
+        self.assertEqual(started(mode="auto", ratio=0.4, seconds=576.0), "Cooldown 9 min 36 s (40% of run 1's 24 min) before run 2, until 14:05:00")
+        self.assertEqual(started(mode="auto", ratio=0.5, seconds=300.0, run_seconds=180.0, bound="minimum"), "Cooldown 5 min (the minimum; half of run 1's 3 min is less) before run 2, until 14:05:00")
+        self.assertEqual(started(mode="auto", ratio=0.5, seconds=1800.0, run_seconds=4800.0, bound="maximum"), "Cooldown 30 min (the maximum; half of run 1's 1 h 20 min is more) before run 2, until 14:05:00")
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", minimum_seconds=300.0, maximum_seconds=1800.0))
+        job = load_job(self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.dt_config)
+        self.assertIn("  Cooldown: auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)\n", str(confirm_run_text(job, "draw-things-cli")))
+        job = load_job(self.write_job(job_data(cooldown={"mode": "off"})), self.global_config, self.dt_config)
+        self.assertIn("  Cooldown: off (job)\n", str(confirm_run_text(job, "draw-things-cli")))
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
         (self.outputs / "old-1.mov").write_bytes(b"video")

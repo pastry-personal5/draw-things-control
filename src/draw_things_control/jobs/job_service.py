@@ -22,12 +22,13 @@ from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArg
 from draw_things_control.core.draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
 from draw_things_control.core.generation_config import build_config_json
 from draw_things_control.core.generation_service import ChildStartCallback, GenerationService, Runner
+from draw_things_control.core.global_config import CooldownWait
 from draw_things_control.core.process_output import MessageCallback, ProcessMessage
 from draw_things_control.jobs.job_definition import JobDefinition, PromptPair
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, RunFinished, RunOutput, RunStarted, notify
 from draw_things_control.jobs.job_log import add_job_log, remove_job_log
 from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
-from draw_things_control.jobs.job_report import cooldown_summary, report_ignored_config, seconds_text
+from draw_things_control.jobs.job_report import auto_wait_text, cooldown_summary, report_ignored_config, seconds_text
 from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
 
 if TYPE_CHECKING:
@@ -281,8 +282,9 @@ class JobService:
                 config_override=job.config_override.as_dict(),
                 seed=seed,
                 seed_source=seed_source,
-                cooldown_seconds=job.cooldown_seconds,
+                cooldown_seconds=job.cooldown.fixed_seconds,
                 cooldown_source=job.cooldown_source,
+                cooldown=job.cooldown.as_dict(),
                 started_at=self._timestamp(),
                 log_file=log_path.name if log_path is not None else None,
                 input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
@@ -316,7 +318,7 @@ class JobService:
                 model=job.model,
                 seed=manifest.seed,
                 seed_source=manifest.seed_source,
-                cooldown_seconds=job.cooldown_seconds,
+                cooldown=job.cooldown,
                 cooldown_source=job.cooldown_source,
                 manifest=str(execution.manifest_path) if execution.manifest_path is not None else None,
                 log=str(execution.log_path) if execution.log_path is not None else None,
@@ -374,8 +376,8 @@ class JobService:
             completed += 1
             execution.save()
             current_input = run.last_frame or run.output
-            wait = number < total and job.cooldown_seconds > 0 and self._interrupt is None
-            stop = self._cool_down(execution, record, number + 1) if wait else None
+            wait = job.cooldown.wait_after(record.seconds or 0.0) if number < total and self._interrupt is None else None
+            stop = self._cool_down(execution, record, number + 1, wait) if wait is not None and wait.seconds > 0 else None
             if stop is not None:
                 exit_code = self._stop(manifest, *stop)
                 break
@@ -423,12 +425,16 @@ class JobService:
         )
         return record
 
-    def _cool_down(self, execution: _Execution, record: RunRecord, next_run: int) -> tuple[signal.Signals, str] | None:
-        """Wait the job's cooldown after ``record``'s run; return the signal that cut it short and where, or None."""
-        seconds, total = execution.job.cooldown_seconds, execution.total
+    def _cool_down(self, execution: _Execution, record: RunRecord, next_run: int, wait: CooldownWait) -> tuple[signal.Signals, str] | None:
+        """Wait ``wait`` after ``record``'s run; return the signal that cut it short and where, or None."""
+        policy, seconds, total, run_seconds = execution.job.cooldown, wait.seconds, execution.total, record.seconds or 0.0
         until = (self._clock().astimezone() + timedelta(seconds=seconds)).strftime("%H:%M:%S")
-        logger.info("Cooldown: waiting {} before run {}/{} (until {})", seconds_text(seconds), next_run, total, until)
-        self._emit(CooldownStarted(at=self._timestamp(), after_run=next_run - 1, seconds=seconds, until=until))
+        if policy.mode == "auto":
+            logger.info("Cooldown: waiting {} before run {}/{} (until {})", auto_wait_text(seconds, policy.ratio, next_run - 1, run_seconds, wait.bound, commas=True), next_run, total, until)
+        else:
+            logger.info("Cooldown: waiting {} before run {}/{} (until {})", seconds_text(seconds), next_run, total, until)
+        ratio = policy.ratio if policy.mode == "auto" else None
+        self._emit(CooldownStarted(at=self._timestamp(), after_run=next_run - 1, seconds=seconds, until=until, mode=policy.mode, ratio=ratio, run_seconds=run_seconds, bound=wait.bound))
         # Saved at 0 first, so the manifest shows the job is cooling down rather than stuck.
         record.cooldown_after_seconds = 0.0
         execution.save()

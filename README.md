@@ -35,7 +35,7 @@ uv run dtc tui
 ## Development
 
 ```bash
-make check    # Ruff, Black, and tests
+make check    # Ruff lint, Ruff format check, and tests
 ```
 
 ## License

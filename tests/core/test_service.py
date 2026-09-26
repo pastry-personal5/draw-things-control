@@ -1,9 +1,14 @@
 """Tests for generation orchestration without launching a subprocess."""
 
+import json
+import shlex
 import signal
+import tempfile
 import unittest
 from dataclasses import dataclass
+from pathlib import Path
 
+from draw_things_control.core.configuration import load_config
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.generation_service import GenerationService
 
@@ -75,3 +80,72 @@ class GenerationServiceTests(unittest.TestCase):
         service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1)
         service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1, on_message=callback, on_start=print)
         self.assertEqual(received, [(arguments, None, 1, None, None), (arguments, None, 1, callback, print)])
+
+
+def generate_options(**changes: object) -> dict[str, object]:
+    """The options the generate command passes to prepare, all unset except ``changes``."""
+    names = ("models_dir", "model", "prompt", "prompt_file", "negative_prompt", "negative_prompt_file", "steps", "cfg", "width", "height", "frames", "strength", "seed", "config_json", "config_file", "image", "audio", "audio_encoder_file", "segment_frames", "cond_frames", "output", "video_format", "terminal_image_protocol", "download_missing", "remote_url", "remote_port", "remote_tls", "remote_shared_secret", "api_key", "cloud_api_base_url")
+    flags = ("avc", "terminal_image", "disable_preview", "offline", "remote", "cloud_compute")
+    options: dict[str, object] = dict.fromkeys(names) | dict.fromkeys(flags, False) | {"executable": "draw-things-cli"}
+    return options | changes
+
+
+class ConfigurationFileTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self._temporary.name).resolve()
+        self.launched: list[DrawThingsGenerateArguments] = []
+
+        def factory(arguments: DrawThingsGenerateArguments, *_args: object) -> FakeRunner:
+            self.launched.append(arguments)
+            return FakeRunner(FakeResult(return_code=0, timed_out=False))
+
+        self.service = GenerationService(runner_factory=factory, find_executable=lambda executable: executable, config_loader=load_config)
+
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
+
+    def write(self, name: str, text: str) -> Path:
+        path = self.root / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_yaml_is_passed_inline_with_config_json_merged_on_top(self) -> None:
+        config = self.write("wan.yaml", "# Wan\nmodel: base.ckpt\nsteps: 30\nshift: 3.99\nloras: []\n")
+        arguments = self.service.prepare(generate_options(config_file=config, config_json='{"steps": 8, "sharpness": 0.5}'))
+        self.assertIsNone(arguments.config_file)
+        self.assertEqual(arguments.model, "base.ckpt")
+        self.assertEqual(arguments.config_json, '{"model":"base.ckpt","steps":8,"shift":3.99,"loras":[],"sharpness":0.5}')
+        command = list(arguments.command)
+        self.assertNotIn("--config-file", command)
+        self.assertEqual(command.count("--config-json"), 1)
+        preview = self.service.execute(arguments, dry_run=True, timeout=None, shutdown_grace=1).command_preview
+        split = shlex.split(preview)
+        self.assertEqual(json.loads(split[split.index("--config-json") + 1]), {"model": "base.ckpt", "steps": 8, "shift": 3.99, "loras": [], "sharpness": 0.5})
+        self.service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1)
+        self.assertEqual(self.launched, [arguments])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["wan.yaml"])
+
+    def test_yml_without_config_json_is_passed_inline(self) -> None:
+        config = self.write("wan.YML", "model: base.ckpt\n")
+        arguments = self.service.prepare(generate_options(config_file=config))
+        self.assertEqual((arguments.config_file, arguments.config_json), (None, '{"model":"base.ckpt"}'))
+
+    def test_json_file_is_passed_through(self) -> None:
+        config = self.write("wan.json", '{"model": "base.ckpt", "steps": 30}')
+        arguments = self.service.prepare(generate_options(config_file=config, config_json='{"steps": 8}'))
+        self.assertEqual((arguments.config_file, arguments.config_json), (config, '{"steps": 8}'))
+        command = list(arguments.command)
+        self.assertEqual(command[command.index("--config-file") + 1], str(config))
+
+    def test_the_format_follows_the_name_given_not_a_symlink_target(self) -> None:
+        target = self.write("v3", "model: base.ckpt\n")
+        link = self.root / "current.yaml"
+        link.symlink_to(target)
+        arguments = self.service.prepare(generate_options(config_file=link))
+        self.assertEqual((arguments.config_file, arguments.config_json), (None, '{"model":"base.ckpt"}'))
+
+    def test_invalid_yaml_is_an_input_error(self) -> None:
+        config = self.write("wan.yaml", "model: a\nmodel: b\n")
+        with self.assertRaisesRegex(ValueError, r"wan\.yaml \(key 'model' appears twice on line 2\)"):
+            self.service.prepare(generate_options(config_file=config))

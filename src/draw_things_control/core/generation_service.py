@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from draw_things_control.core.configuration import is_yaml_file
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.process_output import MessageCallback
 
@@ -63,9 +64,10 @@ class GenerationService:
 
     def prepare(self, options: Mapping[str, Any]) -> DrawThingsGenerateArguments:
         """Validate files and config, then construct typed CLI arguments."""
-        config_file = options["config_file"]
-        config = config_file.expanduser().resolve() if config_file is not None else None
-        settings = dict(self._config_loader(config)) if config is not None else {}
+        config_file = options["config_file"].expanduser() if options["config_file"] is not None else None
+        # The format follows the name as given, as in validate-config, not the target of a symlink.
+        settings = dict(self._config_loader(config_file)) if config_file is not None else {}
+        config = config_file.resolve() if config_file is not None else None
         config_json = options["config_json"]
         if config_json is not None:
             try:
@@ -75,6 +77,10 @@ class GenerationService:
             if not isinstance(inline_settings, dict):
                 raise ValueError("--config-json must contain a JSON object")
             settings.update(inline_settings)
+        if config_file is not None and is_yaml_file(config_file):
+            # draw-things-cli reads only JSON, so a YAML file is passed inline, with --config-json already merged on top.
+            config_json = json.dumps(settings, separators=(",", ":"))
+            config = None
         model = options["model"] or settings.get("model")
         if not model:
             raise ValueError("A model must be set in the configuration or passed with --model")

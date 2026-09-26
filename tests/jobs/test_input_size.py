@@ -16,7 +16,7 @@ class InputSizeTests(JobTestCase):
 
     def test_mismatched_size_names_both_sizes_and_the_source(self) -> None:
         self.write_image("photo.png", (1920, 1080))
-        with self.assertRaisesRegex(ValueError, r"is 1920x1080, but the job size is 832x448 \(width and height from config_file base.json\)"):
+        with self.assertRaisesRegex(ValueError, r"is 1920x1080, but the job size is 832x448 \(width and height from config_file base.yaml\)"):
             self.load(input="photo.png")
 
     def test_override_size_takes_precedence(self) -> None:
@@ -36,10 +36,10 @@ class InputSizeTests(JobTestCase):
             self.load(input="broken.png")
 
     def test_missing_width_or_height_is_rejected_for_image_modes(self) -> None:
-        self.write_base_config({"model": "m.ckpt", "width": 832}, name="noheight.json")
+        self.write_base_config({"model": "m.ckpt", "width": 832}, name="noheight.yaml")
         with self.assertRaisesRegex(ValueError, "config_override.height"):
-            self.load(config_file="noheight.json")
-        self.assertIsNone(self.load(config_file="noheight.json", mode="t2v", input=None).input)
+            self.load(config_file="noheight.yaml")
+        self.assertIsNone(self.load(config_file="noheight.yaml", mode="t2v", input=None).input)
 
 
 class ResizePlanTests(unittest.TestCase):

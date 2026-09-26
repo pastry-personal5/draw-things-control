@@ -88,3 +88,32 @@ class DrawThingsCliTests(unittest.TestCase):
             result = self.runner.invoke(app, ["validate-config", str(config)])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("example.ckpt", result.stdout)
+
+    def test_validate_config_accepts_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text("# a comment\nmodel: example.ckpt\n", encoding="utf-8")
+            result = self.runner.invoke(app, ["validate-config", str(config)])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(result.stdout, f"Valid configuration: {config} (model: example.ckpt)\n")
+
+    def test_validate_config_rejects_invalid_yaml_with_exit_code_2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for name, text in (("date.yaml", "model: m\nseed: 2026-09-25\n"), ("nan.yml", "shift: .nan\n"), ("list.yaml", "- m\n"), ("keys.yaml", "1: m\n")):
+                with self.subTest(name):
+                    config = Path(directory) / name
+                    config.write_text(text, encoding="utf-8")
+                    result = self.runner.invoke(app, ["validate-config", str(config)])
+                    self.assertEqual(result.exit_code, 2, result.output)
+
+    def test_generate_passes_yaml_inline_merged_with_config_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.yaml"
+            config.write_text("model: example.ckpt\nsteps: 30\n", encoding="utf-8")
+            result = self.runner.invoke(app, ["generate", "--config-file", str(config), "--config-json", '{"steps": 8}', "--dry-run"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            command = shlex.split(result.stdout.strip())
+            self.assertNotIn("--config-file", command)
+            self.assertEqual(json.loads(command[command.index("--config-json") + 1]), {"model": "example.ckpt", "steps": 8})
+            self.assertEqual(command[command.index("--model") + 1], "example.ckpt")
+            self.assertEqual([path.name for path in Path(directory).iterdir()], ["config.yaml"])

@@ -1,5 +1,6 @@
 """Tests for loading and validating job definitions."""
 
+import json
 import subprocess
 import sys
 from dataclasses import replace
@@ -8,8 +9,9 @@ from unittest import mock
 
 from PIL import Image
 
+from draw_things_control.core.global_config import DEFAULT_COOLDOWN, CooldownPolicy
 from draw_things_control.jobs.job_definition import GenerationMode, load_job
-from draw_things_control.jobs.job_report import cooldown_details, duration_text, ignored_config_lines, seconds_text
+from draw_things_control.jobs.job_report import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
 from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 
@@ -81,9 +83,21 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("output.extension", output={"extension": "png"})
         self.assert_invalid("output.extension", mode="i2i", output={"extension": "mov"})
         self.assert_invalid("config_file", config_file=None)
-        self.assert_invalid("not a path", config_file="../base.json")
-        self.assert_invalid("available: base.json", config_file="missing.json")
+        self.assert_invalid("not a path", config_file="../base.yaml")
+        self.assert_invalid("available: base.yaml", config_file="missing.yaml")
         self.assert_invalid("run_timeout_seconds", run_timeout_seconds=0)
+
+    def test_config_file_must_name_a_yaml_file(self) -> None:
+        (self.dt_config / "base.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
+        (self.dt_config / "only.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
+        self.assert_invalid(r"'config_file' base\.json is JSON; name base\.yaml instead", config_file="base.json")
+        self.assert_invalid(r"'config_file' only\.json is JSON, but a job needs a YAML configuration; write only\.yaml", config_file="only.json")
+        self.assert_invalid(r"must name a YAML file \(\.yaml or \.yml\)", config_file="base.txt")
+        self.assertEqual(self.load(config_file="base.yaml").config_file, "base.yaml")
+
+    def test_invalid_yaml_base_configuration_is_a_validation_error(self) -> None:
+        (self.dt_config / "twice.yml").write_text("model: a\nmodel: b\n", encoding="utf-8")
+        self.assert_invalid(r"twice\.yml \(key 'model' appears twice on line 2\)", config_file="twice.yml")
 
     def test_invalid_overrides_name_the_key(self) -> None:
         cases = {
@@ -104,35 +118,35 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("config_override.seed", config_override={"seed": 2**32})
 
     def test_model_and_refiner_requirements(self) -> None:
-        self.write_base_config({"width": 832, "height": 448}, name="bare.json")
-        self.assert_invalid("config_override.model", config_file="bare.json")
-        self.assert_invalid("refiner_start", config_file="bare.json", config_override={"model": "m.ckpt", "refiner_start": 0.1})
-        job = self.load(config_file="bare.json", config_override={"model": "m.ckpt", "refiner_model": "r.ckpt", "refiner_start": 0.1})
+        self.write_base_config({"width": 832, "height": 448}, name="bare.yaml")
+        self.assert_invalid("config_override.model", config_file="bare.yaml")
+        self.assert_invalid("refiner_start", config_file="bare.yaml", config_override={"model": "m.ckpt", "refiner_start": 0.1})
+        job = self.load(config_file="bare.yaml", config_override={"model": "m.ckpt", "refiner_model": "r.ckpt", "refiner_start": 0.1})
         self.assertEqual(job.model, "m.ckpt")
 
     def test_seed_precedence(self) -> None:
         self.assertEqual(self.load(config_override={"seed": 7}).configured_seed(), (7, "config_override"))
         self.assertEqual(self.load().configured_seed(), (42, "config_file"))
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.json")
-        self.assertEqual(self.load(config_file="noseed.json").configured_seed(), (None, "random"))
+        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
+        self.assertEqual(self.load(config_file="noseed.yaml").configured_seed(), (None, "random"))
         self.assertEqual(self.load(config_override={"seed": 2**32 - 1}).configured_seed(), (2**32 - 1, "config_override"))
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "seed": 2**32}, name="bigseed.json")
-        self.assert_invalid("config_file", config_file="bigseed.json")
+        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "seed": 2**32}, name="bigseed.yaml")
+        self.assert_invalid("config_file", config_file="bigseed.yaml")
 
     def test_i2v_ignores_run_count_from_the_config_file(self) -> None:
-        self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.json")
-        job = self.load(config_file="batch.json")
+        self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.yaml")
+        job = self.load(config_file="batch.yaml")
         self.assertNotIn("batchCount", job.base_config)
         self.assertEqual(job.ignored_config, {"batchCount": 4})
         messages = ignored_config_lines(job)
         self.assertEqual(len(messages), 1)
-        self.assertTrue(messages[0].startswith("Ignoring batchCount (4) from config_file batch.json"))
+        self.assertTrue(messages[0].startswith("Ignoring batchCount (4) from config_file batch.yaml"))
 
     def test_other_modes_keep_run_count(self) -> None:
-        self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.json")
+        self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.yaml")
         for mode, changes in (("i2i", {}), ("t2v", {"input": None})):
             with self.subTest(mode):
-                job = self.load(config_file="batch.json", mode=mode, **changes)
+                job = self.load(config_file="batch.yaml", mode=mode, **changes)
                 self.assertEqual(job.base_config["batchCount"], 4)
                 self.assertEqual(job.ignored_config, {})
 
@@ -152,9 +166,9 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("is 1920x1080, but the job size is 832x448", input="photo.jpg")
 
     def test_desired_size_needs_no_width_or_height_from_the_config(self) -> None:
-        self.write_base_config({"model": "m.ckpt"}, name="nosize.json")
-        self.assert_invalid("config_override.width", config_file="nosize.json")
-        job = self.load(config_file="nosize.json", desired_input_width=832)
+        self.write_base_config({"model": "m.ckpt"}, name="nosize.yaml")
+        self.assert_invalid("config_override.width", config_file="nosize.yaml")
+        job = self.load(config_file="nosize.yaml", desired_input_width=832)
         self.assertEqual((job.size, job.ignored_size), ((832, 448), ()))
 
     def test_invalid_desired_keys_name_the_key(self) -> None:
@@ -213,37 +227,73 @@ class JobDefinitionTests(JobTestCase):
             ignored_config_lines(job),
             [
                 "Ignoring config_override.width (832): desired_input_width/desired_input_height set the size (1280x704)",
-                "Ignoring width (832) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
-                "Ignoring height (448) from config_file base.json: desired_input_width/desired_input_height set the size (1280x704)",
+                "Ignoring width (832) from config_file base.yaml: desired_input_width/desired_input_height set the size (1280x704)",
+                "Ignoring height (448) from config_file base.yaml: desired_input_width/desired_input_height set the size (1280x704)",
                 "Input photo.jpg (1920x1080) will be scaled to 1252x704 and letterboxed to 1280x704 for run 1",
             ],
         )
 
     def test_cooldown_comes_from_the_job_then_the_global_config_then_the_default(self) -> None:
-        self.assertEqual((self.load().cooldown_seconds, self.load().cooldown_source), (0.0, "default"))
-        self.global_config = replace(self.global_config, cooldown_seconds=900.0)
+        self.global_config = replace(self.global_config, cooldown=None)
         job = self.load()
-        self.assertEqual((job.cooldown_seconds, job.cooldown_source), (900.0, "global_config"))
-        for value, expected in ((120, 120.0), (0, 0.0), (2.5, 2.5)):
+        self.assertEqual((job.cooldown, job.cooldown_source), (DEFAULT_COOLDOWN, "default"))
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="manual", seconds=900.0))
+        job = self.load()
+        self.assertEqual((job.cooldown, job.cooldown_source), (CooldownPolicy(mode="manual", seconds=900.0), "global_config"))
+        for value, expected in (({"mode": "manual", "seconds": 120}, CooldownPolicy(mode="manual", seconds=120.0)), ({"mode": "off"}, CooldownPolicy(mode="off")), ({"mode": False}, CooldownPolicy(mode="off")), ({"mode": "auto", "ratio": 0.4}, CooldownPolicy(mode="auto", ratio=0.4))):
             with self.subTest(value=value):
-                job = self.load(cooldown_seconds=value)
-                self.assertEqual((job.cooldown_seconds, job.cooldown_source), (expected, "job"))
+                job = self.load(cooldown=value)
+                self.assertEqual((job.cooldown, job.cooldown_source), (expected, "job"))
+
+    def test_a_job_cooldown_replaces_the_global_one_as_a_whole(self) -> None:
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", ratio=0.25, minimum_seconds=300.0, maximum_seconds=1800.0))
+        job = self.load(cooldown={"mode": "auto"})
+        self.assertEqual((job.cooldown, job.cooldown_source), (DEFAULT_COOLDOWN, "job"))
 
     def test_cooldown_is_allowed_in_every_mode(self) -> None:
-        self.assertEqual(self.load(mode="t2v", input=None, cooldown_seconds=60).cooldown_seconds, 60.0)
-        self.assertEqual(self.load(mode="i2i", cooldown_seconds=60).cooldown_seconds, 60.0)
+        self.assertEqual(self.load(mode="t2v", input=None, cooldown={"mode": "manual", "seconds": 60}).cooldown.seconds, 60.0)
+        self.assertEqual(self.load(mode="i2i", cooldown={"mode": "manual", "seconds": 60}).cooldown.seconds, 60.0)
 
     def test_invalid_cooldown_is_rejected(self) -> None:
-        for value in (-1, 3601, float("nan"), float("inf"), True, "15 min"):
+        for value, message in (
+            ({"mode": "manual", "seconds": 3601}, r"'cooldown.seconds' must be a number of seconds from 0 to 3600"),
+            ({"mode": "manual", "seconds": True}, r"'cooldown.seconds' must be a number of seconds from 0 to 3600"),
+            ({"mode": "auto", "seconds": 60}, r"'cooldown.seconds' is not used with mode auto"),
+            ({"mode": "off", "minimum_seconds": 0}, r"'cooldown.minimum_seconds' is not used with mode off"),
+            ({"mode": "slow"}, r"'cooldown.mode' must be auto, manual, or off"),
+            (900, r"'cooldown' must be a mapping"),
+        ):
             with self.subTest(value=value):
-                self.assert_invalid(r"'cooldown_seconds' must be a number of seconds from 0 to 3600", cooldown_seconds=value)
+                self.assert_invalid(rf"{self.root / 'job.yaml'}: {message}", cooldown=value)
+
+    def test_the_old_cooldown_seconds_key_names_its_replacement(self) -> None:
+        for value, same in ((300, "{mode: manual, seconds: 300}"), (0, "{mode: off}")):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    self.load(cooldown_seconds=value)
+                self.assertEqual(str(caught.exception), f"{self.root / 'job.yaml'}: 'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {same} for the same wait, or use mode auto or off (see config/global-config.example.yaml)")
 
     def test_cooldown_details(self) -> None:
-        self.global_config = replace(self.global_config, cooldown_seconds=900.0)
-        self.assertEqual(cooldown_details(self.load(run_count=7, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (6 waits, 1 h 30 min total)")
-        self.assertEqual(cooldown_details(self.load(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown_seconds=90)), "90 s between runs, from job (1 wait, 1 min 30 s total)")
-        self.assertEqual(cooldown_details(self.load(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), "900 s between runs, from global_config (no waits: 1 run)")
-        self.assertEqual(cooldown_details(self.load(cooldown_seconds=0)), "none (job)")
+        only = {"prompt_pairs": [{"name": "only", "positive": "text"}]}
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="manual", seconds=900.0))
+        self.assertEqual(cooldown_details(self.load(run_count=7, **only)), "900 s between runs, from global_config (6 waits, 1 h 30 min total)")
+        self.assertEqual(cooldown_details(self.load(run_count=2, **only, cooldown={"mode": "manual", "seconds": 90})), "90 s between runs, from job (1 wait, 1 min 30 s total)")
+        self.assertEqual(cooldown_details(self.load(run_count=1, **only)), "900 s between runs, from global_config (no waits: 1 run)")
+        self.assertEqual(cooldown_details(self.load(cooldown={"mode": "manual", "seconds": 0})), "none (job)")
+        self.assertEqual(cooldown_details(self.load(cooldown={"mode": "off"})), "off (job)")
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", minimum_seconds=300.0, maximum_seconds=1800.0))
+        self.assertEqual(cooldown_details(self.load(run_count=3, **only)), "auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)")
+        self.assertEqual(cooldown_details(self.load(run_count=2, **only, cooldown={"mode": "auto", "ratio": 0.4})), "auto: 40% of each run's time, 0 s to 1 h, from job (up to 1 wait, 1 h total at most)")
+        self.assertEqual(cooldown_details(self.load(run_count=1, **only)), "auto: half of each run's time, 5 min to 30 min, from global_config (no waits: 1 run)")
+
+    def test_cooldown_summaries_and_wait_reasons(self) -> None:
+        auto = CooldownPolicy(mode="auto", minimum_seconds=300.0, maximum_seconds=1800.0)
+        self.assertEqual([share_text(ratio) for ratio in (0.5, 0.4, 0.125, 1)], ["half", "40%", "12.5%", "100%"])
+        self.assertEqual([policy_text(policy) for policy in (auto, CooldownPolicy(mode="manual", seconds=900.0), CooldownPolicy(mode="off"))], ["auto, half, 5 min to 30 min", "900 s", "off"])
+        self.assertEqual(auto_wait_text(720, 0.5, 1, 1440, None), "12 min (half of run 1's 24 min)")
+        self.assertEqual(auto_wait_text(720, 0.5, 1, 1440, None, commas=True), "12 min, half of run 1's 24 min,")
+        self.assertEqual(auto_wait_text(300, 0.5, 1, 180, "minimum"), "5 min (the minimum; half of run 1's 3 min is less)")
+        self.assertEqual(auto_wait_text(1800, 0.4, 2, 4800, "maximum"), "30 min (the maximum; 40% of run 2's 1 h 20 min is more)")
 
     def test_seconds_and_durations_read_as_written(self) -> None:
         self.assertEqual([seconds_text(value) for value in (900, 900.0, 0.5, 1234.5678, 0.00001, 412.3)], ["900 s", "900 s", "0.5 s", "1234.5678 s", "0.00001 s", "412.3 s"])

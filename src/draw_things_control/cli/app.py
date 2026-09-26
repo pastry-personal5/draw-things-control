@@ -142,7 +142,7 @@ def generate(
     strength: Annotated[float | None, typer.Option()] = None,
     seed: Annotated[int | None, typer.Option("--seed", "-s")] = None,
     config_json: Annotated[str | None, typer.Option(help="Inline JSON configuration override.")] = None,
-    config_file: Annotated[Path | None, typer.Option("--config-file", "--config", help="JSON configuration override file.")] = None,
+    config_file: Annotated[Path | None, typer.Option("--config-file", "--config", help="YAML or JSON configuration file; a YAML file is passed inline with --config-json.")] = None,
     image: Annotated[list[Path] | None, typer.Option("--image", help="Repeat for ordered reference images.")] = None,
     audio: Annotated[Path | None, typer.Option()] = None,
     audio_encoder_file: Annotated[str | None, typer.Option()] = None,
@@ -192,8 +192,8 @@ def generate(
 
 
 @app.command("validate-config")
-def validate_config(config: Annotated[Path, typer.Argument(help="JSON configuration file to validate.")]) -> None:
-    """Validate a Draw Things JSON override file."""
+def validate_config(config: Annotated[Path, typer.Argument(help="YAML or JSON configuration file to validate.")]) -> None:
+    """Validate a Draw Things YAML or JSON configuration file."""
     with invalid_input_exits():
         settings = load_config(config.expanduser())
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")

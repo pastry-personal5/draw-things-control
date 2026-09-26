@@ -104,7 +104,7 @@ class StateCliTests(JobTestCase):
         with RunLock("run-job"):
             self.assertEqual(self.run_job("--dry-run").exit_code, 0)
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
-            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.dt_config / "base.json")]).exit_code, 0)
+            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.dt_config / "base.yaml")]).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"]).exit_code, 0)
             # None of those touched the database.
             self.assertFalse((self.state / "dtc.db").exists())

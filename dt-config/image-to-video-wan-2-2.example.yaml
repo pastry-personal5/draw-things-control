@@ -1,0 +1,38 @@
+# Wan 2.2 A14B image-to-video: wan_v2.2_a14b_hne_i2v_i8x.ckpt (high-noise expert),
+# refined by wan_v2.2_a14b_lne_i2v_i8x.ckpt (low-noise expert).
+# Converted once from image-to-video-wan-2-2.example.json, which is left as it is.
+
+batchCount: 1
+batchSize: 1
+causalInferencePad: 0
+cfgZeroInitSteps: 0
+cfgZeroStar: false
+colorCalibration: none
+compressionArtifacts: disabled
+compressionArtifactsQuality: 43.1
+controls: []
+faceRestoration: ''
+guidanceScale: 4
+height: 448
+hiresFix: false
+loras: []
+maskBlur: 1.5
+maskBlurOutset: 0
+model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+numFrames: 17
+preserveOriginalAfterInpaint: false
+refinerModel: wan_v2.2_a14b_lne_i2v_i8x.ckpt
+refinerStart: 0.1
+sampler: 17
+seed: 829023514
+seedMode: 2
+sharpness: 0.5
+shift: 3.99
+shiftForAudio: 3
+steps: 40
+strength: 1
+teaCache: false
+tiledDecoding: false
+tiledDiffusion: false
+upscaler: ''
+width: 832

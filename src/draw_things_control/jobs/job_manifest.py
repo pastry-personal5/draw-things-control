@@ -43,8 +43,10 @@ class JobManifest:
     config_override: dict[str, Any]
     seed: int
     seed_source: str
-    cooldown_seconds: float
+    # The manual wait, 0 for off, or None for auto; ``cooldown`` is the whole mapping as resolved.
+    cooldown_seconds: float | None
     cooldown_source: str
+    cooldown: dict[str, Any] | None
     started_at: str
     log_file: str | None
     input_resize: dict[str, Any] | None = None

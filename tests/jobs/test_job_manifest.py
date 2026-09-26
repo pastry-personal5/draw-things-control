@@ -12,7 +12,7 @@ class JobManifestTests(unittest.TestCase):
     def test_rewrite_is_atomic_and_leaves_no_temporary_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "job-20260924-153012-job.json"
-            manifest = JobManifest(job_file="job.yaml", name="job", mode="i2v", config_file="base.json", config_override={}, seed=1, seed_source="random", cooldown_seconds=0.0, cooldown_source="default", started_at="t", log_file="job.log")
+            manifest = JobManifest(job_file="job.yaml", name="job", mode="i2v", config_file="base.json", config_override={}, seed=1, seed_source="random", cooldown_seconds=0.0, cooldown_source="default", cooldown={"mode": "off"}, started_at="t", log_file="job.log")
             write_manifest(path, manifest)
             manifest.runs.append(RunRecord(pair="walk", positive="p", negative=None, input=None, output="o.mov", last_frame=None, command=["x"], started_at="t"))
             manifest.status = "succeeded"

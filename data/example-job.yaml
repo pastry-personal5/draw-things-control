@@ -46,8 +46,9 @@ output:
   # with the last frame saved as sunset-walk-<YYYYmmdd-HHMMSS>-<NNNN>-last-frame.png,
   # and the job manifest and log as sunset-walk-<YYYYmmdd-HHMMSS>-job.json and -job.log.
 
-# Base configuration for every run: dt-config/image-to-video-wan-2-2.example.json.
-config_file: image-to-video-wan-2-2.example.json
+# Base configuration for every run: dt-config/image-to-video-wan-2-2.example.yaml.
+# It must be a YAML file (.yaml or .yml); a .json name is rejected.
+config_file: image-to-video-wan-2-2.example.yaml
 
 # Overrides applied on top of config_file for every run. Any key left out
 # comes from config_file, then from the model's recommended settings.
@@ -65,4 +66,6 @@ config_override:
   seed: 829023514                      # omitted: config_file's seed, else one random seed for the whole job
 
 run_timeout_seconds: 3600              # limit for each run
-# cooldown_seconds: 300                # optional; wait after each run but the last; overrides the global cooldown_seconds; 0 = no wait
+# cooldown:                            # optional; the wait after each run but the last; replaces the global cooldown as a whole
+#   mode: manual                       # auto (a share of the last run's time), manual (fixed seconds), or off
+#   seconds: 300                       # manual only; auto takes ratio, minimum_seconds, maximum_seconds

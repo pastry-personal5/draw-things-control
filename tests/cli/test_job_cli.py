@@ -4,6 +4,7 @@ import shlex
 from pathlib import Path
 from unittest import mock
 
+from loguru import logger
 from typer.testing import CliRunner
 
 from draw_things_control.cli.app import app, create_job_runner, create_runner
@@ -33,6 +34,13 @@ class JobCliTests(JobTestCase):
         bad_job = self.write_job(job_data(mode="t2i"), name="bad.yaml")
         self.assertEqual(self.runner.invoke(app, ["validate-job", str(bad_job), "--global-config", str(self.global_path)]).exit_code, 2)
         self.assertEqual(self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.root / "absent.yaml")]).exit_code, 2)
+
+    def test_a_job_naming_a_json_configuration_exits_with_2(self) -> None:
+        (self.dt_config / "base.json").write_text("{}", encoding="utf-8")
+        job = self.write_job(job_data(config_file="base.json"), name="json.yaml")
+        for command in (["validate-job"], ["run-job", "--dry-run"]):
+            with self.subTest(command[0]):
+                self.assertEqual(self.runner.invoke(app, [*command, str(job), "--global-config", str(self.global_path)]).exit_code, 2)
 
     def test_dry_run_prints_every_command_and_writes_nothing(self) -> None:
         executable_stub = self.root / "draw-things-cli"
@@ -74,7 +82,7 @@ class JobCliTests(JobTestCase):
         self.assertFalse(self.output_directory.exists())
 
     def test_validate_job_and_dry_run_show_the_cooldown(self) -> None:
-        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 900\n", encoding="utf-8")
+        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")
         result = self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("  cooldown: 900 s between runs, from global_config (4 waits, 1 h total)", result.stdout)
@@ -89,9 +97,26 @@ class JobCliTests(JobTestCase):
         self.assertEqual(comments, ["# Run 1/5 (pair walk)", "# Cooldown 900 s", "# Run 2/5 (pair wave)", "# Cooldown 900 s", "# Run 3/5 (pair walk)", "# Cooldown 900 s", "# Run 4/5 (pair wave)", "# Cooldown 900 s", "# Run 5/5 (pair walk)"])
 
     def test_job_can_turn_off_the_global_cooldown(self) -> None:
-        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 900\n", encoding="utf-8")
-        job_path = self.write_job(job_data(cooldown_seconds=0), name="no-cooldown.yaml")
+        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")
+        job_path = self.write_job(job_data(cooldown={"mode": "off"}), name="no-cooldown.yaml")
         result = self.runner.invoke(app, ["validate-job", str(job_path), "--global-config", str(self.global_path)])
-        self.assertIn("  cooldown: none (job)", result.stdout)
-        bad = self.write_job(job_data(cooldown_seconds=4000), name="bad.yaml")
-        self.assertEqual(self.runner.invoke(app, ["validate-job", str(bad), "--global-config", str(self.global_path)]).exit_code, 2)
+        self.assertIn("  cooldown: off (job)", result.stdout)
+        bad = self.write_job(job_data(cooldown={"mode": "manual", "seconds": 4000}), name="bad.yaml")
+        self.assertEqual(self.invalid(bad), "'cooldown.seconds' must be a number of seconds from 0 to 3600")
+
+    def invalid(self, job_path: Path) -> str:
+        """Validate a job that must fail with exit code 2; return the logged error after the file name."""
+        logged: list[str] = []
+        sink = logger.add(lambda message: logged.append(str(message).rstrip("\n")), format="{message}", level="ERROR")
+        try:
+            result = self.runner.invoke(app, ["validate-job", str(job_path), "--global-config", str(self.global_path)])
+        finally:
+            logger.remove(sink)
+        self.assertEqual(result.exit_code, 2)
+        return logged[-1].split(": ", 1)[1]
+
+    def test_the_old_cooldown_seconds_key_fails_with_exit_code_2(self) -> None:
+        old = self.write_job(job_data(cooldown_seconds=300), name="old.yaml")
+        self.assertTrue(self.invalid(old).startswith("'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {mode: manual, seconds: 300} for the same wait"))
+        self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 1200\n", encoding="utf-8")
+        self.assertEqual(self.invalid(self.job_path), "'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {mode: manual, seconds: 1200} for the same wait, or use mode auto or off (see config/global-config.example.yaml)")

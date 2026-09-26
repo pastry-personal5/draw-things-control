@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from draw_things_control.core.global_config import GlobalConfig, load_global_config
+from draw_things_control.core.global_config import CooldownPolicy, GlobalConfig, load_global_config
 from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, load_job
 
 if TYPE_CHECKING:
@@ -60,23 +60,71 @@ def duration_text(seconds: float) -> str:
     return " ".join(parts)
 
 
+def share_text(ratio: float) -> str:
+    """An auto cooldown's ratio as a share: ``half``, or a percentage such as ``40%``."""
+    if ratio == 0.5:
+        return "half"
+    text = format(Decimal(repr(float(ratio))) * 100, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return f"{text}%"
+
+
+def bounds_text(policy: CooldownPolicy) -> str:
+    """An auto cooldown's bounds, for example ``5 min to 30 min``."""
+    return f"{duration_text(policy.minimum_seconds)} to {duration_text(policy.maximum_seconds)}"
+
+
+def policy_text(policy: CooldownPolicy) -> str:
+    """A cooldown in a few words, as history shows it: ``900 s``, ``off``, or ``auto, half, 5 min to 30 min``."""
+    if policy.mode == "auto":
+        return f"auto, {share_text(policy.ratio)}, {bounds_text(policy)}"
+    if policy.mode == "manual":
+        return seconds_text(policy.seconds)
+    return "off"
+
+
 def cooldown_summary(job: JobDefinition, source_prefix: str = "") -> str:
     """The job's cooldown and its source, for example ``cooldown 900 s (from global_config)``."""
-    if job.cooldown_seconds > 0:
-        return f"cooldown {seconds_text(job.cooldown_seconds)} ({source_prefix}{job.cooldown_source})"
-    return f"no cooldown ({source_prefix}{job.cooldown_source})"
+    policy, source = job.cooldown, f"({source_prefix}{job.cooldown_source})"
+    if policy.mode == "auto":
+        return f"cooldown auto, {share_text(policy.ratio)} of each run, {bounds_text(policy)} {source}"
+    if policy.mode == "manual" and policy.seconds > 0:
+        return f"cooldown {seconds_text(policy.seconds)} {source}"
+    return f"no cooldown {source}"
 
 
 def cooldown_details(job: JobDefinition) -> str:
-    """The cooldown line of validate-job: the value, its source, and the waits it adds."""
-    if job.cooldown_seconds <= 0:
+    """The cooldown line of validate-job: the mode or value, its source, and the waits it adds."""
+    policy, waits = job.cooldown, job.run_count - 1
+    if policy.mode == "off":
+        return f"off ({job.cooldown_source})"
+    if policy.mode == "manual" and policy.seconds <= 0:
         return f"none ({job.cooldown_source})"
-    waits = job.run_count - 1
-    if waits == 0:
-        extent = "no waits: 1 run"
-    else:
-        extent = f"{waits} wait{'s' if waits > 1 else ''}, {duration_text(waits * job.cooldown_seconds)} total"
-    return f"{seconds_text(job.cooldown_seconds)} between runs, from {job.cooldown_source} ({extent})"
+    plural = "s" if waits > 1 else ""
+    if policy.mode == "auto":
+        extent = "no waits: 1 run" if waits == 0 else f"up to {waits} wait{plural}, {duration_text(waits * policy.maximum_seconds)} total at most"
+        return f"auto: {share_text(policy.ratio)} of each run's time, {bounds_text(policy)}, from {job.cooldown_source} ({extent})"
+    extent = "no waits: 1 run" if waits == 0 else f"{waits} wait{plural}, {duration_text(waits * policy.seconds)} total"
+    return f"{seconds_text(policy.seconds)} between runs, from {job.cooldown_source} ({extent})"
+
+
+def planned_cooldown_line(policy: CooldownPolicy, after_run: int) -> str | None:
+    """The dry-run plan's line for the wait after run ``after_run``, or None when there is no wait."""
+    if policy.mode == "auto":
+        return f"# Cooldown auto: {share_text(policy.ratio)} of run {after_run}'s time, {bounds_text(policy)}"
+    if policy.mode == "manual" and policy.seconds > 0:
+        return f"# Cooldown {seconds_text(policy.seconds)}"
+    return None
+
+
+def auto_wait_text(seconds: float, ratio: float, after_run: int, run_seconds: float, bound: str | None, *, commas: bool = False) -> str:
+    """An auto wait and why it is that long: ``12 min (half of run 1's 24 min)``, or with ``commas``,
+    ``12 min, half of run 1's 24 min,``; a bound is named: ``5 min (the minimum; half of run 1's 3 min is less)``."""
+    share = f"{share_text(ratio)} of run {after_run}'s {duration_text(run_seconds)}"
+    if bound is not None:
+        return f"{duration_text(seconds)} (the {bound}; {share} is {'less' if bound == 'minimum' else 'more'})"
+    return f"{duration_text(seconds)}, {share}," if commas else f"{duration_text(seconds)} ({share})"
 
 
 def ignored_config_lines(job: JobDefinition) -> list[str]:
@@ -130,8 +178,9 @@ def plan_lines(job: JobDefinition, preview: JobPreview) -> list[str]:
         "# Output names are examples; a real run generates new ones.",
     ]
     for run, command in zip(preview.runs, preview.command_previews, strict=True):
-        if run.number > 1 and job.cooldown_seconds > 0:
-            lines.append(f"# Cooldown {seconds_text(job.cooldown_seconds)}")
+        cooldown = planned_cooldown_line(job.cooldown, run.number - 1) if run.number > 1 else None
+        if cooldown is not None:
+            lines.append(cooldown)
         lines.append(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
         lines.append(command)
     return lines

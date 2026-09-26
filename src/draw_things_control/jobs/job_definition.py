@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from draw_things_control.core import generation_config
-from draw_things_control.core.global_config import COOLDOWN_ERROR, GlobalConfig, is_cooldown, is_number, read_yaml_mapping
+from draw_things_control.core.global_config import DEFAULT_COOLDOWN, CooldownPolicy, GlobalConfig, is_number, parse_cooldown, read_yaml_mapping, replaced_cooldown_message
 from draw_things_control.jobs.input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown_seconds"}
+JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs", "config_file")
 PAIR_KEYS = {"name", "positive", "negative", "runs", "default"}
 # Keys from job files written before "batch" was dropped as a second word for "run"; named in the error so the fix is obvious.
@@ -108,8 +108,8 @@ class JobDefinition:
     input_resize: ResizePlan | None = None
     # (source, key, value) for each width or height that the desired size replaces.
     ignored_size: tuple[tuple[str, str, Any], ...] = ()
-    # Seconds to wait between runs, and where that came from: job, global_config, or default.
-    cooldown_seconds: float = 0.0
+    # The wait between runs, and where it came from: job, global_config, or default.
+    cooldown: CooldownPolicy = DEFAULT_COOLDOWN
     cooldown_source: str = "default"
     # The job file's text as it was loaded, so a record shows exactly what ran. Job files reject unknown keys, so it cannot hold a credential.
     # Left out of equality and repr: comments must not make two jobs differ, and a repr must not dump the file.
@@ -148,6 +148,8 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     path = path.expanduser().resolve()
     data, source_text = read_yaml_mapping(path, "Job file")
     fail = _Failure(path)
+    if "cooldown_seconds" in data:
+        raise ValueError(f"{path}: {replaced_cooldown_message(data['cooldown_seconds'])}")
     _check_keys(fail, data, JOB_KEYS, "")
     for key in REQUIRED_JOB_KEYS:
         if key not in data:
@@ -191,7 +193,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     timeout = data.get("run_timeout_seconds")
     if timeout is not None and (not is_number(timeout) or timeout <= 0):
         fail("run_timeout_seconds", "must be a positive number of seconds")
-    cooldown_seconds, cooldown_source = _cooldown(fail, data, global_config)
+    cooldown, cooldown_source = _cooldown(path, data, global_config)
 
     desired = _desired_size(fail, data, mode)
     plan, ignored_size = _input_size(fail, path, input_path, desired, override, base_config, config_file, decode_input=decode_input)
@@ -210,7 +212,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
         config_override=override,
         model=model,
         run_timeout_seconds=float(timeout) if timeout is not None else None,
-        cooldown_seconds=cooldown_seconds,
+        cooldown=cooldown,
         cooldown_source=cooldown_source,
         ignored_config=ignored_config,
         size=plan.target_size if plan is not None else None,
@@ -301,15 +303,16 @@ def _input_size(fail: _Failure, path: Path, input_path: Path | None, desired: tu
     return plan, tuple(ignored)
 
 
-def _cooldown(fail: _Failure, data: dict[str, Any], global_config: GlobalConfig) -> tuple[float, str]:
-    """The job's cooldown and its source: the job's key, else the global configuration's, else 0."""
-    if "cooldown_seconds" in data:
-        if not is_cooldown(data["cooldown_seconds"]):
-            fail("cooldown_seconds", COOLDOWN_ERROR)
-        return float(data["cooldown_seconds"]), "job"
-    if global_config.cooldown_seconds is not None:
-        return global_config.cooldown_seconds, "global_config"
-    return 0.0, "default"
+def _cooldown(path: Path, data: dict[str, Any], global_config: GlobalConfig) -> tuple[CooldownPolicy, str]:
+    """The job's cooldown and its source: the job's mapping as a whole, else the global configuration's, else auto."""
+    if "cooldown" in data:
+        try:
+            return parse_cooldown(data["cooldown"], "cooldown"), "job"
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from error
+    if global_config.cooldown is not None:
+        return global_config.cooldown, "global_config"
+    return DEFAULT_COOLDOWN, "default"
 
 
 def _prompt_pairs(fail: _Failure, value: Any, run_count: int) -> tuple[PromptPair, ...]:

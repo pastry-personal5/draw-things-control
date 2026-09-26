@@ -19,6 +19,7 @@ from PIL import Image
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_runner import install_signal_handlers, restore_signal_handlers
 from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.global_config import CooldownPolicy
 from draw_things_control.core.process_output import OutputStream, ProcessMessage
 from draw_things_control.jobs import job_service
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
@@ -167,8 +168,8 @@ class JobServiceTests(JobTestCase):
         self.assertNotIn("--config-file", arguments.command)
 
     def test_random_seed_is_drawn_once_and_recorded(self) -> None:
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.json")
-        outcome = self.run_job(self.job(config_file="noseed.json"))
+        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
+        outcome = self.run_job(self.job(config_file="noseed.yaml"))
         self.assertEqual({arguments.seed for arguments, _t, _g in self.calls}, {777})
         manifest = self.manifest(outcome)
         self.assertEqual((manifest["seed"], manifest["seed_source"]), (777, "random"))
@@ -225,6 +226,19 @@ class JobServiceTests(JobTestCase):
         self.assertFalse(job.output_directory.exists())
         self.assertEqual(self.calls, [])
 
+    def test_a_yaml_base_configuration_plans_the_config_json_of_the_equal_json_file(self) -> None:
+        text = "# Wan 2.2\nmodel: base.ckpt\nrefinerModel: base-refiner.ckpt\nrefinerStart: 0.2\nwidth: 832\nheight: 448\nseed: 42\nsteps: 30\nshift: 3.99\nfaceRestoration: ''\ncolorCalibration: none\ncontrols: []\nloras: [{file: l.ckpt, weight: 0.6}]\nhiresFix: false\n"
+        (self.dt_config / "wan.yaml").write_text(text, encoding="utf-8")
+        json_config = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30, "shift": 3.99, "faceRestoration": "", "colorCalibration": "none", "controls": [], "loras": [{"file": "l.ckpt", "weight": 0.6}], "hiresFix": False}
+        (self.dt_config / "wan.json").write_text(json.dumps(json_config, indent=2), encoding="utf-8")
+        yaml_job = self.job(config_file="wan.yaml", config_override={"steps": 8, "shift": 5.0})
+        # Before YAML, a job's base_config was the JSON file's object; the plan must not change.
+        json_job = replace(yaml_job, base_config=json.loads((self.dt_config / "wan.json").read_text(encoding="utf-8")))
+        yaml_plan, json_plan = (self.service.preview(job, executable="draw-things-cli", seed=1) for job in (yaml_job, json_job))
+        self.assertEqual([run.arguments.config_json for run in yaml_plan.runs], [run.arguments.config_json for run in json_plan.runs])
+        self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', yaml_plan.runs[0].arguments.config_json)
+        self.assertNotIn("--config-file", yaml_plan.runs[0].arguments.command)
+
     def test_missing_tools_fail_before_anything_runs(self) -> None:
         self.service._find_executable = lambda _executable: None
         with self.assertRaisesRegex(ValueError, "Could not find 'draw-things-cli'"):
@@ -266,10 +280,10 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(self.calls, [])
 
     def test_i2v_config_json_omits_run_count_and_the_log_says_so(self) -> None:
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "batchCount": 3}, name="batch.json")
-        outcome = self.run_job(self.job(config_file="batch.json", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "batchCount": 3}, name="batch.yaml")
+        outcome = self.run_job(self.job(config_file="batch.yaml", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertNotIn("batchCount", json.loads(self.calls[0][0].config_json or "{}"))
-        self.assertIn("Ignoring batchCount (3) from config_file batch.json", outcome.log.read_text(encoding="utf-8"))
+        self.assertIn("Ignoring batchCount (3) from config_file batch.yaml", outcome.log.read_text(encoding="utf-8"))
 
     def test_records_are_off_by_default(self) -> None:
         job = self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
@@ -426,6 +440,13 @@ class JobServiceTests(JobTestCase):
         self.cooldown = cooldown
         return waits
 
+    def run_times(self, *seconds: float) -> None:
+        """Make the job service measure each run, in order, as taking ``seconds``."""
+        readings = iter([value for run in seconds for value in (0.0, run)])
+        patcher = mock.patch.object(job_service, "time", mock.Mock(monotonic=lambda: next(readings)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_cooldown_waits_between_runs_but_not_after_the_last(self) -> None:
         waits = self.fake_cooldown()
         for mode, changes in (("i2v", {}), ("i2i", {}), ("t2v", {"input": None})):
@@ -433,12 +454,12 @@ class JobServiceTests(JobTestCase):
                 waits.clear()
                 self.calls.clear()
                 shutil.rmtree(self.output_directory, ignore_errors=True)
-                outcome = self.run_job(self.cooldown_job(mode=mode, cooldown_seconds=900, **changes))
+                outcome = self.run_job(self.cooldown_job(mode=mode, cooldown={"mode": "manual", "seconds": 900}, **changes))
                 self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 3))
                 # Each wait comes after one run and before the next, and starts with the manifest showing 0.
                 self.assertEqual(waits, [(900.0, 1, [0.0]), (900.0, 2, [900.0, 0.0])])
                 manifest = self.manifest(outcome)
-                self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"]), (900.0, "job"))
+                self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"], manifest["cooldown"]), (900.0, "job", {"mode": "manual", "seconds": 900.0}))
                 self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [900.0, 900.0, None])
                 log = outcome.log.read_text(encoding="utf-8")
                 self.assertIn("cooldown 900 s (from job)", log)
@@ -447,36 +468,69 @@ class JobServiceTests(JobTestCase):
 
     def test_global_cooldown_applies_and_a_job_can_turn_it_off(self) -> None:
         waits = self.fake_cooldown()
-        self.global_config = replace(self.global_config, cooldown_seconds=60.0)
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="manual", seconds=60.0))
         outcome = self.run_job(self.cooldown_job())
         self.assertEqual([seconds for seconds, _runs, _saved in waits], [60.0, 60.0])
         self.assertEqual(self.manifest(outcome)["cooldown_source"], "global_config")
-        waits.clear()
-        outcome = self.run_job(self.cooldown_job(cooldown_seconds=0))
-        self.assertEqual(waits, [])
-        self.assertIn("no cooldown (from job)", outcome.log.read_text(encoding="utf-8"))
+        for cooldown in ({"mode": "manual", "seconds": 0}, {"mode": "off"}):
+            with self.subTest(cooldown=cooldown):
+                waits.clear()
+                outcome = self.run_job(self.cooldown_job(cooldown=cooldown))
+                self.assertEqual(waits, [])
+                log = outcome.log.read_text(encoding="utf-8")
+                self.assertIn("no cooldown (from job)", log)
+                self.assertNotIn("Cooldown", log)
+                self.assertEqual([run["cooldown_after_seconds"] for run in self.manifest(outcome)["runs"]], [None, None, None])
+        self.assertEqual((self.manifest(outcome)["cooldown_seconds"], self.manifest(outcome)["cooldown"]), (0.0, {"mode": "off"}))
 
-    def test_no_cooldown_without_either_key(self) -> None:
+    def test_auto_cooldown_waits_a_share_of_each_run_within_the_bounds(self) -> None:
         waits = self.fake_cooldown()
-        outcome = self.run_job(self.cooldown_job())
-        self.assertEqual(waits, [])
+        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", minimum_seconds=300.0))
+        self.run_times(1200.0, 200.0, 1201.0, 10000.0, 5.0)
+        outcome = self.run_job(self.cooldown_job(run_count=5))
+        self.assertEqual([seconds for seconds, _runs, _saved in waits], [600.0, 300.0, 601.0, 3600.0])
         manifest = self.manifest(outcome)
-        self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"]), (0.0, "default"))
-        self.assertNotIn("Cooldown", outcome.log.read_text(encoding="utf-8"))
+        self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"], manifest["cooldown"]), (None, "global_config", {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 3600.0}))
+        self.assertEqual([run["seconds"] for run in manifest["runs"]], [1200.0, 200.0, 1201.0, 10000.0, 5.0])
+        self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [600.0, 300.0, 601.0, 3600.0, None])
+        log = outcome.log.read_text(encoding="utf-8")
+        self.assertIn("cooldown auto, half of each run, 5 min to 1 h (from global_config)", log)
+        self.assertIn("Cooldown: waiting 10 min, half of run 1's 20 min, before run 2/5 (until 15:40:12)", log)
+        self.assertIn("Cooldown: waiting 5 min (the minimum; half of run 2's 3 min 20 s is less) before run 3/5 (until 15:35:12)", log)
+        self.assertIn("Cooldown: waiting 1 h (the maximum; half of run 4's 2 h 46 min 40 s is more) before run 5/5 (until 16:30:12)", log)
+
+    def test_auto_cooldown_with_another_ratio(self) -> None:
+        waits = self.fake_cooldown()
+        self.run_times(1200.0, 1200.0)
+        outcome = self.run_job(self.cooldown_job(run_count=2, cooldown={"mode": "auto", "ratio": 0.25}))
+        self.assertEqual([seconds for seconds, _runs, _saved in waits], [300.0])
+        self.assertIn("Cooldown: waiting 5 min, 25% of run 1's 20 min, before run 2/2", outcome.log.read_text(encoding="utf-8"))
+
+    def test_auto_cooldown_without_either_key(self) -> None:
+        waits = self.fake_cooldown()
+        self.global_config = replace(self.global_config, cooldown=None)
+        self.run_times(90.0, 0.0, 30.0)
+        outcome = self.run_job(self.cooldown_job())
+        # A run measured as 0 s is followed by no wait.
+        self.assertEqual([seconds for seconds, _runs, _saved in waits], [45.0])
+        manifest = self.manifest(outcome)
+        self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"], manifest["cooldown"]["mode"]), (None, "default", "auto"))
+        self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [45.0, None, None])
 
     def test_no_cooldown_after_a_failed_or_timed_out_run(self) -> None:
         waits = self.fake_cooldown()
         for result in (FakeResult(return_code=3), FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM)):
             with self.subTest(result=result):
-                self.calls.clear()
                 self.results[1] = result
-                outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
-                self.assertEqual((len(self.calls), waits), (1, []))
-                self.assertIsNone(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"])
+                for cooldown in ({"mode": "manual", "seconds": 900}, {"mode": "auto", "minimum_seconds": 60}):
+                    self.calls.clear()
+                    outcome = self.run_job(self.cooldown_job(cooldown=cooldown))
+                    self.assertEqual((len(self.calls), waits), (1, []))
+                    self.assertIsNone(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"])
 
     def test_signal_during_a_cooldown_stops_the_job(self) -> None:
         waits = self.fake_cooldown(interrupt_on=1, waited=412.34)
-        outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
+        outcome = self.run_job(self.cooldown_job(cooldown={"mode": "manual", "seconds": 900}))
         self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls), len(waits)), (130, 1, 1, 1))
         manifest = self.manifest(outcome)
         self.assertEqual(manifest["status"], "interrupted")
@@ -515,7 +569,7 @@ class JobServiceTests(JobTestCase):
             return seconds
 
         self.cooldown = full_wait_then_signal
-        outcome = self.run_job(self.cooldown_job(cooldown_seconds=900))
+        outcome = self.run_job(self.cooldown_job(cooldown={"mode": "manual", "seconds": 900}))
         self.assertEqual((outcome.exit_code, len(self.calls)), (143, 1))
         self.assertEqual(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"], 900.0)
         log = outcome.log.read_text(encoding="utf-8")
@@ -525,7 +579,7 @@ class JobServiceTests(JobTestCase):
     def test_cooldown_end_time_is_local_like_the_other_timestamps(self) -> None:
         utc_now = datetime(2026, 9, 24, 6, 30, 12, tzinfo=timezone.utc)
         self.service._clock = lambda: utc_now
-        outcome = self.run_job(self.cooldown_job(run_count=2, cooldown_seconds=90))
+        outcome = self.run_job(self.cooldown_job(run_count=2, cooldown={"mode": "manual", "seconds": 90}))
         expected = (utc_now.astimezone() + timedelta(seconds=90)).strftime("%H:%M:%S")
         self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", outcome.log.read_text(encoding="utf-8"))
 
@@ -560,12 +614,12 @@ class JobServiceTests(JobTestCase):
 
     def test_events_for_a_three_run_job_with_a_cooldown(self) -> None:
         self.fake_cooldown()
-        job = self.cooldown_job(cooldown_seconds=900)
+        job = self.cooldown_job(cooldown={"mode": "manual", "seconds": 900})
         outcome, events = self.observed(job)
         self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, CooldownStarted, CooldownEnded, RunStarted, RunFinished, CooldownStarted, CooldownEnded, RunStarted, RunFinished, JobFinished])
         started, first, first_done, cooldown, cooled = events[:5]
         self.assertEqual((started.job_name, started.mode, started.total_runs, started.seed, started.seed_source), ("sunset-walk", "i2v", 3, 42, "config_file"))
-        self.assertEqual((started.cooldown_seconds, started.cooldown_source, started.model, started.input), (900.0, "job", "base.ckpt", str(job.input)))
+        self.assertEqual((started.cooldown, started.cooldown_source, started.model, started.input), (CooldownPolicy(mode="manual", seconds=900.0), "job", "base.ckpt", str(job.input)))
         self.assertEqual((started.job_file, started.manifest, started.log, started.at), (str(job.path), str(outcome.manifest), str(outcome.log), "2026-09-24T15:30:12" + started.at[19:]))
         self.assertEqual(started.source_text, job.path.read_text(encoding="utf-8"))
         self.assertNotIn(started.source_text, repr(job))
@@ -575,10 +629,19 @@ class JobServiceTests(JobTestCase):
         self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), arguments.output.name, arguments.output.stem + "-last-frame.png"))
         self.assertEqual(first.command, tuple(GenerationService.redact_command(arguments.command)))
         self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, arguments.output.name, first.last_frame))
-        self.assertEqual((cooldown.after_run, cooldown.seconds, cooldown.until), (1, 900.0, "15:45:12"))
+        self.assertEqual((cooldown.after_run, cooldown.seconds, cooldown.until, cooldown.mode, cooldown.ratio, cooldown.run_seconds, cooldown.bound), (1, 900.0, "15:45:12", "manual", None, first_done.seconds, None))
         self.assertEqual((cooled.waited_seconds, cooled.cut_short), (900.0, False))
         finished = events[-1]
         self.assertEqual((finished.status, finished.exit_code, finished.completed_runs, finished.total_runs, finished.signal), ("succeeded", 0, 3, 3, None))
+
+    def test_auto_cooldown_events_say_why_the_wait_is_that_long(self) -> None:
+        self.fake_cooldown()
+        self.run_times(1440.0, 180.0, 60.0)
+        _outcome, events = self.observed(self.cooldown_job(cooldown={"mode": "auto", "minimum_seconds": 300}))
+        started = events[0]
+        self.assertEqual((started.cooldown, started.cooldown_source), (CooldownPolicy(mode="auto", minimum_seconds=300.0), "job"))
+        cooldowns = [event for event in events if isinstance(event, CooldownStarted)]
+        self.assertEqual([(event.after_run, event.seconds, event.mode, event.ratio, event.run_seconds, event.bound) for event in cooldowns], [(1, 720.0, "auto", 0.5, 1440.0, None), (2, 300.0, "auto", 0.5, 180.0, "minimum")])
 
     def test_events_for_failed_and_timed_out_runs(self) -> None:
         for result, status, exit_code in ((FakeResult(return_code=3), "failed", 3), (FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM), "timed_out", 124)):
@@ -672,7 +735,7 @@ class JobServiceTests(JobTestCase):
     def test_cancel_ends_a_real_cooldown_wait_at_once(self) -> None:
         self.service._cooldown = self.service._wait_for_cooldown
         open_fds = set(os.listdir("/dev/fd"))
-        thread, result = self.start_in_thread(self.cooldown_job(cooldown_seconds=60))
+        thread, result = self.start_in_thread(self.cooldown_job(cooldown={"mode": "manual", "seconds": 60}))
         self.wait_for_event(CooldownStarted)
         started = time.monotonic()
         self.assertTrue(self.service.cancel(signal.SIGINT))

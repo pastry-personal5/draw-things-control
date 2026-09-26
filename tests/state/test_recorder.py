@@ -47,7 +47,7 @@ class RecorderTests(JobTestCase):
         return self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records, observer=recorder or ExecutionRecorder(self.store))
 
     def test_an_execution_and_its_runs_match_the_manifest(self) -> None:
-        job = self.job(run_count=3, prompt_pairs=[{"name": "only", "positive": "text", "negative": "blurry"}], cooldown_seconds=30)
+        job = self.job(run_count=3, prompt_pairs=[{"name": "only", "positive": "text", "negative": "blurry"}], cooldown={"mode": "manual", "seconds": 30})
         outcome = self.run_recorded(job, write_records=True)
         manifest = json.loads(outcome.manifest.read_text(encoding="utf-8"))
         [row] = self.store.list_executions()
@@ -61,6 +61,15 @@ class RecorderTests(JobTestCase):
         for stored, recorded in zip(execution["runs"], manifest["runs"], strict=True):
             self.assertEqual((stored["pair"], stored["positive"], stored["negative"], stored["input"], stored["output"], stored["last_frame"], stored["command"], stored["started_at"], stored["seconds"], stored["exit_code"], stored["status"], stored["cooldown_after_seconds"]), (recorded["pair"], recorded["positive"], recorded["negative"], recorded["input"], recorded["output"], recorded["last_frame"], recorded["command"], recorded["started_at"], recorded["seconds"], recorded["exit_code"], recorded["status"], recorded["cooldown_after_seconds"]))
         self.assertEqual([run["cooldown_after_seconds"] for run in execution["runs"]], [30.0, 30.0, None])
+        self.assertEqual((execution["settings"]["cooldown"], manifest["cooldown"]), ({"mode": "manual", "seconds": 30.0}, {"mode": "manual", "seconds": 30.0}))
+
+    def test_an_auto_cooldown_is_recorded_as_its_mapping(self) -> None:
+        self.global_config = replace(self.global_config, cooldown=None)
+        self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False)
+        [row] = self.store.list_executions()
+        execution = self.store.get_execution(row["id"])
+        self.assertEqual((execution["cooldown_seconds"], execution["cooldown_source"]), (None, "default"))
+        self.assertEqual(execution["settings"]["cooldown"], {"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})
 
     def test_recording_does_not_depend_on_write_job_records(self) -> None:
         outcome = self.run_recorded(self.job(), write_records=False)

@@ -17,11 +17,11 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 ## Code style
 
-- **Line length is unlimited** (owner decision). `line-length = 65535` in both
-  `[tool.ruff]` and `[tool.black]`; keep the two equal and do not lower them
-  unless the owner revises the decision. Do not wrap lines to satisfy a
+- **Line length is unlimited** (owner decision). `line-length = 65535` in
+  `[tool.ruff]`, which both Ruff's linter and its formatter read; do not lower
+  it unless the owner revises the decision. Do not wrap lines to satisfy a
   limit.
-- **Black formats, Ruff lints** (owner decision). Ruff does not format.
+- **Ruff lints and formats** (owner decision). Black is not used.
 - PEP 8 otherwise; type hints where applicable; small, single-purpose
   functions.
 - Entry points use `def main()` and `if __name__ == "__main__":`.
@@ -41,8 +41,9 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `server` over HTTP only.
 - Imports are absolute (`from draw_things_control.core... import ...`).
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
-- `dt-config/*.json` and `config/global-config.yaml` are user files. Never
-  edit, delete, or deduplicate them from code, tests, or tools.
+- `dt-config/*.json`, `dt-config/*.yaml`, and `config/global-config.yaml`
+  are user files. Never edit, delete, or deduplicate them from code, tests,
+  or tools.
 - See [architecture.md](architecture.md) for module responsibilities.
 
 ## Testing and checks
@@ -51,9 +52,9 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `tests/`.
 - No test starts the real `draw-things-cli`; inject a fake runner.
 - Test files live in `tests/<subpackage>/`, each directory has an `__init__.py`, and shared helpers are in `tests/fixtures.py`.
-- `make check` runs Ruff, Black in check mode, and the tests. It must pass
+- `make check` runs Ruff's linter, Ruff's formatter in check mode, and the tests. It must pass
   before a change is committed.
-- `make format` applies Black.
+- `make format` applies Ruff's formatter.
 
 ## Documentation
 

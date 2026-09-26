@@ -89,6 +89,9 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
         "recovered_at": now if stale else None,
         "settings": {"config_file": manifest.get("config_file"), "config_override": manifest.get("config_override"), "input_resize": manifest.get("input_resize"), "cooldown_seconds": manifest.get("cooldown_seconds"), "cooldown_source": manifest.get("cooldown_source")},
     }
+    # Manifests from before the cooldown mapping have only cooldown_seconds, which means manual.
+    if isinstance(manifest.get("cooldown"), dict):
+        execution["settings"]["cooldown"] = manifest["cooldown"]
     epoch(execution["started_at"])
     if finished_at is not None:
         epoch(finished_at)

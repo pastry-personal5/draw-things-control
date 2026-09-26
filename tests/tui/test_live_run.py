@@ -32,7 +32,7 @@ from tests.fixtures import JobTestCase, job_data
 from tests.tui.fake_runs import FakeRuns
 from tests.tui.tui_case import TuiTestCase
 
-TWO_RUNS = {"run_count": 2, "prompt_pairs": [{"name": "walk", "positive": "walk", "runs": [1, 2]}], "cooldown_seconds": 0}
+TWO_RUNS = {"run_count": 2, "prompt_pairs": [{"name": "walk", "positive": "walk", "runs": [1, 2]}], "cooldown": {"mode": "off"}}
 
 
 class LiveRunTests(TuiTestCase):
@@ -103,7 +103,7 @@ class LiveRunTests(TuiTestCase):
         self.assertEqual([runner.grace for runner in runs.runners], [3, 3])
 
     async def test_the_confirmation_shows_the_job_and_n_cancels(self) -> None:
-        self.write_data_job(cooldown_seconds=30)
+        self.write_data_job(cooldown={"mode": "manual", "seconds": 30})
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:
@@ -231,7 +231,7 @@ class LiveRunTests(TuiTestCase):
         self.assertTrue(run_lock_is_free())
 
     async def test_stop_during_a_cooldown_ends_it_at_once(self) -> None:
-        self.write_data_job(cooldown_seconds=600)
+        self.write_data_job(cooldown={"mode": "manual", "seconds": 600})
         runs = FakeRuns()
         app = self.app(runs)
         async with app.run_test(size=(160, 60)) as pilot:

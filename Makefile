@@ -5,10 +5,10 @@ run:
 
 lint:
 	uv run --extra dev ruff check .
-	uv run --extra dev black --check .
+	uv run --extra dev ruff format --check .
 
 format:
-	uv run --extra dev black .
+	uv run --extra dev ruff format .
 
 test:
 	uv run python -m unittest discover -s tests -t . -v

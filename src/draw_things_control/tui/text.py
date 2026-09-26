@@ -9,9 +9,10 @@ from typing import Any
 
 from rich.text import Text
 
+from draw_things_control.core.global_config import parse_cooldown
 from draw_things_control.jobs.job_definition import JobDefinition
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted
-from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, seconds_text
+from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
 from draw_things_control.tui.history import is_imported, run_file
 from draw_things_control.tui.live_run import LiveRun
 
@@ -213,7 +214,11 @@ def event_text(event: JobEvent) -> Text | None:
             text.append(f": {event.output}")
         return text
     if isinstance(event, CooldownStarted):
-        return Text(f"Cooldown {duration_text(math.ceil(event.seconds))} before run {event.after_run + 1}, until {event.until}")
+        if event.mode == "auto" and event.ratio is not None and event.run_seconds is not None:
+            wait = auto_wait_text(event.seconds, event.ratio, event.after_run, event.run_seconds, event.bound)
+        else:
+            wait = duration_text(math.ceil(event.seconds))
+        return Text(f"Cooldown {wait} before run {event.after_run + 1}, until {event.until}")
     if isinstance(event, CooldownEnded):
         return Text(f"Cooldown cut short after {seconds_text(event.waited_seconds)}", style="yellow") if event.cut_short else None
     return None
@@ -250,13 +255,25 @@ def file_text(execution: dict[str, Any], name: str | None) -> str:
     return str(path) if path.exists() else f"{path} (missing)"
 
 
+def stored_cooldown_text(execution: dict[str, Any]) -> str:
+    """An execution's cooldown and source, from the resolved mapping when it was recorded, else the old seconds, which mean manual."""
+    source = f"({execution.get('cooldown_source') or '-'})"
+    mapping = (execution.get("settings") or {}).get("cooldown")
+    if isinstance(mapping, dict):
+        try:
+            return f"{policy_text(parse_cooldown(mapping, 'cooldown'))} {source}"
+        except ValueError:
+            pass
+    seconds = execution.get("cooldown_seconds")
+    return f"{seconds_text(seconds)} {source}" if seconds is not None else "-"
+
+
 def execution_text(execution: dict[str, Any]) -> Text:
     """One execution as it ran, from the stored row, and each of its runs; never the current job file."""
     text = Text(f"Execution {execution['id']}: {execution['job_name']}", style="bold")
     if is_imported(execution):
         text.append("  imported", style="yellow")
     text.append("\n")
-    cooldown = execution.get("cooldown_seconds")
     signal = f", stopped by {execution['signal']}" if execution.get("signal") else ""
     for label, value in (
         ("status", f"{execution['status']}, exit code {execution['exit_code'] if execution['exit_code'] is not None else '-'}{signal}"),
@@ -264,7 +281,7 @@ def execution_text(execution: dict[str, Any]) -> Text:
         ("mode", execution["mode"]),
         ("model", execution.get("model") or "-"),
         ("seed", f"{execution['seed']} ({execution.get('seed_source') or '-'})" if execution.get("seed") is not None else "-"),
-        ("cooldown", f"{seconds_text(cooldown)} ({execution.get('cooldown_source') or '-'})" if cooldown is not None else "-"),
+        ("cooldown", stored_cooldown_text(execution)),
         ("started", execution["started_at"]),
         ("finished", execution.get("finished_at") or "-"),
         ("manifest", execution.get("manifest_path") or "-"),

@@ -211,8 +211,8 @@ class TuiTests(TuiTestCase):
         self.assertIn(f"Job file: {self.data / 'walk.yml'}", exact)
 
     async def test_a_job_without_a_seed_shows_the_placeholder_seed(self) -> None:
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.json")
-        self.write_data_job("random.yaml", config_file="noseed.json", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])
+        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
+        self.write_data_job("random.yaml", config_file="noseed.yaml", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)

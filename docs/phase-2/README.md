@@ -24,6 +24,15 @@ processes from driving the GPU at once.
 - One-time import of existing manifests into the state store
 - Pruning of history older than 14 days (`history_retention_days` overrides
   it); database rows only, never output files
+- Base configurations in `dt-config/` written as YAML for people to edit;
+  the app converts them to the JSON `draw-things-cli` reads
+- A `cooldown` setting with an `auto` mode (a share of the last run's time,
+  half by default, within bounds; the default), a `manual` mode (a fixed
+  wait), and `off`, in the global configuration and job files
+- A status widget with the job's and the run's progress bars and estimated
+  end times, and an execution detail widget under the history with the
+  model, refiner, size, CFG, and shift, and each run's frames, steps, time, and a
+  link that reveals its output in Finder
 
 ## Non-goals
 
@@ -46,9 +55,12 @@ processes from driving the GPU at once.
 | 03 | [TUI shell and job browser](milestone-03-tui-job-browser.md) | done |
 | 04 | [Live run view](milestone-04-tui-live-run.md) | done |
 | 05 | [Command layout and execution history](milestone-05-tui-run-history.md) | done |
+| 06 | [YAML Draw Things configurations](milestone-06-yaml-dt-config.md) | done |
+| 07 | [Automatic cooldown](milestone-07-cooldown-auto.md) | done |
+| 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | planned |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
-both.
+both. 06 and 07 stand alone. 08 builds on 04 and 05.
 
 ## New dependencies
 
@@ -87,6 +99,16 @@ Decisions and notable changes are recorded in
   manifests.
 - No credential value (`--api-key`, `--remote-shared-secret`) reaches the
   state store or an event.
+- A job's base configuration is a YAML file in `dt-config/`, and
+  `draw-things-cli` is given JSON converted from it; no JSON file in
+  `dt-config/` is changed.
+- With `cooldown: {mode: auto}`, or no `cooldown` at all, the wait after
+  each run is `ratio` (default one half) of that run's time, within
+  `minimum_seconds` and `maximum_seconds`; the old `cooldown_seconds` key is
+  rejected with a message naming its replacement.
+- While a job runs, the TUI shows its progress and estimated end times,
+  and the history shows the model, refiner, size, CFG, and shift, and each run's
+  frames, steps, and time, with a link that reveals its output in Finder.
 - TUI screens are covered by headless tests; no test starts the real
   `draw-things-cli`.
 - `make check` passes.

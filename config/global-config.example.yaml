@@ -24,11 +24,27 @@ output_directory: ~/draw-things/output
 # outputs. Default: false (nothing but the generated files is written).
 write_job_records: false
 
-# Optional. Seconds every job waits after each successful run, before the
-# next, so long chains (especially video) do not overheat the machine. A job
-# file's own cooldown_seconds overrides it; a job sets 0 to skip the wait.
-# 0 to 3600. Default: 0 (no wait).
-cooldown_seconds: 900
+# Optional. How long every job waits after each successful run but the last,
+# so long chains (especially video) do not overheat the machine. A job file's
+# own cooldown mapping replaces this one as a whole. Seconds are 0 to 3600.
+# Default when neither file sets it: mode auto with the defaults below.
+#
+# auto: wait a share of the run that just finished, rounded up to a whole
+# second and kept between the two bounds. A 24-minute run waits 12 minutes.
+cooldown:
+  mode: auto
+  ratio: 0.5               # share of the last run's time, above 0 and up to 1; default 0.5
+  minimum_seconds: 300     # shortest wait; default 0
+  maximum_seconds: 1800    # longest wait; default 3600
+
+# manual: the same fixed wait after every run.
+# cooldown:
+#   mode: manual
+#   seconds: 900
+
+# off: no wait.
+# cooldown:
+#   mode: off
 
 # Optional. Execution history in state/dtc.db older than this many days is
 # pruned when a command opens it. Only database rows are removed, never output
