@@ -192,6 +192,30 @@ class StoreTests(StoreCase):
         remaining = self.store._connection().execute("SELECT COUNT(*) FROM runs").fetchone()[0]
         self.assertEqual(remaining, 2 + 1)
 
+    def test_prune_deletes_the_log_of_a_pruned_execution_only(self) -> None:
+        directory = Path(self._temporary.name)
+        logs = {name: directory / f"{name}.log" for name in ("old", "recent", "running")}
+        manifest = directory / "old.json"
+        for path in (*logs.values(), manifest):
+            path.write_text("x")
+        for name, (started, finished) in {"old": (iso(15.5), iso(15)), "recent": (iso(13.5), iso(13)), "running": (iso(40), None)}.items():
+            execution_id = self.add(name, started=started, finished=finished)
+            self.store._connection().execute("UPDATE executions SET log_path = ? WHERE id = ?", (str(logs[name]), execution_id)).connection.commit()
+        self.store.prune()
+        self.assertFalse(logs["old"].exists())
+        self.assertTrue(logs["recent"].exists())
+        self.assertTrue(logs["running"].exists())
+        self.assertTrue(manifest.exists())
+
+    def test_prune_ignores_a_missing_log_and_a_path_that_is_not_a_log(self) -> None:
+        other = Path(self._temporary.name) / "keep.png"
+        other.write_text("x")
+        for path in (Path(self._temporary.name) / "gone.log", other):
+            execution_id = self.add(path.name, started=iso(15.5), finished=iso(15))
+            self.store._connection().execute("UPDATE executions SET log_path = ? WHERE id = ?", (str(path), execution_id)).connection.commit()
+        self.assertEqual(self.store.prune(), 2)
+        self.assertTrue(other.exists())
+
     def test_prune_compares_instants_across_offsets(self) -> None:
         # The cutoff is 2026-09-11T12:00Z. The first instant is 11:00Z (text looks later, so text comparison would keep it); the second is 22:00Z (text looks earlier, so it would prune it).
         expired = self.add("expired", started=iso(15), finished="2026-09-12T01:00:00+14:00")

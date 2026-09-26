@@ -5,6 +5,10 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-26
 
+- **Change**: Pruning history also deletes the `.log` file of each pruned execution, so `history_retention_days` now bounds the logs too.
+  - Only a regular file named `*.log` that a pruned row points to is deleted. Manifests and outputs stay, and a failed delete is a warning, not an error.
+  - Alternatives: a separate log-only age setting, and deleting by file age in the output directory. Both were rejected: the first adds a second knob for one policy, and the second could delete logs the history still lists or files it never wrote.
+
 - **Owner decision** [M10]: The TUI command `/run` is renamed `/apply`. It still reads the job again, confirms, and runs it, and takes a job ID or a file name. `/run` is no longer a command.
 
 - **Change** [M10]: The Job Definition widget no longer polls.

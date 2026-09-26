@@ -23,7 +23,8 @@ processes from driving the GPU at once.
   job, watch it live, and review past runs
 - One-time import of existing manifests into the state store
 - Pruning of history older than 14 days (`history_retention_days` overrides
-  it); database rows only, never output files
+  it); database rows and the pruned executions' `.log` files, never outputs or
+  manifests
 - Base configurations in `data/params/` written as YAML for people to edit;
   the app converts them to the JSON `draw-things-cli` reads
 - A `cooldown` setting with an `auto` mode (a share of the last run's time,

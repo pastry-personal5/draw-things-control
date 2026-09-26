@@ -638,8 +638,9 @@ log. A `--dry-run` needs no ID. The executions already recorded before
 execution IDs existed were numbered by start time, oldest first.
 
 - History older than `history_retention_days` (default 14) is pruned whenever a
-  command opens the database. Only database rows are removed, never outputs,
-  manifests, or logs.
+  command opens the database. The rows are removed, and so is each pruned
+  execution's `.log` file; outputs and manifests are never removed. A log with
+  no history row, such as one from before the database existed, is left alone.
 - If a run is killed, its record stays `running` until the next run starts,
   which closes it as `interrupted`.
 - To bring in manifests written before the database existed (jobs run with

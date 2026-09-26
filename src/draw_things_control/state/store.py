@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from draw_things_control.core.run_lock import ensure_state_directory
 
 DATABASE_FILE_NAME = "dtc.db"
@@ -95,6 +97,16 @@ SCHEMA_VERSION = len(MIGRATIONS)
 
 EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at")
 RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames")
+
+
+def _delete_log(path: Path) -> None:
+    """Delete a pruned execution's log file. Only a regular ``.log`` file goes, and a file already gone or refused is no error: the row is deleted either way."""
+    if path.suffix != ".log" or path.is_symlink():
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        logger.warning("Could not delete the old log {}: {}", path, error.strerror)
 
 
 class StateError(Exception):
@@ -299,12 +311,17 @@ class Store:
             return cursor.rowcount
 
     def prune(self) -> int:
-        """Delete executions (and their runs) finished before the retention cutoff; never a ``running`` one. Rows only."""
+        """Delete executions (and their runs) finished before the retention cutoff; never a ``running`` one. Their ``.log`` files are deleted too, never their manifests or outputs."""
         if self._retention_days <= 0:
             return 0
         cutoff = self._clock().timestamp() - self._retention_days * SECONDS_PER_DAY
+        condition = "status != 'running' AND finished_epoch IS NOT NULL AND finished_epoch < ?"
         with self._transaction() as connection:
-            return connection.execute("DELETE FROM executions WHERE status != 'running' AND finished_epoch IS NOT NULL AND finished_epoch < ?", (cutoff,)).rowcount
+            log_paths = [row[0] for row in connection.execute(f"SELECT log_path FROM executions WHERE {condition} AND log_path IS NOT NULL", (cutoff,))]
+            deleted = connection.execute(f"DELETE FROM executions WHERE {condition}", (cutoff,)).rowcount
+        for log_path in log_paths:
+            _delete_log(Path(log_path))
+        return deleted
 
     def retention_cutoff(self) -> float | None:
         """The UTC epoch before which history is pruned, or None when it is kept forever."""
