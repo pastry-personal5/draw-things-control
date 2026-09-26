@@ -15,7 +15,7 @@ GPU; an MCP server gives agents typed tools on top of it.
 - Restart handling and an explicit resume for interrupted jobs
 - An HTTP API (`dtc serve`) with bearer-token auth, job control, history,
   and a live event stream
-- Job file management for agents: create, edit, and delete jobs in `data/`,
+- Job file management for agents: create, edit, and delete jobs in `data/jobs/`,
   behind an explicit write flag, with backups and a trash folder
 - An MCP server (`dtc mcp`) that is a thin client of the HTTP API
 - Limits on submissions, path confinement, redaction, and an audit log
@@ -23,7 +23,7 @@ GPU; an MCP server gives agents typed tools on top of it.
 
 ## Non-goals
 
-- Editing `config/global-config.yaml` or `dt-config/*.json` through any
+- Editing `config/global-config.yaml` or `data/params/*.json` through any
   interface
 - Parallel generation, remote or multi-user hosting, or a public network
   bind
@@ -85,7 +85,7 @@ Decisions and notable changes are recorded in
 - The server holds the run lock while it is up, so nothing else starts a run.
 - The server restarts without losing the queue: queued jobs run, interrupted
   jobs are marked, and an explicit resume continues one.
-- Invalid or out-of-bounds input (bad names, paths outside `data/` or the
+- Invalid or out-of-bounds input (bad names, paths outside `data/jobs/` or the
   input directory, oversized jobs) is rejected with an error naming the
   field, and touches nothing.
 - Write tools do not exist unless the server was started with the write flag.

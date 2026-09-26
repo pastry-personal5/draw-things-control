@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from draw_things_control.core.configuration import load_config
-from draw_things_control.core.generation_config import DT_CONFIG_DIRECTORY, build_config_json, find_config_file, load_base_config
+from draw_things_control.core.generation_config import PARAMS_DIRECTORY, build_config_json, find_config_file, load_base_config
 
 
 class GenerationConfigTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class GenerationConfigTests(unittest.TestCase):
         return path
 
     def test_config_directory_is_the_repository_folder(self) -> None:
-        self.assertEqual(DT_CONFIG_DIRECTORY, Path(__file__).resolve().parents[2] / "dt-config")
+        self.assertEqual(PARAMS_DIRECTORY, Path(__file__).resolve().parents[2] / "data" / "params")
 
     def test_bare_yaml_name_is_found_in_the_directory(self) -> None:
         for name in ("base.yaml", "base.yml", "BASE.YML"):
@@ -32,7 +32,7 @@ class GenerationConfigTests(unittest.TestCase):
                 self.assertEqual(load_base_config(name, self.directory), {"model": "m.ckpt"})
 
     def test_paths_are_rejected(self) -> None:
-        for name in ("../pyproject.toml", "dt-config/x.yaml", "/etc/hosts", ".."):
+        for name in ("../pyproject.toml", "params/x.yaml", "/etc/hosts", ".."):
             with self.subTest(name), self.assertRaisesRegex(ValueError, "not a path"):
                 find_config_file(name)
 
@@ -115,9 +115,9 @@ class GenerationConfigTests(unittest.TestCase):
         self.assertEqual(load_config(path)["loras"], [{"file": "l.ckpt", "weight": 0.5}] * 2)
 
     def test_the_example_yaml_configuration_equals_its_json_file(self) -> None:
-        # Reads dt-config/ only. The untracked -default files are the owner's to change, so only the tracked example is compared.
+        # Reads data/params/ only. The untracked -default files are the owner's to change, so only the tracked example is compared.
         name = "image-to-video-wan-2-2.example"
-        json_config, yaml_config = load_config(DT_CONFIG_DIRECTORY / f"{name}.json"), load_config(DT_CONFIG_DIRECTORY / f"{name}.yaml")
+        json_config, yaml_config = load_config(PARAMS_DIRECTORY / f"{name}.json"), load_config(PARAMS_DIRECTORY / f"{name}.yaml")
         self.assertEqual(yaml_config, json_config)
         self.assertEqual(list(yaml_config), list(json_config))
 

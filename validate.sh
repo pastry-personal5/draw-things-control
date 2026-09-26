@@ -2,4 +2,4 @@
 
 uv run dtc \
 validate-job \
-./data/duo.yaml 
+./data/jobs/duo.yaml 

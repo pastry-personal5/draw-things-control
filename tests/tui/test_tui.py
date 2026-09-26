@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 import signal
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from typer.testing import CliRunner
 from draw_things_control.cli import app as cli
 from draw_things_control.core.global_config import PROJECT_ROOT
 from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_report import plan_lines
+from draw_things_control.jobs.job_report import plan_header, plan_steps
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
@@ -186,7 +187,7 @@ class TuiTests(TuiTestCase):
                     self.assertEqual(self.since("/describe job walk"), [f"No job file 'walk' in {directory}"])
 
     async def test_job_prints_the_summary_pairs_and_the_dry_run_plan(self) -> None:
-        path = self.write_data_job("walk.yaml", run_count=3, prompt_pairs=[{"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "runs": [2]}])
+        path = self.write_data_job("walk.yaml", run_count=3, prompt_pairs=[{"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "runs": [2]}], cooldown={"mode": "manual", "seconds": 60})
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
@@ -197,11 +198,27 @@ class TuiTests(TuiTestCase):
         self.assertIn("  runs: 3 (walk, wave, walk)", shown)
         self.assertIn("  seed: 42 (config_file)", shown)
         self.assertIn("walk: runs 1, 3", shown)
-        self.assertIn("  negative: blurry", shown)
+        self.assertIn("\nnegative:\nblurry\n", shown)
         self.assertIn("wave: run 2", shown)
-        # The same plan run-job --dry-run prints for this file, with the same output names.
-        expected = plan_lines(load_job(path, self.global_config), make_service().preview(load_job(path, self.global_config), executable="draw-things-cli"))
-        self.assertEqual(shown.split("Dry-run plan\n\n")[1].splitlines(), expected)
+        # The plan run-job --dry-run prints for this file, from the same steps and with the same output names, in words:
+        # its header without "# ", then each run's wait, heading, and arguments as a table instead of its command line.
+        job = load_job(path, self.global_config)
+        preview = make_service().preview(job, executable="draw-things-cli")
+        plan = shown.split("Dry-run plan\n\n")[1]
+        header = "".join(f"{line}\n" for line in plan_header(job, preview))
+        self.assertTrue(plan.startswith(f"{header}Executable: draw-things-cli\n"), plan)
+        steps = plan_steps(job, preview)
+        self.assertEqual([step.cooldown is not None for step in steps], [False, True, True])
+        for step in steps:
+            if step.cooldown is not None:
+                self.assertIn(f"\n{step.cooldown}\n\n{step.heading}: ", plan)
+            self.assertIn(f"\n{step.heading}: {step.run.output}\n", plan)
+            self.assertRegex(plan, rf"\n  --output\s+{re.escape(str(step.run.output))}(\n|$)")
+        # Run 1 in full; the later runs only what changed since the run before.
+        self.assertIn("\n--config-json\n", plan)
+        self.assertEqual((plan.count("Arguments as run 1, except:"), plan.count("Arguments as run 2, except:")), (1, 1))
+        self.assertNotIn("draw-things-cli generate", shown)
+        self.assertNotIn('{"', shown)
         self.assertNotIn("placeholder", shown)
 
     async def test_a_job_name_without_its_suffix_must_be_unique(self) -> None:
@@ -225,7 +242,7 @@ class TuiTests(TuiTestCase):
         self.assertIn("  seed: random (drawn when the job starts)", shown)
         self.assertIn("placeholder seed 0", shown)
         self.assertIn("seed 0 (random)", shown)
-        self.assertIn("--seed 0 ", shown)
+        self.assertRegex(shown, r"\n  --seed\s+0\s")
 
     async def test_an_invalid_job_shows_only_its_error(self) -> None:
         self.write_data_job("bad.yaml", mode="t2i")
@@ -268,7 +285,7 @@ class TuiTests(TuiTestCase):
             await self.settle(pilot)
             shown = await self.show(pilot, "walk")
         self.assertNotIn("Could not find", shown)
-        self.assertIn("/opt/local/draw-things-cli generate", shown)
+        self.assertIn("\nExecutable: /opt/local/draw-things-cli\n", shown)
 
     async def test_each_job_command_reads_the_file_again(self) -> None:
         self.write_data_job("walk.yaml")
@@ -463,7 +480,7 @@ class TuiCommandTests(JobTestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             run.assert_called_once_with()
             options = init.call_args.kwargs
-            self.assertEqual(options["data_directory"], PROJECT_ROOT / "data")
+            self.assertEqual(options["data_directory"], PROJECT_ROOT / "data" / "jobs")
             self.assertEqual(options["executable"], "/opt/dtc/cli")
             self.assertEqual(options["settings"].output_directory, self.output_directory)
             self.assertIsInstance(options["job_service"], JobService)

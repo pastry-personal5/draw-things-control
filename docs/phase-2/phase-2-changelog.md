@@ -5,6 +5,46 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-26
 
+- **Change** [M08, M09]: Fixes from a third code review, all made at the owner's request.
+  - A `--config-json` value is written one to one: every list is in brackets and every mapping in braces, and an empty list is `[]` and an empty mapping `{}`. A mapping key that is not a plain name is quoted. This supersedes the earlier forms, where a one-item list read like its item and null, `[]`, and `{}` all read `(none)`. Because of those forms, "only what changed" could hide a change such as `[]` becoming null.
+  - `JobPreview` holds each run's redacted command once, in `commands`, which is required. `command_previews` is derived from it with `shlex.join`, so `preview` no longer runs a dry-run `execute` per run.
+  - `plan_header` and `plan_steps` return text without `# `, and `plan_lines` adds it for the CLI. The TUI keeps the `PlanStep`s themselves, so `PlannedCommand` is gone.
+  - The last run a `/run` message is compared with is kept on the job's `LiveRun`, which each job starts afresh, instead of on the screen. A run without a command is never kept.
+  - Each run's argument rows are built once and carried to the next run for the comparison. `details_text` and `plan_text` take the valid job from their caller, without unreachable `No job` branches.
+
+- **Owner decision**: The Draw Things configurations move from `dt-config/` to `data/params/`, and the job files from `data/` to `data/jobs/`. `dt-config/` is removed. From the interview:
+  - The tools read fixed paths: `data/params/` for `config_file`, and `data/jobs/` as the default `--data-dir`. There is no fallback to the old places. Global configuration keys for both directories were offered.
+  - The rule never to edit, delete, or deduplicate the configurations now covers `data/params/*.json` and `data/params/*.yaml`; this move was the one-time exception. Extending it to `data/jobs/`, or dropping it, was offered.
+  - Tracked files moved with `git mv`, and the rest as files. `.gitignore` ignores the `-default` files under `data/params/`.
+  - The code names follow: `PARAMS_DIRECTORY` and `params_directory` replace `DT_CONFIG_DIRECTORY` and `dt_config_directory`. The current documents, scripts, and the example job's comments use the new paths; past changelog entries and done milestones stay as written.
+
+- **Owner decision** [M08, M09]: From an interview after a second code review.
+  - All ten findings are fixed.
+  - A `--config-json` text value is always quoted: `"wan.ckpt"`, `""`, `"true"`. This supersedes the earlier words for text, `(empty)` and unquoted text, which could not be told from `true`, `false`, or `(none)`. Quoting only ambiguous text, or keeping JSON for nested values, was offered.
+  - A width and height set by `desired_input_width` or `desired_input_height` are marked `desired input size`, not `job override`. No note was offered.
+  - From run 2 on, `/run`, `/execution`, and `/describe job` show only the arguments that changed since the run before; `/get param` still shows one run in full. Keeping every table in full, or collapsing only in `/run` and `/describe job`, was offered.
+- **Change** [M08, M09]: Fixes from the second review.
+  - Nested values are written with braces and brackets (`size={w=2 h=3}`, `[1, 2]`), so a mapping inside a mapping is no longer flattened.
+  - `/describe job` and `run-job --dry-run` read the plan from the same steps, `plan_header` and `plan_steps` in `jobs/job_report.py`. The TUI takes each run's redacted command as arguments from the new `JobPreview.commands` instead of splitting its preview line, and names the executable it was given.
+  - The Status widget reads the execution ID again at every job event, so it drops the ID when the state store stops recording the job.
+  - The `/describe job` test covers cooldown lines in the plan.
+  - `job_file_stem` in `tui/text.py` is renamed `job_display_name` and uses `is_yaml_file`. `plan_text` takes only the job details. `execution_notes` computes an execution's notes once.
+
+- **Owner decision** [M09]: `/execution` and `/describe job` get the same treatment as a `/run` run. They show prompts laid out as `/get prompts` lays them out, and arguments as the `/get param` table with the overrides marked. They no longer show a command line or bare JSON.
+- **Design decision** [M09]: How the two commands use the table.
+  - `/describe job` builds its plan from the same preview as `run-job --dry-run`. The header drops the `# `, and each run's command becomes its heading and a table, parsed from the redacted command preview. A new header line, `Executable:`, names the executable, since the table leaves it out. The prompts appear once, under the prompt pairs, not again for each run. `run-job --dry-run` in the CLI is unchanged.
+  - `/execution` shows each run's prompts after its steps, and its table last, with the overrides taken from the stored `config_override`.
+
+- **Owner decision** [M09]: When a run of `/run` starts, Messages shows the run's positive and negative prompts and its argument table with the job's overrides marked, instead of the `draw-things-cli` command line with its bare `--config-json`. No JSON is shown.
+- **Design decision** [M09]: The run's table is the `/get param` table, from one function, `arguments_table`, so the two cannot differ. A `--config-json` value is written in words in both:
+  - an empty text as `(empty)`, and null or an empty list or mapping as `(none)`;
+  - a mapping as `key=value` pairs, and a list's items separated by commas, or by `; ` between mappings, such as LoRAs.
+
+  The earlier `""` and `[]` of `/get param` are superseded. The full table is shown for every run; showing only what changed since the previous run was left for later.
+- **Change**: `dt-config/image-to-video-wan-2-2.example.json` is written again from `dt-config/image-to-video-wan-2-2.example.yaml`, at the owner's request, so the test that compares the two passes. `dt-config/image-to-video-wan-2-2-default.json` was already gone.
+
+- **Owner decision** [M08]: Status line 1 shows the execution's ID and the job file's name without `.yaml` (or `.yml`), for example `running  execution 12: walk  run 2/3`. This follows the `Execution 12: walk` form of the history and `/get`. The ID appears once the state store has recorded the job, from `JobStarted` on, and stays after the job ends. It is left out while the job starts, and when it is not recorded (`did not start`).
+
 - **Owner decision** [M08, M09]: From an interview after the review fixes.
   - At the first step report, a past run whose step count differs from the counter's total gives its whole time less the time elapsed. Rescaling by a saved `strength`, or showing `estimating` until the live rate, was offered.
   - The manifest importer reads a size or frame count written as text of digits (`"832"`), by the one rule every source now shares. Rejecting text in manifests only was offered.

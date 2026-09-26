@@ -42,7 +42,7 @@ class RecorderTests(JobTestCase):
         return FakeRunner(arguments, self.results.get(self.calls, FakeResult()), write_output=True)
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.dt_config)
+        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def run_recorded(self, job: JobDefinition, *, write_records: bool, recorder: ExecutionRecorder | None = None):
         return self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records, observer=recorder or ExecutionRecorder(self.store))

@@ -38,7 +38,7 @@ def main() -> int:
         while app.live is None:
             await asyncio.sleep(0.02)
 
-    with mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", root / "dt-config"), mock.patch("draw_things_control.core.run_lock.STATE_DIRECTORY", root / "state"):
+    with mock.patch("draw_things_control.core.generation_config.PARAMS_DIRECTORY", root / "params"), mock.patch("draw_things_control.core.run_lock.STATE_DIRECTORY", root / "state"):
         app.run(headless=True, auto_pilot=start_job)
     return app.return_code or 0
 

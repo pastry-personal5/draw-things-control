@@ -342,6 +342,9 @@ class DrawThingsApp(App[None]):
 
     def on_job_event_message(self, message: JobEventMessage) -> None:
         if self.live is not None:
+            # Read again at every event: the recorder wrote the row before JobStarted was posted, and it says None from the
+            # moment the store fails, so the Status widget never names a row that stopped being recorded.
+            self.live.execution_id = self.execution_id
             self.live.apply(message.event)
             if self.main is not None:
                 self.main.job_event(message.event)

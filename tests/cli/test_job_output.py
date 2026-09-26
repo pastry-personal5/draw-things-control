@@ -35,7 +35,7 @@ class JobOutputTests(JobTestCase):
         self.job_path = self.write_job(job_data(run_count=3, prompt_pairs=pairs, input="photo.jpg", desired_input_width=850, config_file="batch.yaml", config_override={"steps": 8}))
         numbers = itertools.count(1000)
         service = JobService(runner_factory=mock.Mock(), find_executable=lambda executable: executable, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg", clock=lambda: datetime(2026, 9, 24, 15, 30, 12), random_number=lambda: next(numbers), random_seed=lambda: 777)
-        for patcher in (mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config), mock.patch.object(cli, "job_service", service)):
+        for patcher in (mock.patch("draw_things_control.core.generation_config.PARAMS_DIRECTORY", self.params), mock.patch.object(cli, "job_service", service)):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.logged: list[str] = []

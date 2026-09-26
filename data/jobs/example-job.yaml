@@ -1,12 +1,12 @@
 # Example job for draw-things-control (job format version 1).
 #
-# Validate:  uv run python main.py validate-job data/example-job.yaml
-# Preview:   uv run python main.py run-job data/example-job.yaml --dry-run
-# Run:       uv run python main.py run-job data/example-job.yaml
+# Validate:  uv run dtc validate-job data/jobs/example-job.yaml
+# Preview:   uv run dtc run-job data/jobs/example-job.yaml --dry-run
+# Run:       uv run dtc run-job data/jobs/example-job.yaml
 #
 # Relative paths: `input` is read from the global input_directory, and
 # `output.directory` is created under the global output_directory.
-# `config_file` is a file name only; the app finds it in dt-config/.
+# `config_file` is a file name only; the app finds it in data/params/.
 # See docs/archive/phase-1/milestone-01-job-definition-batch.md for every rule.
 
 version: 1
@@ -46,7 +46,7 @@ output:
   # with the last frame saved as sunset-walk-<YYYYmmdd-HHMMSS>-<NNNN>-last-frame.png,
   # and the job manifest and log as sunset-walk-<YYYYmmdd-HHMMSS>-job.json and -job.log.
 
-# Base configuration for every run: dt-config/image-to-video-wan-2-2.example.yaml.
+# Base configuration for every run: data/params/image-to-video-wan-2-2.example.yaml.
 # It must be a YAML file (.yaml or .yml); a .json name is rejected.
 config_file: image-to-video-wan-2-2.example.yaml
 

@@ -55,7 +55,7 @@ Out of scope:
 |-----------------|---------|
 | `GET /health` | Liveness (no auth): server up, version |
 | `GET /capabilities` | Whether writes are enabled, limits in force |
-| `GET /jobs` | Jobs in `data/`: name, mode, runs, validity and first error |
+| `GET /jobs` | Jobs in `data/jobs/`: name, mode, runs, validity and first error |
 | `GET /jobs/{name}` | The resolved job (prompt pairs, cooldown and source) |
 | `POST /jobs/{name}/validate` | Validate the file on disk |
 | `GET /jobs/{name}/preview` | The dry-run plan, commands redacted |

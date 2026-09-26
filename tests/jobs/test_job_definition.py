@@ -17,7 +17,7 @@ from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 class JobDefinitionTests(JobTestCase):
     def load(self, **changes: object):
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.dt_config)
+        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def assert_invalid(self, field: str, **changes: object) -> None:
         with self.assertRaisesRegex(ValueError, field):
@@ -88,15 +88,15 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("run_timeout_seconds", run_timeout_seconds=0)
 
     def test_config_file_must_name_a_yaml_file(self) -> None:
-        (self.dt_config / "base.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
-        (self.dt_config / "only.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
+        (self.params / "base.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
+        (self.params / "only.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")
         self.assert_invalid(r"'config_file' base\.json is JSON; name base\.yaml instead", config_file="base.json")
         self.assert_invalid(r"'config_file' only\.json is JSON, but a job needs a YAML configuration; write only\.yaml", config_file="only.json")
         self.assert_invalid(r"must name a YAML file \(\.yaml or \.yml\)", config_file="base.txt")
         self.assertEqual(self.load(config_file="base.yaml").config_file, "base.yaml")
 
     def test_invalid_yaml_base_configuration_is_a_validation_error(self) -> None:
-        (self.dt_config / "twice.yml").write_text("model: a\nmodel: b\n", encoding="utf-8")
+        (self.params / "twice.yml").write_text("model: a\nmodel: b\n", encoding="utf-8")
         self.assert_invalid(r"twice\.yml \(key 'model' appears twice on line 2\)", config_file="twice.yml")
 
     def test_invalid_overrides_name_the_key(self) -> None:
@@ -208,7 +208,7 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640, desired_input_height=448)
         # A real run writes the copy right away, which decodes the input, so it skips this decode.
-        load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.dt_config, decode_input=False)
+        load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.params, decode_input=False)
 
     def test_loading_a_job_does_not_import_the_resizer(self) -> None:
         code = "import sys, draw_things_control.jobs.job_definition; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"

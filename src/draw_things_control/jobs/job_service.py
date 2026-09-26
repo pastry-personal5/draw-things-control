@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shlex
 import signal
 import struct
 import threading
@@ -79,7 +80,13 @@ class JobPreview:
     seed: int
     seed_source: str
     runs: tuple[PlannedRun, ...]
-    command_previews: tuple[str, ...]
+    # Each run's command as arguments, credentials redacted, in run order.
+    commands: tuple[tuple[str, ...], ...]
+
+    @property
+    def command_previews(self) -> tuple[str, ...]:
+        """Each run's redacted command as one line a shell can read, as the dry run prints it."""
+        return tuple(shlex.join(command) for command in self.commands)
 
 
 @dataclass
@@ -180,8 +187,9 @@ class JobService:
             reserved.update(path for path in (run.output, run.last_frame) if path is not None)
             runs.append(run)
             current_input = run.last_frame or run.output
-        previews = tuple(self._generation.execute(run.arguments, dry_run=True, timeout=job.run_timeout_seconds, shutdown_grace=0).command_preview or "" for run in runs)
-        return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), command_previews=previews)
+        # The job's timeout was checked when it was loaded, so each command only needs its credentials redacted.
+        commands = tuple(tuple(GenerationService.redact_command(run.arguments.command)) for run in runs)
+        return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), commands=commands)
 
     def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None, on_child_start: ChildStartCallback | None = None) -> JobOutcome:
         """Run the job's runs in order; stop at the first failed, timed-out, or interrupted run.

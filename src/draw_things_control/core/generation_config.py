@@ -7,14 +7,15 @@ from typing import Any
 
 from draw_things_control.core.configuration import YAML_SUFFIXES, is_yaml_file, load_config
 
-DT_CONFIG_DIRECTORY = Path(__file__).resolve().parents[3] / "dt-config"
+# The Draw Things configurations a job names in config_file: data/params/ in the repository.
+PARAMS_DIRECTORY = Path(__file__).resolve().parents[3] / "data" / "params"
 
 # Job override keys that draw-things-cli has no flag for, and their Draw Things names.
 CONFIG_ONLY_KEYS = {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift"}
 
 
-def find_config_file(name: str, directory: Path = DT_CONFIG_DIRECTORY) -> Path:
-    """Resolve a bare configuration file name inside the dt-config directory."""
+def find_config_file(name: str, directory: Path = PARAMS_DIRECTORY) -> Path:
+    """Resolve a bare configuration file name inside the params directory (data/params/)."""
     if not name or "/" in name or "\\" in name or name in {".", ".."} or ".." in Path(name).parts:
         raise ValueError(f"'config_file' must be a file name in {directory}, not a path: {name}")
     if Path(name).suffix.lower() == ".json":
@@ -38,7 +39,7 @@ def _json_config_message(name: str, directory: Path) -> str:
     return f"'config_file' {name} is JSON, but a job needs a YAML configuration; write {stem}.yaml in {directory} (the JSON file is left as it is)"
 
 
-def load_base_config(name: str, directory: Path = DT_CONFIG_DIRECTORY) -> dict[str, Any]:
+def load_base_config(name: str, directory: Path = PARAMS_DIRECTORY) -> dict[str, Any]:
     """Load the named YAML base configuration as an object JSON can hold."""
     return load_config(find_config_file(name, directory))
 

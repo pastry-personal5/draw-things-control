@@ -121,7 +121,7 @@ class JobServiceTests(JobTestCase):
         png.write_bytes(b"png")
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.dt_config)
+        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def run_job(self, job: JobDefinition, write_records: bool = True):
         return self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records)
@@ -230,12 +230,12 @@ class JobServiceTests(JobTestCase):
 
     def test_a_yaml_base_configuration_plans_the_config_json_of_the_equal_json_file(self) -> None:
         text = "# Wan 2.2\nmodel: base.ckpt\nrefinerModel: base-refiner.ckpt\nrefinerStart: 0.2\nwidth: 832\nheight: 448\nseed: 42\nsteps: 30\nshift: 3.99\nfaceRestoration: ''\ncolorCalibration: none\ncontrols: []\nloras: [{file: l.ckpt, weight: 0.6}]\nhiresFix: false\n"
-        (self.dt_config / "wan.yaml").write_text(text, encoding="utf-8")
+        (self.params / "wan.yaml").write_text(text, encoding="utf-8")
         json_config = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30, "shift": 3.99, "faceRestoration": "", "colorCalibration": "none", "controls": [], "loras": [{"file": "l.ckpt", "weight": 0.6}], "hiresFix": False}
-        (self.dt_config / "wan.json").write_text(json.dumps(json_config, indent=2), encoding="utf-8")
+        (self.params / "wan.json").write_text(json.dumps(json_config, indent=2), encoding="utf-8")
         yaml_job = self.job(config_file="wan.yaml", config_override={"steps": 8, "shift": 5.0})
         # Before YAML, a job's base_config was the JSON file's object; the plan must not change.
-        json_job = replace(yaml_job, base_config=json.loads((self.dt_config / "wan.json").read_text(encoding="utf-8")))
+        json_job = replace(yaml_job, base_config=json.loads((self.params / "wan.json").read_text(encoding="utf-8")))
         yaml_plan, json_plan = (self.service.preview(job, executable="draw-things-cli", seed=1) for job in (yaml_job, json_job))
         self.assertEqual([run.arguments.config_json for run in yaml_plan.runs], [run.arguments.config_json for run in json_plan.runs])
         self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', yaml_plan.runs[0].arguments.config_json)

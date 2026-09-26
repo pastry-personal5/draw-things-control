@@ -38,16 +38,16 @@ def job_data(**changes: Any) -> dict[str, Any]:
 
 
 class JobTestCase(unittest.TestCase):
-    """Creates input, output, and dt-config directories under a temporary root."""
+    """Creates input, output, and params directories under a temporary root."""
 
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
         self.root = Path(self._temporary.name).resolve()
         self.input_directory = self.root / "input"
         self.output_directory = self.root / "output"
-        self.dt_config = self.root / "dt-config"
+        self.params = self.root / "params"
         self.input_directory.mkdir()
-        self.dt_config.mkdir()
+        self.params.mkdir()
         # No cooldown unless a test sets one: the default auto cooldown would follow a fake run with a wait of 0 or 1 second, by chance.
         self.global_config = GlobalConfig(input_directory=self.input_directory, output_directory=self.output_directory, cooldown=CooldownPolicy(mode="off"))
         self.write_base_config(BASE_CONFIG)
@@ -57,7 +57,7 @@ class JobTestCase(unittest.TestCase):
         self._temporary.cleanup()
 
     def write_base_config(self, config: dict[str, Any], name: str = "base.yaml") -> Path:
-        path = self.dt_config / name
+        path = self.params / name
         path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
         return path
 

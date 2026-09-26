@@ -132,7 +132,7 @@ class JobTaggingTests(JobTestCase):
         )
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.dt_config)
+        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def test_each_video_is_tagged_before_its_last_frame_is_extracted(self) -> None:
         outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)

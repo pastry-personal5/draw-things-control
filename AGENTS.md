@@ -24,7 +24,7 @@ application through the locally installed `draw-things-cli`. Phase 1 (CLI and jo
 
 - `uv sync` to install; run with `uv run dtc`; never `pip install`.
 - **Line length is unlimited** (owner decision): `line-length = 65535` in Ruff, for linting and formatting. Do not wrap lines to satisfy a limit.
-- **Never edit, delete, or deduplicate `dt-config/*.json` or `dt-config/*.yaml`.**
+- **Never edit, delete, or deduplicate `data/params/*.json` or `data/params/*.yaml`.**
 - `make check` must pass; `make format` applies Ruff's formatter. Tests use `unittest` and Typer's `CliRunner`, and never start the real `draw-things-cli`.
 - Use the Context7 MCP tools for current library, framework, SDK, or CLI documentation. Not for refactoring, scripts from scratch, business-logic debugging, code review, or general programming concepts.
 - Architecture rules: front ends call services and observe events, never parse logs; one `draw-things-cli` at a time; no credentials in events, storage, logs, or responses.

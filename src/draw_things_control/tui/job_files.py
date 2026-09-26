@@ -7,7 +7,7 @@ from pathlib import Path
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_definition import JobDefinition
-from draw_things_control.jobs.job_report import PLACEHOLDER_SEED, job_files, plan_lines, read_job
+from draw_things_control.jobs.job_report import PLACEHOLDER_SEED, PlanStep, job_files, plan_header, plan_steps, read_job
 from draw_things_control.jobs.job_service import JobService
 
 
@@ -22,12 +22,13 @@ class JobRow:
 
 @dataclass(frozen=True)
 class JobDetails:
-    """What /describe job prints: the job or its error, and the plan or why there is none."""
+    """What /describe job prints: the job or its error, and the plan (its header lines, then each run) or why there is none."""
 
     job: JobDefinition | None
     error: str | None = None
     plan: tuple[str, ...] | None = None
     plan_error: str | None = None
+    runs: tuple[PlanStep, ...] = ()
 
 
 def error_text(path: Path, error: Exception) -> str:
@@ -69,7 +70,9 @@ def add_plan(details: JobDetails, service: JobService, executable: str) -> JobDe
         preview = service.preview(details.job, executable=executable, seed=PLACEHOLDER_SEED)
     except (ValueError, OSError) as error:
         return JobDetails(details.job, plan_error=str(error))
-    return JobDetails(details.job, plan=tuple(plan_lines(details.job, preview)))
+    job = details.job
+    # The plan run-job --dry-run prints, from the same steps. The table leaves out the executable, so the header names it.
+    return JobDetails(job, plan=(*plan_header(job, preview), f"Executable: {executable}"), runs=tuple(plan_steps(job, preview)))
 
 
 def find_job(directory: Path, name: str) -> Path | str:

@@ -9,7 +9,7 @@ from tests.fixtures import JobTestCase, job_data
 
 class InputSizeTests(JobTestCase):
     def load(self, **changes: object):
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.dt_config)
+        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def test_matching_size_passes(self) -> None:
         self.assertEqual(self.load().input, self.input_directory / "first-frame.png")

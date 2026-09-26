@@ -6,8 +6,8 @@
 
 ## Goal
 
-Let an agent create, edit, and delete job files in `data/`, safely: only when
-the owner turned writing on, only inside `data/`, and always recoverably.
+Let an agent create, edit, and delete job files in `data/jobs/`, safely: only when
+the owner turned writing on, only inside `data/jobs/`, and always recoverably.
 
 ## Scope
 
@@ -20,7 +20,7 @@ In scope:
 
 Out of scope:
 
-- Editing `config/global-config.yaml`, `dt-config/*.json`, or any file other
+- Editing `config/global-config.yaml`, `data/params/*.json`, or any file other
   than a job file
 - Uploading input images; inputs must already exist in the input directory
 - A structured (non-YAML) job schema
@@ -49,9 +49,9 @@ The body of `PUT` is the job file as YAML text (`text/plain` or a JSON
 ### Name and path rules
 
 - `name` must match `[a-z0-9-]`, as job names already must. The file is
-  always `data/<name>.yaml`, derived by the server. No slashes, dots, or
+  always `data/jobs/<name>.yaml`, derived by the server. No slashes, dots, or
   other path parts are accepted, and the resolved path is checked to be
-  directly inside the data directory. Symlinks in `data/` are never
+  directly inside the data directory. Symlinks in `data/jobs/` are never
   followed for writing or deleting.
 - The job's own `name:` field must equal the file name, so listings and
   outputs stay consistent.
@@ -66,20 +66,20 @@ The body of `PUT` is the job file as YAML text (`text/plain` or a JSON
 - Referenced input files must exist inside the configured input directory.
   A job that points elsewhere is rejected naming the field.
 - Nothing is written when validation fails; the error names the field.
-- The write is atomic: the text is written to a temporary file in `data/`
+- The write is atomic: the text is written to a temporary file in `data/jobs/`
   and renamed into place.
 
 ### Create, overwrite, and backups
 
-- Create fails with 409 if `data/<name>.yaml` exists and `overwrite` is not
+- Create fails with 409 if `data/jobs/<name>.yaml` exists and `overwrite` is not
   set.
 - With `overwrite`, the previous file is first copied to
-  `data/.backups/<name>/<timestamp>.yaml`, then replaced. Backups are never
+  `data/jobs/.backups/<name>/<timestamp>.yaml`, then replaced. Backups are never
   pruned by the server.
 
 ### Delete and trash
 
-- Delete moves the file to `data/.trash/<name>-<timestamp>.yaml`. Nothing is
+- Delete moves the file to `data/jobs/.trash/<name>-<timestamp>.yaml`. Nothing is
   permanently deleted by the server.
 - Delete and overwrite are refused with 409 when the job is `queued`
   or `running` in the queue, since a snapshot exists but the
@@ -87,7 +87,7 @@ The body of `PUT` is the job file as YAML text (`text/plain` or a JSON
 
 ### Directories
 
-`.trash/` and `.backups/` are created on demand under `data/`. The job
+`.trash/` and `.backups/` are created on demand under `data/jobs/`. The job
 loader, the TUI, the API, and the MCP server all ignore dot-directories
 (the TUI already does, from Phase 2, Milestone 03). Git ignores them: they
 are added to `.gitignore`.
@@ -101,14 +101,14 @@ the `audit_log` table ([Milestone 02](milestone-02-http-api.md#audit-log)).
 
 - Without `--allow-write`, `PUT` and `DELETE` return 404 and
   `/capabilities` says writes are off.
-- With it, a valid job is created as `data/<name>.yaml` with its text and
+- With it, a valid job is created as `data/jobs/<name>.yaml` with its text and
   comments unchanged; the same request again returns 409 without
   `overwrite`.
 - Overwrite leaves the old file in `.backups/<name>/`; delete leaves the file
   in `.trash/`; nothing else is removed.
 - Names like `../x`, `a/b`, `A`, `a.b`, and a name that does not match the
   `name:` field are rejected and no file is touched. A symlinked
-  `data/<name>.yaml` is never written through.
+  `data/jobs/<name>.yaml` is never written through.
 - An input outside the input directory, or missing, is rejected naming the
   field.
 - Overwrite and delete of a queued or running job return 409.

@@ -2,5 +2,5 @@
 
 uv run dtc \
 run-job \
-./data/duo.yaml \
+./data/jobs/duo.yaml \
 --executable ./draw-things-cli

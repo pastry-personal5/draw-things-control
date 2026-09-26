@@ -81,7 +81,7 @@ Image to video with a bundled configuration:
 
 ```bash
 uv run dtc generate \
-  --config-file dt-config/image-to-video-wan-2-2.example.yaml \
+  --config-file data/params/image-to-video-wan-2-2.example.yaml \
   --image /path/to/source.png \
   --output /path/to/output.mov \
   --timeout 3600
@@ -109,7 +109,7 @@ Common options:
 
 A base configuration holds Draw Things settings (`model`, `steps`,
 `sharpness`, and so on, under Draw Things' own key names). Write them as YAML
-files in `dt-config/`, one mapping of keys to values:
+files in `data/params/`, one mapping of keys to values:
 
 ```yaml
 # Wan 2.2 A14B image-to-video
@@ -154,25 +154,25 @@ Where each format is accepted:
 Check a file before use:
 
 ```bash
-uv run dtc validate-config dt-config/image-to-video-wan-2-2.example.yaml
+uv run dtc validate-config data/params/image-to-video-wan-2-2.example.yaml
 ```
 
-The files in `dt-config/`, YAML and JSON alike, are yours: this tool reads
+The files in `data/params/`, YAML and JSON alike, are yours: this tool reads
 them and never changes them. The JSON files from before YAML support are left
 as they are; each has a YAML copy with the same name (`.yaml`) for jobs to use.
 
 ## Jobs: chained runs
 
-A job is a YAML file in `data/` describing a chain of generations. It runs
+A job is a YAML file in `data/jobs/` describing a chain of generations. It runs
 `run_count` times, and every run starts from the previous run's output (the
 last frame, for video). Each run uses one of your named prompt pairs.
 
 The workflow is always the same three steps:
 
 ```bash
-uv run dtc validate-job data/example-job.yaml
-uv run dtc run-job data/example-job.yaml --dry-run
-uv run dtc run-job data/example-job.yaml
+uv run dtc validate-job data/jobs/example-job.yaml
+uv run dtc run-job data/jobs/example-job.yaml --dry-run
+uv run dtc run-job data/jobs/example-job.yaml
 ```
 
 1. `validate-job` reports any problem, naming the field, and shows the
@@ -182,7 +182,7 @@ uv run dtc run-job data/example-job.yaml
    running anything.
 3. `run-job` runs the chain.
 
-Start from `data/example-job.yaml`, which is commented line by line. Invalid
+Start from `data/jobs/example-job.yaml`, which is commented line by line. Invalid
 jobs are rejected before any generation starts.
 
 ## Job file reference
@@ -195,7 +195,7 @@ jobs are rejected before any generation starts.
 | `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
 | `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
-| `config_file` | A YAML file name in `dt-config/`, the [base configuration](#base-configurations) |
+| `config_file` | A YAML file name in `data/params/`, the [base configuration](#base-configurations) |
 | `config_override` | Settings applied to every run on top of `config_file` |
 | `output` | `directory` and `extension` (`mov` or `mp4` for video) |
 | `run_timeout_seconds` | Limit for each run |
@@ -404,15 +404,18 @@ terminal does.
   without its suffix when only one file has it. Quote a name with spaces,
   or escape them: `/run '[b] walk.yaml'` or `/run my\ job.yaml`. Tab
   completes such names in the style you started. A line that does not begin with `/` runs nothing.
-- The data directory (default: `data/` in the project, whatever the working
+- The data directory (default: `data/jobs/` in the project, whatever the working
   directory) holds the jobs: each `*.yaml` and `*.yml` file (any letter case)
   directly in it, sorted by name. `/get jobs` shows each one's name, mode, and
   run count, or the first error of an invalid one. Sub-directories,
   dot-directories, and dotfiles are ignored. `/get jobs`, `/describe job`, and `/run`
   read the files again each time, so edit a job in your editor and run the
   command again.
-- `/describe job` prints what `validate-job` and `run-job --dry-run` print. For a job
-  that sets no seed, the plan uses the placeholder seed `0`, so it is the
+- `/describe job` prints what `validate-job` and `run-job --dry-run` print,
+  in words: the prompt pairs laid out as `/get prompts` lays them out, and
+  the plan's header, then each run's heading and its arguments as the
+  `/get param` table instead of its command line. The header names the
+  executable, which the table leaves out. For a job that sets no seed, the plan uses the placeholder seed `0`, so it is the
   same each time; a run draws a real seed. If `draw-things-cli` or `ffmpeg`
   is missing, the plan says why and the rest still shows.
 - `--executable` is the `draw-things-cli` the plan names and a run uses, and
@@ -426,6 +429,21 @@ terminal does.
   log when `write_job_records` is true. If another run holds the lock, or
   the job cannot start (for example, `draw-things-cli` is missing), Messages
   says why and nothing runs. One job runs at a time.
+- As each run starts, Messages shows its positive and negative prompts, laid
+  out as `/get prompts` lays them out, and then its `draw-things-cli` arguments
+  as the `/get param` table. The table marks the job's overrides and every
+  `--config-json` value a flag replaced. The command line itself is not
+  shown, so no JSON appears: a `--config-json` value is written in words.
+  Each value has its own form, so two values that differ never read the
+  same. Text is always in double quotes (`"wan.ckpt"`, `""`, `"true"`), null
+  is `(none)`, a list is in brackets, and a mapping is in braces as
+  `key=value` pairs: `[{file="a.ckpt" weight=0.5}, {file="b.ckpt" weight=1}]`,
+  `[]`, `{}`. A number is written as the command line writes it, so `5.0`
+  reads `5`, which is the same setting. From
+  run 2 on, only what changed since the run before is shown (`Arguments as
+  run 1, except:`), with `(not given)` for a row the run no longer has.
+  `/execution` and `/describe job` show arguments the same way; `/get param`
+  shows one run in full.
 - `/stop` stops the job after you confirm, as Ctrl-C stops `run-job`: the
   run and any cooldown end, no later run starts, and the job is
   `interrupted` with exit code 130.
@@ -440,7 +458,9 @@ terminal does.
 - `/get param` shows the arguments the run's saved command passed, with
   credentials already redacted: first the flags (a flag that stands alone
   reads `yes`), then each `--config-json` key. The note column marks a
-  value the job's configuration overrides set (`job override`), and a flag
+  value the job's configuration overrides set (`job override`), a width
+  and height that `desired_input_width` or `desired_input_height` set
+  (`desired input size`, which replaces any width or height override), and a flag
   that replaced a `--config-json` value, on both rows: `--width 832` says
   `replaces --config-json 1000`, and `width 1000` says
   `replaced by --width 832`.
@@ -450,7 +470,8 @@ terminal does.
   rather than the current job file: its settings (with the refiner, CFG,
   and shift from the saved command), and each run's prompts, steps,
   measured size and frames, input, output, last frame, seconds, exit code,
-  and command. It lists every run, failed ones too. A file that no longer
+  and arguments. The prompts are laid out as `/get prompts` lays them out,
+  and the arguments are the `/get param` table, not the command line. It lists every run, failed ones too. A file that no longer
   exists is marked `(missing)`. Executions brought in by `import-history`
   are marked `imported`.
 - `/reveal` runs `open -R` on the output (macOS). If the file is missing,
@@ -460,7 +481,7 @@ terminal does.
 
 | Line | What it shows |
 |------|---------------|
-| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the job file, and `run k/N` |
+| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  execution 12: walk  run 2/3` |
 | 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)` |
 | 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
 | 4 | The step counter (`step 28/40`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
@@ -537,7 +558,7 @@ they succeed, unless you are in the history or the detail at that moment.
 - Browsing only reads files. Running a job writes what `run-job` writes (its
   outputs and last frames, its manifest and log when `write_job_records` is
   true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
-  changes a job file, `dt-config/`, or the global configuration, and it
+  changes a job file, `data/params/`, or the global configuration, and it
   does not create `state/dtc.db` just to show an empty history. The one
   write browsing may make is upgrading an existing `state/dtc.db` to the
   current schema, which any `dtc` command does the first time it opens an

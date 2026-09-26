@@ -43,7 +43,7 @@ class StateCliTests(JobTestCase):
             cooldown=lambda seconds: seconds,
         )
         for patcher in (
-            mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config),
+            mock.patch("draw_things_control.core.generation_config.PARAMS_DIRECTORY", self.params),
             mock.patch.object(run_lock, "STATE_DIRECTORY", self.state),
             mock.patch.object(cli, "job_service", self.fake_service),
         ):
@@ -104,7 +104,7 @@ class StateCliTests(JobTestCase):
         with RunLock("run-job"):
             self.assertEqual(self.run_job("--dry-run").exit_code, 0)
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
-            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.dt_config / "base.yaml")]).exit_code, 0)
+            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")]).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"]).exit_code, 0)
             # None of those touched the database.
             self.assertFalse((self.state / "dtc.db").exists())

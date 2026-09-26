@@ -138,13 +138,13 @@ class JobDefinition:
         return None, "random"
 
 
-def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path | None = None, *, decode_input: bool = True) -> JobDefinition:
+def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | None = None, *, decode_input: bool = True) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
     writes the copy right away passes ``decode_input=False``, since writing it decodes the input anyway.
     """
-    dt_config_directory = dt_config_directory or generation_config.DT_CONFIG_DIRECTORY
+    params_directory = params_directory or generation_config.PARAMS_DIRECTORY
     path = path.expanduser().resolve()
     data, source_text = read_yaml_mapping(path, "Job file")
     fail = _Failure(path)
@@ -176,7 +176,7 @@ def load_job(path: Path, global_config: GlobalConfig, dt_config_directory: Path 
     if not isinstance(config_file, str):
         fail("config_file", "must be a file name")
     try:
-        base_config = generation_config.load_base_config(config_file, dt_config_directory)
+        base_config = generation_config.load_base_config(config_file, params_directory)
     except ValueError as error:
         raise ValueError(f"{path}: {error}") from error
     base_seed = base_config.get("seed")

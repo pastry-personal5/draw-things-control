@@ -18,7 +18,7 @@ from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.job_definition import load_job
 root, executable = Path(sys.argv[1]), sys.argv[2]
-job = load_job(root / "job.yaml", GlobalConfig(input_directory=root / "input", output_directory=root / "output"), root / "dt-config")
+job = load_job(root / "job.yaml", GlobalConfig(input_directory=root / "input", output_directory=root / "output"), root / "params")
 lock = RunLock("run-job", directory=root / "state")
 lock.acquire()
 print("held", flush=True)

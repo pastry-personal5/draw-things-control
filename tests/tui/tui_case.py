@@ -1,4 +1,4 @@
-"""A base for headless TUI tests: temporary data, dt-config, and state directories, typed commands, and the messages as written."""
+"""A base for headless TUI tests: temporary data, params, and state directories, typed commands, and the messages as written."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.data = self.root / "data"
         self.data.mkdir()
         self.state = self.root / "state"
-        for target, value in (("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config), ("draw_things_control.core.run_lock.STATE_DIRECTORY", self.state)):
+        for target, value in (("draw_things_control.core.generation_config.PARAMS_DIRECTORY", self.params), ("draw_things_control.core.run_lock.STATE_DIRECTORY", self.state)):
             patcher = mock.patch(target, value)
             patcher.start()
             self.addCleanup(patcher.stop)

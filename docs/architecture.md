@@ -56,7 +56,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 | `core/draw_things_runner.py` | Process group, signals, timeout, graceful-then-forced shutdown |
 | `core/process_output.py` | Classify and log child output; strip terminal codes; structured progress (step counter and percent) |
 | `core/global_config.py` | Global config loading; `CooldownPolicy`, the `cooldown` mapping shared by the global configuration and jobs |
-| `core/configuration.py`, `core/generation_config.py` | Configuration files (YAML or JSON, phase 2), `dt-config/` lookup and merging |
+| `core/configuration.py`, `core/generation_config.py` | Configuration files (YAML or JSON, phase 2), `data/params/` lookup and merging |
 | `jobs/job_service.py` | `run-job` use case: chain a job's runs, cooldown |
 | `jobs/job_definition.py` | Job file loading and validation |
 | `jobs/job_report.py` | Reading jobs and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI (phase 2) |
@@ -108,8 +108,8 @@ Adds what every later front end needs, without changing the CLI's behavior:
 
   | File | Format | Written by | Read by |
   |------|--------|------------|---------|
-  | `dt-config/<name>.yaml` (or `.yml`) | YAML | a person | `dtc` (jobs, `generate`, `validate-config`) |
-  | `dt-config/<name>.json` | JSON | a person (phase 1) | `generate --config-file` and `validate-config` only |
+  | `data/params/<name>.yaml` (or `.yml`) | YAML | a person | `dtc` (jobs, `generate`, `validate-config`) |
+  | `data/params/<name>.json` | JSON | a person (phase 1) | `generate --config-file` and `validate-config` only |
   | the `--config-json` value | JSON | `dtc` (jobs, and `generate` with a YAML file) | `draw-things-cli` |
 - Automatic cooldown (Milestone 07, done): a frozen `CooldownPolicy` in
   `core/global_config.py`, parsed by `parse_cooldown` from the `cooldown`
@@ -175,7 +175,7 @@ Adds what every later front end needs, without changing the CLI's behavior:
   resume (`jobs/job_queue.py`). The server holds the run lock while it is up.
 - `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn), bearer-token
   auth, job control, history, event stream, limits, and an audit log.
-- Job file management in `data/` behind a write flag, with `.backups/` and
+- Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
 - `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, exposing typed
   tools. It never touches the core directly.
@@ -185,8 +185,8 @@ Adds what every later front end needs, without changing the CLI's behavior:
 - No source in the project root; each front end gets its own subpackage.
 - Front ends call services and observe events; they do not parse logs.
 - One run at a time, machine-wide. No parallel generation.
-- Never edited by any interface: `dt-config/*.json`, `dt-config/*.yaml`, `config/global-config.yaml`.
+- Never edited by any interface: `data/params/*.json`, `data/params/*.yaml`, `config/global-config.yaml`.
 - No credential (`--api-key`, `--remote-shared-secret`) reaches events, the
   state store, logs, or API responses.
 - Agents (phase 3) can express only what a job file can express, within
-  `data/` and the configured input directory.
+  `data/jobs/` and the configured input directory.

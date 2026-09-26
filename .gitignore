@@ -36,8 +36,8 @@ venv/
 draw-things-cli
 draw-things-cli.exe
 
-# Local symlink overrides within dt-config
-dt-config/dt-config
+# Local symlink overrides within data/params
+data/params/params
 
 # Runtime / output artifacts
 *.log
@@ -51,8 +51,8 @@ Thumbs.db
 # Machine-specific global configuration (copy from config/global-config.example.yaml)
 config/global-config.yaml
 
-dt-config/image-to-video-wan-2-2-default.json
-dt-config/image-to-video-wan-2-2-default.yaml
+data/params/image-to-video-wan-2-2-default.json
+data/params/image-to-video-wan-2-2-default.yaml
 
 # Execution history database and run lock (created at run time)
 /state/

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,7 +14,7 @@ from draw_things_control.core.global_config import CooldownPolicy, GlobalConfig,
 from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, load_job
 
 if TYPE_CHECKING:
-    from draw_things_control.jobs.job_service import JobPreview
+    from draw_things_control.jobs.job_service import JobPreview, PlannedRun
 
 # The seed a front end shows in a plan for a job with no configured seed, so the plan is the same every time it is shown.
 PLACEHOLDER_SEED = 0
@@ -109,12 +111,12 @@ def cooldown_details(job: JobDefinition) -> str:
     return f"{seconds_text(policy.seconds)} between runs, from {job.cooldown_source} ({extent})"
 
 
-def planned_cooldown_line(policy: CooldownPolicy, after_run: int) -> str | None:
-    """The dry-run plan's line for the wait after run ``after_run``, or None when there is no wait."""
+def planned_cooldown_text(policy: CooldownPolicy, after_run: int) -> str | None:
+    """The dry-run plan's text for the wait after run ``after_run``, without the ``# `` the CLI adds; None when there is no wait."""
     if policy.mode == "auto":
-        return f"# Cooldown auto: {share_text(policy.ratio)} of run {after_run}'s time, {bounds_text(policy)}"
+        return f"Cooldown auto: {share_text(policy.ratio)} of run {after_run}'s time, {bounds_text(policy)}"
     if policy.mode == "manual" and policy.seconds > 0:
-        return f"# Cooldown {seconds_text(policy.seconds)}"
+        return f"Cooldown {seconds_text(policy.seconds)}"
     return None
 
 
@@ -171,16 +173,36 @@ def pair_runs(job: JobDefinition) -> list[tuple[PromptPair, tuple[int, ...]]]:
     return [(pair, tuple(number for number, used in enumerate(schedule, start=1) if used is pair)) for pair in job.prompt_pairs]
 
 
-def plan_lines(job: JobDefinition, preview: JobPreview) -> list[str]:
-    """The lines run-job --dry-run prints: a header, then each run's comment and redacted command."""
-    lines = [
-        f"# Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job)}",
-        "# Output names are examples; a real run generates new ones.",
+@dataclass(frozen=True)
+class PlanStep:
+    """One run of the dry-run plan, as text without the ``# `` the CLI adds: the wait before it (None when there is none),
+    its heading, the planned run, and its redacted command as arguments."""
+
+    cooldown: str | None
+    heading: str
+    run: PlannedRun
+    command: tuple[str, ...]
+
+
+def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
+    """The dry-run plan's lines before its runs, as text without the ``# `` the CLI adds."""
+    return [
+        f"Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job)}",
+        "Output names are examples; a real run generates new ones.",
     ]
-    for run, command in zip(preview.runs, preview.command_previews, strict=True):
-        cooldown = planned_cooldown_line(job.cooldown, run.number - 1) if run.number > 1 else None
-        if cooldown is not None:
-            lines.append(cooldown)
-        lines.append(f"# Run {run.number}/{len(preview.runs)} (pair {run.pair.name})")
-        lines.append(command)
+
+
+def plan_steps(job: JobDefinition, preview: JobPreview) -> list[PlanStep]:
+    """Each run of the dry-run plan, in order; run-job --dry-run and the TUI both read the plan from here."""
+    return [PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, f"Run {run.number}/{len(preview.runs)} (pair {run.pair.name})", run, command) for run, command in zip(preview.runs, preview.commands, strict=True)]
+
+
+def plan_lines(job: JobDefinition, preview: JobPreview) -> list[str]:
+    """The lines run-job --dry-run prints: the header and each run's heading and wait as comments, and each redacted command."""
+    lines = [f"# {line}" for line in plan_header(job, preview)]
+    for step in plan_steps(job, preview):
+        if step.cooldown is not None:
+            lines.append(f"# {step.cooldown}")
+        lines.append(f"# {step.heading}")
+        lines.append(shlex.join(step.command))
     return lines

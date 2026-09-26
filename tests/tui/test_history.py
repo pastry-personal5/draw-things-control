@@ -17,13 +17,13 @@ from textual.content import Content
 from draw_things_control.core.global_config import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
 from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_events import CooldownStarted
+from draw_things_control.jobs.job_events import CooldownStarted, RunStarted
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader, copy_to_pasteboard
 from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryPane
 from draw_things_control.tui.screens import MainScreen
-from draw_things_control.tui.text import confirm_run_text, event_text, parameters_text, reveal_action, stored_cooldown_text
+from draw_things_control.tui.text import argument_rows, confirm_run_text, event_text, override_notes, parameters_text, reveal_action, stored_cooldown_text
 from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import job_data
 from tests.tui.fake_runs import FakeRuns
@@ -188,8 +188,11 @@ class HistoryTests(HistoryCase):
             unknown = await self.detail(pilot, 99)
         self.assertTrue(detail.startswith(f"Execution {execution_id}: sunset-walk\n"), detail)
         self.assertNotIn("imported", detail)
-        for line in ("  status: succeeded, exit code 0", f"  job file: {job_file}", "  mode: i2v", "  model: base.ckpt", "  seed: 42 (config_file)", "  cooldown: 5 s (job)", f"  started: {at(0)}", f"  finished: {at(1)}", "  manifest: -", "Run 1 succeeded (pair walk, 12.5 s, exit code 0)", "Run 2 failed (pair walk, 12.5 s, exit code 1)", "  positive: a walk [slow]", "  negative: blurry", "  input: in.png", f"  output: {self.outputs / 'kept.mov'}\n", f"  output: {self.outputs / 'gone.mov'} (missing)", "  command: draw-things-cli generate --api-key [redacted]"):
+        for line in ("  status: succeeded, exit code 0", f"  job file: {job_file}", "  mode: i2v", "  model: base.ckpt", "  seed: 42 (config_file)", "  cooldown: 5 s (job)", f"  started: {at(0)}", f"  finished: {at(1)}", "  manifest: -", "Run 1 succeeded (pair walk, 12.5 s, exit code 0)", "Run 2 failed (pair walk, 12.5 s, exit code 1)", "\npositive:\na walk [slow]\n", "\nnegative:\nblurry\n", "  input: in.png", f"  output: {self.outputs / 'kept.mov'}\n", f"  output: {self.outputs / 'gone.mov'} (missing)"):
             self.assertIn(line, detail)
+        # The arguments as a table, the key redacted, and never the command line.
+        self.assertRegex(detail, r"\n  --api-key\s+\[redacted\]")
+        self.assertNotIn("draw-things-cli generate", detail)
         self.assertEqual(unknown, "No execution 99")
 
     def test_the_cooldown_detail_for_each_mode_and_for_old_rows(self) -> None:
@@ -214,9 +217,9 @@ class HistoryTests(HistoryCase):
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=300.0, run_seconds=180.0, bound="minimum"), "Cooldown 5 min (the minimum; half of run 1's 3 min is less) before run 2, until 14:05:00")
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=1800.0, run_seconds=4800.0, bound="maximum"), "Cooldown 30 min (the maximum; half of run 1's 1 h 20 min is more) before run 2, until 14:05:00")
         self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", minimum_seconds=300.0, maximum_seconds=1800.0))
-        job = load_job(self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.dt_config)
+        job = load_job(self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
         self.assertIn("  Cooldown: auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)\n", str(confirm_run_text(job, "draw-things-cli")))
-        job = load_job(self.write_job(job_data(cooldown={"mode": "off"})), self.global_config, self.dt_config)
+        job = load_job(self.write_job(job_data(cooldown={"mode": "off"})), self.global_config, self.params)
         self.assertIn("  Cooldown: off (job)\n", str(confirm_run_text(job, "draw-things-cli")))
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
@@ -642,6 +645,64 @@ class ParametersTextTests(unittest.TestCase):
         # A value that differs is still marked, both ways.
         self.assertIn("replaces --config-json 30", table)
         self.assertIn("replaced by --steps 20", table)
+
+
+class RunStartedTextTests(unittest.TestCase):
+    CONFIG = {"steps": 40, "shift": 3.99, "width": 512, "faceRestoration": "", "sampler": "true", "loras": [{"file": "my lora.ckpt", "weight": 0.5}, {"file": "b.ckpt", "weight": 1}], "controls": [], "upscaler": None, "zeroNegativePrompt": False, "tiling": {"size": {"w": 2, "h": 3}, "on": True}}
+
+    @staticmethod
+    def event(number: int, seed: str, output: str, config: dict[str, Any]) -> RunStarted:
+        command = ("draw-things-cli", "generate", "--model", "wan.ckpt", "--prompt", "a walk", "--negative-prompt", "blurry", "--steps", "8", "--width", "832", "--seed", seed, "--config-json", json.dumps(config), "--output", output, "--api-key", "[redacted]")
+        return RunStarted(at=at(0), number=number, total=3, pair="walk", positive="a walk", negative=None, input=None, resized_input=None, output=output, last_frame=None, command=command)
+
+    @staticmethod
+    def rows(text: str) -> dict[str, str]:
+        return {line.split()[0]: line for line in text.splitlines() if line.startswith("  ") and set(line.strip()) - {"-", " "}}
+
+    def test_a_run_shows_its_prompts_and_an_arguments_table_without_json(self) -> None:
+        notes = override_notes({"steps": 8, "shift": 3.99, "width": 512}, sized=True)
+        event = self.event(1, "7", "/out/walk-1.mov", self.CONFIG)
+        text = str(event_text(event, argument_rows(event.command, notes)))
+        self.assertTrue(text.startswith("Run 1/3 started (pair walk): /out/walk-1.mov\n\npositive:\na walk\n\nnegative:\n(none)\n\n  Argument"), text)
+        rows = self.rows(text)
+        self.assertRegex(rows["--steps"], r"^  --steps\s+8\s+job override; replaces --config-json 40$")
+        # The desired input size set the width, not the job's width override, which it replaced.
+        self.assertRegex(rows["--width"], r"^  --width\s+832\s+desired input size; replaces --config-json 512$")
+        self.assertRegex(rows["width"], r"^  width\s+512\s+desired input size; replaced by --width 832$")
+        self.assertRegex(rows["shift"], r"^  shift\s+3\.99\s+job override$")
+        # Text is always quoted, so it is never mistaken for a boolean, an empty value, or two keys.
+        self.assertRegex(rows["faceRestoration"], r'^  faceRestoration\s+""$')
+        self.assertRegex(rows["sampler"], r'^  sampler\s+"true"$')
+        self.assertRegex(rows["zeroNegativePrompt"], r"^  zeroNegativePrompt\s+false$")
+        self.assertRegex(rows["loras"], r'^  loras\s+\[\{file="my lora\.ckpt" weight=0\.5\}, \{file="b\.ckpt" weight=1\}\]$')
+        self.assertRegex(rows["tiling"], r"^  tiling\s+\{size=\{w=2 h=3\} on=true\}$")
+        self.assertRegex(rows["controls"], r"^  controls\s+\[\]$")
+        self.assertRegex(rows["upscaler"], r"^  upscaler\s+\(none\)$")
+        self.assertRegex(rows["--api-key"], r"^  --api-key\s+\[redacted\]$")
+        # The prompts are shown once, above the table, and no JSON or command line appears.
+        self.assertNotIn("--prompt", text)
+        self.assertNotIn('{"', text)
+        self.assertNotIn("draw-things-cli", text)
+
+    def test_a_later_run_shows_only_what_changed(self) -> None:
+        first = self.event(1, "7", "/out/walk-1.mov", self.CONFIG)
+        second = self.event(2, "8", "/out/walk-2.mov", {key: value for key, value in self.CONFIG.items() if key != "upscaler"} | {"shift": 5})
+        text = str(event_text(second, argument_rows(second.command, {}), (1, argument_rows(first.command, {}))))
+        self.assertIn("\nArguments as run 1, except:\n", text)
+        self.assertEqual(set(self.rows(text)) - {"Argument", "Key"}, {"--seed", "--output", "shift", "upscaler"})
+        self.assertRegex(self.rows(text)["upscaler"], r"^  upscaler\s+\(not given\)$")
+        same = self.event(2, "7", "/out/walk-1.mov", self.CONFIG)
+        self.assertTrue(str(event_text(same, argument_rows(same.command, {}), (1, argument_rows(first.command, {})))).endswith("\nArguments as run 1"))
+
+    def test_values_that_differ_never_read_the_same(self) -> None:
+        # Each pair once read alike; now every value has its own form, so the later run shows the change.
+        for before, after in (([], None), ({}, []), (["a"], "a"), ([5], 5), ("true", True), ({"a b": 1}, {"a": {"b": 1}})):
+            with self.subTest(before=before, after=after):
+                first, second = self.event(1, "7", "/o.mov", {"x": before}), self.event(2, "7", "/o.mov", {"x": after})
+                self.assertNotEqual(argument_rows(first.command, {}), argument_rows(second.command, {}))
+                self.assertIn("except:", str(event_text(second, argument_rows(second.command, {}), (1, argument_rows(first.command, {})))))
+        # The same setting written as 5 or 5.0 is the same value.
+        self.assertEqual(argument_rows(self.event(1, "7", "/o.mov", {"x": 5}).command, {}), argument_rows(self.event(1, "7", "/o.mov", {"x": 5.0}).command, {}))
 
 
 class PasteboardTests(unittest.TestCase):

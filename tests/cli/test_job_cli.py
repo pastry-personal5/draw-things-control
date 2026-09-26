@@ -19,8 +19,8 @@ class JobCliTests(JobTestCase):
         self.global_path = self.root / "global-config.yaml"
         self.global_path.write_text(f"version: 1\ninput_directory: {self.input_directory}\noutput_directory: {self.output_directory}\n", encoding="utf-8")
         self.job_path = self.write_job(job_data())
-        # The commands read the repository's dt-config/; point it at the test's copy.
-        patcher = mock.patch("draw_things_control.core.generation_config.DT_CONFIG_DIRECTORY", self.dt_config)
+        # The commands read the repository's data/params/; point it at the test's copy.
+        patcher = mock.patch("draw_things_control.core.generation_config.PARAMS_DIRECTORY", self.params)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -36,7 +36,7 @@ class JobCliTests(JobTestCase):
         self.assertEqual(self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.root / "absent.yaml")]).exit_code, 2)
 
     def test_a_job_naming_a_json_configuration_exits_with_2(self) -> None:
-        (self.dt_config / "base.json").write_text("{}", encoding="utf-8")
+        (self.params / "base.json").write_text("{}", encoding="utf-8")
         job = self.write_job(job_data(config_file="base.json"), name="json.yaml")
         for command in (["validate-job"], ["run-job", "--dry-run"]):
             with self.subTest(command[0]):

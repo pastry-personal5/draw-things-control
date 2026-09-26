@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from textual.message import Message
 
@@ -104,6 +105,10 @@ class LiveRun:
         self._wall_clock = wall_clock
         self.job_name = job.name
         self.path = path
+        # The state store's row for this job, once JobStarted has been recorded; None before, or when it is not recorded.
+        self.execution_id: int | None = None
+        # The last run with a command (its number and argument rows), which the next run's message is compared with.
+        self.previous_arguments: tuple[int, Any] | None = None
         self.started: JobStarted | None = None
         self.runs = [RunState(number, pair.name) for number, pair in enumerate(job.schedule(), start=1)]
         self.active_run: int | None = None

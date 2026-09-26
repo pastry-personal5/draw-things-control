@@ -16,13 +16,13 @@ from textual.widgets import DataTable, Input, RichLog, Rule, Static
 from textual.worker import get_current_worker
 
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished
+from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.tui.commands import GET_WORDS, CommandError, CommandSuggester, help_text, parse, usage
 from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, parse_id, reveal_run
 from draw_things_control.tui.job_files import JobDetails, JobRow, add_plan, find_job, read_details, read_rows
 from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, StatusPane
-from draw_things_control.tui.text import details_text, event_text, execution_text, jobs_text, parameters_text, prompts_text, question_text, result_text, status_line_text
+from draw_things_control.tui.text import Arguments, PreviousRun, argument_rows, details_text, event_text, execution_text, jobs_text, override_notes, parameters_text, prompts_text, question_text, result_text, status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
 if TYPE_CHECKING:
@@ -260,7 +260,7 @@ class MainScreen(Screen[None]):
         if details.job is None:
             self.say(Text(f"Invalid job: {path}\n{details.error}", style="red"))
             return
-        self.say(details_text(details.job, details.plan, details.plan_error))
+        self.say(details_text(details.job, details))
 
     # The history and the detail
 
@@ -336,9 +336,23 @@ class MainScreen(Screen[None]):
             self.cli.new_job(self.dtc.live)
         self.tick()
 
+    def run_arguments(self, event: JobEvent) -> tuple[Arguments | None, PreviousRun | None]:
+        """For a run with a command: its argument rows, and the last such run of this job to compare them with. The last
+        run is kept on the job's LiveRun, which each job starts afresh; a run without a command is never compared with."""
+        live = self.dtc.live
+        if not isinstance(event, RunStarted) or not event.command:
+            return None, None
+        started = live.started if live is not None else None
+        notes = override_notes(started.config_override, started.input_resize is not None) if started is not None else {}
+        arguments = argument_rows(event.command, notes)
+        if live is None:
+            return arguments, None
+        previous, live.previous_arguments = live.previous_arguments, (event.number, arguments)
+        return arguments, previous
+
     def job_event(self, event: JobEvent) -> None:
         """Log the event, update the draw-things-cli pane, and refresh the history where the store changed."""
-        text = event_text(event)
+        text = event_text(event, *self.run_arguments(event))
         if text is not None:
             self.say(text)
         self.render_live(event)

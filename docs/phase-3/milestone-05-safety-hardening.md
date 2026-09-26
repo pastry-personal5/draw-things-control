@@ -36,7 +36,7 @@ MCP tools:
 
 - Names: `..`, `../x`, `a/b`, `a\b`, absolute paths, NUL, very long names,
   upper case, and dots.
-- Symlinks in `data/` and in the input directory pointing outside.
+- Symlinks in `data/jobs/` and in the input directory pointing outside.
 - Job inputs referencing `/etc/passwd`, `~`, `..`, or a symlink out of the
   input directory.
 - Writes and deletes with `--allow-write` off, and on.
@@ -66,7 +66,7 @@ its effect, the limits, and where `.trash/` and `.backups/` are.
   YAML, commands, or credentials (a test drives each action through the API
   and through MCP and reads the log back).
 - The whole security suite passes.
-- No known path from agent input to a file outside `data/` (writes) or the
+- No known path from agent input to a file outside `data/jobs/` (writes) or the
   input directory (reads), or to an unvalidated `draw-things-cli` argument.
 - README documents the server, the MCP client entry, the write flag, and the
   limits.

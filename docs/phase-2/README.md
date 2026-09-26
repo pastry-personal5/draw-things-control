@@ -24,7 +24,7 @@ processes from driving the GPU at once.
 - One-time import of existing manifests into the state store
 - Pruning of history older than 14 days (`history_retention_days` overrides
   it); database rows only, never output files
-- Base configurations in `dt-config/` written as YAML for people to edit;
+- Base configurations in `data/params/` written as YAML for people to edit;
   the app converts them to the JSON `draw-things-cli` reads
 - A `cooldown` setting with an `auto` mode (a share of the last run's time,
   half by default, within bounds; the default), a `manual` mode (a fixed
@@ -39,7 +39,7 @@ processes from driving the GPU at once.
 ## Non-goals
 
 - Editing job files in the TUI. Jobs are still written in an editor.
-- Editing `dt-config/*.json` or the global configuration from anywhere.
+- Editing `data/params/*.json` or the global configuration from anywhere.
 - Parallel generation. One run at a time, machine-wide.
 - A queue of jobs. Phase 2 runs one job at a time; queuing is
   [Phase 3](../phase-3/README.md).
@@ -102,9 +102,9 @@ Decisions and notable changes are recorded in
   manifests.
 - No credential value (`--api-key`, `--remote-shared-secret`) reaches the
   state store or an event.
-- A job's base configuration is a YAML file in `dt-config/`, and
+- A job's base configuration is a YAML file in `data/params/`, and
   `draw-things-cli` is given JSON converted from it; no JSON file in
-  `dt-config/` is changed.
+  `data/params/` is changed.
 - With `cooldown: {mode: auto}`, or no `cooldown` at all, the wait after
   each run is `ratio` (default one half) of that run's time, within
   `minimum_seconds` and `maximum_seconds`; the old `cooldown_seconds` key is

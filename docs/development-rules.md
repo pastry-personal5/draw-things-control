@@ -41,7 +41,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `server` over HTTP only.
 - Imports are absolute (`from draw_things_control.core... import ...`).
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
-- `dt-config/*.json`, `dt-config/*.yaml`, and `config/global-config.yaml`
+- `data/params/*.json`, `data/params/*.yaml`, and `config/global-config.yaml`
   are user files. Never edit, delete, or deduplicate them from code, tests,
   or tools.
 - See [architecture.md](architecture.md) for module responsibilities.

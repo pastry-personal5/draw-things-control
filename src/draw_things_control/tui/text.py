@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import math
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 from rich.style import Style
 from rich.text import Text
 
+from draw_things_control.core.configuration import is_yaml_file
 from draw_things_control.core.draw_things_arguments import CommandSettings, command_arguments, command_settings, config_json
 from draw_things_control.core.global_config import parse_cooldown
 from draw_things_control.core.numbers import setting_number
@@ -20,6 +22,7 @@ from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, 
 from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
 from draw_things_control.tui.history import is_imported, run_file
+from draw_things_control.tui.job_files import JobDetails
 from draw_things_control.tui.live_run import LiveRun
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start"}
@@ -72,40 +75,49 @@ def summary_text(job: JobDefinition) -> Text:
 
 
 def pairs_text(job: JobDefinition) -> Text:
-    """Each prompt pair and the runs that use it."""
+    """Each prompt pair and the runs that use it, its prompts laid out as /get prompts lays them out."""
     text = Text("Prompt pairs\n", style="bold")
     for pair, runs in pair_runs(job):
         used = ", ".join(str(number) for number in runs) if runs else "none"
         text.append(f"\n{pair.name}", style="bold")
         text.append(f"{' (default)' if pair.default else ''}: run{'s' if len(runs) != 1 else ''} {used}\n")
-        text.append("  positive: ", style="green")
-        text.append(f"{pair.positive.strip()}\n")
-        if pair.negative:
-            text.append("  negative: ", style="red")
-            text.append(f"{pair.negative.strip()}\n")
+        prompt_block(text, "positive", "green", pair.positive)
+        prompt_block(text, "negative", "red", pair.negative)
     return text
 
 
-def plan_text(job: JobDefinition, lines: tuple[str, ...] | None, error: str | None) -> Text:
-    """The dry-run plan, or the reason it cannot be made."""
+def plan_text(job: JobDefinition, details: JobDetails) -> Text:
+    """The dry-run plan of ``job`` in words: its header, then each run's heading and its arguments as a table (after run
+    1, only what changed since the run before), never a command line; or the reason it cannot be made. The prompts are
+    in the prompt pairs above."""
     text = Text("Dry-run plan\n\n", style="bold")
-    if error is not None:
-        text.append(error, style="red")
+    if details.plan_error is not None:
+        text.append(details.plan_error, style="red")
         return text
     if job.configured_seed()[0] is None:
         text.append(f"{PLACEHOLDER_SEED_NOTE}\n\n", style="yellow")
-    for line in lines or ():
-        text.append(f"{line}\n", style="dim" if line.startswith("#") else "")
+    for line in details.plan or ():
+        text.append(f"{line}\n", style="dim")
+    notes = override_notes(job.config_override.as_dict(), job.size is not None)
+    previous: PreviousRun | None = None
+    for step in details.runs:
+        if step.cooldown is not None:
+            text.append(f"\n{step.cooldown}\n", style="dim")
+        text.append(f"\n{step.heading}: {step.run.output}\n", style="bold")
+        arguments = argument_rows(step.command, notes)
+        text.append_text(arguments_text(arguments, previous))
+        previous = (step.run.number, arguments)
     return text
 
 
-def details_text(job: JobDefinition, lines: tuple[str, ...] | None, error: str | None) -> Text:
-    """What show prints: the summary, the prompt pairs, and the dry-run plan."""
+def details_text(job: JobDefinition, details: JobDetails) -> Text:
+    """What /describe job prints for a valid job (the caller shows an invalid one's error): the summary, the prompt
+    pairs, and the dry-run plan."""
     text = summary_text(job)
     text.append("\n")
     text.append_text(pairs_text(job))
     text.append("\n")
-    text.append_text(plan_text(job, lines, error))
+    text.append_text(plan_text(job, details))
     text.rstrip()
     return text
 
@@ -271,13 +283,20 @@ def _phase_line(live: LiveRun) -> Text:
     else:
         phase = live.phase
         text = Text(PHASE_TEXT[phase], style="bold yellow" if phase in ("starting", "stopping", "not_started") else "bold cyan")
-    text.append(f"  {live.path.name}")
+    # The execution's ID once the state store has recorded it, as the history and /get write it: ``execution 12: walk``.
+    text.append(f"  execution {live.execution_id}: " if live.execution_id is not None else "  ")
+    text.append(job_display_name(live.path))
     if live.finished is None and not live.worker_ended:
         if live.active_run is not None:
             text.append(f"  run {live.active_run}/{len(live.runs)}")
         elif live.cooldown is not None:
             text.append(f"  after run {live.cooldown.after_run}/{len(live.runs)}")
     return text
+
+
+def job_display_name(path: Path) -> str:
+    """A job file's name as the Status widget shows it: without its YAML suffix (``walk``), any other suffix kept."""
+    return path.stem if is_yaml_file(path) else path.name
 
 
 def _details_line(live: LiveRun, now: float) -> Text:
@@ -311,16 +330,23 @@ def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, 
     return text
 
 
-def event_text(event: JobEvent) -> Text | None:
-    """The job log's line for an event, or None for events the log leaves out (the child's output)."""
+def event_text(event: JobEvent, arguments: Arguments | None = None, previous: PreviousRun | None = None) -> Text | None:
+    """The job log's line for an event, or None for events the log leaves out (the child's output). A run shows its
+    argument rows (``argument_rows`` of its command), and after an earlier run (``previous``) only what changed since it."""
     if isinstance(event, JobStarted):
         text = Text(f"Job started: {event.job_name}", style="bold")
         text.append(f" ({event.mode}, {event.total_runs} run{'s' if event.total_runs != 1 else ''}, seed {event.seed} ({event.seed_source}), model {event.model})")
         return text
     if isinstance(event, RunStarted):
+        # The prompts, then the arguments as a table: never the command line, whose --config-json is bare JSON.
         text = Text(f"Run {event.number}/{event.total} started", style="bold")
-        text.append(f" (pair {event.pair}): {event.output}\n  command: ")
-        text.append(" ".join(event.command), style="dim")
+        text.append(f" (pair {event.pair}): {event.output}\n")
+        prompt_block(text, "positive", "green", event.positive)
+        prompt_block(text, "negative", "red", event.negative)
+        if arguments is not None:
+            text.append("\n")
+            text.append_text(arguments_text(arguments, previous))
+        text.rstrip()
         return text
     if isinstance(event, RunFinished):
         text = Text(f"Run {event.number} ")
@@ -414,6 +440,9 @@ def execution_text(execution: dict[str, Any]) -> Text:
         text.append(f"{value}\n")
     if execution.get("recovered_at"):
         text.append(f"  closed as interrupted at {execution['recovered_at']}, after the process that ran it ended\n", style="yellow")
+    notes = execution_notes(execution)
+    # Each run's arguments after the first with a command: only what changed since the run before.
+    previous: PreviousRun | None = None
     for run in execution["runs"]:
         text.append(f"\nRun {run['number']} ", style="bold")
         text.append(run["status"], style=STATUS_STYLE.get(run["status"], ""))
@@ -421,11 +450,9 @@ def execution_text(execution: dict[str, Any]) -> Text:
         text.append(f" (pair {run['pair']}{seconds}, exit code {run['exit_code'] if run.get('exit_code') is not None else '-'})\n")
         text.append("  steps: ", style="bold")
         text.append(f"{run_steps(run) or '-'}, output {output_measure_text(run)}\n")
-        text.append("  positive: ", style="green")
-        text.append(f"{run['positive'].strip()}\n")
-        if run.get("negative"):
-            text.append("  negative: ", style="red")
-            text.append(f"{run['negative'].strip()}\n")
+        prompt_block(text, "positive", "green", run.get("positive"))
+        prompt_block(text, "negative", "red", run.get("negative"))
+        text.append("\n")
         for label, value in (("input", run.get("input") or "-"), ("output", file_text(execution, run.get("output"))), ("last frame", file_text(execution, run.get("last_frame")) if run.get("last_frame") else None)):
             if value is not None:
                 text.append(f"  {label}: ", style="bold")
@@ -434,8 +461,11 @@ def execution_text(execution: dict[str, Any]) -> Text:
             text.append("  cooldown after: ", style="bold")
             text.append(f"{seconds_text(run['cooldown_after_seconds'])}\n")
         if run.get("command"):
-            text.append("  command: ", style="bold")
-            text.append(f"{' '.join(run['command'])}\n", style="dim")
+            # The arguments as a table, never the command line with its bare --config-json.
+            text.append("\n")
+            arguments = argument_rows(run["command"], notes)
+            text.append_text(arguments_text(arguments, previous))
+            previous = (int(run["number"]), arguments)
     text.rstrip()
     return text
 
@@ -604,6 +634,16 @@ def find_run(execution: dict[str, Any], run_number: int | None) -> dict[str, Any
     return first if first is not None else f"Execution {execution['id']} has no run with a saved command"
 
 
+def prompt_block(text: Text, label: str, style: str, value: str | None) -> str:
+    """Append a blank line, ``label:`` on its own line, and the prompt from the next line on (``(none)`` without one);
+    returns the prompt as shown, empty when there is none."""
+    prompt = value.strip() if value else ""
+    text.append(f"\n{label}:", style=style)
+    text.append("\n")
+    text.append(f"{prompt or '(none)'}\n", style="" if prompt else "dim")
+    return prompt
+
+
 def prompts_text(execution: dict[str, Any], which: str, run_number: int | None) -> tuple[Text, tuple[str, str] | None]:
     """``positive``, ``negative``, or both (``prompts``): each prompt pair once with the runs that used it, or one run's.
 
@@ -632,11 +672,7 @@ def prompts_text(execution: dict[str, Any], which: str, run_number: int | None) 
         for label, style in (("positive", "green"), ("negative", "red")):
             if which not in (label, "prompts"):
                 continue
-            value = run.get(label)
-            prompt = value.strip() if value else ""
-            text.append(f"\n{label}:", style=style)
-            text.append("\n")
-            text.append(f"{prompt or '(none)'}\n", style="" if prompt else "dim")
+            prompt = prompt_block(text, label, style, run.get(label))
             if prompt:
                 copied.append(f"{label}:\n{prompt}" if which == "prompts" else prompt)
     if not copied:
@@ -653,53 +689,143 @@ def parameters_text(execution: dict[str, Any], run_number: int | None) -> Text:
     command = run.get("command") or []
     if not command:
         return Text(f"Run {run['number']} of execution {execution['id']} has no saved command", style="red")
-    overrides = {OVERRIDE_ARGUMENTS[key] for key in ((execution.get("settings") or {}).get("config_override") or {}) if key in OVERRIDE_ARGUMENTS}
-    config = config_json(command)
-    flags = [(flag, value) for flag, value in command_arguments(command) if flag not in PROMPT_FLAGS and flag != "--config-json"]
-    given = dict(flags)
-    flag_rows = []
-    for flag, value in flags:
-        notes = ["job override"] if flag in overrides else []
-        key = FLAG_CONFIG_KEYS.get(flag)
-        if key in config and value is not None and not _same_value(value, config[key]):
-            notes.append(f"replaces --config-json {_config_value(config[key])}")
-        flag_rows.append((flag, "yes" if value is None else value, "; ".join(notes)))
-    config_rows = []
-    replaced_by = {key: flag for flag, key in FLAG_CONFIG_KEYS.items() if flag in given}
-    for key, value in config.items():
-        notes = ["job override"] if key in overrides else []
-        flag = replaced_by.get(key)
-        if flag is not None and given[flag] is not None and not _same_value(given[flag], value):
-            notes.append(f"replaced by {flag} {given[flag]}")
-        config_rows.append((key, _config_value(value), "; ".join(notes)))
     total = len(execution.get("runs") or [])
     text = Text(f"Execution {execution['id']}: {execution['job_name']}, run {run['number']} of {total}: draw-things-cli arguments", style="bold")
     if execution.get("config_file"):
         text.append(f" (configuration {execution['config_file']})")
     text.append("\n")
-    text.append_text(_table(("Argument", "Value", "Note"), flag_rows))
-    if config_rows:
-        text.append("\n--config-json\n", style="bold")
-        text.append_text(_table(("Key", "Value", "Note"), config_rows))
+    text.append_text(arguments_table(command, execution_notes(execution)))
     text.rstrip()
     return text
 
 
+# A row of an argument table: its name, its value, and its note.
+Row = tuple[str, str, str]
+# A command's argument rows: the flags, then the --config-json keys.
+Arguments = tuple[list[Row], list[Row]]
+# An earlier run's number and argument rows, which a later run's arguments are compared with.
+PreviousRun = tuple[int, Arguments]
+
+
+def override_notes(config_override: dict[str, Any] | None, sized: bool) -> dict[str, str]:
+    """The note for each flag or --config-json key the job set: ``job override`` for ``config_override``'s keys, and
+    ``desired input size`` for the width and height when desired_input_width or desired_input_height set them (``sized``),
+    which then replace any override of the size."""
+    notes = {OVERRIDE_ARGUMENTS[key]: "job override" for key in (config_override or {}) if key in OVERRIDE_ARGUMENTS}
+    if sized:
+        notes.update(dict.fromkeys(("--width", "--height", "width", "height"), "desired input size"))
+    return notes
+
+
+def execution_notes(execution: dict[str, Any]) -> dict[str, str]:
+    """``override_notes`` for a stored execution, from the job settings it ran with; a resize plan means a desired size."""
+    settings = execution.get("settings") or {}
+    return override_notes(settings.get("config_override"), settings.get("input_resize") is not None)
+
+
+def argument_rows(command: Sequence[str], notes: dict[str, str]) -> tuple[list[Row], list[Row]]:
+    """A command's draw-things-cli arguments without its prompts, as the flag rows and the --config-json rows, with
+    ``notes`` (``override_notes``) and every value a flag replaced marked."""
+    config = config_json(command)
+    flags = [(flag, value) for flag, value in command_arguments(command) if flag not in PROMPT_FLAGS and flag != "--config-json"]
+    given = dict(flags)
+    flag_rows = []
+    for flag, value in flags:
+        marks = [notes[flag]] if flag in notes else []
+        key = FLAG_CONFIG_KEYS.get(flag)
+        if key in config and value is not None and not _same_value(value, config[key]):
+            marks.append(f"replaces --config-json {_config_value(config[key])}")
+        flag_rows.append((flag, "yes" if value is None else value, "; ".join(marks)))
+    config_rows = []
+    replaced_by = {key: flag for flag, key in FLAG_CONFIG_KEYS.items() if flag in given}
+    for key, value in config.items():
+        marks = [notes[key]] if key in notes else []
+        flag = replaced_by.get(key)
+        if flag is not None and given[flag] is not None and not _same_value(given[flag], value):
+            marks.append(f"replaced by {flag} {given[flag]}")
+        config_rows.append((key, _config_value(value), "; ".join(marks)))
+    return flag_rows, config_rows
+
+
+def arguments_table(command: Sequence[str], notes: dict[str, str]) -> Text:
+    """A command's arguments as two tables, the flags and then each --config-json key; never JSON as it is."""
+    return _tables(*argument_rows(command, notes))
+
+
+def arguments_text(arguments: Arguments, previous: PreviousRun | None) -> Text:
+    """A run's argument rows (``argument_rows``) as tables: in full, or, after an earlier run (``previous``), only the rows
+    that changed since it, and ``(not given)`` for a row it had and this run does not. Values are written one to one
+    (``_config_value``), so comparing the rows compares the values."""
+    if previous is None:
+        return _tables(*arguments)
+    number, before = previous
+    changed = [_changed_rows(old, new) for old, new in zip(before, arguments, strict=True)]
+    if not any(changed):
+        return Text(f"Arguments as run {number}\n", style="dim")
+    text = Text(f"Arguments as run {number}, except:\n", style="dim")
+    text.append_text(_tables(*changed))
+    return text
+
+
+def _changed_rows(before: list[Row], after: list[Row]) -> list[Row]:
+    """The rows of ``after`` that differ from ``before``, then each of ``before``'s rows ``after`` lacks, as not given. A
+    flag given more than once (``--image``) is matched by its place among its own repeats."""
+
+    def keyed(rows: list[Row]) -> dict[tuple[str, int], Row]:
+        seen: dict[str, int] = {}
+        result = {}
+        for row in rows:
+            seen[row[0]] = seen.get(row[0], 0) + 1
+            result[(row[0], seen[row[0]])] = row
+        return result
+
+    old, new = keyed(before), keyed(after)
+    return [row for key, row in new.items() if old.get(key) != row] + [(row[0], "(not given)", "") for key, row in old.items() if key not in new]
+
+
+def _tables(flag_rows: list[Row], config_rows: list[Row]) -> Text:
+    text = _table(("Argument", "Value", "Note"), flag_rows) if flag_rows else Text()
+    if config_rows:
+        text.append("--config-json\n" if not flag_rows else "\n--config-json\n", style="bold")
+        text.append_text(_table(("Key", "Value", "Note"), config_rows))
+    return text
+
+
 def _same_value(flag_value: str, config_value: object) -> bool:
-    """Whether a flag's text and a --config-json value are the same setting: numbers by value (``5.0`` is ``5``), the rest as text."""
+    """Whether a flag's text and a --config-json value are the same setting: numbers by value (``5.0`` is ``5``), text as
+    it is, anything else as the table writes it."""
     flag_number, config_number = setting_number(flag_value), setting_number(config_value)
     if flag_number is not None and config_number is not None:
         return flag_number == config_number
-    return flag_value == _config_value(config_value)
+    return flag_value == (config_value if isinstance(config_value, str) else _config_value(config_value))
 
 
 def _config_value(value: object) -> str:
-    """A --config-json value as the command line writes the same setting: text as it is, anything else as JSON."""
+    """A --config-json value in words, never JSON, and one to one, so two values that differ never read the same: text
+    always in double quotes (a quote or backslash inside escaped), a number as the command line writes it (``5.0`` as
+    ``5``, the same setting), ``true`` or ``false``, ``(none)`` for null, a list in brackets with its items separated by
+    commas, and a mapping in braces as ``key=value`` pairs, a key quoted unless it is a plain name."""
     if isinstance(value, str):
-        return value if value else '""'
+        return _quoted(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "(none)"
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, dict):
+        return "{" + " ".join(f"{key if PLAIN_KEY.fullmatch(str(key)) else _quoted(str(key))}={_config_value(item)}" for key, item in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_config_value(item) for item in value) + "]"
+    return str(value)
+
+
+# A mapping key written without quotes.
+PLAIN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _quoted(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _table(header: tuple[str, str, str], rows: list[tuple[str, str, str]]) -> Text:

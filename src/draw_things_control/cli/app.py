@@ -34,7 +34,7 @@ from draw_things_control.state.store import StateError, Store
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
-DEFAULT_DATA_DIRECTORY = PROJECT_ROOT / "data"
+DEFAULT_DATA_DIRECTORY = PROJECT_ROOT / "data" / "jobs"
 
 
 @contextmanager
