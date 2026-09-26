@@ -31,7 +31,7 @@ class ParseTests(unittest.TestCase):
             parse("/apply 'walk")
 
     def test_usage_and_help_list_every_form(self) -> None:
-        self.assertEqual(usage("reveal"), "/reveal ID [RUN]")
+        self.assertEqual(usage("reveal"), "/reveal <Execution ID> [RUN]")
         self.assertEqual(usage("filter"), "/filter status STATUS | /filter name TEXT | /filter off")
         text = str(help_text())
         for name in COMMAND_NAMES:
@@ -99,13 +99,13 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/get positive 1", self.JOBS), [])
 
     def test_the_replaced_commands_name_their_new_form(self) -> None:
-        for line, new in (("/jobs", "/get jobs"), ("/job walk", "/describe job JOB"), ("/History", "/get history"), ("/execution E0012", "/describe execution ID"), ("/run walk", "/apply JOB")):
+        for line, new in (("/jobs", "/get jobs"), ("/job walk", "/describe job <Job ID>"), ("/History", "/get history"), ("/execution E0012", "/describe execution <Execution ID>"), ("/run walk", "/apply <Job ID>")):
             with self.subTest(line=line), self.assertRaisesRegex(CommandError, f"^{line.split()[0]} is now {new}; type /help$"):
                 parse(line)
         self.assertNotIn("jobs", COMMAND_NAMES)
-        self.assertEqual(usage("get", "positive"), "/get positive ID [RUN]")
-        self.assertEqual(usage("describe"), "/describe job JOB | /describe execution ID")
-        self.assertEqual(usage("describe", "execution"), "/describe execution ID")
+        self.assertEqual(usage("get", "positive"), "/get positive <Execution ID> [RUN]")
+        self.assertEqual(usage("describe"), "/describe job <Job ID> | /describe execution <Execution ID>")
+        self.assertEqual(usage("describe", "execution"), "/describe execution <Execution ID>")
 
     def test_ids_and_sort_words_complete(self) -> None:
         # Job IDs complete a JOB before the file names; execution IDs complete an ID, keeping what was typed.
@@ -113,6 +113,9 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/describe job J0002", self.JOBS, ["J0001", "J0002"]), [])
         executions = ["E0012", "E0011", "E0003"]
         self.assertEqual(completions("/describe execution E001", self.JOBS, (), executions), ["/describe execution E0012", "/describe execution E0011"])
+        self.assertEqual(completions("/describe j0", self.JOBS, ["J0001", "J0002"], executions), ["/describe j0001", "/describe j0002"])
+        self.assertEqual(completions("/describe e001", self.JOBS, ["J0001"], executions), ["/describe e0012", "/describe e0011"])
+        self.assertEqual(completions("/describe j", self.JOBS, ["J0001"], executions), ["/describe job", "/describe j0001"])
         self.assertEqual(completions("/reveal e000", self.JOBS, (), executions), ["/reveal e0003"])
         self.assertEqual(completions("/get param E00", self.JOBS, (), executions), ["/get param E0012", "/get param E0011", "/get param E0003"])
         self.assertEqual(completions("/get jobs E", self.JOBS, (), executions), [])

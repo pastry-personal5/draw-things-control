@@ -382,20 +382,21 @@ so the Execution widget keeps about 9 lines under the other two.
 |---------|--------|
 | `/help` | List the commands and keys |
 | `/get jobs` | List the job files and whether each is valid |
-| `/describe job JOB` | The summary, prompt pairs, and dry-run plan of a job |
+| `/describe job <Job ID>` | The summary, prompt pairs, and dry-run plan of a job |
 | `/sort jobs KEY [asc\|desc]` | Sort the Job Definition widget by `id`, `name`, `changed`, `mode`, or `runs` |
-| `/apply JOB` | Read the job again, confirm, and run it |
+| `/apply <Job ID>` | Read the job again, confirm, and run it |
 | `/stop` | Stop the running job, after confirmation |
 | `/get history` | Read the history again |
-| `/get prompts ID [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
-| `/get positive ID [RUN]` | Its positive prompts only |
-| `/get negative ID [RUN]` | Its negative prompts only |
-| `/get param ID [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
-| `/describe execution ID` | The detail of one execution |
+| `/get prompts <Execution ID> [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
+| `/get positive <Execution ID> [RUN]` | Its positive prompts only |
+| `/get negative <Execution ID> [RUN]` | Its negative prompts only |
+| `/get param <Execution ID> [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
+| `/describe execution <Execution ID>` | The detail of one execution |
+| `/describe J0001` or `/describe E0012` | The same, with the noun left out: a job <Execution ID> or an execution <Execution ID> says which |
 | `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, or `running` executions |
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
 | `/filter off` | Remove both filters |
-| `/reveal ID [RUN]` | Show a run's output in Finder (default: the last run with an output) |
+| `/reveal <Execution ID> [RUN]` | Show a run's output in Finder (default: the last run with an output) |
 | `/clear` | Clear the messages |
 | `/quit` | Quit; while a job runs, asks to stop it first |
 
@@ -408,7 +409,7 @@ prompts for `/get prompts`. A missing prompt is not copied. Without
 `pbcopy`, the terminal is asked to copy them (OSC 52), which not every
 terminal does.
 
-- `JOB` is a job ID (`J0001`), a file name in the data directory
+- `<Job ID>` is a job ID (`J0001`), a file name in the data directory
   (`walk.yaml`), or the name without its suffix when only one file has it. Quote a name with spaces,
   or escape them: `/apply '[b] walk.yaml'` or `/apply my\ job.yaml`. Tab
   completes such names in the style you started. A line that does not begin with `/` runs nothing.
@@ -461,7 +462,7 @@ terminal does.
   seconds, so that job appears and updates whatever the filter. When no process holds the run lock, an execution left `running`
   by a crash is shown as `interrupted`. More rows load as you move to the
   last one.
-- `ID` is an execution ID (`E0012`), and `RUN` one of its run numbers. The
+- `<Execution ID>` is an execution ID (`E0012`), and `RUN` one of its run numbers. The
   letter of an ID can be typed in either case and its leading zeros left
   out: `e12` is `E0012`, and `j1` is `J0001`. A bare number (`12`) is
   refused with `Use E0012`, so an execution ID and a run number never mix
@@ -478,7 +479,7 @@ terminal does.
   `replaced by --width 832`.
 - `/jobs`, `/job`, `/history`, and `/execution` were renamed; typing one
   says what to type instead.
-- `/describe execution ID` prints the execution as it ran, from the stored record
+- `/describe execution <Execution ID>` prints the execution as it ran, from the stored record
   rather than the current job file: its settings (with the refiner, CFG,
   and shift from the saved command), and each run's prompts, steps,
   measured size and frames, input, output, last frame, seconds, exit code,

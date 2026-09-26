@@ -5,6 +5,10 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-26
 
+- **Change**: `/help` and the usage messages write `<Job ID>` and `<Execution ID>` in place of `JOB` and `ID`. `RUN` is unchanged.
+
+- **Owner decision**: `/describe` may leave out the noun when the ID shows it: `/describe J0001` is `/describe job J0001`, and `/describe e12` is `/describe execution e12`. A job file name still needs `job`.
+
 - **Change**: Pruning history also deletes the `.log` file of each pruned execution, so `history_retention_days` now bounds the logs too.
   - Only a regular file named `*.log` that a pruned row points to is deleted. Manifests and outputs stay, and a failed delete is a warning, not an error.
   - Alternatives: a separate log-only age setting, and deleting by file age in the output directory. Both were rejected: the first adds a second knob for one policy, and the second could delete logs the history still lists or files it never wrote.

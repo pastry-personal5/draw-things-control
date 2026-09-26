@@ -18,21 +18,21 @@ PREFIX = "/"
 COMMANDS = (
     ("help", "", "List the commands and keys"),
     ("get", "jobs", "List the job files and whether each is valid"),
-    ("describe", "job JOB", "The summary, prompt pairs, and dry-run plan of a job"),
+    ("describe", "job <Job ID>", "The summary, prompt pairs, and dry-run plan of a job"),
     ("sort", "jobs KEY [asc|desc]", "Sort the Job Definition widget by id, name, changed, mode, or runs"),
-    ("apply", "JOB", "Read the job again, confirm, and run it"),
+    ("apply", "<Job ID>", "Read the job again, confirm, and run it"),
     ("stop", "", "Stop the running job, after confirmation"),
     ("get", "history", "Read the execution history again"),
-    ("get", "prompts ID [RUN]", "An execution's positive and negative prompts (every pair, or one run's)"),
-    ("get", "positive ID [RUN]", "An execution's positive prompts (every pair, or one run's)"),
-    ("get", "negative ID [RUN]", "An execution's negative prompts (every pair, or one run's)"),
-    ("get", "param ID [RUN]", "A run's draw-things-cli arguments without the prompts, with overridden values (default: its first run)"),
-    ("get", "parameters ID [RUN]", "The same as /get param"),
-    ("describe", "execution ID", "The detail of one execution"),
+    ("get", "prompts <Execution ID> [RUN]", "An execution's positive and negative prompts (every pair, or one run's)"),
+    ("get", "positive <Execution ID> [RUN]", "An execution's positive prompts (every pair, or one run's)"),
+    ("get", "negative <Execution ID> [RUN]", "An execution's negative prompts (every pair, or one run's)"),
+    ("get", "param <Execution ID> [RUN]", "A run's draw-things-cli arguments without the prompts, with overridden values (default: its first run)"),
+    ("get", "parameters <Execution ID> [RUN]", "The same as /get param"),
+    ("describe", "execution <Execution ID>", "The detail of one execution"),
     ("filter", "status STATUS", f"Show only {', '.join(STATUSES)} executions"),
     ("filter", "name TEXT", "Show only executions whose job name or file name contains TEXT"),
     ("filter", "off", "Remove the history filters"),
-    ("reveal", "ID [RUN]", "Reveal a run's output in Finder (default: the last output)"),
+    ("reveal", "<Execution ID> [RUN]", "Reveal a run's output in Finder (default: the last output)"),
     ("clear", "", "Clear the messages"),
     ("quit", "", "Quit; while a job runs, asks to stop it first"),
 )
@@ -41,7 +41,7 @@ COMMAND_NAMES = tuple(dict.fromkeys(name for name, _, _ in COMMANDS))
 GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in COMMANDS if name == "get"))
 DESCRIBE_WORDS = ("job", "execution")
 # Commands the /get and /describe forms replaced, and what to type instead.
-REPLACED = {"jobs": "/get jobs", "job": "/describe job JOB", "history": "/get history", "execution": "/describe execution ID", "run": "/apply JOB"}
+REPLACED = {"jobs": "/get jobs", "job": "/describe job <Job ID>", "history": "/get history", "execution": "/describe execution <Execution ID>", "run": "/apply <Job ID>"}
 # The Job Definition widget's sort keys, in the order `s` moves through them, and the directions.
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
@@ -103,8 +103,8 @@ def help_text() -> Text:
     for form, action in forms:
         text.append(f"  {form.ljust(width)}  ", style="bold")
         text.append(f"{action}\n")
-    text.append("JOB is a job ID (J0001), a job file name in the data directory, or its name without the suffix. Quote a name with spaces.\n", style="dim")
-    text.append("ID is an execution ID (E0012), and RUN one of its run numbers. The letter's case and the leading zeros do not matter.\n", style="dim")
+    text.append("<Job ID> is a job ID (J0001), a job file name in the data directory, or its name without the suffix. Quote a name with spaces.\n", style="dim")
+    text.append("<Execution ID> is an execution ID (E0012), and RUN one of its run numbers. The letter's case and the leading zeros do not matter.\n", style="dim")
     text.append("Keys\n", style="bold")
     width = max(len(key) for key, _ in KEYS)
     for key, action in KEYS:
@@ -133,7 +133,10 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
     elif words == [f"{PREFIX}get"]:
         candidates = list(GET_WORDS)
     elif words == [f"{PREFIX}describe"]:
-        candidates = list(DESCRIBE_WORDS)
+        # The noun may be left out, so a typed J or E completes to an ID too (in any case, as after the noun).
+        identifiers = [identifier for identifier in (*job_ids, *execution_ids) if last and identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]
+        matching = [f"{head} {word}" for word in DESCRIBE_WORDS if word.startswith(last) and word != last]
+        return [*matching, *(f"{head} {last}{identifier[len(last) :]}" for identifier in identifiers)]
     elif words in ([f"{PREFIX}describe", "execution"], [f"{PREFIX}reveal"]) or (len(words) == 2 and words[0] == f"{PREFIX}get" and words[1] in ("prompts", "positive", "negative", "param", "parameters")):
         # Typed in any case: the completion keeps what was typed and adds the rest.
         return [f"{head} {last}{identifier[len(last) :]}" for identifier in execution_ids if identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]

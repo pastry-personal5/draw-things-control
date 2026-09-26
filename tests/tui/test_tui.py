@@ -309,40 +309,40 @@ class TuiTests(TuiTestCase):
                 ("/launch walk", "Unknown command '/launch'; type /help"),
                 ("/exit", "Unknown command '/exit'; type /help"),
                 ("/apply 'walk", "Cannot read the command: No closing quotation"),
-                ("/job walk", "/job is now /describe job JOB; type /help"),
+                ("/job walk", "/job is now /describe job <Job ID>; type /help"),
                 ("/jobs", "/jobs is now /get jobs; type /help"),
                 ("/history", "/history is now /get history; type /help"),
-                ("/describe job", "Usage: /describe job JOB"),
-                ("/describe jobs walk", "Usage: /describe job JOB | /describe execution ID"),
-                ("/describe execution", "Usage: /describe execution ID"),
-                ("/describe execution x", "Usage: /describe execution ID"),
+                ("/describe job", "Usage: /describe job <Job ID>"),
+                ("/describe jobs walk", "Usage: /describe job <Job ID> | /describe execution <Execution ID>"),
+                ("/describe execution", "Usage: /describe execution <Execution ID>"),
+                ("/describe execution x", "Usage: /describe execution <Execution ID>"),
                 ("/describe execution 12", "Use E0012: an execution ID begins with E"),
-                ("/describe execution J12", "Usage: /describe execution ID"),
-                ("/execution E0012", "/execution is now /describe execution ID; type /help"),
+                ("/describe execution J12", "Usage: /describe execution <Execution ID>"),
+                ("/execution E0012", "/execution is now /describe execution <Execution ID>; type /help"),
                 ("/sort jobs size", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
                 ("/sort jobs name up", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
                 ("/apply J0099", f"No job file has the ID J0099 in {self.data}"),
                 ("/get history 3", "Usage: /get history"),
                 ("/get jobs all", "Usage: /get jobs"),
-                ("/get positive x", "Usage: /get positive ID [RUN]"),
-                ("/get param E1 2 3", "Usage: /get param ID [RUN]"),
+                ("/get positive x", "Usage: /get positive <Execution ID> [RUN]"),
+                ("/get param E1 2 3", "Usage: /get param <Execution ID> [RUN]"),
                 ("/get param 1", "Use E0001: an execution ID begins with E"),
                 ("/get everything", f"Usage: {usage('get')}"),
-                ("/apply a b", "Usage: /apply JOB"),
+                ("/apply a b", "Usage: /apply <Job ID>"),
                 ("/stop now", "Usage: /stop"),
                 ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, running"),
                 ("/filter clear", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
                 ("/filter name ''", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
-                ("/reveal x", "Usage: /reveal ID [RUN]"),
+                ("/reveal x", "Usage: /reveal <Execution ID> [RUN]"),
                 # IDs SQLite cannot hold, and digits int() or SQLite would refuse, are usage errors, not crashes.
-                ("/describe execution E99999999999999999999", "Usage: /describe execution ID"),
-                ("/describe execution E²", "Usage: /describe execution ID"),
-                ("/describe execution E0", "Usage: /describe execution ID"),
-                ("/reveal E99999999999999999999", "Usage: /reveal ID [RUN]"),
-                ("/reveal E1 ²", "Usage: /reveal ID [RUN]"),
+                ("/describe execution E99999999999999999999", "Usage: /describe execution <Execution ID>"),
+                ("/describe execution E²", "Usage: /describe execution <Execution ID>"),
+                ("/describe execution E0", "Usage: /describe execution <Execution ID>"),
+                ("/reveal E99999999999999999999", "Usage: /reveal <Execution ID> [RUN]"),
+                ("/reveal E1 ²", "Usage: /reveal <Execution ID> [RUN]"),
                 # Thousands of digits, which int() itself refuses, are usage errors too.
-                ("/describe execution E" + "1" * 5000, "Usage: /describe execution ID"),
-                ("/reveal E1 " + "1" * 5000, "Usage: /reveal ID [RUN]"),
+                ("/describe execution E" + "1" * 5000, "Usage: /describe execution <Execution ID>"),
+                ("/reveal E1 " + "1" * 5000, "Usage: /reveal <Execution ID> [RUN]"),
                 ("/apply J" + "1" * 5000, f"No job file 'J{'1' * 5000}' in {self.data}"),
                 ("/stop", "No job is running"),
             ):
@@ -361,7 +361,7 @@ class TuiTests(TuiTestCase):
             self.assertGreater(len(log.lines), 10)
             await self.command(pilot, "/clear")
             self.assertEqual(len(log.lines), 0)
-        self.assertIn("/reveal ID [RUN]", shown)
+        self.assertIn("/reveal <Execution ID> [RUN]", shown)
         self.assertIn("Tab", shown)
 
     async def test_messages_keep_at_most_5000_lines(self) -> None:

@@ -84,7 +84,7 @@ class JobDefinitionTests(TuiTestCase):
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
             rows = {row[1]: row for row in self.rows(pilot.app)}
-            for line in ("/describe job j2", "/describe job J0002", "/describe job walk"):
+            for line in ("/describe job j2", "/describe job J0002", "/describe j2", "/describe J0002", "/describe job walk"):
                 await self.command(pilot, line)
             await self.command(pilot, "/apply J9")
             await self.command(pilot, "/apply j0002")
@@ -94,7 +94,7 @@ class JobDefinitionTests(TuiTestCase):
         self.assertEqual(rows["bad"][0::3], ["J0001", "invalid"])
         self.assertEqual(rows["bad"][4], "invalid")
         self.assertEqual(rows["walk"][0], "J0002")
-        for line in ("/describe job j2", "/describe job J0002", "/describe job walk"):
+        for line in ("/describe job j2", "/describe job J0002", "/describe j2", "/describe J0002", "/describe job walk"):
             shown = "\n".join(self.since(line))
             self.assertTrue(shown.startswith(f"Job ID: J0002\nJob file: {self.data / 'walk.yaml'}"), shown)
         self.assertEqual(self.since("/apply J9")[:1], [f"No job file has the ID J0009 in {self.data}"])

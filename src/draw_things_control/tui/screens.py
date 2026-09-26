@@ -17,7 +17,7 @@ from textual.widgets import DataTable, Input, RichLog, Rule, Static
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.job_service import JobService
-from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
+from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
 from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, execution_label, parse_id, reveal_run
 from draw_things_control.tui.job_files import JobCatalog, JobDetails, JobListing, add_plan, read_details
@@ -186,8 +186,13 @@ class MainScreen(Screen[None]):
 
     def command_describe(self, what: str, *arguments: str) -> None:
         """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file; /describe execution ID: one
-        execution as it ran."""
+        execution as it ran. The noun may be left out when the ID shows it: /describe J0001, /describe e12."""
         word = what.lower()
+        if not arguments and word not in ("job", "execution"):
+            if parse_typed_id(what, JOB_LETTER) is not None:
+                word, arguments = "job", (what,)
+            elif parse_typed_id(what, EXECUTION_LETTER) is not None:
+                word, arguments = "execution", (what,)
         if word == "job" and len(arguments) == 1:
             self.describe_job(self.job_path(arguments[0]))
         elif word == "execution" and len(arguments) == 1:
