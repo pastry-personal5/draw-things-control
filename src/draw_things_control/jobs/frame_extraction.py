@@ -33,9 +33,27 @@ def require_ffmpeg(executable: str = "ffmpeg") -> str:
     return path
 
 
+def find_ffprobe(ffmpeg: str | None = None) -> str | None:
+    """ffprobe beside ``ffmpeg`` (the pair installed together; without one, the ffmpeg on PATH), or else on PATH; None when
+    there is neither. The preflight and the measuring both look here, so they find the same ffprobe."""
+    if ffmpeg is None:
+        ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is not None and Path(ffmpeg).with_name("ffprobe").exists():
+        return str(Path(ffmpeg).with_name("ffprobe"))
+    return shutil.which("ffprobe")
+
+
+def require_ffprobe(ffmpeg: str | None = None) -> str:
+    """Return ffprobe's path, or explain how to get it; video jobs need it to measure their outputs."""
+    path = find_ffprobe(ffmpeg)
+    if path is None:
+        raise ValueError("Could not find 'ffprobe' beside ffmpeg or on PATH; video jobs need it to measure their outputs (it comes with ffmpeg, for example: brew install ffmpeg)")
+    return path
+
+
 def has_matrix_tag(video: Path, ffmpeg: str) -> bool:
     """Whether the video's first stream says which YCbCr matrix it uses; when ffprobe cannot tell, assume it does not."""
-    ffprobe = str(Path(ffmpeg).with_name("ffprobe")) if Path(ffmpeg).with_name("ffprobe").exists() else shutil.which("ffprobe")
+    ffprobe = find_ffprobe(ffmpeg)
     if ffprobe is None:
         return False
     command = [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_space", "-of", "default=nw=1:nk=1", str(video)]

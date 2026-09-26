@@ -15,6 +15,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
 
+from draw_things_control.core.draw_things_arguments import command_settings
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.job_definition import JobDefinition
@@ -24,7 +25,7 @@ from draw_things_control.jobs.job_service import JobService
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import StateError, Store
 from draw_things_control.tui.job_files import error_text
-from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun
+from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun, PastRun, PastRunFound
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
 from draw_things_control.tui.text import confirm_run_text, question_text
 
@@ -304,6 +305,8 @@ class DrawThingsApp(App[None]):
                     store.sweep_interrupted()
                 except sqlite3.Error as error:
                     raise StateError(f"Cannot use the state database {store.path}: {error}") from error
+                # Posted before any event, so the run can be estimated from its first moment.
+                self.post_message(PastRunFound(self.past_run(store)))
                 # The recorder comes first, so its row exists before JobStarted is posted.
                 self._recorder = ExecutionRecorder(store)
                 observer = combine_observers(self._recorder, self.post_event, self.stop_if_requested)
@@ -312,6 +315,21 @@ class DrawThingsApp(App[None]):
                 store.close()
         finally:
             lock.release()
+
+    @staticmethod
+    def past_run(store: Store) -> PastRun | None:
+        """The latest successful run of any job, to estimate from; None when there is none or the store cannot say."""
+        try:
+            run = store.latest_succeeded_run()
+        except (sqlite3.Error, ValueError):
+            return None
+        if run is None or not run.get("seconds"):
+            return None
+        return PastRun(float(run["seconds"]), command_settings(run.get("command") or []).steps)
+
+    def on_past_run_found(self, message: PastRunFound) -> None:
+        if self.live is not None:
+            self.live.past_run = message.past_run
 
     def post_event(self, event: JobEvent) -> None:
         # Thread-safe and non-blocking; returns False once the app is closing.

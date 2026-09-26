@@ -21,11 +21,12 @@ from draw_things_control.core.generation_service import ChildStartCallback, Gene
 from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.process_output import MessageCallback, OutputProcessor
 from draw_things_control.core.run_lock import EX_TEMPFAIL, RunLock, RunLockBusy, RunLockError
-from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg
+from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg, require_ffprobe
 from draw_things_control.jobs.job_definition import JobDefinition
 from draw_things_control.jobs.job_report import job_summary, plan_lines, read_settings, report_ignored_config
 from draw_things_control.jobs.job_report import read_job as load_job_and_settings
 from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.media_info import measure_output
 from draw_things_control.jobs.video_color import tag_video_colors
 from draw_things_control.state.history_import import import_history
 from draw_things_control.state.recorder import ExecutionRecorder
@@ -108,7 +109,7 @@ def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | N
 
 def create_job_service(*, handle_signals: bool = True) -> JobService:
     """The JobService every front end uses to run jobs with the real tools; ``handle_signals`` must be False for jobs run off the main thread."""
-    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors, handle_signals=handle_signals)
+    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors, handle_signals=handle_signals, require_ffprobe=require_ffprobe, output_measurer=measure_output)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)

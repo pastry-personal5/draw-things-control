@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from loguru import logger
 from PIL import Image
 
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
@@ -25,6 +26,7 @@ from draw_things_control.jobs import job_service
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
 from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.media_info import MediaInfo
 from tests.fixtures import JobTestCase, job_data
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
@@ -255,6 +257,59 @@ class JobServiceTests(JobTestCase):
             self.service.preview(self.job(), executable="draw-things-cli")
         self.service.preview(self.job(mode="i2i"), executable="draw-things-cli")
         self.assertEqual(self.calls, [])
+
+    def test_a_video_job_without_ffprobe_fails_before_anything_runs(self) -> None:
+        def no_ffprobe() -> str:
+            raise ValueError("Could not find 'ffprobe' beside ffmpeg or on PATH")
+
+        self.service._require_ffprobe = no_ffprobe
+        with self.assertRaisesRegex(ValueError, "ffprobe"):
+            self.run_job(self.job())
+        with self.assertRaisesRegex(ValueError, "ffprobe"):
+            self.service.preview(self.job(), executable="draw-things-cli")
+        self.assertEqual(self.calls, [])
+        # An image job measures its PNG from the file header, so it needs no ffprobe.
+        self.assertEqual(self.run_job(self.job(mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])).exit_code, 0)
+
+    def test_each_successful_run_records_what_its_output_file_holds(self) -> None:
+        measured: list[Path] = []
+
+        def measure(path: Path) -> MediaInfo:
+            measured.append(path)
+            # The file as the run left it: written, tagged, and its last frame extracted.
+            self.assertTrue(path.is_file())
+            self.assertEqual(len(self.extracted), len(measured))
+            return MediaInfo(832, 448, 77 + len(measured))
+
+        self.service._output_measurer = measure
+        events: list[object] = []
+        outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        finished = [event for event in events if isinstance(event, RunFinished)]
+        self.assertEqual([(event.output_width, event.output_height, event.output_frames) for event in finished], [(832, 448, 78), (832, 448, 79)])
+        self.assertEqual(measured, [arguments.output for arguments, _timeout, _grace in self.calls])
+        runs = self.manifest(outcome)["runs"]
+        self.assertEqual([(run["output_width"], run["output_height"], run["output_frames"]) for run in runs], [(832, 448, 78), (832, 448, 79)])
+        # The run's time is draw-things-cli's alone; measuring is not in it.
+        self.assertTrue(all(isinstance(run["seconds"], float) for run in runs))
+
+    def test_a_file_that_cannot_be_measured_is_a_warning_and_failed_runs_are_not_measured(self) -> None:
+        def cannot(path: Path) -> MediaInfo:
+            raise ValueError("ffprobe exited with 1")
+
+        warnings: list[str] = []
+        sink = logger.add(lambda message: warnings.append(message.record["message"]), level="WARNING")
+        self.addCleanup(logger.remove, sink)
+        self.service._output_measurer = cannot
+        outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}]))
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual([(run["output_width"], run["output_frames"]) for run in self.manifest(outcome)["runs"]], [(None, None)])
+        self.assertTrue(any("Could not measure" in warning and "ffprobe exited with 1" in warning for warning in warnings), warnings)
+
+        calls: list[Path] = []
+        self.service._output_measurer = lambda path: calls.append(path) or MediaInfo(1, 1, 1)
+        self.results[len(self.calls) + 1] = FakeResult(return_code=3)
+        self.assertEqual(self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])).exit_code, 3)
+        self.assertEqual(calls, [])
 
     def test_run_that_cannot_start_is_marked_failed(self) -> None:
         def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:

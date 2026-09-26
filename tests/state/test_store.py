@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from draw_things_control.state import store as store_module
-from draw_things_control.state.store import SCHEMA_VERSION, StateError, Store
+from draw_things_control.state.store import SCHEMA_V1, SCHEMA_VERSION, StateError, Store
 
 NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -51,6 +51,42 @@ class StoreTests(unittest.TestCase):
         self.store.close()
         again = self.open()
         self.assertEqual(again.get_execution(execution_id)["job_name"], "first")
+
+    def test_a_version_1_database_is_upgraded_on_open_with_every_row_kept(self) -> None:
+        path = self.path.with_name("old.db")
+        connection = sqlite3.connect(path)
+        for statement in SCHEMA_V1.split(";\n"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 1")
+        connection.execute("INSERT INTO executions (job_name, job_file, mode, status, started_at, started_epoch) VALUES ('old', 'old.yaml', 'i2v', 'succeeded', '2026-09-01T09:00:00+00:00', 0)")
+        connection.execute("INSERT INTO runs (execution_id, number, pair, positive, started_at, started_epoch, status, output) VALUES (1, 1, 'p', 'text', '2026-09-01T09:00:00+00:00', 0, 'succeeded', 'a.mov')")
+        connection.commit()
+        connection.close()
+        # Opened without pruning, as the TUI's history reader opens it: the upgrade is the one write it makes.
+        store = Store(path, clock=lambda: NOW, prune_on_open=False)
+        self.addCleanup(store.close)
+        self.assertEqual(store._connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+        execution = store.get_execution(1)
+        assert execution is not None
+        self.assertEqual([(run["output"], run["output_width"], run["output_height"], run["output_frames"]) for run in execution["runs"]], [("a.mov", None, None, None)])
+
+    def test_a_finished_run_keeps_its_measured_output(self) -> None:
+        execution_id = self.store.start_execution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at=iso(0), settings={})
+        self.store.start_run(execution_id, 1, pair="p", positive="text", started_at=iso(0), command=[])
+        self.store.finish_run(execution_id, 1, status="succeeded", exit_code=0, seconds=4.0, output="a.mov", last_frame=None, output_width=832, output_height=448, output_frames=81)
+        run = self.store.get_execution(execution_id)["runs"][0]  # type: ignore[index]
+        self.assertEqual((run["output_width"], run["output_height"], run["output_frames"]), (832, 448, 81))
+
+    def test_the_latest_successful_run_of_any_job_is_found(self) -> None:
+        self.assertIsNone(self.store.latest_succeeded_run())
+        older = self.add("older", started=iso(2), finished=iso(2))
+        newer = self.store.start_execution(job_name="newer", job_file="newer.yaml", mode="i2v", started_at=iso(1), settings={})
+        self.store.start_run(newer, 1, pair="p", positive="text", started_at=iso(1), command=["draw-things-cli", "--steps", "8"])
+        self.store.finish_run(newer, 1, status="failed", exit_code=1, seconds=3.0, output=None, last_frame=None)
+        run = self.store.latest_succeeded_run()
+        # A failed run is never the one to estimate from.
+        self.assertEqual((run["execution_id"], run["seconds"], run["command"]), (older, 1.0, ["draw-things-cli", "--prompt", "text"]))  # type: ignore[index]
 
     def test_a_database_with_a_newer_schema_is_refused(self) -> None:
         self.store.close()

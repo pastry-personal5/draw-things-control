@@ -67,6 +67,18 @@ class ImportHistoryTests(unittest.TestCase):
         self.assertEqual((old["cooldown_seconds"], old["settings"]["cooldown_seconds"]), (900.0, 900.0))
         self.assertNotIn("cooldown", old["settings"])
 
+    def test_measured_outputs_are_copied_and_manifests_without_them_still_import(self) -> None:
+        measured = manifest()
+        measured["runs"][0].update(output_width=832, output_height=448, output_frames=81)
+        measured["runs"][1].update(output_width="832", output_height=True, output_frames=0)
+        self.write("measured-job.json", measured)
+        self.write("old-job.json", manifest(days_ago=2), folder="old")
+        self.assertEqual(self.run_import().imported, 2)
+        new, old = (self.store.get_execution(row["id"]) for row in self.store.list_executions())
+        # A positive whole number is read as every source is (text of digits too); anything else is unknown, as a hand-edited manifest may hold.
+        self.assertEqual([(run["output_width"], run["output_height"], run["output_frames"]) for run in new["runs"]], [(832, 448, 81), (832, None, None)])
+        self.assertEqual([(run["output_width"], run["output_frames"]) for run in old["runs"]], [(None, None), (None, None)])
+
     def test_manifests_in_job_subdirectories_are_imported_with_their_runs(self) -> None:
         path = self.write("walk-job.json", manifest())
         report = self.run_import()

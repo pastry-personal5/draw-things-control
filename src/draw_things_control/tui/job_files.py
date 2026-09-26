@@ -22,7 +22,7 @@ class JobRow:
 
 @dataclass(frozen=True)
 class JobDetails:
-    """What /job prints: the job or its error, and the plan or why there is none."""
+    """What /describe job prints: the job or its error, and the plan or why there is none."""
 
     job: JobDefinition | None
     error: str | None = None

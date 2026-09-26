@@ -33,6 +33,8 @@ processes from driving the GPU at once.
   end times, and an execution detail widget under the history with the
   model, refiner, size, CFG, and shift, and each run's frames, steps, time, and a
   link that reveals its output in Finder
+- `/get` and `/describe` commands: the job files, the history, and an
+  execution's prompts and `draw-things-cli` arguments
 
 ## Non-goals
 
@@ -57,10 +59,11 @@ processes from driving the GPU at once.
 | 05 | [Command layout and execution history](milestone-05-tui-run-history.md) | done |
 | 06 | [YAML Draw Things configurations](milestone-06-yaml-dt-config.md) | done |
 | 07 | [Automatic cooldown](milestone-07-cooldown-auto.md) | done |
-| 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | planned |
+| 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | done |
+| 09 | [Get and describe commands](milestone-09-tui-get-describe.md) | done |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
-both. 06 and 07 stand alone. 08 builds on 04 and 05.
+both. 06 and 07 stand alone. 08 builds on 04 and 05, and 09 on 05 and 08.
 
 ## New dependencies
 

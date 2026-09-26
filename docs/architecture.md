@@ -51,7 +51,8 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 |--------|----------------|
 | `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`) and wiring |
 | `core/generation_service.py` | `generate` use case: validate, resolve, preview or run |
-| `core/draw_things_arguments.py` | Validated options and argument-vector building (no shell) |
+| `core/draw_things_arguments.py` | Validated options and argument-vector building (no shell); `command_settings` reads a saved command's model, refiner, CFG, shift, and steps back (phase 2); one ordered flag table (`GENERATE_FLAGS`) drives the builder, the parser, and redaction |
+| `core/numbers.py` | Numbers read from a command, `--config-json`, a manifest, or `ffprobe`: `setting_number` and `positive_whole` (phase 2) |
 | `core/draw_things_runner.py` | Process group, signals, timeout, graceful-then-forced shutdown |
 | `core/process_output.py` | Classify and log child output; strip terminal codes; structured progress (step counter and percent) |
 | `core/global_config.py` | Global config loading; `CooldownPolicy`, the `cooldown` mapping shared by the global configuration and jobs |
@@ -60,7 +61,8 @@ Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
 | `jobs/job_definition.py` | Job file loading and validation |
 | `jobs/job_report.py` | Reading jobs and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI (phase 2) |
 | `jobs/input_size.py`, `jobs/input_resize.py` | Input image check and resize |
-| `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg`, labeled sRGB |
+| `jobs/output_naming.py`, `jobs/frame_extraction.py` | Output names; last frames via `ffmpeg`, labeled sRGB; finding `ffprobe` |
+| `jobs/media_info.py` | Measures an output's actual size and frame count: `ffprobe` for a video, the header for a PNG (phase 2) |
 | `jobs/video_color.py` | Adds a `colr` color-tag box to a finished video, without touching frames or timing |
 | `jobs/job_manifest.py`, `jobs/job_log.py` | Per-job JSON manifest and log file |
 
@@ -119,7 +121,16 @@ Adds what every later front end needs, without changing the CLI's behavior:
   wait follows, and the `bound` that set it, if any. The manifest and the
   execution's `settings` keep the resolved mapping as `cooldown`, and
   `cooldown_seconds` holds only a manual wait (0 for `off`, null for `auto`).
-- `tui/` (Textual, Milestones 03 to 05 done). Textual code stays in the
+- Measured outputs (Milestone 08, done): after each successful run,
+  `JobService` measures the output through an injected `output_measurer`
+  (`jobs/media_info.py` in the CLI and TUI) and puts the actual width,
+  height, and frame count on `RunFinished` (`output_width`, `output_height`,
+  `output_frames`), the manifest's `RunRecord`, and three `runs` columns
+  added by state store schema version 2. A video job needs `ffprobe`
+  (`require_ffprobe`, checked with `ffmpeg` before run 1). The store migrates
+  on any open, a browsing one too: an upgrade is the one write a read-only
+  screen may make.
+- `tui/` (Textual, Milestones 03 to 05, 08, and 09 done). Textual code stays in the
   modules that need it; the rest are plain functions that run on worker
   threads and are tested without an app.
 
@@ -127,13 +138,14 @@ Adds what every later front end needs, without changing the CLI's behavior:
   |--------|----------------|
   | `app.py` | The app: its collaborators (settings, data directory, executable, shutdown grace, a `JobService` built with `handle_signals=False`), the job worker, signals, and the two-press Ctrl-C |
   | `screens.py` | `MainScreen` (layout, `/` command dispatch, wiring job events to the panes) and the confirmation dialog |
-  | `panes.py` | `CliPane` (run line and output) and `HistoryPane` (paging, filters, polling, in-place row updates), each owning its state |
+  | `panes.py` | `StatusPane` (the job at a glance), `CliPane` (run line and output), `HistoryPane` (paging, filters, polling, in-place row updates, the other-process lock check), and `ExecutionPane` (the execution under the cursor, its successful runs, selection, and reveal), each owning its state |
   | `widgets.py` | `CommandInput` (completion, recall) and `MessageLog` |
-  | `commands.py` | The command table: parsing, usage, help, completion |
+  | `commands.py` | The command table (including the `/get` and `/describe` forms): parsing, usage, help, completion |
   | `history.py` | `HistoryReader` (one store, never raises, never creates or prunes the database), output paths, reveal |
   | `job_files.py` | Reading and planning the job files in the data directory |
   | `text.py` | Every text the TUI shows, from `jobs/job_report.py` where the CLI prints the same |
-  | `live_run.py` | `LiveRun`, the running job's state, built from its events on the main thread |
+  | `live_run.py` | `LiveRun`, the running job's state, built from its events on the main thread, with the step readings and run times the estimates use |
+  | `estimate.py` | The run estimate (a past run's time, then its time per step at the first report, then the live step rate) and the job estimate (runs timed by their full time, waits by the cooldown policy), as plain functions of a `LiveRun` |
 
   A job runs on a thread worker that takes `RunLock("tui")`, opens its own
   `Store`, and runs `JobService.run` with the `ExecutionRecorder`. Its
@@ -143,7 +155,19 @@ Adds what every later front end needs, without changing the CLI's behavior:
   `SIGHUP`, `SIGTERM`, and `SIGINT` on the asyncio loop and cancels any
   running job when it unmounts, so no `draw-things-cli` outlives it. No
   Textual worker may raise, since a failed worker closes the app: store
-  reads and `open` failures become messages. Browsing writes nothing.
+  reads and `open` failures become messages. Browsing writes nothing but a
+  schema upgrade of an older `state/dtc.db`.
+
+  Before a job starts, its worker reads the latest successful run of any job
+  (`Store.latest_succeeded_run`) and posts it to the app, so the Status
+  widget can estimate the first run before `draw-things-cli` reports a
+  step.
+
+  The Execution widget follows the history cursor after a 0.2-second pause,
+  reading through the same `HistoryReader`; only the newest read is shown.
+  Its file-name links carry a click action built from the execution and run
+  numbers only (`reveal(12, 3)`), never from stored text, and run in the
+  widget that holds the text, which hands them to the pane.
 
 ## Phase 3: API and MCP for agents (planned)
 

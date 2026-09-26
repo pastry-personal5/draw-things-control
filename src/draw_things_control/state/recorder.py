@@ -72,7 +72,7 @@ class ExecutionRecorder:
             self._last_run = event.number
             self._store.start_run(self._execution_id, event.number, pair=event.pair, positive=event.positive, negative=event.negative, input=event.input, resized_input=event.resized_input, output=event.output, last_frame=event.last_frame, command=list(event.command), started_at=event.at)
         elif isinstance(event, RunFinished):
-            self._store.finish_run(self._execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame)
+            self._store.finish_run(self._execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame, output_width=event.output_width, output_height=event.output_height, output_frames=event.output_frames)
         elif isinstance(event, CooldownEnded):
             if self._last_run is not None:
                 self._store.set_run_cooldown(self._execution_id, self._last_run, event.waited_seconds)

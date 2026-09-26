@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import threading
 from collections.abc import Callable
@@ -184,3 +186,29 @@ def reveal_in_finder(path: Path) -> str | None:
     if result.returncode != 0:
         return f"Cannot reveal {path}: open exited with {result.returncode}{': ' + result.stderr.strip() if result.stderr.strip() else ''}"
     return None
+
+
+def copy_to_pasteboard(text: str) -> str | None:
+    """Put ``text`` on the macOS clipboard with pbcopy; None when it did, else why not (also when there is no pbcopy)."""
+    pbcopy = shutil.which("pbcopy")
+    if pbcopy is None:
+        return "pbcopy was not found"
+    # pbcopy reads its input in the locale's encoding; UTF-8 keeps any prompt's characters.
+    environment = {**os.environ, "LC_CTYPE": "UTF-8"}
+    try:
+        result = subprocess.run([pbcopy], input=text.encode("utf-8"), check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10, env=environment)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"pbcopy failed: {error}"
+    if result.returncode != 0:
+        return f"pbcopy exited with {result.returncode}"
+    return None
+
+
+def reveal_run(execution: dict[str, Any] | str, run_number: int | None) -> tuple[str, str]:
+    """Reveal the run's output in Finder (/reveal, a click, or Enter): the message to say, and its style. ``execution`` is
+    as the reader returns it, a string when it could not be read; runs off the UI thread."""
+    target = reveal_target(execution, run_number) if isinstance(execution, dict) else execution
+    if isinstance(target, str):
+        return target, "red"
+    error = reveal_in_finder(target)
+    return (error, "red") if error else (f"Revealed {target}", "")

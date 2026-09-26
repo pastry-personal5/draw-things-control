@@ -20,12 +20,12 @@ from draw_things_control.core.generation_service import GenerationService
 from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_events import RunStarted
+from draw_things_control.jobs.job_events import JobStarted, RunStarted
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryReader
-from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, JobEventMessage, LiveRun
-from draw_things_control.tui.panes import HistoryPane
+from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, JobEventMessage, LiveRun, PastRun
+from draw_things_control.tui.panes import ExecutionPane, HistoryPane
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
 from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import JobTestCase, job_data
@@ -101,6 +101,105 @@ class LiveRunTests(TuiTestCase):
         self.assertEqual([run["status"] for run in execution["runs"]], ["succeeded", "succeeded"])
         self.assertTrue(run_lock_is_free())
         self.assertEqual([runner.grace for runner in runs.runners], [3, 3])
+
+    async def test_the_status_widget_follows_the_job_and_keeps_its_end(self) -> None:
+        self.write_data_job()
+        gate = threading.Event()
+        runs = FakeRuns(gate=gate)
+        app = self.app(runs)
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.settle(pilot)
+            idle = self.text(app, "status")
+            await self.start(pilot)
+            await self.wait_for(pilot, lambda: app.live is not None and app.live.progress == (4, 8), "run 1's progress")
+            await pilot.pause()
+            running = self.text(app, "status").split("\n")
+            gate.set()
+            await self.finish(pilot)
+            await pilot.pause()
+            ended = self.text(app, "status").split("\n")
+        self.assertEqual(idle, "\n\n\n\n")
+        self.assertEqual(running[0], "running  walk.yaml  run 1/2")
+        self.assertTrue(running[1].startswith("Job "), running)
+        self.assertTrue(running[2].startswith("Run ") and " 50% " in running[2], running)
+        self.assertTrue(running[3].startswith("step 4/8  "), running)
+        self.assertEqual(running[4], "")
+        self.assertEqual(ended[:2], ["finished (succeeded)  walk.yaml", "2/2 runs succeeded"])
+        self.assertTrue(ended[3].startswith("job took ") and ended[4].startswith("last run took "), ended)
+
+    async def test_a_new_job_moves_the_history_cursor_unless_the_history_is_being_browsed(self) -> None:
+        self.write_data_job()
+        store = Store()
+        self.addCleanup(store.close)
+        old = store.start_execution(job_name="old", job_file="/jobs/old.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00", settings={})
+        store.finish_execution(old, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:01:00+00:00")
+        original = MainScreen.job_event
+
+        def browse_then_apply(screen: MainScreen, event: Any) -> None:
+            # The person moves to the history just as the job starts (set_focus at once; focus() waits for the next turn).
+            if isinstance(event, JobStarted):
+                screen.set_focus(screen.history)
+            original(screen, event)
+
+        for browsing in (False, True):
+            with self.subTest(browsing=browsing):
+                app = self.app(FakeRuns())
+                patcher = mock.patch.object(MainScreen, "job_event", browse_then_apply) if browsing else contextlib.nullcontext()
+                with patcher:
+                    async with app.run_test(size=(160, 60)) as pilot:
+                        await self.settle(pilot)
+                        table = app.screen.query_one(HistoryPane)
+                        before = table.selected
+                        await self.start(pilot)
+                        await self.finish(pilot)
+                        await self.settle(pilot)
+                        await self.wait_for(pilot, lambda app=app, table=table: app.execution_id is not None and app.execution_id in table.executions, "the new row")
+                        new = app.execution_id
+                        selected = table.selected
+                        if not browsing:
+                            await self.wait_for(pilot, lambda app=app, new=new: app.screen.query_one(ExecutionPane).execution_id == new, "the new execution in the detail")
+                self.assertEqual(selected, before if browsing else new)
+
+    async def test_a_job_is_estimated_from_the_latest_successful_run_before_it_reports_a_step(self) -> None:
+        self.write_data_job()
+        store = Store()
+        self.addCleanup(store.close)
+        other = store.start_execution(job_name="other", job_file="/jobs/other.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00", settings={})
+        store.start_run(other, 1, pair="p", positive="text", started_at="2026-09-20T09:00:00+00:00", command=["draw-things-cli", "generate", "--steps", "30"])
+        store.finish_run(other, 1, status="succeeded", exit_code=0, seconds=600.0, output="a.mov", last_frame=None)
+        gate = threading.Event()
+        # No step lines: the run is estimated from the other job's run alone.
+        runs = FakeRuns(gate=gate, lines=())
+        app = self.app(runs)
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.start(pilot)
+            await self.wait_for(pilot, lambda: app.live is not None and app.live.active_run == 1, "run 1")
+            await pilot.pause()
+            past = app.live.past_run if app.live is not None else None
+            status = self.text(app, "status").split("\n")
+            gate.set()
+            await self.finish(pilot)
+        self.assertEqual(past, PastRun(600.0, 30))
+        self.assertIn("ends ~", status[2])
+        # 600 s less the moment the run has taken so far.
+        self.assertRegex(status[2], r"\(in (10 min|9 min 5\d s)\)$")
+        self.assertIn("ends ~", status[1])
+
+    async def test_a_job_another_process_is_running_is_shown_when_the_tui_opens(self) -> None:
+        lock = RunLock("run-job")
+        lock.acquire()
+        self.addCleanup(lock.release)
+        app = self.app(FakeRuns())
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.settle(pilot)
+            # Before the first 5-second poll.
+            shown = self.text(app, "status").split("\n")[0]
+            lock.release()
+            app.screen.query_one(HistoryPane).poll()
+            await pilot.pause()
+            released = self.text(app, "status")
+        self.assertEqual(shown, "A job is running in another process")
+        self.assertEqual(released, "\n\n\n\n")
 
     async def test_the_confirmation_shows_the_job_and_n_cancels(self) -> None:
         self.write_data_job(cooldown={"mode": "manual", "seconds": 30})
@@ -295,15 +394,15 @@ class LiveRunTests(TuiTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.start(pilot)
             await self.wait_for(pilot, runs.started.is_set, "run 1")
-            await self.command(pilot, "/jobs")
-            [during] = [text for text in self.since("/jobs") if text.startswith("Jobs")]
+            await self.command(pilot, "/get jobs")
+            [during] = [text for text in self.since("/get jobs") if text.startswith("Jobs")]
             await self.command(pilot, "/run z-other")
             refused = self.since("/run z-other")
             self.assertIsInstance(app.screen, MainScreen)
             app.request_stop()
             await self.finish(pilot)
-            await self.command(pilot, "/jobs")
-            [after] = self.since("/jobs")
+            await self.command(pilot, "/get jobs")
+            [after] = self.since("/get jobs")
         self.assertRegex(during, r"walk\.yaml .* running")
         self.assertRegex(during, r"z-other\.yaml .* valid")
         self.assertEqual(refused, ["A job is already running"])

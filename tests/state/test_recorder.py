@@ -10,6 +10,7 @@ from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArg
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
 from draw_things_control.jobs.job_events import combine_observers
 from draw_things_control.jobs.job_service import JobService, PlannedRun
+from draw_things_control.jobs.media_info import MediaInfo
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import Store
 from tests.fixtures import JobTestCase, job_data
@@ -62,6 +63,15 @@ class RecorderTests(JobTestCase):
             self.assertEqual((stored["pair"], stored["positive"], stored["negative"], stored["input"], stored["output"], stored["last_frame"], stored["command"], stored["started_at"], stored["seconds"], stored["exit_code"], stored["status"], stored["cooldown_after_seconds"]), (recorded["pair"], recorded["positive"], recorded["negative"], recorded["input"], recorded["output"], recorded["last_frame"], recorded["command"], recorded["started_at"], recorded["seconds"], recorded["exit_code"], recorded["status"], recorded["cooldown_after_seconds"]))
         self.assertEqual([run["cooldown_after_seconds"] for run in execution["runs"]], [30.0, 30.0, None])
         self.assertEqual((execution["settings"]["cooldown"], manifest["cooldown"]), ({"mode": "manual", "seconds": 30.0}, {"mode": "manual", "seconds": 30.0}))
+
+    def test_the_measured_output_is_recorded_as_in_the_manifest(self) -> None:
+        self.service._output_measurer = lambda path: MediaInfo(832, 448, 81)
+        outcome = self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=True)
+        manifest = json.loads(outcome.manifest.read_text(encoding="utf-8"))
+        [row] = self.store.list_executions()
+        runs = self.store.get_execution(row["id"])["runs"]  # type: ignore[index]
+        self.assertEqual([(run["output_width"], run["output_height"], run["output_frames"]) for run in runs], [(832, 448, 81)] * 2)
+        self.assertEqual([(run["output_width"], run["output_height"], run["output_frames"]) for run in manifest["runs"]], [(832, 448, 81)] * 2)
 
     def test_an_auto_cooldown_is_recorded_as_its_mapping(self) -> None:
         self.global_config = replace(self.global_config, cooldown=None)

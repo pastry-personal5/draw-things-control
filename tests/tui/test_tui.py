@@ -17,6 +17,7 @@ from draw_things_control.jobs.job_definition import load_job
 from draw_things_control.jobs.job_report import plan_lines
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.tui.app import DrawThingsApp
+from draw_things_control.tui.commands import usage
 from draw_things_control.tui.panes import HistoryPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
@@ -49,24 +50,28 @@ class TuiTests(TuiTestCase):
         return self.make_app(make_service(missing), data=data, executable=executable)
 
     async def show(self, pilot, name: str) -> str:
-        await self.command(pilot, f"/job {name}")
-        return "\n".join(self.since(f"/job {name}"))
+        await self.command(pilot, f"/describe job {name}")
+        return "\n".join(self.since(f"/describe job {name}"))
 
     async def test_the_widgets_are_laid_out_around_the_history(self) -> None:
-        for size, cli_height, messages in (((120, 40), 15, (15, 36)), ((80, 24), 14, (14, 20))):
+        # 80x30 is the smallest size: Status 7 lines, draw-things-cli 13, Messages 6.
+        for size, cli_height, messages in (((120, 40), 15, (22, 36)), ((80, 30), 13, (20, 26))):
             with self.subTest(size=size):
                 app = self.app()
                 async with app.run_test(size=size) as pilot:
                     await self.settle(pilot)
                     width, height = size
-                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("cli", "messages", "history", "command-line", "status-line")}
+                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "history", "execution", "command-line", "status-line")}
                     rules = [rule.region for rule in app.screen.query(".command-rule")]
                     focused = app.focused
                     status = self.text(app, "status-line")
-                self.assertEqual((regions["cli"].x, regions["cli"].y, regions["cli"].height), (0, 0, cli_height))
+                self.assertEqual((regions["status"].x, regions["status"].y, regions["status"].height), (0, 0, 7))
+                self.assertEqual((regions["cli"].x, regions["cli"].y, regions["cli"].height), (0, 7, cli_height))
                 self.assertEqual((regions["messages"].x, regions["messages"].y, regions["messages"].bottom), (0, *messages))
                 self.assertGreaterEqual(regions["messages"].height, 6)
-                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (0, width, height - 4))
+                # History shows 5 rows (8 lines with its border and header); the detail fills the rest of the column.
+                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (0, width, 8))
+                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 8, width, height - 4))
                 self.assertEqual(regions["history"].x, regions["cli"].right)
                 # A third of the width, at least 36 columns.
                 self.assertEqual(regions["history"].width, max(36, width // 3))
@@ -86,10 +91,10 @@ class TuiTests(TuiTestCase):
             self.assertEqual(app.theme, "textual-dark")
             self.assertFalse(field.cursor_blink)
             self.assertEqual(field.placeholder, "")
-            # Every widget but the command line and the history is on black.
-            for name in ("cli", "run-line", "cli-output", "messages", "status-line"):
+            # Every widget but the command line, the history, and the execution detail is on black.
+            for name in ("status", "cli", "run-line", "cli-output", "messages", "status-line"):
                 self.assertEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
-            for name in ("command", "history"):
+            for name in ("command", "history", "execution"):
                 self.assertNotEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
             await pilot.press("ctrl+p")
             await pilot.pause()
@@ -121,8 +126,8 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            await self.command(pilot, "/jobs")
-            [listing] = self.since("/jobs")
+            await self.command(pilot, "/get jobs")
+            [listing] = self.since("/get jobs")
         lines = listing.splitlines()
         self.assertEqual(lines[0], "Jobs")
         self.assertEqual([line.split()[0] for line in lines[1:]], ["a-still.yml", "b-walk.yaml", "c-bad.yaml", "d-bad-pairs.yaml"])
@@ -139,8 +144,8 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            await self.command(pilot, "/jobs")
-            [listing] = self.since("/jobs")
+            await self.command(pilot, "/get jobs")
+            [listing] = self.since("/get jobs")
             shown = await self.show(pilot, "broken.yaml")
             walk = await self.show(pilot, "'[b] walk.yaml'")
         self.assertIn("[b] walk.yaml", listing)
@@ -153,8 +158,8 @@ class TuiTests(TuiTestCase):
         app = self.app(data=missing)
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            await self.command(pilot, "/jobs")
-            self.assertEqual(self.since("/jobs"), [f"Data directory not found: {missing}"])
+            await self.command(pilot, "/get jobs")
+            self.assertEqual(self.since("/get jobs"), [f"Data directory not found: {missing}"])
 
     async def test_file_suffixes_match_in_any_case(self) -> None:
         self.write_data_job("Portrait.YAML")
@@ -162,8 +167,8 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            await self.command(pilot, "/jobs")
-            [listing] = self.since("/jobs")
+            await self.command(pilot, "/get jobs")
+            [listing] = self.since("/get jobs")
         self.assertEqual([line.split()[0] for line in listing.splitlines()[1:]], ["Portrait.YAML", "Still.Yml"])
 
     async def test_an_empty_and_a_missing_data_directory_show_a_message(self) -> None:
@@ -173,12 +178,12 @@ class TuiTests(TuiTestCase):
                 app = self.app(data=directory)
                 async with app.run_test() as pilot:
                     await self.settle(pilot)
-                    # The message is written when the app starts, and again for /jobs.
+                    # The message is written when the app starts, and again for /get jobs.
                     self.assertIn(message, self.said)
-                    await self.command(pilot, "/jobs")
-                    self.assertEqual(self.since("/jobs"), [message])
-                    await self.command(pilot, "/job walk")
-                    self.assertEqual(self.since("/job walk"), [f"No job file 'walk' in {directory}"])
+                    await self.command(pilot, "/get jobs")
+                    self.assertEqual(self.since("/get jobs"), [message])
+                    await self.command(pilot, "/describe job walk")
+                    self.assertEqual(self.since("/describe job walk"), [f"No job file 'walk' in {directory}"])
 
     async def test_job_prints_the_summary_pairs_and_the_dry_run_plan(self) -> None:
         path = self.write_data_job("walk.yaml", run_count=3, prompt_pairs=[{"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "runs": [2]}])
@@ -285,10 +290,18 @@ class TuiTests(TuiTestCase):
                 ("/launch walk", "Unknown command '/launch'; type /help"),
                 ("/exit", "Unknown command '/exit'; type /help"),
                 ("/run 'walk", "Cannot read the command: No closing quotation"),
-                ("/job", "Usage: /job JOB"),
+                ("/job walk", "/job is now /describe job JOB; type /help"),
+                ("/jobs", "/jobs is now /get jobs; type /help"),
+                ("/history", "/history is now /get history; type /help"),
+                ("/describe job", "Usage: /describe job JOB"),
+                ("/describe jobs walk", "Usage: /describe job JOB"),
+                ("/get history 3", "Usage: /get history"),
+                ("/get jobs all", "Usage: /get jobs"),
+                ("/get positive x", "Usage: /get positive ID [RUN]"),
+                ("/get param 1 2 3", "Usage: /get param ID [RUN]"),
+                ("/get everything", f"Usage: {usage('get')}"),
                 ("/run a b", "Usage: /run JOB"),
                 ("/stop now", "Usage: /stop"),
-                ("/history 3", "Usage: /history"),
                 ("/execution x", "Usage: /execution ID"),
                 ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, running"),
                 ("/filter clear", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
@@ -342,11 +355,12 @@ class TuiTests(TuiTestCase):
             await pilot.press("tab")
             self.assertEqual(field.value, "/reveal")
             field.value = ""
-            await pilot.press("slash", "j", "o", "b", "space", "w")
-            await self.wait_for(pilot, lambda: field._suggestion == "/job walk.yaml", "the job name")
+            field.value = "/describe job w"
+            field.cursor_position = len(field.value)
+            await self.wait_for(pilot, lambda: field._suggestion == "/describe job walk.yaml", "the job name")
             await pilot.press("tab", "enter")
             await self.settle(pilot)
-            self.assertIn("  runs: 5", "\n".join(self.since("/job walk.yaml")))
+            self.assertIn("  runs: 5", "\n".join(self.since("/describe job walk.yaml")))
             await pilot.press("tab")
             self.assertIsInstance(app.focused, HistoryPane)
             await pilot.press("escape")
@@ -357,7 +371,7 @@ class TuiTests(TuiTestCase):
         async with app.run_test() as pilot:
             await self.settle(pilot)
             field = app.screen.query_one(CommandInput)
-            for line in ("/help", "/jobs", "/jobs", "nonsense"):
+            for line in ("/help", "/get jobs", "/get jobs", "nonsense"):
                 await self.command(pilot, line)
             field.focus()
             await pilot.press("up")
@@ -367,7 +381,7 @@ class TuiTests(TuiTestCase):
             await pilot.press("up")
             self.assertEqual(field.value, "/help")
             await pilot.press("down")
-            self.assertEqual(field.value, "/jobs")
+            self.assertEqual(field.value, "/get jobs")
             await pilot.press("down", "down")
             self.assertEqual(field.value, "")
             await pilot.press("up", "escape")
@@ -425,7 +439,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            for line in ("/jobs", "/job walk", "/job resize", "/history", "/execution 1", "/filter status failed", "/filter name walk", "/filter off", "/reveal 1"):
+            for line in ("/get jobs", "/describe job walk", "/describe job resize", "/get history", "/execution 1", "/filter status failed", "/filter name walk", "/filter off", "/reveal 1"):
                 await self.command(pilot, line)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.output_directory.exists())

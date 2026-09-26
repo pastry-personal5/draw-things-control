@@ -6,9 +6,17 @@
     width: 2fr;
 }
 
-/* Owner decision: every widget but the command line and the history is on black. */
-#cli, #run-line, #cli-output, #messages, #status-line {
+/* Owner decision: every widget but the command line, the history, and the execution detail is on black. */
+#status, #cli, #run-line, #cli-output, #messages, #status-line {
     background: black;
+}
+
+/* 7 lines with its border: the phase, two bars, the details, and the last run (screens.STATUS_LINES). */
+#status {
+    height: 7;
+    padding: 0 1;
+    border: round $panel;
+    border-title-color: $accent;
 }
 
 #cli {
@@ -34,17 +42,40 @@
     border-title-color: $accent;
 }
 
-#history {
+#right {
     width: 1fr;
     min-width: 36;
-    height: 1fr;
+}
+
+/* Owner decision: 5 rows show, so 8 lines with the border and the header. */
+#history {
+    height: 8;
     border: round $panel;
     border-title-color: $accent;
     border-subtitle-color: $warning;
 }
 
-#history:focus {
+#history:focus, #execution:focus {
     border: round $accent;
+}
+
+#execution {
+    height: 1fr;
+    padding: 0 1;
+    border: round $panel;
+    border-title-color: $accent;
+    scrollbar-size-vertical: 1;
+    /* The file names underline themselves; a link's own style would recolor them. */
+    link-style: none;
+    link-color: $foreground;
+    link-background: transparent;
+    link-style-hover: bold underline;
+    link-color-hover: $accent;
+    link-background-hover: transparent;
+}
+
+#execution-body {
+    width: 100%;
 }
 
 Rule.command-rule {

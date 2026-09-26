@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from textual.message import Message
@@ -45,6 +46,48 @@ class RunState:
 
 
 @dataclass(frozen=True)
+class StepReading:
+    """One reading of the child's step counter, at a monotonic time."""
+
+    step: int
+    total: int
+    at: float
+
+
+@dataclass(frozen=True)
+class PastRun:
+    """A run that already succeeded, which a run estimates from until its own step counter gives a rate."""
+
+    # draw-things-cli's own time for the whole run, and its step count, when known.
+    seconds: float
+    steps: int | None = None
+
+
+class PastRunFound(Message):
+    """The latest successful run of any job, read from the state store before the job starts; None when there is none."""
+
+    def __init__(self, past_run: PastRun | None) -> None:
+        super().__init__()
+        self.past_run = past_run
+
+
+@dataclass(frozen=True)
+class FinishedRun:
+    """A run of this job that has ended, timed on the TUI's clock for the estimates."""
+
+    number: int
+    status: str
+    # draw-things-cli's own time, as RunFinished reports it; what the cooldown follows.
+    seconds: float | None
+    # RunStarted to RunFinished: loading, the decode, last-frame extraction, tagging, and measuring included.
+    full_seconds: float
+    # From the last step counter reading to RunFinished; None when the counter never showed.
+    tail_seconds: float | None
+    # The counter's total, when it showed.
+    steps: int | None = None
+
+
+@dataclass(frozen=True)
 class OutputLine:
     """One line the child printed, by stream."""
 
@@ -55,9 +98,10 @@ class OutputLine:
 class LiveRun:
     """Everything the live view shows about one job; plain data, changed only on the thread that created it."""
 
-    def __init__(self, job: JobDefinition, path: Path, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, job: JobDefinition, path: Path, *, clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], datetime] = datetime.now) -> None:
         self._thread = threading.get_ident()
         self._clock = clock
+        self._wall_clock = wall_clock
         self.job_name = job.name
         self.path = path
         self.started: JobStarted | None = None
@@ -72,6 +116,17 @@ class LiveRun:
         self.cooldown: CooldownStarted | None = None
         # Monotonic time the cooldown ends.
         self.cooldown_ends_at: float | None = None
+        # The run the last cooldown followed, once it has ended; the next run starts without another wait.
+        self.cooled_after_run: int | None = None
+        # Monotonic time JobStarted was applied, and the time a stop was requested (the estimates freeze there).
+        self.job_started_at: float | None = None
+        self.stopped_at: float | None = None
+        # The active run's first counter reading, since the counter last started over, and its latest.
+        self.first_step: StepReading | None = None
+        self.last_step: StepReading | None = None
+        self.finished_runs: list[FinishedRun] = []
+        # The latest successful run of any job when this one started, from the state store.
+        self.past_run: PastRun | None = None
         self.output: deque[OutputLine] = deque(maxlen=MAX_OUTPUT_LINES)
         # Every line ever added, so a view knows how many it has not written yet.
         self.output_count = 0
@@ -96,11 +151,15 @@ class LiveRun:
     def now(self) -> float:
         return self._clock()
 
+    def wall_now(self) -> datetime:
+        return self._wall_clock()
+
     def apply(self, event: JobEvent) -> None:
         """Update the state from one event."""
         self._check_thread()
         if isinstance(event, JobStarted):
             self.started = event
+            self.job_started_at = self._clock()
         elif isinstance(event, RunStarted):
             run = self._run(event.number)
             run.status = "running"
@@ -109,31 +168,57 @@ class LiveRun:
             self.active_output = event.output
             self.command = event.command
             self.progress = self.percent = None
+            self.first_step = self.last_step = None
         elif isinstance(event, RunOutput):
             # The progress bar prints a new line per step; it updates the progress instead of filling the pane.
             if event.progress is not None or event.percent is not None:
                 self.progress = event.progress or self.progress
                 self.percent = event.percent if event.percent is not None else self.percent
+                if event.progress is not None:
+                    self._read_step(*event.progress)
             else:
                 self.output.append(OutputLine(event.stream, event.text))
                 self.output_count += 1
         elif isinstance(event, RunFinished):
             run = self._run(event.number)
             run.status, run.seconds, run.output = event.status, event.seconds, event.output
+            now = self._clock()
+            full = now - self.run_started_at if self.run_started_at is not None else event.seconds or 0.0
+            tail = now - self.last_step.at if self.last_step is not None else None
+            steps = self.last_step.total if self.last_step is not None else None
+            self.finished_runs.append(FinishedRun(event.number, event.status, event.seconds, max(0.0, full), tail, steps))
             self.active_run = self.run_started_at = None
         elif isinstance(event, CooldownStarted):
             self.cooldown = event
             self.cooldown_ends_at = self._clock() + event.seconds
         elif isinstance(event, CooldownEnded):
+            self.cooled_after_run = self.cooldown.after_run if self.cooldown is not None else None
             self.cooldown = self.cooldown_ends_at = None
         elif isinstance(event, JobFinished):
             self.finished = event
             self.active_run = self.run_started_at = None
             self.cooldown = self.cooldown_ends_at = None
 
+    def reference_run(self) -> PastRun | None:
+        """The run a run estimates from before its own rate: this job's last successful run, or else the store's latest."""
+        own = next((run for run in reversed(self.finished_runs) if run.status == "succeeded" and run.seconds), None)
+        if own is not None and own.seconds is not None:
+            return PastRun(own.seconds, own.steps)
+        return self.past_run
+
     def request_stop(self) -> None:
         self._check_thread()
         self.stop_requested = True
+        if self.stopped_at is None:
+            self.stopped_at = self._clock()
+
+    def _read_step(self, step: int, total: int) -> None:
+        """Keep the counter's first and latest readings; a counter that goes back or changes its total starts over."""
+        now = self._clock()
+        last = self.last_step
+        if self.first_step is None or last is None or step < last.step or total != last.total:
+            self.first_step = StepReading(step, total, now)
+        self.last_step = StepReading(step, total, now)
 
     def end(self, error: str | None) -> None:
         """The worker ended; ``error`` is the exception it caught, if any."""

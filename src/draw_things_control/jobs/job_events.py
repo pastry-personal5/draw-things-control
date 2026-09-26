@@ -86,6 +86,12 @@ class RunFinished:
     # File names kept beside the outputs; None when nothing was written.
     output: str | None
     last_frame: str | None
+    # What the output file actually holds, measured after a successful run: Draw Things may round or crop the size it
+    # was asked for, and change the frame count. None when the run failed or the file could not be measured; frames is
+    # None for an image.
+    output_width: int | None = None
+    output_height: int | None = None
+    output_frames: int | None = None
 
 
 @dataclass(frozen=True)

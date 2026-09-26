@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from draw_things_control.core.numbers import positive_whole
 from draw_things_control.state.store import Store, epoch
 
 MANIFEST_KEYS = ("job_file", "name", "mode", "seed", "started_at", "runs")
@@ -116,6 +117,10 @@ def _convert_run(run: dict[str, Any]) -> dict[str, Any]:
         "exit_code": run.get("exit_code"),
         "status": "interrupted" if status == "running" else str(status),
         "cooldown_after_seconds": run.get("cooldown_after_seconds"),
+        # Measured sizes, from manifests written since they were recorded; older ones have none.
+        "output_width": positive_whole(run.get("output_width")),
+        "output_height": positive_whole(run.get("output_height")),
+        "output_frames": positive_whole(run.get("output_frames")),
     }
     epoch(converted["started_at"])
     return converted

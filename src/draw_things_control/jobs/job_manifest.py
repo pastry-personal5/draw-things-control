@@ -30,6 +30,10 @@ class RunRecord:
     # Run 1's resized copy of ``input``, which ``command`` passes as --image; removed after the run.
     # Rebuild it from the job manifest's ``input_resize`` to replay the command.
     resized_input: str | None = None
+    # The output file's actual size and frame count, measured after a successful run; None when unknown.
+    output_width: int | None = None
+    output_height: int | None = None
+    output_frames: int | None = None
 
 
 @dataclass

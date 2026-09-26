@@ -68,12 +68,20 @@ CREATE TABLE runs (
 );
 """
 
-# Forward-only: migration N runs when the database is at N - 1. The list index is the version reached.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1,)
+# Each run's output as measured: its actual size and frame count, which may differ from what was requested.
+SCHEMA_V2 = """
+ALTER TABLE runs ADD COLUMN output_width INTEGER;
+ALTER TABLE runs ADD COLUMN output_height INTEGER;
+ALTER TABLE runs ADD COLUMN output_frames INTEGER
+"""
+
+# Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
+# a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 EXECUTION_COLUMNS = ("job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at")
-RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds")
+RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames")
 
 
 class StateError(Exception):
@@ -127,9 +135,12 @@ class Store:
         with self._transaction() as connection:
             self._insert_run(connection, execution_id, number, {"status": "running", **fields})
 
-    def finish_run(self, execution_id: int, number: int, *, status: str, exit_code: int | None, seconds: float | None, output: str | None, last_frame: str | None) -> None:
+    def finish_run(self, execution_id: int, number: int, *, status: str, exit_code: int | None, seconds: float | None, output: str | None, last_frame: str | None, output_width: int | None = None, output_height: int | None = None, output_frames: int | None = None) -> None:
         with self._transaction() as connection:
-            connection.execute("UPDATE runs SET status = ?, exit_code = ?, seconds = ?, output = ?, last_frame = ? WHERE execution_id = ? AND number = ?", (status, exit_code, seconds, output, last_frame, execution_id, number))
+            connection.execute(
+                "UPDATE runs SET status = ?, exit_code = ?, seconds = ?, output = ?, last_frame = ?, output_width = ?, output_height = ?, output_frames = ? WHERE execution_id = ? AND number = ?",
+                (status, exit_code, seconds, output, last_frame, output_width, output_height, output_frames, execution_id, number),
+            )
 
     def set_run_cooldown(self, execution_id: int, number: int, seconds: float) -> None:
         with self._transaction() as connection:
@@ -189,6 +200,11 @@ class Store:
             return {}
         rows = self._connection().execute(f"SELECT execution_id, COUNT(*) FROM runs WHERE status = 'succeeded' AND execution_id IN ({', '.join('?' for _ in execution_ids)}) GROUP BY execution_id", execution_ids).fetchall()
         return {int(row[0]): int(row[1]) for row in rows}
+
+    def latest_succeeded_run(self) -> dict[str, Any] | None:
+        """The most recently started run that succeeded with a known time, of any job; None when there is none."""
+        row = self._connection().execute("SELECT * FROM runs WHERE status = 'succeeded' AND seconds IS NOT NULL ORDER BY started_epoch DESC, id DESC LIMIT 1").fetchone()
+        return self._run(row, False) if row is not None else None
 
     def has_manifest(self, manifest_path: str) -> bool:
         return self._connection().execute("SELECT 1 FROM executions WHERE manifest_path = ?", (manifest_path,)).fetchone() is not None

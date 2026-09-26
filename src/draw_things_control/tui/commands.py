@@ -13,14 +13,20 @@ from textual.suggester import Suggester
 from draw_things_control.tui.history import STATUSES
 
 PREFIX = "/"
-# Name, arguments, and what it does, in the order help lists them.
+# Name, arguments, and what it does, in the order help lists them. For /get and /describe, the first argument names
+# what the command acts on.
 COMMANDS = (
     ("help", "", "List the commands and keys"),
-    ("jobs", "", "List the job files and whether each is valid"),
-    ("job", "JOB", "The summary, prompt pairs, and dry-run plan of a job"),
+    ("get", "jobs", "List the job files and whether each is valid"),
+    ("describe", "job JOB", "The summary, prompt pairs, and dry-run plan of a job"),
     ("run", "JOB", "Read the job again, confirm, and run it"),
     ("stop", "", "Stop the running job, after confirmation"),
-    ("history", "", "Read the execution history again"),
+    ("get", "history", "Read the execution history again"),
+    ("get", "prompts ID [RUN]", "An execution's positive and negative prompts (every pair, or one run's)"),
+    ("get", "positive ID [RUN]", "An execution's positive prompts (every pair, or one run's)"),
+    ("get", "negative ID [RUN]", "An execution's negative prompts (every pair, or one run's)"),
+    ("get", "param ID [RUN]", "A run's draw-things-cli arguments without the prompts, with overridden values (default: its first run)"),
+    ("get", "parameters ID [RUN]", "The same as /get param"),
     ("execution", "ID", "The detail of one execution"),
     ("filter", "status STATUS", f"Show only {', '.join(STATUSES)} executions"),
     ("filter", "name TEXT", "Show only executions whose job name or file name contains TEXT"),
@@ -30,14 +36,19 @@ COMMANDS = (
     ("quit", "", "Quit; while a job runs, asks to stop it first"),
 )
 COMMAND_NAMES = tuple(dict.fromkeys(name for name, _, _ in COMMANDS))
+# The words after /get and /describe, in the order help lists them.
+GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in COMMANDS if name == "get"))
+DESCRIBE_WORDS = ("job",)
+# Commands the /get and /describe forms replaced, and what to type instead.
+REPLACED = {"jobs": "/get jobs", "job": "/describe job JOB", "history": "/get history"}
 FILTER_WORDS = ("status", "name", "off")
 # Characters a shell would split or interpret, escaped with a backslash in a completed job file name.
 SHELL_SPECIAL = re.compile(r"([^\w@%+=:,./-])")
 KEYS = (
-    ("Enter", "Run the command, or show the selected execution (history)"),
-    ("Tab", "Complete the command line, or move to the history"),
-    ("Up/Down", "Recall this session's commands (command line), move (history)"),
-    ("Escape", "Clear the command line, or go back to it (history)"),
+    ("Enter", "Run the command; move to the detail (history); reveal the selected run (detail)"),
+    ("Tab", "Complete the command line, or move to the history, then the detail"),
+    ("Up/Down", "Recall this session's commands (command line), move (history, detail)"),
+    ("Escape", "Clear the command line, or go back to it (history, detail)"),
     ("Ctrl-C", "Clear the command line, or press twice to quit"),
 )
 
@@ -65,14 +76,17 @@ def parse(line: str) -> Command | None:
     except ValueError as error:
         raise CommandError(f"Cannot read the command: {error}") from error
     name = words[0][len(PREFIX) :].lower()
+    if name in REPLACED:
+        raise CommandError(f"{words[0]} is now {REPLACED[name]}; type {PREFIX}help")
     if name not in COMMAND_NAMES:
         raise CommandError(f"Unknown command '{words[0]}'; type {PREFIX}help")
     return Command(name, tuple(words[1:]))
 
 
-def usage(name: str) -> str:
-    """Every form of a command, as help lists them."""
-    return " | ".join(f"{PREFIX}{name} {arguments}".strip() for command, arguments, _ in COMMANDS if command == name)
+def usage(name: str, word: str | None = None) -> str:
+    """Every form of a command, as help lists them; with ``word``, only the forms that begin with it (``/get positive``)."""
+    forms = [arguments for command, arguments, _ in COMMANDS if command == name and (word is None or arguments.split()[:1] == [word])]
+    return " | ".join(f"{PREFIX}{name} {arguments}".strip() for arguments in forms)
 
 
 def help_text() -> Text:
@@ -84,6 +98,7 @@ def help_text() -> Text:
         text.append(f"  {form.ljust(width)}  ", style="bold")
         text.append(f"{action}\n")
     text.append("JOB is a job file name in the data directory, or its name without the suffix. Quote a name with spaces.\n", style="dim")
+    text.append("ID is an execution's ID in the history, and RUN one of its run numbers.\n", style="dim")
     text.append("Keys\n", style="bold")
     width = max(len(key) for key, _ in KEYS)
     for key, action in KEYS:
@@ -96,12 +111,19 @@ def help_text() -> Text:
 def completions(line: str, job_names: list[str]) -> list[str]:
     """Whole command lines that ``line`` could be completed to, in order; each one begins with ``line``, as Input needs."""
     command, space, rest = line.partition(" ")
-    if space and command.lower() in (f"{PREFIX}run", f"{PREFIX}job"):
+    if space and command.lower() == f"{PREFIX}run":
         return [f"{command} {name}" for name in job_completions(rest, job_names)]
+    word, space_after_word, name = rest.partition(" ")
+    if space and space_after_word and command.lower() == f"{PREFIX}describe" and word.lower() == "job":
+        return [f"{command} {word} {completed}" for completed in job_completions(name, job_names)]
     head, _, last = line.rpartition(" ")
     words = [word.lower() for word in head.split()]
     if not words:
         candidates = [f"{PREFIX}{name}" for name in COMMAND_NAMES] if not head else []
+    elif words == [f"{PREFIX}get"]:
+        candidates = list(GET_WORDS)
+    elif words == [f"{PREFIX}describe"]:
+        candidates = list(DESCRIBE_WORDS)
     elif words == [f"{PREFIX}filter"]:
         candidates = list(FILTER_WORDS)
     elif words == [f"{PREFIX}filter", "status"]:

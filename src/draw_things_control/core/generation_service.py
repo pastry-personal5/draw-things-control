@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from draw_things_control.core.configuration import is_yaml_file
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_arguments import SECRET_FLAGS, DrawThingsGenerateArguments
 from draw_things_control.core.process_output import MessageCallback
 
 
@@ -180,7 +180,7 @@ class GenerationService:
         """Return the command with credential values replaced, safe to show or save."""
         display = list(command)
         for index, token in enumerate(display[:-1]):
-            if token in {"--api-key", "--remote-shared-secret"}:
+            if token in SECRET_FLAGS:
                 display[index + 1] = "[redacted]"
         return display
 

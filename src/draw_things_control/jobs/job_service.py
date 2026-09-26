@@ -29,6 +29,7 @@ from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, 
 from draw_things_control.jobs.job_log import add_job_log, remove_job_log
 from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
 from draw_things_control.jobs.job_report import auto_wait_text, cooldown_summary, report_ignored_config, seconds_text
+from draw_things_control.jobs.media_info import MediaInfo
 from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
 
 if TYPE_CHECKING:
@@ -55,6 +56,8 @@ FrameExtractor = Callable[[Path, Path], None]
 VideoTagger = Callable[[Path], bool]
 # Waits up to the given seconds between runs and returns the seconds actually waited.
 Cooldown = Callable[[float], float]
+# Measures what an output file actually holds; raises ValueError when it cannot.
+OutputMeasurer = Callable[[Path], MediaInfo]
 
 
 @dataclass(frozen=True)
@@ -131,6 +134,8 @@ class JobService:
         handle_signals: bool = True,
         cooldown: Cooldown | None = None,
         video_tagger: VideoTagger | None = None,
+        require_ffprobe: Callable[[], object] | None = None,
+        output_measurer: OutputMeasurer | None = None,
     ) -> None:
         self._runner_factory = runner_factory
         self._find_executable = find_executable
@@ -142,6 +147,8 @@ class JobService:
         self._handle_signals = handle_signals
         self._cooldown = cooldown or self._wait_for_cooldown
         self._video_tagger = video_tagger
+        self._require_ffprobe = require_ffprobe
+        self._output_measurer = output_measurer
         self._generation = GenerationService(runner_factory=self._create_runner, find_executable=find_executable, config_loader=load_config)
         self._current_runner: StoppableRunner | None = None
         self._interrupt: signal.Signals | None = None
@@ -461,7 +468,7 @@ class JobService:
         return 128 + received_signal.value
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
-        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame))
+        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames))
 
     @staticmethod
     def _exit_signal(exit_code: int) -> str | None:
@@ -508,7 +515,19 @@ class JobService:
                 logger.error("{}", error)
                 return "failed", 1
             record.last_frame = run.last_frame.name
+        self._measure(run.output, record)
         return "succeeded", 0
+
+    def _measure(self, output: Path, record: RunRecord) -> None:
+        """Record the output's actual size and frame count; a file that cannot be measured is a warning, never a failed run."""
+        if self._output_measurer is None:
+            return
+        try:
+            info = self._output_measurer(output)
+        except (ValueError, OSError) as error:
+            logger.warning("Could not measure {}; its size and frame count are not recorded: {}", output.name, error)
+            return
+        record.output_width, record.output_height, record.output_frames = info.width, info.height, info.frames
 
     def _tag_video(self, video: Path) -> None:
         """Label the video's colors; a video that cannot be tagged is kept as Draw Things wrote it, and the run still succeeds."""
@@ -551,6 +570,9 @@ class JobService:
             raise ValueError(f"Could not find '{executable}' on PATH. Install Draw Things CLI or pass --executable with its path.")
         if job.mode.is_video:
             self._require_ffmpeg()
+            # A video job that could not measure its outputs would record no actual size, so it does not start.
+            if self._require_ffprobe is not None:
+                self._require_ffprobe()
 
     def _seed(self, job: JobDefinition, placeholder: int | None) -> tuple[int, str]:
         seed, source = job.configured_seed()

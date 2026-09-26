@@ -18,11 +18,11 @@ from textual.worker import get_current_worker
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished
 from draw_things_control.jobs.job_service import JobService
-from draw_things_control.tui.commands import CommandError, CommandSuggester, help_text, parse, usage
-from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, parse_id, reveal_in_finder, reveal_target
+from draw_things_control.tui.commands import GET_WORDS, CommandError, CommandSuggester, help_text, parse, usage
+from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, parse_id, reveal_run
 from draw_things_control.tui.job_files import JobDetails, JobRow, add_plan, find_job, read_details, read_rows
-from draw_things_control.tui.panes import CliPane, HistoryPane
-from draw_things_control.tui.text import details_text, event_text, execution_text, jobs_text, question_text, result_text, status_line_text
+from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, StatusPane
+from draw_things_control.tui.text import details_text, event_text, execution_text, jobs_text, parameters_text, prompts_text, question_text, result_text, status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
 if TYPE_CHECKING:
@@ -34,6 +34,8 @@ CLI_PANE_MIN_LINES = 7
 MESSAGES_MIN_LINES = 6
 # The rows under the panes: a rule, the command line, a rule, and the status line.
 BOTTOM_LINES = 4
+# The Status widget above the draw-things-cli pane, with its border (styles.tcss sets the same height).
+STATUS_LINES = 7
 
 
 class MainScreen(Screen[None]):
@@ -64,14 +66,25 @@ class MainScreen(Screen[None]):
     def cli(self) -> CliPane:
         return self.query_one(CliPane)
 
+    @property
+    def detail(self) -> ExecutionPane:
+        return self.query_one(ExecutionPane)
+
+    @property
+    def status(self) -> StatusPane:
+        return self.query_one(StatusPane)
+
     def compose(self) -> ComposeResult:
         # The history pane reads through it; the detail and reveal commands too. Closed when the screen goes.
         self.reader = HistoryReader(self.dtc.settings.history_retention_days)
         with Horizontal(id="main"):
             with Vertical(id="left"):
+                yield StatusPane(id="status")
                 yield CliPane(id="cli")
                 yield MessageLog(id="messages", max_lines=MAX_MESSAGE_LINES, wrap=True, min_width=20)
-            yield HistoryPane(self.reader, busy=lambda: self.dtc.job_running, id="history")
+            with Vertical(id="right"):
+                yield HistoryPane(self.reader, busy=lambda: self.dtc.job_running, leave=self.focus_command_line, id="history")
+                yield ExecutionPane(self.reader, say=self.say, leave=self.focus_command_line, id="execution")
         yield Rule(line_style="solid", classes="command-rule")
         with Horizontal(id="command-line"):
             yield Static("> ", id="prompt")
@@ -81,7 +94,7 @@ class MainScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self.query_one(MessageLog).border_title = "Messages"
-        # Tab moves between the command line and the history only; the logs scroll with the mouse.
+        # Tab moves from the command line to the history and the detail; the logs scroll with the mouse.
         for log in self.query(RichLog):
             log.can_focus = False
         self.command_line.focus()
@@ -96,11 +109,14 @@ class MainScreen(Screen[None]):
 
     def on_resize(self, event: events.Resize) -> None:
         # The draw-things-cli pane gives up lines, down to its least, so Messages keeps its least on a short terminal.
-        left = event.size.height - BOTTOM_LINES
+        left = event.size.height - BOTTOM_LINES - STATUS_LINES
         self.cli.styles.height = max(CLI_PANE_MIN_LINES, min(CLI_PANE_LINES, left - MESSAGES_MIN_LINES))
 
     def say(self, text: Text | str, style: str = "") -> None:
         self.query_one(MessageLog).say(text, style)
+
+    def focus_command_line(self) -> None:
+        self.command_line.focus()
 
     # Commands
 
@@ -141,11 +157,25 @@ class MainScreen(Screen[None]):
     def command_quit(self) -> None:
         self.call_later(self.dtc.action_quit)
 
-    def command_jobs(self) -> None:
-        self.read_jobs(self.dtc.data_directory, self.dtc.settings, announce=True)
+    def command_get(self, what: str, *arguments: str) -> None:
+        """/get jobs, /get history, and an execution's prompts or draw-things-cli arguments."""
+        word = what.lower()
+        if word == "jobs" and not arguments:
+            self.read_jobs(self.dtc.data_directory, self.dtc.settings, announce=True)
+        elif word == "history" and not arguments:
+            self.history.load()
+        elif word in ("prompts", "positive", "negative", "param", "parameters") and 1 <= len(arguments) <= 2:
+            execution_id = self.number(arguments[0], "get", word)
+            run = self.number(arguments[1], "get", word) if len(arguments) == 2 else None
+            self.show_part(word, execution_id, run)
+        else:
+            raise CommandError(f"Usage: {usage('get', word if word in GET_WORDS else None)}")
 
-    def command_job(self, name: str) -> None:
-        self.load_details(self.job_path(name), self.dtc.settings, self.dtc.job_service, self.dtc.executable)
+    def command_describe(self, what: str, *arguments: str) -> None:
+        """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file."""
+        if what.lower() != "job" or len(arguments) != 1:
+            raise CommandError(f"Usage: {usage('describe')}")
+        self.load_details(self.job_path(arguments[0]), self.dtc.settings, self.dtc.job_service, self.dtc.executable)
 
     def command_run(self, name: str) -> None:
         self.dtc.start_flow(self.job_path(name))
@@ -165,9 +195,6 @@ class MainScreen(Screen[None]):
     def confirm_stop(self, stop: bool | None) -> None:
         if stop:
             self.dtc.request_stop()
-
-    def command_history(self) -> None:
-        self.history.load()
 
     def command_execution(self, execution_id: str) -> None:
         self.show_execution(self.number(execution_id, "execution"))
@@ -197,11 +224,11 @@ class MainScreen(Screen[None]):
         return path
 
     @staticmethod
-    def number(text: str, command: str) -> int:
-        """An execution or run number, or a usage error for ``command``."""
+    def number(text: str, command: str, word: str | None = None) -> int:
+        """An execution or run number, or a usage error for ``command`` (and its ``word``, for /get)."""
         number = parse_id(text)
         if number is None:
-            raise CommandError(f"Usage: {usage(command)}")
+            raise CommandError(f"Usage: {usage(command, word)}")
         return number
 
     # Workers: jobs, the detail, and reveal
@@ -235,8 +262,37 @@ class MainScreen(Screen[None]):
             return
         self.say(details_text(details.job, details.plan, details.plan_error))
 
+    # The history and the detail
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # The detail follows the cursor, after a pause.
+        if event.row_key.value is not None:
+            self.detail.follow(int(str(event.row_key.value)))
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.show_execution(int(str(event.row_key.value)))
+        # Enter moves to the detail, at its first run; /execution still writes the full detail to Messages.
+        execution_id = int(str(event.row_key.value))
+        detail = self.detail
+        detail.focus()
+        if detail.execution_id == execution_id:
+            detail.action_jump(0)
+        else:
+            detail.follow(execution_id, pause=False)
+
+    def on_history_pane_page_shown(self, event: HistoryPane.PageShown) -> None:
+        # A re-read may keep the cursor where it was, which highlights nothing; read the detail again all the same.
+        if event.execution_id is None:
+            self.detail.follow(None)
+            self.detail.show_message(event.message or "No execution selected")
+        else:
+            self.detail.follow(event.execution_id)
+
+    def on_history_pane_rows_updated(self, event: HistoryPane.RowsUpdated) -> None:
+        if self.detail.execution_id in event.execution_ids:
+            self.detail.follow(self.detail.execution_id, pause=False)
+
+    def on_history_pane_lock_changed(self, event: HistoryPane.LockChanged) -> None:
+        self.render_status()
 
     @work(thread=True, group="execution")
     def show_execution(self, execution_id: int) -> None:
@@ -244,16 +300,33 @@ class MainScreen(Screen[None]):
         execution = self.reader.execution(execution_id)
         self.app.call_from_thread(self.say, execution_text(execution) if isinstance(execution, dict) else Text(execution, style="red"))
 
+    @work(thread=True, group="execution")
+    def show_part(self, word: str, execution_id: int, run: int | None) -> None:
+        """An execution's prompts (``prompts``, ``positive``, ``negative``) or its arguments (``param``, ``parameters``)."""
+        assert self.reader is not None
+        execution = self.reader.execution(execution_id)
+        if isinstance(execution, str):
+            self.app.call_from_thread(self.say, execution, "red")
+            return
+        if word in ("param", "parameters"):
+            self.app.call_from_thread(self.say, parameters_text(execution, run))
+            return
+        text, copied = prompts_text(execution, word, run)
+        self.app.call_from_thread(self.say, text)
+        if copied is not None:
+            copied, what = copied
+            error = copy_to_pasteboard(copied)
+            if error is None:
+                self.app.call_from_thread(self.say, f"Copied the {what} to the clipboard", "dim")
+            else:
+                # Without pbcopy, the terminal is asked to copy (OSC 52); not every terminal does, so it cannot be confirmed.
+                self.app.call_from_thread(self.app.copy_to_clipboard, copied)
+                self.app.call_from_thread(self.say, f"Asked the terminal to copy the {what} ({error})", "dim")
+
     @work(thread=True, group="reveal")
     def reveal(self, execution_id: int, run: int | None) -> None:
         assert self.reader is not None
-        execution = self.reader.execution(execution_id)
-        target = reveal_target(execution, run) if isinstance(execution, dict) else execution
-        if isinstance(target, str):
-            self.app.call_from_thread(self.say, target, "red")
-            return
-        error = reveal_in_finder(target)
-        self.app.call_from_thread(self.say, error or f"Revealed {target}", "red" if error else "")
+        self.app.call_from_thread(self.say, *reveal_run(self.reader.execution(execution_id), run))
 
     # The running job
 
@@ -271,6 +344,9 @@ class MainScreen(Screen[None]):
         self.render_live(event)
         # A new execution needs its row; a finished run changes only that row. The end of the job reads the pane again.
         if isinstance(event, JobStarted):
+            # The cursor moves to the new execution, unless the person is browsing the history or the detail.
+            if self.focused not in (self.history, self.detail):
+                self.history.select_when_shown = self.dtc.execution_id
             self.history.load()
         elif isinstance(event, RunFinished) and self.dtc.execution_id is not None:
             self.history.refresh_rows([self.dtc.execution_id])
@@ -286,9 +362,13 @@ class MainScreen(Screen[None]):
         self.cli.show(self.dtc.live, event)
         self.tick()
 
+    def render_status(self) -> None:
+        self.status.show(self.dtc.live, self.history.other_process_running)
+
     def tick(self) -> None:
-        """Update the elapsed time, the cooldown countdown, and the status line."""
+        """Update the elapsed time, the cooldown countdown, the Status widget, and the status line."""
         self.cli.tick(self.dtc.live)
+        self.render_status()
         self.query_one("#status-line", Static).update(status_line_text(self.dtc.data_directory, self.dtc.live, self.dtc.job_running, self.dtc.quit_armed))
 
 

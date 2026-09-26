@@ -12,7 +12,7 @@ the project root as `uv run dtc <command>`.
 - [Jobs: chained runs](#jobs-chained-runs)
 - [Job file reference](#job-file-reference)
 - [Where outputs go](#where-outputs-go)
-- [Browse jobs in the terminal UI](#browse-jobs-in-the-terminal-ui)
+- [Browse and run jobs in the terminal UI](#browse-and-run-jobs-in-the-terminal-ui)
 - [Execution history and the run lock](#execution-history-and-the-run-lock)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
@@ -22,7 +22,9 @@ the project root as `uv run dtc <command>`.
 You need Python 3.12 or later, [uv](https://docs.astral.sh/uv/), and the
 [Draw Things CLI](https://github.com/drawthingsai/draw-things-community)
 installed locally. Video jobs also need `ffmpeg` on your `PATH` to extract
-last frames.
+last frames, and `ffprobe` (installed with `ffmpeg`, beside it or on your
+`PATH`) to measure each video's actual size and frame count; a video job
+without it does not start.
 
 ```bash
 uv sync
@@ -322,6 +324,14 @@ ends a wait at once and stops the job.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
+- After each successful run, its output is measured: a video's displayed
+  width, height, and frame count with `ffprobe`, and a PNG's width and height
+  from its header. Draw Things may round a requested size to a multiple of
+  64, or crop it, and a video model may change the frame count, so these are
+  what the file holds, not what was asked for. They are kept in the
+  execution history and, as `output_width`, `output_height`, and
+  `output_frames`, in each manifest run. A file that cannot be measured is a
+  warning, and the run still succeeds.
 
 ## Browse and run jobs in the terminal UI
 
@@ -336,7 +346,9 @@ uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli --
 
 The screen, top to bottom:
 
-- **draw-things-cli** (top left, 15 lines): the run line (the running run's
+- **Status** (top left, 7 lines): the job at a glance (see
+  [The Status widget](#the-status-widget)). Empty until a job runs.
+- **draw-things-cli** (below it, 15 lines): the run line (the running run's
   number, elapsed time, step progress, and output file, or the cooldown
   countdown), then the last 2000 lines `draw-things-cli` printed. stderr is
   in red, and progress-bar lines update the run line instead of adding
@@ -346,24 +358,31 @@ The screen, top to bottom:
   the running job: when it started, each run's start (with its command,
   credentials redacted) and result, cooldowns, and the job's result with its
   manifest and log paths. It keeps the last 5000 lines.
-- **History** (the right third): every execution recorded in the state
-  store, newest first: its ID, job name, status, start time, and runs
-  succeeded of total.
+- **History** (top of the right third, 5 rows): every execution recorded in
+  the state store, newest first: its ID, job name, status, start time, and
+  runs succeeded of total. On a narrow terminal it scrolls sideways, and its
+  scrollbar gets a line of its own.
+- **Execution** (the rest of the right third): the execution under the
+  history cursor (see [The execution detail](#the-execution-detail)).
 - **The command line**, between two lines, showing `> ` and a white block
   cursor, then the **status line**: the running or last job, the data
   directory, and a reminder of `/help` and Ctrl-C.
 
-On a terminal shorter than 30 lines, the draw-things-cli pane shrinks (down
-to 7 lines) to leave Messages some room. The smallest usable size is 80x24.
+On a terminal shorter than 32 lines, the draw-things-cli pane shrinks (down
+to 7 lines) to leave Messages at least 6. The smallest usable size is 80x30.
 
 | Command | Action |
 |---------|--------|
 | `/help` | List the commands and keys |
-| `/jobs` | List the job files and whether each is valid |
-| `/job JOB` | The summary, prompt pairs, and dry-run plan of a job |
+| `/get jobs` | List the job files and whether each is valid |
+| `/describe job JOB` | The summary, prompt pairs, and dry-run plan of a job |
 | `/run JOB` | Read the job again, confirm, and run it |
 | `/stop` | Stop the running job, after confirmation |
-| `/history` | Read the history again |
+| `/get history` | Read the history again |
+| `/get prompts ID [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
+| `/get positive ID [RUN]` | Its positive prompts only |
+| `/get negative ID [RUN]` | Its negative prompts only |
+| `/get param ID [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
 | `/execution ID` | The detail of one execution |
 | `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, or `running` executions |
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
@@ -372,18 +391,27 @@ to 7 lines) to leave Messages some room. The smallest usable size is 80x24.
 | `/clear` | Clear the messages |
 | `/quit` | Quit; while a job runs, asks to stop it first |
 
+`/get prompts`, `/get positive`, and `/get negative` show each `positive:`
+or `negative:` label on its own line, with the prompt starting on the next
+line and a blank line around it. They also copy the prompts to the
+clipboard with `pbcopy`: the prompts alone for `/get positive` or
+`/get negative` (several separated by a blank line), and the labelled
+prompts for `/get prompts`. A missing prompt is not copied. Without
+`pbcopy`, the terminal is asked to copy them (OSC 52), which not every
+terminal does.
+
 - `JOB` is a file name in the data directory (`walk.yaml`), or the name
   without its suffix when only one file has it. Quote a name with spaces,
   or escape them: `/run '[b] walk.yaml'` or `/run my\ job.yaml`. Tab
   completes such names in the style you started. A line that does not begin with `/` runs nothing.
 - The data directory (default: `data/` in the project, whatever the working
   directory) holds the jobs: each `*.yaml` and `*.yml` file (any letter case)
-  directly in it, sorted by name. `/jobs` shows each one's name, mode, and
+  directly in it, sorted by name. `/get jobs` shows each one's name, mode, and
   run count, or the first error of an invalid one. Sub-directories,
-  dot-directories, and dotfiles are ignored. `/jobs`, `/job`, and `/run`
+  dot-directories, and dotfiles are ignored. `/get jobs`, `/describe job`, and `/run`
   read the files again each time, so edit a job in your editor and run the
   command again.
-- `/job` prints what `validate-job` and `run-job --dry-run` print. For a job
+- `/describe job` prints what `validate-job` and `run-job --dry-run` print. For a job
   that sets no seed, the plan uses the placeholder seed `0`, so it is the
   same each time; a run draws a real seed. If `draw-things-cli` or `ffmpeg`
   is missing, the plan says why and the rest still shows.
@@ -401,27 +429,103 @@ to 7 lines) to leave Messages some room. The smallest usable size is 80x24.
 - `/stop` stops the job after you confirm, as Ctrl-C stops `run-job`: the
   run and any cooldown end, no later run starts, and the job is
   `interrupted` with exit code 130.
-- The history pane is read when the TUI starts, on `/history`, when a filter
+- The history pane is read when the TUI starts, on `/get history`, when a filter
   changes, and as the TUI's own job progresses. While another process runs a
   job (for example, `run-job` in another terminal), it is checked every 5
   seconds, so that job appears and updates whatever the filter. When no process holds the run lock, an execution left `running`
   by a crash is shown as `interrupted`. More rows load as you move to the
   last one.
-- `/execution ID`, or Enter on a history row, prints the execution as it
-  ran, from the stored record rather than the current job file: its
-  settings, and each run's prompts, input, output, last frame, seconds,
-  exit code, and command. A file that no longer exists is marked
-  `(missing)`. Executions brought in by `import-history` are marked
-  `imported`.
+- `ID` is an execution's ID in the history, and `RUN` one of its run
+  numbers. `/get` reads the stored execution, never the current job file.
+- `/get param` shows the arguments the run's saved command passed, with
+  credentials already redacted: first the flags (a flag that stands alone
+  reads `yes`), then each `--config-json` key. The note column marks a
+  value the job's configuration overrides set (`job override`), and a flag
+  that replaced a `--config-json` value, on both rows: `--width 832` says
+  `replaces --config-json 1000`, and `width 1000` says
+  `replaced by --width 832`.
+- `/jobs`, `/job`, and `/history` were renamed; typing one says what to type
+  instead.
+- `/execution ID` prints the execution as it ran, from the stored record
+  rather than the current job file: its settings (with the refiner, CFG,
+  and shift from the saved command), and each run's prompts, steps,
+  measured size and frames, input, output, last frame, seconds, exit code,
+  and command. It lists every run, failed ones too. A file that no longer
+  exists is marked `(missing)`. Executions brought in by `import-history`
+  are marked `imported`.
 - `/reveal` runs `open -R` on the output (macOS). If the file is missing,
   or `open` fails, Messages says so.
 
+### The Status widget
+
+| Line | What it shows |
+|------|---------------|
+| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the job file, and `run k/N` |
+| 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)` |
+| 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
+| 4 | The step counter (`step 28/40`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
+| 5 | `last run took 7 min 12 s`: the job's last successful run, its `draw-things-cli` time without the cooldown |
+
+- A run is estimated from its first moment. Until `draw-things-cli`
+  reports a step, the estimate is a past run's time less the time so far:
+  the job's own last successful run, or before it has one, the latest
+  successful run of any job. At the first step report it becomes that past
+  run's time per step times the steps left, when the past run counted the
+  same number of steps (otherwise the past run's time less the time so far
+  stands), and from the second report on
+  the live rate: the time since the first step divided by the steps since,
+  so loading the model is not counted. Without any past run, or once a run
+  has taken longer than the past one, it says `estimating` until the rate
+  exists. After the last step the run says `finishing` (the decode and
+  last-frame extraction have no counter).
+- The job estimate times each run still to come by the average full time
+  of this job's finished runs, and each wait by the job's `cooldown`
+  setting applied to their `draw-things-cli` time. On run 1 it starts from
+  the past run, so it has an estimate from the start; from run 2 on, it
+  keeps its estimate while a run loads. The job bar is the share of the job's
+  estimated time that has passed, cooldowns included.
+- A time on another day starts with its date (`09-27 02:10`). On a narrow
+  terminal the bars shrink and the text stays whole.
+- After a stop is requested, the bars stop moving and the end times read
+  `stopping`. When the job ends, the widget shows its result, the runs that
+  succeeded, and how long the job took, until the next job starts.
+- While another process holds the run lock (for example, `run-job` in
+  another terminal), it says `A job is running in another process`, from
+  the moment the TUI opens.
+
+### The execution detail
+
+The Execution widget shows the execution under the history cursor, a moment
+after the cursor stops:
+
+- its model, its refiner and where the refiner takes over
+  (`… from 10%`), and `832x448  CFG 5  shift 3.99`, read from the saved
+  `draw-things-cli` command (a flag wins over `--config-json`, as
+  `draw-things-cli` applies them);
+- one line per **successful** run: its number, frames, steps, and time
+  (`draw-things-cli`'s own time, without the cooldown), with its output's
+  file name under it. Failed, interrupted, and running runs are left out;
+  `/execution` lists them. An execution with none says
+  `No run finished successfully`.
+
+The size and frames are the measured ones (see
+[Where outputs go](#where-outputs-go)), never the size or frame count the
+job asked for. `sizes vary` means its runs differ, and `size -` or `-` means
+nothing was measured, as for executions recorded before measuring began.
+Long names are cut in the middle with `…`; `/execution` shows them whole.
+
+Click a file name, or select its run and press Enter, to show it in Finder
+(`open -R`). A file that no longer exists is marked `(missing)`. When this
+TUI starts a job, the history cursor moves to it, so its runs appear as
+they succeed, unless you are in the history or the detail at that moment.
+
 | Key | Action |
 |-----|--------|
-| Enter | Run the command; in the history, show the selected execution |
-| Tab | Complete a command, job file name, or filter word; with nothing to complete, move to the history |
-| Up/Down | Recall the commands typed in this session; in the history, move |
-| Escape | Clear the command line; in the history, go back to the command line |
+| Enter | Run the command; in the history, move to the detail; in the detail, show the selected run's output in Finder |
+| Tab | Complete a command, job file name, or filter word; with nothing to complete, move to the history, then the detail |
+| Up/Down | Recall the commands typed in this session; in the history or the detail, move |
+| PageUp/PageDown, Home/End | In the history or the detail, move further |
+| Escape | Clear the command line; in the history or the detail, go back to the command line |
 | Ctrl-C | Clear the command line; on an empty line, press twice within 2 seconds to quit |
 
 - Ctrl-C twice while a job runs asks whether to stop the job and quit; the
@@ -434,7 +538,10 @@ to 7 lines) to leave Messages some room. The smallest usable size is 80x24.
   outputs and last frames, its manifest and log when `write_job_records` is
   true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
   changes a job file, `dt-config/`, or the global configuration, and it
-  does not create `state/dtc.db` just to show an empty history.
+  does not create `state/dtc.db` just to show an empty history. The one
+  write browsing may make is upgrading an existing `state/dtc.db` to the
+  current schema, which any `dtc` command does the first time it opens an
+  older one.
 - An invalid global configuration is reported before the TUI starts, and the
   command exits with 2. If the TUI itself fails, it prints the error and the
   command exits with 1.
@@ -501,4 +608,7 @@ keeps any partial output, and exits with that run's exit code.
   or set `desired_input_width` and/or `desired_input_height`.
 - **Last-frame extraction failed:** install `ffmpeg` and make sure it is on
   your `PATH`.
+- **`Could not find 'ffprobe'`:** a video job needs `ffprobe` to measure its
+  outputs. It comes with `ffmpeg` (`brew install ffmpeg`); put it beside
+  `ffmpeg` or on your `PATH`.
 - **Unsure what will run:** add `--dry-run`.

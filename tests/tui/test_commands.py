@@ -12,7 +12,8 @@ from draw_things_control.tui.history import MAX_ID, parse_id
 class ParseTests(unittest.TestCase):
     def test_a_line_splits_as_a_shell_would(self) -> None:
         self.assertEqual(parse("/run walk.yaml"), Command("run", ("walk.yaml",)))
-        self.assertEqual(parse("  /job '[b] walk.yaml'  "), Command("job", ("[b] walk.yaml",)))
+        self.assertEqual(parse("  /describe job '[b] walk.yaml'  "), Command("describe", ("job", "[b] walk.yaml")))
+        self.assertEqual(parse("/GET Positive 12 3"), Command("get", ("Positive", "12", "3")))
         self.assertEqual(parse('/filter name "sunset walk"'), Command("filter", ("name", "sunset walk")))
         self.assertEqual(parse("/RUN walk"), Command("run", ("walk",)))
         self.assertIsNone(parse("   "))
@@ -52,7 +53,7 @@ class CompletionTests(unittest.TestCase):
     JOBS = ["walk.yaml", "wave.yml", "[b] walk.yaml"]
 
     def test_command_names_complete_after_the_slash(self) -> None:
-        self.assertEqual(completions("/h", self.JOBS), ["/help", "/history"])
+        self.assertEqual(completions("/h", self.JOBS), ["/help"])
         self.assertEqual(completions("/", self.JOBS), [f"/{name}" for name in COMMAND_NAMES])
         self.assertEqual(completions("", self.JOBS), [f"/{name}" for name in COMMAND_NAMES])
         self.assertEqual(completions("/help", self.JOBS), [])
@@ -60,7 +61,7 @@ class CompletionTests(unittest.TestCase):
 
     def test_job_names_complete_after_run_and_job(self) -> None:
         self.assertEqual(completions("/run wa", self.JOBS), ["/run walk.yaml", "/run wave.yml"])
-        self.assertEqual(completions("/job wav", self.JOBS), ["/job wave.yml"])
+        self.assertEqual(completions("/describe job wav", self.JOBS), ["/describe job wave.yml"])
         # A name with spaces is completed quoted, so it parses as one argument.
         self.assertEqual(completions("/run '[", self.JOBS), ["/run '[b] walk.yaml'"])
         self.assertEqual(completions("/stop w", self.JOBS), [])
@@ -71,7 +72,7 @@ class CompletionTests(unittest.TestCase):
             # Unquoted: special characters are escaped, so the suggestion still begins with the typed text.
             "/run my": ["/run my\\ job.yaml"],
             "/run my\\ j": ["/run my\\ job.yaml"],
-            "/job it": ["/job it\\'s.yaml"],
+            "/describe job it": ["/describe job it\\'s.yaml"],
             # Inside a quote the user opened, the name is closed with it; a name holding that quote is not offered.
             '/run "my': ['/run "my job.yaml"'],
             "/run 'it": [],
@@ -83,11 +84,27 @@ class CompletionTests(unittest.TestCase):
                 self.assertEqual(found, expected)
                 for completed in found:
                     self.assertTrue(completed.startswith(line))
-                    self.assertEqual(len(parse(completed).arguments), 1)
+                    # The name parses back whole, as the last argument.
+                    self.assertIn(parse(completed).arguments[-1], jobs)
 
     def test_the_command_word_completes_in_any_case(self) -> None:
         self.assertEqual(completions("/RUN wa", self.JOBS), ["/RUN walk.yaml", "/RUN wave.yml"])
         self.assertEqual(completions("/Filter status s", self.JOBS), ["/Filter status succeeded"])
+
+    def test_the_get_and_describe_words_complete(self) -> None:
+        self.assertEqual(completions("/get ", self.JOBS), ["/get jobs", "/get history", "/get prompts", "/get positive", "/get negative", "/get param", "/get parameters"])
+        self.assertEqual(completions("/get par", self.JOBS), ["/get param", "/get parameters"])
+        self.assertEqual(completions("/describe ", self.JOBS), ["/describe job"])
+        self.assertEqual(completions("/DESCRIBE Job w", self.JOBS), ["/DESCRIBE Job walk.yaml", "/DESCRIBE Job wave.yml"])
+        self.assertEqual(completions("/get positive 1", self.JOBS), [])
+
+    def test_the_replaced_commands_name_their_new_form(self) -> None:
+        for line, new in (("/jobs", "/get jobs"), ("/job walk", "/describe job JOB"), ("/History", "/get history")):
+            with self.subTest(line=line), self.assertRaisesRegex(CommandError, f"^{line.split()[0]} is now {new}; type /help$"):
+                parse(line)
+        self.assertNotIn("jobs", COMMAND_NAMES)
+        self.assertEqual(usage("get", "positive"), "/get positive ID [RUN]")
+        self.assertEqual(usage("describe"), "/describe job JOB")
 
     def test_filter_words_and_statuses_complete(self) -> None:
         self.assertEqual(completions("/filter ", self.JOBS), ["/filter status", "/filter name", "/filter off"])

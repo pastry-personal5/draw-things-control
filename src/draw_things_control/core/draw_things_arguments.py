@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+
+from draw_things_control.core.numbers import positive_whole, setting_number
+
+# Every flag ``DrawThingsGenerateArguments.command`` writes, in order, with how: "value" (the flag and the attribute's
+# text), "images" (``--image`` once per image, the primary first), "switch" (alone, when true), or "negatable" (the flag
+# when true, ``--no-`` and the flag when false, nothing when None). The attribute is the flag's name in snake case.
+GENERATE_FLAGS = (
+    ("--models-dir", "value"), ("--model", "value"), ("--prompt", "value"), ("--prompt-file", "value"), ("--negative-prompt", "value"), ("--negative-prompt-file", "value"),
+    ("--steps", "value"), ("--cfg", "value"), ("--width", "value"), ("--height", "value"), ("--frames", "value"), ("--strength", "value"), ("--seed", "value"), ("--config-json", "value"), ("--config-file", "value"),
+    ("--image", "images"), ("--audio", "value"), ("--audio-encoder-file", "value"), ("--avc", "switch"), ("--segment-frames", "value"), ("--cond-frames", "value"), ("--output", "value"), ("--video-format", "value"),
+    ("--terminal-image", "switch"), ("--terminal-image-protocol", "value"), ("--download-missing", "negatable"), ("--disable-preview", "switch"), ("--offline", "switch"),
+    ("--remote", "switch"), ("--remote-url", "value"), ("--remote-port", "value"), ("--remote-tls", "negatable"), ("--remote-shared-secret", "value"),
+    ("--cloud-compute", "switch"), ("--api-key", "value"), ("--cloud-api-base-url", "value"),
+)  # fmt: skip
+# The flags written with a value after them; the rest stand alone.
+VALUE_FLAGS = frozenset(flag for flag, kind in GENERATE_FLAGS if kind in ("value", "images"))
+# The flags whose value is a credential, which is never shown or saved.
+SECRET_FLAGS = frozenset(("--api-key", "--remote-shared-secret"))
 
 
 class CommandArguments(Protocol):
@@ -111,57 +131,90 @@ class DrawThingsGenerateArguments:
     def command(self) -> tuple[str, ...]:
         """Build the command as an argv tuple without shell interpolation."""
         command = [self.executable, "generate"]
-
-        def add_value(flag: str, value: object | None) -> None:
-            if value is not None:
-                command.extend((flag, str(value)))
-
-        add_value("--models-dir", self.models_dir)
-        add_value("--model", self.model)
-        add_value("--prompt", self.prompt)
-        add_value("--prompt-file", self.prompt_file)
-        add_value("--negative-prompt", self.negative_prompt)
-        add_value("--negative-prompt-file", self.negative_prompt_file)
-        for flag, value in (
-            ("--steps", self.steps),
-            ("--cfg", self.cfg),
-            ("--width", self.width),
-            ("--height", self.height),
-            ("--frames", self.frames),
-            ("--strength", self.strength),
-            ("--seed", self.seed),
-            ("--config-json", self.config_json),
-            ("--config-file", self.config_file),
-        ):
-            add_value(flag, value)
-        for image in (() if self.image is None else (self.image,)) + self.reference_images:
-            add_value("--image", image)
-        add_value("--audio", self.audio)
-        add_value("--audio-encoder-file", self.audio_encoder_file)
-        if self.avc:
-            command.append("--avc")
-        add_value("--segment-frames", self.segment_frames)
-        add_value("--cond-frames", self.cond_frames)
-        add_value("--output", self.output)
-        add_value("--video-format", self.video_format)
-        if self.terminal_image:
-            command.append("--terminal-image")
-        add_value("--terminal-image-protocol", self.terminal_image_protocol)
-        if self.download_missing is not None:
-            command.append("--download-missing" if self.download_missing else "--no-download-missing")
-        if self.disable_preview:
-            command.append("--disable-preview")
-        if self.offline:
-            command.append("--offline")
-        if self.remote:
-            command.append("--remote")
-        add_value("--remote-url", self.remote_url)
-        add_value("--remote-port", self.remote_port)
-        if self.remote_tls is not None:
-            command.append("--remote-tls" if self.remote_tls else "--no-remote-tls")
-        add_value("--remote-shared-secret", self.remote_shared_secret)
-        if self.cloud_compute:
-            command.append("--cloud-compute")
-        add_value("--api-key", self.api_key)
-        add_value("--cloud-api-base-url", self.cloud_api_base_url)
+        for flag, kind in GENERATE_FLAGS:
+            value = getattr(self, flag[2:].replace("-", "_"))
+            if kind == "images":
+                for image in (() if value is None else (value,)) + self.reference_images:
+                    command.extend((flag, str(image)))
+            elif kind == "value":
+                if value is not None:
+                    command.extend((flag, str(value)))
+            elif kind == "switch":
+                if value:
+                    command.append(flag)
+            elif value is not None:
+                command.append(flag if value else "--no-" + flag[2:])
         return tuple(command)
+
+
+@dataclass(frozen=True)
+class CommandSettings:
+    """Generation settings read back from a saved ``draw-things-cli generate`` command; each None when it cannot be told."""
+
+    model: str | None = None
+    refiner_model: str | None = None
+    # The share of the steps after which the refiner takes over, 0 to 1.
+    refiner_start: float | None = None
+    cfg: float | None = None
+    shift: float | None = None
+    steps: int | None = None
+
+
+def command_settings(command: Sequence[str]) -> CommandSettings:
+    """The settings a command ran with: a flag wins over the same key in ``--config-json``, as draw-things-cli applies them.
+
+    A setting in neither is None: the model's recommended value is not in the command. Never raises; an unreadable
+    ``--config-json``, a value of the wrong type, or a flag with no value leaves only the settings it affects as None.
+    """
+    flags: dict[str, str] = {}
+    for flag, value in command_arguments(command):
+        if value is not None:
+            flags.setdefault(flag, value)
+    config = _config_json(flags.get("--config-json"))
+    return CommandSettings(
+        model=flags.get("--model") or _text(config.get("model")),
+        refiner_model=_text(config.get("refinerModel")),
+        refiner_start=setting_number(config.get("refinerStart")),
+        cfg=setting_number(flags["--cfg"]) if "--cfg" in flags else setting_number(config.get("guidanceScale")),
+        shift=setting_number(config.get("shift")),
+        steps=positive_whole(flags["--steps"]) if "--steps" in flags else positive_whole(config.get("steps")),
+    )
+
+
+def command_arguments(command: Sequence[str]) -> list[tuple[str, str | None]]:
+    """Each flag of a saved ``draw-things-cli generate`` command, in order, with its value, or None for a flag that stands alone.
+
+    The executable and the subcommand are skipped. A flag's value is taken as it is, so a prompt that reads like a flag is
+    never parsed as one; a value flag at the very end has no value (None). Words that are not flags are skipped.
+    """
+    arguments: list[tuple[str, str | None]] = []
+    index = 1
+    while index < len(command):
+        token = str(command[index])
+        if token in VALUE_FLAGS:
+            arguments.append((token, str(command[index + 1]) if index + 1 < len(command) else None))
+            index += 2
+        else:
+            if token.startswith("--"):
+                arguments.append((token, None))
+            index += 1
+    return arguments
+
+
+def config_json(command: Sequence[str]) -> dict[str, Any]:
+    """The command's ``--config-json`` as a mapping; empty when it has none or it cannot be read."""
+    return _config_json(next((value for flag, value in command_arguments(command) if flag == "--config-json"), None))
+
+
+def _config_json(text: str | None) -> dict[str, Any]:
+    if text is None:
+        return {}
+    try:
+        config = json.loads(text)
+    except ValueError:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
