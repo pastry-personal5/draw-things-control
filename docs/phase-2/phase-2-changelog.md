@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Change**: `.gitignore` ignores everything under `data/` except files with `example` in their name (`data/**`, then `!data/**/` and `!data/**/*example*`). It replaces the rules for `data/params/params` and the two `-default` configurations. Files already tracked stay tracked.
+
 - **Change** [M11]: fixes from the code review of the branch.
   - `StoreProvider` refuses `get()` after `close()`, so a worker still running cannot reopen a store nobody closes.
   - `Database._connect` closes its connection when a `PRAGMA` fails.
