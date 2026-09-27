@@ -5,6 +5,10 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Change**: version 1.0.0. `pyproject.toml` and `uv.lock` move from 0.1.0 to 1.0.0, and the release notes are in [docs/releases/1.0.0.md](../releases/1.0.0.md).
+
+- **Owner decision**: the project's mission is long-horizon video generation by autoregressive image-to-video chaining, with the Draw Things app used beneath. The `pyproject.toml` description, the README, the user guide, the architecture overview, the documentation index, and the 1.0.0 release notes now say so.
+
 - **Change**: `.gitignore` ignores everything under `data/` except files with `example` in their name (`data/**`, then `!data/**/` and `!data/**/*example*`). It replaces the rules for `data/params/params` and the two `-default` configurations. Files already tracked stay tracked.
 
 - **Change** [M11]: fixes from the code review of the branch.

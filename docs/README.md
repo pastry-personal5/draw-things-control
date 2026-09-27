@@ -1,5 +1,7 @@
 # Documentation
 
+`draw-things-control` is built for long-horizon video generation by autoregressive image-to-video chaining, with the Draw Things app doing the generating underneath.
+
 - [User guide](user-guide.md): using the CLI and the terminal UI
 - [Architecture](architecture.md): modules, process supervision, exit codes
 - [Development rules](development-rules.md): style, checks, documentation, git

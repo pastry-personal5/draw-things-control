@@ -1,6 +1,9 @@
 # User Guide
 
-How to use the `draw-things-control` command line. Every command is run from
+How to use the `draw-things-control` command line, whose mission is long-horizon
+video generation by autoregressive image-to-video chaining on top of the Draw
+Things app. Jobs ([Jobs: chained runs](#jobs-chained-runs)) are the main way to
+do that; `generate` covers a single image or video. Every command is run from
 the project root as `uv run dtc <command>`.
 
 ## Contents

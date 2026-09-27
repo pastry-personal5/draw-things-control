@@ -1,7 +1,9 @@
 # Architecture
 
-`draw-things-control` wraps the locally installed `draw-things-cli`. One core
-runs generations; front ends (CLI, TUI, API, MCP) are thin layers over it.
+`draw-things-control` exists for long-horizon video generation by
+autoregressive image-to-video chaining: each run starts from the previous run's
+output. It uses the Draw Things app beneath, through the locally installed
+`draw-things-cli`. One core runs the chained generations; front ends (CLI, TUI, API, MCP) are thin layers over it.
 Only one `draw-things-cli` runs at a time on the machine.
 
 ## Overview

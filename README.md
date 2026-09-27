@@ -1,9 +1,12 @@
 # draw-things-control
 
-A Python CLI that drives the locally installed
-[Draw Things CLI](https://github.com/drawthingsai/draw-things-community):
-generate images or video, and run YAML jobs that chain runs, each starting
-from the previous run's output.
+The mission of this project is long-horizon video generation by autoregressive
+image-to-video chaining: each clip starts from the last frame of the one before,
+so a video can run far longer than a single generation allows. The
+[Draw Things](https://github.com/drawthingsai/draw-things-community) app does
+the generating underneath; this Python CLI and terminal UI drive it through the
+locally installed `draw-things-cli`. YAML jobs describe the chain, and single
+`dtc generate` runs cover the one-off image or video.
 
 ## Quick start
 
