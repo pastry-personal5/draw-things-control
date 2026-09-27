@@ -20,7 +20,7 @@ from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.panes import HistoryPane
+from draw_things_control.tui.panes.history import HistoryPane
 from draw_things_control.tui.widgets import CommandInput, MessageLog
 from tests.fixtures import JobTestCase, job_data
 

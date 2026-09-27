@@ -22,11 +22,11 @@ from draw_things_control.services.job_catalog import JobCatalog, JobRow
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
+from draw_things_control.tui.confirm import ConfirmScreen
 from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
-from draw_things_control.tui.panes import JobDefinitionPane
-from draw_things_control.tui.screens import ConfirmScreen
-from draw_things_control.tui.text import changed_text, job_display_names, sort_job_rows
+from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.text.jobs import changed_text, job_display_names, sort_job_rows
 from draw_things_control.tui.widgets import MessageLog
 from tests.fixtures import job_data
 from tests.tui.test_tui import make_service
@@ -380,7 +380,7 @@ class JobWatcherTests(JobDefinitionTests):
 class JobDefinitionWatchTests(JobDefinitionTests):
     async def test_a_new_file_shows_without_a_timer_and_the_timer_pauses_while_all_jobs_are_valid(self) -> None:
         self.write_data_job("walk.yaml")
-        with mock.patch("draw_things_control.tui.panes.JOBS_POLL_SECONDS", 3600):
+        with mock.patch("draw_things_control.tui.panes.job_definitions.JOBS_POLL_SECONDS", 3600):
             async with self.app().run_test(size=(160, 50)) as pilot:
                 await self.settle(pilot)
                 table = pilot.app.screen.query_one(JobDefinitionPane)

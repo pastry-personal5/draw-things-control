@@ -209,7 +209,9 @@ src/draw_things_control/
 │   └── history.py            # HistoryReader, HistoryFilter, HistoryPage (from tui/history.py)
 ├── cli/app.py
 └── tui/
-    ├── app.py, screens.py, controller.py (new), signals.py (new), desktop.py (reveal, pbcopy; from history.py)
+    ├── app.py, screens.py, confirm.py (ConfirmScreen), controller.py (CommandController; new)
+    ├── signals.py            # SignalGuard, QuitPress (from app.py; new)
+    ├── desktop.py            # reveal, pbcopy (from history.py)
     ├── reader.py             # PaneHistory: the history for the panes, failures as text (new)
     ├── job_sort.py           # SortPreference: the Job Definition widget's kept sort (new)
     ├── commands.py, widgets.py, job_watch.py, live_run.py, estimate.py

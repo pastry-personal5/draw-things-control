@@ -26,9 +26,11 @@ from draw_things_control.services.history import HistoryReader
 from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
+from draw_things_control.tui.confirm import ConfirmScreen
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, JobEventMessage, LiveRun, PastRun
-from draw_things_control.tui.panes import ExecutionPane, HistoryPane
-from draw_things_control.tui.screens import ConfirmScreen, MainScreen
+from draw_things_control.tui.panes.execution import ExecutionPane
+from draw_things_control.tui.panes.history import HistoryPane
+from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import JobTestCase, job_data
 from tests.tui.fake_runs import FakeRuns
@@ -594,7 +596,7 @@ class LiveRunTests(TuiTestCase):
             await pilot.pause()
         # The job is stopping but held by the gate: a second signal must not kill the process.
         self.assertIsNot(signal.getsignal(signal.SIGTERM), before)
-        app.ignore_signal(signal.SIGTERM)
+        app.signals.ignore(signal.SIGTERM)
         gate.set()
         deadline = time.monotonic() + 5
         while signal.getsignal(signal.SIGTERM) is not before and time.monotonic() < deadline:

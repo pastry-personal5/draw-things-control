@@ -2,33 +2,39 @@
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen, Screen
+from textual.screen import Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
-from draw_things_control.core.errors import DtcError
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished, RunStarted
+from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished
 from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.services.history import STATUSES, HistoryFilter, HistoryReader
+from draw_things_control.services.history import HistoryReader
 from draw_things_control.services.job_catalog import JobCatalog, JobListing
 from draw_things_control.services.job_details import JobDetails, add_plan, read_details
 from draw_things_control.services.store_provider import StoreProvider
-from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_bare_number, parse_typed_id
-from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
-from draw_things_control.tui.desktop import copy_to_pasteboard, reveal_run
+from draw_things_control.tui.commands import CommandSuggester
+from draw_things_control.tui.controller import CommandController
+from draw_things_control.tui.desktop import copy_text, reveal_run
 from draw_things_control.tui.job_sort import SortPreference
-from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, JobDefinitionPane, StatusPane, natural_descending
+from draw_things_control.tui.panes.cli_output import CliPane
+from draw_things_control.tui.panes.execution import ExecutionPane
+from draw_things_control.tui.panes.history import HistoryPane
+from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.panes.status import StatusPane
 from draw_things_control.tui.reader import PaneHistory
-from draw_things_control.tui.text import Arguments, PreviousRun, argument_rows, details_text, event_text, execution_text, jobs_text, override_notes, parameters_text, prompts_text, question_text, result_text, status_line_text
+from draw_things_control.tui.text.arguments import parameters_text, run_arguments
+from draw_things_control.tui.text.events import event_text, result_text
+from draw_things_control.tui.text.execution import execution_text
+from draw_things_control.tui.text.jobs import details_text, jobs_text
+from draw_things_control.tui.text.prompts import prompts_text
+from draw_things_control.tui.text.status import status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
 if TYPE_CHECKING:
@@ -56,6 +62,7 @@ class MainScreen(Screen[None]):
         self.catalog: JobCatalog | None = None
         self.reader: PaneHistory | None = None
         self.store: StoreProvider | None = None
+        self.commands = CommandController(self)
 
     @property
     def dtc(self) -> DrawThingsApp:
@@ -146,140 +153,10 @@ class MainScreen(Screen[None]):
             return
         self.command_line.remember(line)
         self.say(Text(f"> {line}", style="bold"), block=True)
-        try:
-            command = parse(line)
-        except CommandError as error:
-            self.say(str(error), "red")
-            return
-        if command is not None:
-            self.run_command(command.name, command.arguments)
-
-    def run_command(self, name: str, arguments: tuple[str, ...]) -> None:
-        """Call ``command_<name>``; arguments that do not fit its signature, or a CommandError, print the reason."""
-        handler = getattr(self, f"command_{name}")
-        try:
-            inspect.signature(handler).bind(*arguments)
-        except TypeError:
-            self.say(f"Usage: {usage(name)}", "red")
-            return
-        try:
-            handler(*arguments)
-        except CommandError as error:
-            self.say(str(error), "red")
-
-    def command_help(self) -> None:
-        self.say(help_text())
-
-    def command_clear(self) -> None:
-        self.query_one(MessageLog).clear()
-
-    def command_quit(self) -> None:
-        self.call_later(self.dtc.action_quit)
-
-    def command_get(self, what: str, *arguments: str) -> None:
-        """/get jobs, /get history, and an execution's prompts or draw-things-cli arguments."""
-        word = what.lower()
-        if word == "jobs" and not arguments:
-            self.jobs.load(fresh=True, announce=True)
-        elif word == "history" and not arguments:
-            self.history.load()
-        elif word in ("prompts", "positive", "negative", "param", "parameters") and 1 <= len(arguments) <= 2:
-            execution = self.execution_number(arguments[0], "get", word)
-            run = self.number(arguments[1], "get", word) if len(arguments) == 2 else None
-            self.show_part(word, execution, run)
-        else:
-            raise CommandError(f"Usage: {usage('get', word if word in GET_WORDS else None)}")
-
-    def command_describe(self, what: str, *arguments: str) -> None:
-        """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file; /describe execution ID: one
-        execution as it ran. The noun may be left out when the ID shows it: /describe J0001, /describe e12."""
-        word = what.lower()
-        if not arguments and word not in ("job", "execution"):
-            if parse_typed_id(what, JOB_LETTER) is not None:
-                word, arguments = "job", (what,)
-            elif parse_typed_id(what, EXECUTION_LETTER) is not None:
-                word, arguments = "execution", (what,)
-        if word == "job" and len(arguments) == 1:
-            self.describe_job(self.job_path(arguments[0]))
-        elif word == "execution" and len(arguments) == 1:
-            self.show_execution(self.execution_number(arguments[0], "describe", "execution"))
-        else:
-            raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution') else None)}")
+        self.commands.submit(line)
 
     def describe_job(self, path: Path) -> None:
         self.load_details(path, self.dtc.settings, self.dtc.job_executor, self.dtc.executable)
-
-    def command_sort(self, what: str, key: str, direction: str | None = None) -> None:
-        """/sort jobs KEY [asc|desc]: the Job Definition widget's order, kept across sessions."""
-        key = key.lower()
-        if what.lower() != "jobs" or key not in SORT_KEYS or (direction is not None and direction.lower() not in SORT_DIRECTIONS):
-            raise CommandError(f"Usage: {usage('sort')}; KEY is {', '.join(SORT_KEYS)}")
-        descending = direction.lower() == "desc" if direction is not None else natural_descending(key)
-        self.jobs.set_sort(key, descending)
-        self.say(f"Job Definition: by {key}, {'descending' if descending else 'ascending'}")
-
-    def command_apply(self, name: str) -> None:
-        self.dtc.start_flow(self.job_path(name))
-
-    def command_stop(self) -> None:
-        live = self.dtc.live
-        if not self.dtc.job_running or live is None:
-            self.say("No job is running", "yellow")
-            return
-        if live.stop_requested:
-            self.say("Already stopping", "yellow")
-            return
-        if any(isinstance(screen, ConfirmScreen) for screen in self.app.screen_stack):
-            return
-        self.app.push_screen(ConfirmScreen(question_text("Stop the job?", "stop it", "keep it running"), purpose="stop"), self.confirm_stop)
-
-    def confirm_stop(self, stop: bool | None) -> None:
-        if stop:
-            self.dtc.request_stop()
-
-    def command_filter(self, *arguments: str) -> None:
-        current = self.history.history_filter
-        if arguments == ("off",):
-            history_filter = HistoryFilter()
-        elif len(arguments) == 2 and arguments[0] == "status":
-            if arguments[1] not in STATUSES:
-                raise CommandError(f"Unknown status '{arguments[1]}'; use one of {', '.join(STATUSES)}")
-            history_filter = HistoryFilter(arguments[1], current.name)
-        elif len(arguments) == 2 and arguments[0] == "name" and arguments[1]:
-            history_filter = HistoryFilter(current.status, arguments[1])
-        else:
-            raise CommandError(f"Usage: {usage('filter')}")
-        self.say(f"Execution History: {history_filter.text() or 'all executions'}")
-        self.history.set_filter(history_filter)
-
-    def command_reveal(self, execution_id: str, run: str | None = None) -> None:
-        self.reveal(self.execution_number(execution_id, "reveal"), self.number(run, "reveal") if run is not None else None)
-
-    def job_path(self, name: str) -> Path:
-        assert self.catalog is not None
-        try:
-            return self.catalog.find(name, self.jobs.job_rows)
-        except DtcError as error:
-            raise CommandError(str(error)) from error
-
-    @staticmethod
-    def execution_number(text: str, command: str, word: str | None = None) -> int:
-        """The number of an execution ID as typed (E0012, e12), or why not: a bare number names the E form."""
-        number = parse_typed_id(text, EXECUTION_LETTER)
-        if number is not None:
-            return number
-        bare = parse_bare_number(text)
-        if bare is not None:
-            raise CommandError(f"Use {execution_id_text(bare)}: an execution ID begins with {EXECUTION_LETTER}")
-        raise CommandError(f"Usage: {usage(command, word)}")
-
-    @staticmethod
-    def number(text: str, command: str, word: str | None = None) -> int:
-        """A run number, or a usage error for ``command`` (and its ``word``, for /get)."""
-        number = parse_bare_number(text)
-        if number is None:
-            raise CommandError(f"Usage: {usage(command, word)}")
-        return number
 
     # Workers: jobs, the detail, and reveal
 
@@ -360,14 +237,8 @@ class MainScreen(Screen[None]):
         text, copied = prompts_text(execution, word, run)
         self.app.call_from_thread(self.say, text)
         if copied is not None:
-            copied, what = copied
-            error = copy_to_pasteboard(copied)
-            if error is None:
-                self.app.call_from_thread(self.say, f"Copied the {what} to the clipboard", "dim")
-            else:
-                # Without pbcopy, the terminal is asked to copy (OSC 52); not every terminal does, so it cannot be confirmed.
-                self.app.call_from_thread(self.app.copy_to_clipboard, copied)
-                self.app.call_from_thread(self.say, f"Asked the terminal to copy the {what} ({error})", "dim")
+            text_to_copy, what = copied
+            self.app.call_from_thread(self.say, *copy_text(text_to_copy, what, ask_terminal=lambda text: self.app.call_from_thread(self.app.copy_to_clipboard, text)))
 
     @work(thread=True, group="reveal")
     def reveal(self, number: int, run: int | None) -> None:
@@ -382,23 +253,9 @@ class MainScreen(Screen[None]):
             self.cli.new_job(self.dtc.live)
         self.tick()
 
-    def run_arguments(self, event: JobEvent) -> tuple[Arguments | None, PreviousRun | None]:
-        """For a run with a command: its argument rows, and the last such run of this job to compare them with. The last
-        run is kept on the job's LiveRun, which each job starts afresh; a run without a command is never compared with."""
-        live = self.dtc.live
-        if not isinstance(event, RunStarted) or not event.command:
-            return None, None
-        started = live.started if live is not None else None
-        notes = override_notes(started.config_override, started.input_resize is not None) if started is not None else {}
-        arguments = argument_rows(event.command, notes)
-        if live is None:
-            return arguments, None
-        previous, live.previous_arguments = live.previous_arguments, (event.number, arguments)
-        return arguments, previous
-
     def job_event(self, event: JobEvent) -> None:
         """Log the event, update the draw-things-cli pane, and refresh the history where the store changed."""
-        text = event_text(event, *self.run_arguments(event))
+        text = event_text(event, *run_arguments(self.dtc.live, event))
         if text is not None:
             self.say(text)
         self.render_live(event)
@@ -430,34 +287,3 @@ class MainScreen(Screen[None]):
         self.cli.tick(self.dtc.live)
         self.render_status()
         self.query_one("#status-line", Static).update(status_line_text(self.dtc.data_directory, self.dtc.live, self.dtc.job_running, self.dtc.quit_armed))
-
-
-class ConfirmScreen(ModalScreen[bool]):
-    """A yes-or-no question over the current screen; ``purpose`` names it (``run``, ``stop``, ``quit``).
-
-    With ``enter_confirms`` false, only ``y`` answers yes: Enter also submits the command that opened the dialog,
-    so a second Enter, or a held key, must not answer it.
-    """
-
-    BINDINGS = [
-        Binding("y", "answer(True)", "Yes"),
-        Binding("enter", "enter", "Yes", show=False),
-        Binding("n", "answer(False)", "No"),
-        Binding("escape", "answer(False)", "No", show=False),
-    ]
-
-    def __init__(self, text: Text, *, purpose: str, enter_confirms: bool = True) -> None:
-        super().__init__()
-        self.text = text
-        self.purpose = purpose
-        self.enter_confirms = enter_confirms
-
-    def compose(self) -> ComposeResult:
-        yield Static(self.text, id="confirm")
-
-    def action_enter(self) -> None:
-        if self.enter_confirms:
-            self.dismiss(True)
-
-    def action_answer(self, answer: bool) -> None:
-        self.dismiss(answer)

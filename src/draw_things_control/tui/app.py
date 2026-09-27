@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import signal
-import sqlite3
 import threading
-import time
 from pathlib import Path
-from typing import Any
 
 from textual import work
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
 
-from draw_things_control.core.arguments import command_settings
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
@@ -28,12 +23,13 @@ from draw_things_control.services.job_details import error_text
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import Store
-from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun, PastRun, PastRunFound
-from draw_things_control.tui.screens import ConfirmScreen, MainScreen
-from draw_things_control.tui.text import confirm_run_text, question_text
+from draw_things_control.tui.confirm import ConfirmScreen
+from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun, PastRunFound, latest_past_run
+from draw_things_control.tui.screens import MainScreen
+from draw_things_control.tui.signals import QuitPress, SignalGuard
+from draw_things_control.tui.text.jobs import confirm_run_text, question_text
 
 # Stopped as the CLI is: the job ends as interrupted by the signal, and dtc tui exits with 128+N.
-HANDLED_SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 # How long a first Ctrl-C waits for the second that quits.
 QUIT_PRESS_SECONDS = 2.0
 
@@ -82,12 +78,11 @@ class DrawThingsApp(App[None]):
         self.stop_signal: signal.Signals | None = None
         self.quit_when_stopped = False
         self.exit_signal: signal.Signals | None = None
-        self._previous_handlers: dict[signal.Signals, Any] = {}
+        self.signals = SignalGuard(self.handle_signal)
         self._unmounted = False
         # Records the running job; set on the worker thread, read on the main thread once JobStarted arrives.
         self._recorder: ExecutionRecorder | None = None
-        # Monotonic time a first Ctrl-C stops waiting for the second.
-        self._quit_armed_until = 0.0
+        self.quit_press = QuitPress(QUIT_PRESS_SECONDS)
         self.theme = "textual-dark"
         # Set by the worker thread as its last step; with _unmounted, decides who hands the signal handlers back.
         self._worker_done = threading.Event()
@@ -98,13 +93,13 @@ class DrawThingsApp(App[None]):
         return self.live is not None and not self.live.worker_ended
 
     def on_mount(self) -> None:
-        self.install_signal_handlers()
+        self.signals.install()
         self.push_screen(MainScreen())
 
     def on_unmount(self) -> None:
         self._unmounted = True
         if not self.job_running or self._worker_done.is_set():
-            self.remove_signal_handlers()
+            self.signals.remove()
             return
         # However the app ends, asyncio then waits for the job's thread: stop the job so that wait ends within the shutdown grace.
         # Set first, so a worker that has not reached JobExecutor.run yet cancels on JobStarted.
@@ -112,35 +107,7 @@ class DrawThingsApp(App[None]):
             self.stop_signal = signal.SIGINT
         self.job_executor.cancel(self.stop_signal)
         # Until the worker ends, a second signal must not kill dtc and leave draw-things-cli running; the job is already stopping.
-        with contextlib.suppress(RuntimeError):
-            loop = asyncio.get_running_loop()
-            for received in self._previous_handlers:
-                loop.add_signal_handler(received, self.ignore_signal, received)
-
-    def ignore_signal(self, received: signal.Signals) -> None:
-        """A signal after the app has gone, while its job stops: nothing more to do."""
-
-    def install_signal_handlers(self) -> None:
-        """Handle the signals that would otherwise kill dtc and leave draw-things-cli running."""
-        try:
-            loop = asyncio.get_running_loop()
-            for received in HANDLED_SIGNALS:
-                self._previous_handlers[received] = signal.getsignal(received)
-                loop.add_signal_handler(received, self.handle_signal, received)
-        except (NotImplementedError, RuntimeError, ValueError):
-            # Not on the main thread, or no signals on this platform: nothing to register.
-            pass
-
-    def remove_signal_handlers(self) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        for received, previous in self._previous_handlers.items():
-            loop.remove_signal_handler(received)
-            if previous is not None:
-                signal.signal(received, previous)
-        self._previous_handlers.clear()
+        self.signals.ignore_until_removed()
 
     def handle_signal(self, received: signal.Signals) -> None:
         """Stop the job as the signal would stop the CLI, then quit; with no job, quit now. dtc tui exits with 128+N.
@@ -157,10 +124,7 @@ class DrawThingsApp(App[None]):
 
     @property
     def main(self) -> MainScreen | None:
-        for screen in self.screen_stack:
-            if isinstance(screen, MainScreen) and screen.is_mounted:
-                return screen
-        return None
+        return next((screen for screen in self.screen_stack if isinstance(screen, MainScreen) and screen.is_mounted), None)
 
     def say(self, text: str, style: str = "") -> None:
         """Write a notice to the messages."""
@@ -175,7 +139,7 @@ class DrawThingsApp(App[None]):
     @property
     def quit_armed(self) -> bool:
         """Whether a first Ctrl-C is waiting for the second."""
-        return time.monotonic() < self._quit_armed_until
+        return self.quit_press.armed
 
     async def action_interrupt(self) -> None:
         """Ctrl-C: clear the command line if it holds text; otherwise quit on a second press within QUIT_PRESS_SECONDS."""
@@ -188,12 +152,12 @@ class DrawThingsApp(App[None]):
         if main is not None and main.command_line.value:
             main.command_line.action_clear_line()
             return
-        if self.quit_armed:
-            self._quit_armed_until = 0.0
+        if self.quit_press.armed:
+            self.quit_press.disarm()
             self.show_status()
             await self.action_quit()
             return
-        self._quit_armed_until = time.monotonic() + QUIT_PRESS_SECONDS
+        self.quit_press.arm()
         self.show_status()
         self.set_timer(QUIT_PRESS_SECONDS, self.show_status)
 
@@ -295,7 +259,7 @@ class DrawThingsApp(App[None]):
 
     def after_worker(self) -> None:
         if self._unmounted:
-            self.remove_signal_handlers()
+            self.signals.remove()
 
     def execute(self, job: JobDefinition) -> None:
         """Run the job with its events recorded and posted, under the run lock; runs on the worker thread."""
@@ -303,21 +267,10 @@ class DrawThingsApp(App[None]):
 
         def before_run(store: Store, recorder: ExecutionRecorder) -> None:
             # Posted before any event, so the run can be estimated from its first moment; the recorder is known before JobStarted.
-            self.post_message(PastRunFound(self.past_run(store)))
+            self.post_message(PastRunFound(latest_past_run(store)))
             self._recorder = recorder
 
         session.run(job, holder="tui", executable=self.executable, shutdown_grace=self.shutdown_grace, observers=(self.post_event, self.stop_if_requested), before_run=before_run)
-
-    @staticmethod
-    def past_run(store: Store) -> PastRun | None:
-        """The latest successful run of any job, to estimate from; None when there is none or the store cannot say."""
-        try:
-            run = store.executions.latest_succeeded_run()
-        except (sqlite3.Error, ValueError):
-            return None
-        if run is None or not run.seconds:
-            return None
-        return PastRun(float(run.seconds), command_settings(run.command).steps)
 
     def on_past_run_found(self, message: PastRunFound) -> None:
         if self.live is not None:

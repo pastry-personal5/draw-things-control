@@ -100,11 +100,12 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/DESCRIBE Job w", self.JOBS), ["/DESCRIBE Job walk.yaml", "/DESCRIBE Job wave.yml"])
         self.assertEqual(completions("/get positive 1", self.JOBS), [])
 
-    def test_the_replaced_commands_name_their_new_form(self) -> None:
-        for line, new in (("/jobs", "/get jobs"), ("/job walk", "/describe job <Job ID>"), ("/History", "/get history"), ("/execution E0012", "/describe execution <Execution ID>"), ("/run walk", "/apply <Job ID>")):
-            with self.subTest(line=line), self.assertRaisesRegex(CommandError, f"^{line.split()[0]} is now {new}; type /help$"):
+    def test_the_old_commands_are_unknown(self) -> None:
+        for line in ("/jobs", "/job walk", "/History", "/execution E0012", "/run walk"):
+            with self.subTest(line=line), self.assertRaisesRegex(CommandError, f"^Unknown command '{line.split()[0]}'; type /help$"):
                 parse(line)
-        self.assertNotIn("jobs", COMMAND_NAMES)
+        for name in ("jobs", "job", "history", "execution", "run"):
+            self.assertNotIn(name, COMMAND_NAMES)
         self.assertEqual(usage("get", "positive"), "/get positive <Execution ID> [RUN]")
         self.assertEqual(usage("describe"), "/describe job <Job ID> | /describe execution <Execution ID>")
         self.assertEqual(usage("describe", "execution"), "/describe execution <Execution ID>")

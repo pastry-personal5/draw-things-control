@@ -179,7 +179,7 @@ class JobExecutor:
 
     def _run_chain(self, chain: _Chain) -> JobOutcome:
         manifest = chain.records.manifest
-        self._emit(self._job_started(chain))
+        self._emit(job_started_event(chain))
         try:
             return self._run_runs(chain)
         except BaseException:
@@ -187,31 +187,6 @@ class JobExecutor:
             completed = sum(1 for record in manifest.runs if record.status == RunStatus.SUCCEEDED)
             self._emit(JobFinished(at=self._timestamp(), status=JobStatus.FAILED, exit_code=None, completed_runs=completed, total_runs=chain.total, signal=None))
             raise
-
-    @staticmethod
-    def _job_started(chain: _Chain) -> JobStarted:
-        job, manifest, records = chain.job, chain.records.manifest, chain.records
-        return JobStarted(
-            at=manifest.started_at,
-            job_name=job.name,
-            job_file=manifest.job_file,
-            source_text=job.source_text,
-            mode=manifest.mode,
-            total_runs=chain.total,
-            output_directory=str(job.output_directory),
-            input=str(job.input) if job.input is not None else None,
-            model=job.model,
-            seed=manifest.seed,
-            seed_source=manifest.seed_source,
-            cooldown=job.cooldown,
-            cooldown_source=job.cooldown_source,
-            manifest=str(records.manifest_path) if records.manifest_path is not None else None,
-            log=str(records.log_path) if records.log_path is not None else None,
-            config_file=manifest.config_file,
-            config_override=manifest.config_override,
-            input_resize=manifest.input_resize,
-            execution_id=manifest.execution_id,
-        )
 
     def _run_runs(self, chain: _Chain) -> JobOutcome:
         job, manifest, total = chain.job, chain.records.manifest, chain.total
@@ -292,21 +267,7 @@ class JobExecutor:
         )
         chain.records.manifest.runs.append(record)
         chain.records.save()
-        self._emit(
-            RunStarted(
-                at=record.started_at,
-                number=number,
-                total=chain.total,
-                pair=pair.name,
-                positive=pair.positive,
-                negative=pair.negative,
-                input=record.input,
-                resized_input=record.resized_input,
-                output=run.output.name,
-                last_frame=run.last_frame.name if run.last_frame is not None else None,
-                command=tuple(record.command),
-            )
-        )
+        self._emit(run_started_event(record, run, chain.total))
         return record
 
     def _cool_down(self, chain: _Chain, record: RunRecord, next_run: int, wait: CooldownWait) -> tuple[signal.Signals, str] | None:
@@ -350,3 +311,44 @@ class JobExecutor:
 
     def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord) -> tuple[RunStatus, int]:
         return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start)
+
+
+def job_started_event(chain: _Chain) -> JobStarted:
+    job, manifest, records = chain.job, chain.records.manifest, chain.records
+    return JobStarted(
+        at=manifest.started_at,
+        job_name=job.name,
+        job_file=manifest.job_file,
+        source_text=job.source_text,
+        mode=manifest.mode,
+        total_runs=chain.total,
+        output_directory=str(job.output_directory),
+        input=str(job.input) if job.input is not None else None,
+        model=job.model,
+        seed=manifest.seed,
+        seed_source=manifest.seed_source,
+        cooldown=job.cooldown,
+        cooldown_source=job.cooldown_source,
+        manifest=str(records.manifest_path) if records.manifest_path is not None else None,
+        log=str(records.log_path) if records.log_path is not None else None,
+        config_file=manifest.config_file,
+        config_override=manifest.config_override,
+        input_resize=manifest.input_resize,
+        execution_id=manifest.execution_id,
+    )
+
+
+def run_started_event(record: RunRecord, run: PlannedRun, total: int) -> RunStarted:
+    return RunStarted(
+        at=record.started_at,
+        number=run.number,
+        total=total,
+        pair=run.pair.name,
+        positive=run.pair.positive,
+        negative=run.pair.negative,
+        input=record.input,
+        resized_input=record.resized_input,
+        output=run.output.name,
+        last_frame=run.last_frame.name if run.last_frame is not None else None,
+        command=tuple(record.command),
+    )

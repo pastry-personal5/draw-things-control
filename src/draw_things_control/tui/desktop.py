@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from draw_things_control.state.executions import ExecutionRow
@@ -55,6 +56,16 @@ def copy_to_pasteboard(text: str) -> str | None:
     if result.returncode != 0:
         return f"pbcopy exited with {result.returncode}"
     return None
+
+
+def copy_text(text: str, what: str, *, ask_terminal: Callable[[str], None]) -> tuple[str, str]:
+    """Copy ``text`` to the clipboard; the message to say, and its style. Without pbcopy, ``ask_terminal`` asks the terminal
+    to copy (OSC 52); not every terminal does, so that cannot be confirmed."""
+    error = copy_to_pasteboard(text)
+    if error is None:
+        return f"Copied the {what} to the clipboard", "dim"
+    ask_terminal(text)
+    return f"Asked the terminal to copy the {what} ({error})", "dim"
 
 
 def reveal_run(execution: ExecutionRow | str, run_number: int | None) -> tuple[str, str]:

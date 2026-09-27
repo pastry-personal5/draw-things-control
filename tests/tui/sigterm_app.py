@@ -15,7 +15,8 @@ from loguru import logger
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.screens import ConfirmScreen, MainScreen
+from draw_things_control.tui.confirm import ConfirmScreen
+from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import CommandInput
 from tests.tui.fake_runs import FakeRuns
 

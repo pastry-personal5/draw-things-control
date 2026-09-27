@@ -41,7 +41,6 @@ COMMAND_NAMES = tuple(dict.fromkeys(name for name, _, _ in COMMANDS))
 GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in COMMANDS if name == "get"))
 DESCRIBE_WORDS = ("job", "execution")
 # Commands the /get and /describe forms replaced, and what to type instead.
-REPLACED = {"jobs": "/get jobs", "job": "/describe job <Job ID>", "history": "/get history", "execution": "/describe execution <Execution ID>", "run": "/apply <Job ID>"}
 # The Job Definition widget's sort keys, in the order `s` moves through them, and the directions.
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
@@ -82,8 +81,6 @@ def parse(line: str) -> Command | None:
     except ValueError as error:
         raise CommandError(f"Cannot read the command: {error}") from error
     name = words[0][len(PREFIX) :].lower()
-    if name in REPLACED:
-        raise CommandError(f"{words[0]} is now {REPLACED[name]}; type {PREFIX}help")
     if name not in COMMAND_NAMES:
         raise CommandError(f"Unknown command '{words[0]}'; type {PREFIX}help")
     return Command(name, tuple(words[1:]))

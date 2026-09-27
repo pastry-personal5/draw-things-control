@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -13,8 +14,10 @@ from typing import Any
 
 from textual.message import Message
 
+from draw_things_control.core.arguments import command_settings
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus
+from draw_things_control.state.store import Store
 
 MAX_OUTPUT_LINES = 2000
 
@@ -238,3 +241,14 @@ class LiveRun:
 
     def _check_thread(self) -> None:
         assert threading.get_ident() == self._thread, "LiveRun changed off the thread that created it"
+
+
+def latest_past_run(store: Store) -> PastRun | None:
+    """The latest successful run of any job, to estimate from; None when there is none or the store cannot say."""
+    try:
+        run = store.executions.latest_succeeded_run()
+    except (sqlite3.Error, ValueError):
+        return None
+    if run is None or not run.seconds:
+        return None
+    return PastRun(float(run.seconds), command_settings(run.command).steps)

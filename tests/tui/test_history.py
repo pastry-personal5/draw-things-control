@@ -24,9 +24,14 @@ from draw_things_control.state.executions import ExecutionRow, ExecutionSettings
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.desktop import copy_to_pasteboard
-from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryPane, JobDefinitionPane
+from draw_things_control.tui.panes.execution import ExecutionBody, ExecutionPane
+from draw_things_control.tui.panes.history import HistoryPane
+from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
-from draw_things_control.tui.text import argument_rows, confirm_run_text, event_text, override_notes, parameters_text, reveal_action, stored_cooldown_text
+from draw_things_control.tui.text.arguments import argument_rows, override_notes, parameters_text
+from draw_things_control.tui.text.events import event_text
+from draw_things_control.tui.text.execution import reveal_action, stored_cooldown_text
+from draw_things_control.tui.text.jobs import confirm_run_text
 from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import execution_row, job_data, run_row
 from tests.tui.fake_runs import FakeRuns
@@ -137,7 +142,7 @@ class HistoryTests(HistoryCase):
     async def test_pages_load_at_the_last_row_and_a_refresh_keeps_them_and_the_selection(self) -> None:
         ids = [self.add(f"job{number}", number) for number in range(8)]
         app = self.app()
-        with mock.patch("draw_things_control.tui.panes.PAGE_SIZE", 3), mock.patch("draw_things_control.services.history.PAGE_SIZE", 3):
+        with mock.patch("draw_things_control.tui.panes.history.PAGE_SIZE", 3), mock.patch("draw_things_control.services.history.PAGE_SIZE", 3):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 table = app.screen.query_one(HistoryPane)
@@ -168,7 +173,7 @@ class HistoryTests(HistoryCase):
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.app()
-        with mock.patch("draw_things_control.tui.panes.HISTORY_POLL_SECONDS", 0.1):
+        with mock.patch("draw_things_control.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 held = self.columns(app, 2, 4)
@@ -348,7 +353,7 @@ class HistoryTests(HistoryCase):
     async def test_a_job_another_process_starts_later_is_polled_even_when_filtered(self) -> None:
         self.add("old", 0)
         app = self.app()
-        with mock.patch("draw_things_control.tui.panes.HISTORY_POLL_SECONDS", 0.1):
+        with mock.patch("draw_things_control.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.command(pilot, "/filter status succeeded")
@@ -586,7 +591,7 @@ class GetCommandTests(HistoryCase):
     async def test_the_prompts_of_every_pair_or_of_one_run(self) -> None:
         execution_id = self.add_job()
         copied: list[str] = []
-        with mock.patch("draw_things_control.tui.screens.copy_to_pasteboard", side_effect=lambda text: copied.append(text)):
+        with mock.patch("draw_things_control.tui.desktop.copy_to_pasteboard", side_effect=lambda text: copied.append(text)):
             results = await self.run_lines(f"/get prompts E{execution_id:04d}", f"/get positive E{execution_id:04d}", f"/get negative E{execution_id:04d} 2", f"/get negative E{execution_id:04d} 1", f"/get prompts E{execution_id:04d} 9", "/get positive E0099")
         # Each label on its own line after a blank one, its prompt on the next, and a blank line after the prompt.
         self.assertEqual(results[f"/get prompts E{execution_id:04d}"], f"Execution E{execution_id:04d}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nnegative:\nblurry\n\nPair wave (run 2)\n\npositive:\na wave\n\nnegative:\n(none)\nCopied the prompts to the clipboard")
@@ -601,7 +606,7 @@ class GetCommandTests(HistoryCase):
 
     async def test_without_pbcopy_the_terminal_is_asked_to_copy(self) -> None:
         execution_id = self.add_job()
-        with mock.patch("draw_things_control.tui.screens.copy_to_pasteboard", return_value="pbcopy was not found"), mock.patch.object(DrawThingsApp, "copy_to_clipboard") as terminal:
+        with mock.patch("draw_things_control.tui.desktop.copy_to_pasteboard", return_value="pbcopy was not found"), mock.patch.object(DrawThingsApp, "copy_to_clipboard") as terminal:
             results = await self.run_lines(f"/get positive E{execution_id:04d} 2")
         terminal.assert_called_once_with("a wave")
         self.assertTrue(results[f"/get positive E{execution_id:04d} 2"].endswith("Asked the terminal to copy the positive prompt (pbcopy was not found)"))

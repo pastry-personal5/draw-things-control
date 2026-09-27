@@ -20,7 +20,7 @@ from draw_things_control.jobs.text import plan_header, plan_steps
 from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
-from draw_things_control.tui.panes import JobDefinitionPane
+from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 from tests.fixtures import JobTestCase, TestExecutor, job_executor
@@ -310,16 +310,16 @@ class TuiTests(TuiTestCase):
                 ("/launch walk", "Unknown command '/launch'; type /help"),
                 ("/exit", "Unknown command '/exit'; type /help"),
                 ("/apply 'walk", "Cannot read the command: No closing quotation"),
-                ("/job walk", "/job is now /describe job <Job ID>; type /help"),
-                ("/jobs", "/jobs is now /get jobs; type /help"),
-                ("/history", "/history is now /get history; type /help"),
+                ("/job walk", "Unknown command '/job'; type /help"),
+                ("/jobs", "Unknown command '/jobs'; type /help"),
+                ("/history", "Unknown command '/history'; type /help"),
                 ("/describe job", "Usage: /describe job <Job ID>"),
                 ("/describe jobs walk", "Usage: /describe job <Job ID> | /describe execution <Execution ID>"),
                 ("/describe execution", "Usage: /describe execution <Execution ID>"),
                 ("/describe execution x", "Usage: /describe execution <Execution ID>"),
                 ("/describe execution 12", "Use E0012: an execution ID begins with E"),
                 ("/describe execution J12", "Usage: /describe execution <Execution ID>"),
-                ("/execution E0012", "/execution is now /describe execution <Execution ID>; type /help"),
+                ("/execution E0012", "Unknown command '/execution'; type /help"),
                 ("/sort jobs size", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
                 ("/sort jobs name up", "Usage: /sort jobs KEY [asc|desc]; KEY is id, name, changed, mode, runs"),
                 ("/apply J0099", f"No job file has the ID J0099 in {self.data}"),

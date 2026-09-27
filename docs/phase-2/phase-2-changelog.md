@@ -5,6 +5,13 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 6 differs from the plan.
+  - `ConfirmScreen` moved to `tui/confirm.py`, so the command controller and the screen need not import each other.
+  - The screen keeps the Textual workers that a command starts (`show_execution`, `show_part`, `reveal`, `load_details`), since a worker needs a widget; the controller reads the arguments and asks the screen. Making the controller a widget was rejected.
+  - `SignalGuard` and `QuitPress` in `tui/signals.py` took the signal handling and the double Ctrl-C out of `DrawThingsApp`; the app's own list of handled signals went (D17).
+  - `run_arguments` moved to `tui/text/arguments.py`, `latest_past_run` to `tui/live_run.py`, and the clipboard fallback to `tui/desktop.py`, to bring the app and the screen under the class size limit.
+  - The hints for `/jobs`, `/job`, `/history`, `/execution`, and `/run` are gone; each is an unknown command.
+
 - **Design decision** [M11]: Where Step 5 differs from the plan.
   - Passing `ProjectPaths` down instead of patching landed for every layer in this step (the plan said layer by layer): `RunLock`, `Store.open`, `load_job`, `find_config_file`, and `load_global_config` take their directories, and the module constants `STATE_DIRECTORY`, `PARAMS_DIRECTORY`, `JOBS_DIRECTORY`, and `DEFAULT_GLOBAL_CONFIG` are gone. `--global-config` and `--data-dir` default to the project's own through the context.
   - One `StoreProvider` replaces the three stores the TUI's catalog, reader, and sort opened.
