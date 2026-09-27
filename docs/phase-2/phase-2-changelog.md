@@ -3,6 +3,45 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 2](README.md). Newest first.
 
+## 2026-09-27
+
+- **Owner decision** [M11]: From a second interview on the Milestone 11 plan.
+  - The work is on a `refactor/m11` branch, one commit per step, merged to `main` by the owner; committing straight to `main`, and leaving it uncommitted, were offered.
+  - `event_to_dict` is built now, and the Phase 3 documents are updated in Step 7; leaving either for Phase 3 was offered.
+  - A small bug that a step exposes is fixed in the milestone, each as a **Change** entry with its own test, rather than kept or asked about each time. A fix that changes the CLI's output or exit codes, a file format, or the state store waits for the owner.
+
+- **Design decision** [M11]: From a review of the Milestone 11 plan.
+  - The check that `draw-things-cli` exists moves to `core/`, not `services/`: `core/` and `jobs/` both call it and may not import `services/`.
+  - The manifest, the job log file, and the job's log lines are called by the executor in a fixed order, not attached through `notify`: the log file must start before `JobStarted`, a manifest that cannot be written must still fail the job, and the log lines must keep their order. Plain observers were rejected for those reasons.
+  - Step 1 first adds characterization tests of a real run's log lines, manifest, job log, events, and state store rows, which no test pins today.
+  - The CLI passes `ProjectPaths` in Typer's context object; a `--project-root` option and an environment variable were rejected, since users would see them.
+  - Errors carry a stable code (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`) mapped to today's exit codes in one place, for Phase 3 to map to HTTP statuses.
+  - Two more duplicates are listed: the stop signals (D17) and the three ways of writing a number (D18).
+  - Every file in `data/jobs/` and `config/global-config.yaml` passes the strict YAML reader and uses no dropped key.
+
+- **Owner decision** [M11]: From an interview on the Milestone 11 plan.
+  - One milestone, built in seven steps; splitting it into several milestones was offered.
+  - The rename hints for `batch_count`, `batches`, and the TUI's `/jobs`, `/job`, `/history`, `/execution`, and `/run` are dropped; the hint for `cooldown_seconds` is kept.
+  - Job files and the global configuration are read with the strict YAML loader, so a duplicate key, an octal number, or a base-60 number is refused.
+  - `generate --config-file` and `validate-config` read YAML only. `data/params/*.json` stay on disk, untouched.
+  - `dtc import-history` and the manifests and logs beside the outputs are kept.
+  - Pyright in `standard` mode joins `make check`, in the `dev` extra; `mypy`, and no type checker, were offered.
+  - The new layer is named `services/`, and modules are renamed to drop the stutter (`jobs/job_service.py` becomes `jobs/executor.py`).
+  - The size limits (module 400, class 250, function 40 lines) are acceptance criteria only; a test and Ruff's complexity rules were offered.
+
+- **Owner decision** [M11]: The next milestone is a refactor: a clean codebase and a clean architecture, with duplicates removed, long modules and functions split, and classes introduced where they help. Any legacy contract may be broken. It must prepare Phase 3's API server and MCP server.
+
+- **Change** [M11]: Milestone 11 is planned. It lists 16 duplicates, the long modules, classes, and functions, and the layering problems it fixes, in seven steps that each pass `make check`.
+
+- **Design decision** [M11]: A new `services/` layer sits between the front ends and `state/`, holding the use cases they share (running a recorded job, the job catalog, job details, the history reader) and the wiring of the real tools.
+  - Leaving them in `tui/` was rejected: front ends never import each other, so the API server would copy them.
+  - Putting them in `state/` was rejected: `state/` would depend on the run lock and the tools, and become the place for everything.
+  - Lower layers stop calling their classes services (`JobService` becomes `JobExecutor`), so "service" names the new layer only.
+
+- **Design decision** [M11]: The refactor keeps the state store schema (no migration), job files, manifests, and the CLI's output and exit codes. It breaks the Python API between modules freely, and reads job files and the global configuration with the strict YAML loader that base configurations already use, so a duplicate key is refused instead of read silently.
+
+- **Design decision** [M11]: The manifest, the job log, and the job's log lines become event observers beside `ExecutionRecorder`, so the executor only runs the chain and emits events. Keeping them inside the chain loop was rejected: it is most of that loop's length, and Phase 3's worker would inherit it.
+
 ## 2026-09-26
 
 - **Change**: `/help` and the usage messages write `<Job ID>` and `<Execution ID>` in place of `JOB` and `ID`. `RUN` is unchanged.

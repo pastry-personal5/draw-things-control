@@ -54,8 +54,10 @@ before anything can be submitted or written.
 ## Depends on
 
 [Phase 2](../phase-2/README.md): job events and `cancel()`, the state store,
-and the run lock. Those are used unchanged; the server is one more front end
-beside the CLI and the TUI.
+and the run lock, in the layout that
+[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md) gives
+them. Those are used unchanged; the server is one more front end beside the
+CLI and the TUI.
 
 ## New dependencies
 

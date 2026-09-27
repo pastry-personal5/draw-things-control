@@ -36,6 +36,9 @@ processes from driving the GPU at once.
   link that reveals its output in Finder
 - `/get` and `/describe` commands: the job files, the history, and an
   execution's prompts and `draw-things-cli` arguments
+- A refactor that removes duplicates, splits long modules and functions,
+  and moves what every front end shares into a `services/` layer, ready for
+  Phase 3's servers
 
 ## Non-goals
 
@@ -63,15 +66,18 @@ processes from driving the GPU at once.
 | 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | done |
 | 09 | [Get and describe commands](milestone-09-tui-get-describe.md) | done |
 | 10 | [Job Definition widget, job IDs, and execution IDs](milestone-10-tui-job-definitions.md) | done |
+| 11 | [Clean architecture refactor](milestone-11-clean-architecture.md) | planned |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
 both. 06 and 07 stand alone. 08 builds on 04 and 05, 09 on 05 and 08, and
-10 on 05 and 09.
+10 on 05 and 09, and 11 on all of them.
 
 ## New dependencies
 
 - `textual` (the TUI). It is added in Milestone 03 and installed with a plain
   `uv sync`, not as an optional extra (owner decision, see the changelog).
+- `pyright` (the type checker, in the `dev` extra, run by `make check`). It is
+  added in Milestone 11.
 - No new dependency for the state store or the lock: both use the standard
   library.
 
