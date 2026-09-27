@@ -9,12 +9,14 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from draw_things_control.core.run_lock import run_lock_is_free, state_directory
 from draw_things_control.jobs.events import JobStatus
-from draw_things_control.state.ids import MAX_DIGITS, execution_id_text
-from draw_things_control.state.store import DATABASE_FILE_NAME, StateError, Store
+from draw_things_control.state.database import StateError
+from draw_things_control.state.executions import ExecutionRow
+from draw_things_control.state.ids import execution_id_text
+from draw_things_control.state.store import DATABASE_FILE_NAME, Store, StoreMode
 
 PAGE_SIZE = 200
 STATUSES = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.RUNNING)
@@ -38,7 +40,7 @@ class HistoryPage:
     """Executions (with ``succeeded`` added) from ``offset``; ``complete`` when no more follow."""
 
     offset: int
-    rows: list[dict[str, Any]] = field(default_factory=list)
+    rows: list[ExecutionRow] = field(default_factory=list)
     complete: bool = True
     # Why the store could not be read, or why there is nothing to read.
     message: str | None = None
@@ -49,8 +51,6 @@ def database_path() -> Path:
 
 
 NO_HISTORY = "No execution history yet"
-# The largest ID SQLite can hold; a larger one cannot name an execution.
-MAX_ID = 2**63 - 1
 
 T = TypeVar("T")
 
@@ -75,43 +75,36 @@ class HistoryReader:
             store.close()
 
     def page(self, history_filter: HistoryFilter, offset: int, limit: int = PAGE_SIZE) -> HistoryPage:
-        """Up to ``limit`` executions from ``offset``, newest first, each with ``succeeded``."""
-        rows = self._read(lambda store: self._with_counts(store, store.list_executions(limit=limit, offset=offset, status=history_filter.status, name_contains=history_filter.name, running_as_interrupted=run_lock_is_free())))
+        """Up to ``limit`` executions from ``offset``, newest first, each with its count of successful runs."""
+        rows = self._read(lambda store: store.executions.page(limit=limit, offset=offset, status=history_filter.status, name_contains=history_filter.name, running_as_interrupted=run_lock_is_free()))
         if isinstance(rows, str):
             return HistoryPage(offset, message=rows)
         message = None if rows or offset else ("No executions match the filter" if history_filter.text() else NO_HISTORY)
         return HistoryPage(offset, rows, len(rows) < limit, message)
 
-    def rows(self, execution_ids: list[int]) -> list[dict[str, Any]] | str:
-        """The executions with these IDs, each with ``succeeded``, to update rows already shown."""
-        return self._read(lambda store: self._with_counts(store, store.executions_by_id(execution_ids, running_as_interrupted=run_lock_is_free())))
+    def rows(self, execution_ids: list[int]) -> list[ExecutionRow] | str:
+        """The executions with these IDs, each with its count of successful runs, to update rows already shown."""
+        return self._read(lambda store: store.executions.by_ids(execution_ids, running_as_interrupted=run_lock_is_free()))
 
     def newest_id(self, history_filter: HistoryFilter) -> int | None | str:
         """The ID of the newest execution the filter shows, or None when it shows none."""
-        rows = self._read(lambda store: store.list_executions(limit=1, status=history_filter.status, name_contains=history_filter.name, running_as_interrupted=run_lock_is_free()))
-        return rows if isinstance(rows, str) else (rows[0]["id"] if rows else None)
+        rows = self._read(lambda store: store.executions.page(limit=1, status=history_filter.status, name_contains=history_filter.name, running_as_interrupted=run_lock_is_free()))
+        return rows if isinstance(rows, str) else (rows[0].id if rows else None)
 
-    def execution(self, execution_id: int) -> dict[str, Any] | str:
+    def execution(self, execution_id: int) -> ExecutionRow | str:
         """One execution with its runs, by its row in the store, or why it cannot be shown."""
-        execution = self._read(lambda store: store.get_execution(execution_id, running_as_interrupted=run_lock_is_free()))
+        execution = self._read(lambda store: store.executions.get(execution_id, running_as_interrupted=run_lock_is_free()))
         return execution if execution is not None else "That execution is no longer in the history"
 
-    def numbered(self, number: int) -> dict[str, Any] | str:
+    def numbered(self, number: int) -> ExecutionRow | str:
         """One execution with its runs, by the number of its ID (E0012), or why it cannot be shown."""
 
-        def read(store: Store) -> dict[str, Any] | None:
-            row = store.execution_row(number)
-            return store.get_execution(row, running_as_interrupted=run_lock_is_free()) if row is not None else None
+        def read(store: Store) -> ExecutionRow | None:
+            row = store.executions.row_of(number)
+            return store.executions.get(row, running_as_interrupted=run_lock_is_free()) if row is not None else None
 
         execution = self._read(read)
         return execution if execution is not None else f"No execution {execution_id_text(number)}"
-
-    @staticmethod
-    def _with_counts(store: Store, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        succeeded = store.succeeded_runs([row["id"] for row in rows])
-        for row in rows:
-            row["succeeded"] = succeeded.get(row["id"], 0)
-        return rows
 
     def _read(self, read: Callable[[Store], T]) -> T | str:
         try:
@@ -132,67 +125,25 @@ class HistoryReader:
                 path = database_path()
                 if not path.exists():
                     return None
-                self._store = Store(path, retention_days=self._retention_days, prune_on_open=False)
+                self._store = Store.open(path, mode=StoreMode.BROWSE, retention_days=self._retention_days)
             return self._store
 
 
-def execution_label(execution: dict[str, Any]) -> str:
-    """The execution's ID as people see it (E0012); the store's row id stays internal."""
-    return execution_id_text(int(execution["execution_number"]))
-
-
-def parse_id(text: str) -> int | None:
-    """An execution or run number as typed, or None when it is not one: ASCII digits only, and small enough for SQLite."""
-    if not (text.isascii() and text.isdecimal()):
-        return None
-    # int() raises on thousands of digits; nothing that long names a run.
-    digits = text.lstrip("0") or "0"
-    if len(digits) > MAX_DIGITS:
-        return None
-    number = int(digits)
-    return number if 0 < number <= MAX_ID else None
-
-
-def output_directory(execution: dict[str, Any]) -> Path | None:
-    """Where the execution's outputs are: as recorded, or beside its manifest for an imported one."""
-    recorded = execution.get("settings", {}).get("output_directory")
-    if recorded:
-        return Path(recorded)
-    manifest = execution.get("manifest_path")
-    return Path(manifest).parent if manifest else None
-
-
-def run_file(execution: dict[str, Any], name: str | None) -> Path | None:
-    """The full path of a run's output or last frame, which the store keeps as a file name."""
-    if not name:
-        return None
-    if Path(name).is_absolute():
-        return Path(name)
-    directory = output_directory(execution)
-    return directory / name if directory is not None else None
-
-
-def is_imported(execution: dict[str, Any]) -> bool:
-    """Imported phase 1 executions have no job snapshot."""
-    return execution.get("job_yaml") is None
-
-
-def reveal_target(execution: dict[str, Any], run_number: int | None) -> Path | str:
+def reveal_target(execution: ExecutionRow, run_number: int | None) -> Path | str:
     """The output file to reveal for the run (default: the last run with an output), or why there is none."""
-    runs = execution["runs"]
     if run_number is None:
-        with_output = [run for run in runs if run.get("output")]
+        with_output = [run for run in execution.runs if run.output]
         if not with_output:
-            return f"Execution {execution_label(execution)} has no output"
+            return f"Execution {execution.label} has no output"
         run = with_output[-1]
     else:
-        matches = [run for run in runs if run["number"] == run_number]
-        if not matches:
-            return f"Execution {execution_label(execution)} has no run {run_number}"
-        run = matches[0]
-    path = run_file(execution, run.get("output"))
+        found = execution.run(run_number)
+        if found is None:
+            return f"Execution {execution.label} has no run {run_number}"
+        run = found
+    path = execution.run_file(run.output)
     if path is None:
-        return f"Run {run['number']} of execution {execution_label(execution)} has no output" if not run.get("output") else f"The output directory of execution {execution_label(execution)} was not recorded"
+        return f"Run {run.number} of execution {execution.label} has no output" if not run.output else f"The output directory of execution {execution.label} was not recorded"
     if not path.exists():
         return f"{path} is missing"
     return path
@@ -225,10 +176,10 @@ def copy_to_pasteboard(text: str) -> str | None:
     return None
 
 
-def reveal_run(execution: dict[str, Any] | str, run_number: int | None) -> tuple[str, str]:
+def reveal_run(execution: ExecutionRow | str, run_number: int | None) -> tuple[str, str]:
     """Reveal the run's output in Finder (/reveal, a click, or Enter): the message to say, and its style. ``execution`` is
     as the reader returns it, a string when it could not be read; runs off the UI thread."""
-    target = reveal_target(execution, run_number) if isinstance(execution, dict) else execution
+    target = execution if isinstance(execution, str) else reveal_target(execution, run_number)
     if isinstance(target, str):
         return target, "red"
     error = reveal_in_finder(target)

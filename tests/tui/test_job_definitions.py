@@ -297,7 +297,7 @@ class JobCatalogTests(TuiTestCase):
 
     def test_an_unusable_state_directory_is_reported_and_never_raises(self) -> None:
         self.write_data_job("walk.yaml")
-        with mock.patch.object(job_files, "Store", side_effect=RunLockError("Cannot create the state directory")):
+        with mock.patch.object(job_files.Store, "open", side_effect=RunLockError("Cannot create the state directory")):
             listing = self.catalog.read()
             self.assertEqual(listing.id_error, "Cannot give job IDs: Cannot create the state directory")
             self.assertEqual([row.number for row in listing.rows], [None])

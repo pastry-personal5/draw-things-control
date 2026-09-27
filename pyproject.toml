@@ -50,7 +50,5 @@ venvPath = "."
 venv = ".venv"
 # Milestone 11 removes each entry in the step that rewrites its subject; the list is empty when the milestone is done.
 ignore = [
-    "tests/state",  # Step 4: the store returns typed rows
     "tests/tui/test_job_definitions.py",  # Step 6
-    "tests/cli/test_state_cli.py",  # Step 5
 ]

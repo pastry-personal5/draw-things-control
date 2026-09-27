@@ -18,6 +18,7 @@ from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
 from draw_things_control.jobs.events import CooldownStarted, RunStarted
 from draw_things_control.jobs.parsing import load_job
+from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader, copy_to_pasteboard
@@ -25,7 +26,7 @@ from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryP
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.text import argument_rows, confirm_run_text, event_text, override_notes, parameters_text, reveal_action, stored_cooldown_text
 from draw_things_control.tui.widgets import CommandInput
-from tests.fixtures import job_data
+from tests.fixtures import execution_row, job_data, run_row
 from tests.tui.fake_runs import FakeRuns
 from tests.tui.tui_case import TuiTestCase
 
@@ -54,7 +55,7 @@ class HistoryCase(TuiTestCase):
 
     def store(self) -> Store:
         ensure_state_directory()
-        store = Store()
+        store = Store.open()
         self.addCleanup(store.close)
         return store
 
@@ -64,15 +65,15 @@ class HistoryCase(TuiTestCase):
         ``measured`` is the size and frame count recorded for each successful run; without it, the run is as old rows are.
         """
         store = self.store()
-        execution_id = store.start_execution(job_name=name, job_file=job_file or f"/jobs/{name}.yaml", mode=mode, model="base.ckpt", seed=42, seed_source="config_file", cooldown_seconds=5.0, cooldown_source="job", total_runs=len(runs), started_at=at(minutes), job_yaml=f"name: {name}\n", settings={"output_directory": str(self.outputs)})
+        execution_id = store.executions.start(NewExecution(job_name=name, job_file=job_file or f"/jobs/{name}.yaml", mode=mode, model="base.ckpt", seed=42, seed_source="config_file", cooldown_seconds=5.0, cooldown_source="job", total_runs=len(runs), started_at=at(minutes), job_yaml=f"name: {name}\n", settings=ExecutionSettings(output_directory=str(self.outputs))))
         for number, run_status in enumerate(runs, start=1):
             output = outputs[number - 1] if outputs is not None else f"{name}-{number}.mov"
-            store.start_run(execution_id, number, pair="walk", positive="a walk [slow]", negative="blurry", input="in.png", output=output, last_frame=None, command=command or ["draw-things-cli", "generate", "--api-key", "[redacted]"], started_at=at(minutes))
+            store.executions.start_run(execution_id, number, NewRun(pair="walk", positive="a walk [slow]", negative="blurry", input="in.png", output=output, last_frame=None, command=command or ["draw-things-cli", "generate", "--api-key", "[redacted]"], started_at=at(minutes)))
             if run_status != "running":
                 size = measured if measured is not None and run_status == "succeeded" else (None, None, None)
-                store.finish_run(execution_id, number, status=run_status, exit_code=0 if run_status == "succeeded" else 1, seconds=seconds, output=output, last_frame=None, output_width=size[0], output_height=size[1], output_frames=size[2])
+                store.executions.finish_run(execution_id, number, status=run_status, exit_code=0 if run_status == "succeeded" else 1, seconds=seconds, output=output, last_frame=None, output_width=size[0], output_height=size[1], output_frames=size[2])
         if status is not None:
-            store.finish_execution(execution_id, status=status, exit_code=0 if status == "succeeded" else 1, signal=None, finished_at=at(minutes + 1))
+            store.executions.finish(execution_id, status=status, exit_code=0 if status == "succeeded" else 1, signal=None, finished_at=at(minutes + 1))
         return execution_id
 
     def columns(self, app: DrawThingsApp, *indexes: int) -> list[list[str]]:
@@ -170,8 +171,8 @@ class HistoryTests(HistoryCase):
                 await self.settle(pilot)
                 held = self.columns(app, 2, 4)
                 store = self.store()
-                store.finish_run(running, 1, status="succeeded", exit_code=0, seconds=1.0, output="walk-1.mov", last_frame=None)
-                store.finish_execution(running, status="succeeded", exit_code=0, signal=None, finished_at=at(1))
+                store.executions.finish_run(running, 1, status="succeeded", exit_code=0, seconds=1.0, output="walk-1.mov", last_frame=None)
+                store.executions.finish(running, status="succeeded", exit_code=0, signal=None, finished_at=at(1))
                 await self.wait_for(pilot, lambda: self.columns(app, 2, 4) == [["succeeded", "1/1"]], "the poll to see the finished row")
         self.assertEqual(held, [["running", "0/1"]])
 
@@ -196,8 +197,8 @@ class HistoryTests(HistoryCase):
         self.assertEqual(unknown, "No execution E0099")
 
     def test_the_cooldown_detail_for_each_mode_and_for_old_rows(self) -> None:
-        def row(cooldown_seconds: float | None, source: str, mapping: dict | None) -> dict[str, Any]:
-            return {"cooldown_seconds": cooldown_seconds, "cooldown_source": source, "settings": {"cooldown": mapping} if mapping is not None else {}}
+        def row(cooldown_seconds: float | None, source: str, mapping: dict | None) -> ExecutionRow:
+            return execution_row(cooldown_seconds=cooldown_seconds, cooldown_source=source, settings=ExecutionSettings(cooldown=mapping))
 
         self.assertEqual(stored_cooldown_text(row(None, "global_config", {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 1800.0})), "auto, half, 5 min to 30 min (global_config)")
         self.assertEqual(stored_cooldown_text(row(None, "job", {"mode": "auto", "ratio": 0.4, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})), "auto, 40%, 0 s to 1 h (job)")
@@ -224,9 +225,9 @@ class HistoryTests(HistoryCase):
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
         (self.outputs / "old-1.mov").write_bytes(b"video")
-        execution_id, _number = self.store().import_execution(
-            {"job_name": "old", "job_file": "/jobs/old.yaml", "mode": "t2v", "status": "succeeded", "seed": 7, "total_runs": 1, "started_at": at(0), "finished_at": at(1), "manifest_path": str(self.outputs / "old.json")},
-            [{"pair": "walk", "positive": "walk", "output": "old-1.mov", "started_at": at(0), "seconds": 3.0, "exit_code": 0, "status": "succeeded"}],
+        execution_id, _number = self.store().executions.import_execution(
+            NewExecution(job_name="old", job_file="/jobs/old.yaml", mode="t2v", status="succeeded", seed=7, total_runs=1, started_at=at(0), finished_at=at(1), manifest_path=str(self.outputs / "old.json")),
+            [NewRun(pair="walk", positive="walk", output="old-1.mov", started_at=at(0), seconds=3.0, exit_code=0, status="succeeded")],
         )
         app = self.app()
         reveal = mock.Mock(return_value=None)
@@ -335,7 +336,7 @@ class HistoryTests(HistoryCase):
                 self.assertEqual(self.history(app), [])
                 self.assertTrue(screen.history.reading)
                 # The unfiltered read that was in flight when the filter changed arrives late.
-                screen.history.show_page(stale, HistoryFilter(), HistoryPage(0, [{"id": 99, "job_name": "old", "status": "succeeded", "started_at": at(0), "total_runs": 1, "succeeded": 1}], True))
+                screen.history.show_page(stale, HistoryFilter(), HistoryPage(0, [execution_row(id=99, job_name="old", status="succeeded", started_at=at(0), total_runs=1, succeeded=1)], True))
                 self.assertEqual(self.history(app), [])
                 self.assertTrue(screen.history.reading)
             await self.command(pilot, "/get history")
@@ -357,20 +358,20 @@ class HistoryTests(HistoryCase):
                 await self.wait_for(pilot, lambda: self.columns(app, 1, 2)[:1] == [["walk", "running"]], "the new execution")
                 await self.command(pilot, "/filter status succeeded")
                 store = self.store()
-                store.finish_run(running, 1, status="succeeded", exit_code=0, seconds=1.0, output="walk-1.mov", last_frame=None)
-                store.finish_execution(running, status="succeeded", exit_code=0, signal=None, finished_at=at(6))
+                store.executions.finish_run(running, 1, status="succeeded", exit_code=0, seconds=1.0, output="walk-1.mov", last_frame=None)
+                store.executions.finish(running, status="succeeded", exit_code=0, signal=None, finished_at=at(6))
                 lock.release()
                 await self.wait_for(pilot, lambda: self.columns(app, 1, 2) == [["walk", "succeeded"], ["old", "succeeded"]], "the finished execution under the filter")
 
     async def test_one_store_is_opened_and_closed_with_the_screen(self) -> None:
         self.add("walk", 0)
         app = self.app()
-        with mock.patch("draw_things_control.tui.history.Store", wraps=Store) as opened, mock.patch.object(HistoryReader, "close", autospec=True, side_effect=HistoryReader.close) as close:
+        with mock.patch("draw_things_control.tui.history.Store", wraps=Store) as store_class, mock.patch.object(HistoryReader, "close", autospec=True, side_effect=HistoryReader.close) as close:
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 for line in ("/get history", "/describe execution E0001", "/filter name w", "/filter off"):
                     await self.command(pilot, line)
-        self.assertEqual(opened.call_count, 1)
+        self.assertEqual(store_class.open.call_count, 1)
         close.assert_called_once()
 
 
@@ -421,7 +422,7 @@ class ExecutionDetailTests(HistoryCase):
         (self.outputs / ("a" * 60 + ".png")).write_bytes(b"png")
         (self.outputs / "b.png").write_bytes(b"png")
         store = self.store()
-        store.finish_run(image, 2, status="succeeded", exit_code=0, seconds=1.0, output="b.png", last_frame=None, output_width=512, output_height=512, output_frames=None)
+        store.executions.finish_run(image, 2, status="succeeded", exit_code=0, seconds=1.0, output="b.png", last_frame=None, output_width=512, output_height=512, output_frames=None)
         app = self.app()
         async with app.run_test(size=(80, 34)) as pilot:
             await self.settle(pilot)
@@ -561,13 +562,13 @@ class GetCommandTests(HistoryCase):
     def add_job(self) -> int:
         """An execution of three runs over two pairs, whose job overrode steps and shift; its command asks --width 832 over a 1000 configuration."""
         store = self.store()
-        execution_id = store.start_execution(job_name="walk", job_file="/jobs/walk.yaml", mode="i2v", model="wan.ckpt", started_at=at(0), config_file="wan.yaml", settings={"output_directory": str(self.outputs), "config_override": {"steps": 8, "shift": 3.99}})
+        execution_id = store.executions.start(NewExecution(job_name="walk", job_file="/jobs/walk.yaml", mode="i2v", model="wan.ckpt", started_at=at(0), config_file="wan.yaml", settings=ExecutionSettings(output_directory=str(self.outputs), config_override={"steps": 8, "shift": 3.99})))
         config = json.dumps({"model": "wan.ckpt", "steps": 40, "shift": 3.99, "width": 1000, "faceRestoration": "", "loras": [], "refinerStart": 0.1})
         pairs = (("walk", "a walk [slow]", "blurry"), ("wave", "a wave", None), ("walk", "a walk [slow]", "blurry"))
         for number, (pair, positive, negative) in enumerate(pairs, start=1):
             command = ["draw-things-cli", "generate", "--model", "wan.ckpt", "--prompt", positive, *(["--negative-prompt", negative] if negative else []), "--steps", "8", "--width", "832", "--config-json", config, "--output", f"/out/walk-{number}.mov", "--disable-preview"]
-            store.start_run(execution_id, number, pair=pair, positive=positive, negative=negative, started_at=at(0), command=command)
-            store.finish_run(execution_id, number, status="succeeded", exit_code=0, seconds=5.0, output=f"walk-{number}.mov", last_frame=None)
+            store.executions.start_run(execution_id, number, NewRun(pair=pair, positive=positive, negative=negative, started_at=at(0), command=command))
+            store.executions.finish_run(execution_id, number, status="succeeded", exit_code=0, seconds=5.0, output=f"walk-{number}.mov", last_frame=None)
         return execution_id
 
     async def run_lines(self, *lines: str) -> dict[str, str]:
@@ -630,7 +631,7 @@ class GetCommandTests(HistoryCase):
     async def test_an_execution_without_a_saved_command_says_so(self) -> None:
         execution_id = self.add("old", 0, command=[])
         store = self.store()
-        store._connection().execute("UPDATE runs SET command = '[]' WHERE execution_id = ?", (execution_id,))
+        store._database.connection().execute("UPDATE runs SET command = '[]' WHERE execution_id = ?", (execution_id,))
         results = await self.run_lines(f"/get param E{execution_id:04d}", f"/get param E{execution_id:04d} 1")
         self.assertEqual(results[f"/get param E{execution_id:04d}"], f"Execution E{execution_id:04d} has no run with a saved command")
         self.assertEqual(results[f"/get param E{execution_id:04d} 1"], f"Run 1 of execution E{execution_id:04d} has no saved command")
@@ -640,7 +641,7 @@ class ParametersTextTests(unittest.TestCase):
     def test_a_flag_equal_to_its_config_json_value_as_a_number_replaces_nothing(self) -> None:
         config = json.dumps({"guidanceScale": 5, "strength": 1, "steps": 30})
         command = ["draw-things-cli", "generate", "--model", "m.ckpt", "--cfg", "5.0", "--strength", "1.0", "--steps", "20", "--config-json", config]
-        execution = {"id": 1, "execution_number": 1, "job_name": "walk", "settings": {"config_override": {"guidance_scale": 5.0}}, "runs": [{"number": 1, "command": command}]}
+        execution = execution_row(settings=ExecutionSettings(config_override={"guidance_scale": 5.0}), runs=(run_row(number=1, command=tuple(command)),))
         table = str(parameters_text(execution, 1))
         self.assertNotIn("replaces --config-json 5", table)
         self.assertNotIn("replaced by --cfg", table)

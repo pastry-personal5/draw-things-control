@@ -16,6 +16,7 @@ from textual.widgets import RichLog, Static
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.panes import HistoryPane
@@ -101,10 +102,11 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         table = app.screen.query_one(HistoryPane)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
-    def executions(self) -> list[dict[str, Any]]:
-        store = Store()
+    def executions(self) -> list[ExecutionRow]:
+        store = Store.open()
         try:
-            return [store.get_execution(row["id"]) for row in store.list_executions()]  # type: ignore[misc]
+            rows = (store.executions.get(row.id) for row in store.executions.page())
+            return [row for row in rows if row is not None]
         finally:
             store.close()
 

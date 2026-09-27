@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
 from draw_things_control.jobs.media.info import MediaInfo
 from draw_things_control.jobs.media.toolkit import MediaTools
+from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, RunRow
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 
@@ -127,3 +129,40 @@ def job_executor(*, runner_factory: Callable[..., Any], find_executable: Callabl
 def run_job_with(executor: JobExecutor, job: JobDefinition, **options: Any) -> JobOutcome:
     """Run ``job`` with the options as keywords (executable, shutdown_grace, write_records, observer, ...)."""
     return executor.run(job, JobRunOptions(**options))
+
+
+def run_row(**changes: Any) -> RunRow:
+    """A stored run, without the database: keyword arguments replace the defaults."""
+    base = RunRow(number=1, pair="walk", positive="text", negative=None, input=None, resized_input=None, output=None, last_frame=None, command=(), started_at="2026-01-01T00:00:00+00:00", seconds=None, exit_code=None, status="succeeded", cooldown_after_seconds=None, output_width=None, output_height=None, output_frames=None)
+    return replace(base, **changes)
+
+
+def execution_row(**changes: Any) -> ExecutionRow:
+    """A stored execution, without the database: keyword arguments replace the defaults."""
+    base = ExecutionRow(
+        id=1,
+        execution_number=1,
+        job_name="walk",
+        job_file="/jobs/walk.yaml",
+        mode="i2v",
+        status="succeeded",
+        model=None,
+        seed=None,
+        seed_source=None,
+        cooldown_seconds=None,
+        cooldown_source=None,
+        total_runs=None,
+        started_at="2026-01-01T00:00:00+00:00",
+        started_epoch=0.0,
+        finished_at=None,
+        finished_epoch=None,
+        exit_code=None,
+        signal=None,
+        manifest_path=None,
+        log_path=None,
+        config_file=None,
+        job_yaml=None,
+        settings=ExecutionSettings(),
+        recovered_at=None,
+    )
+    return replace(base, **changes)

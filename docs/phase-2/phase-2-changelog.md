@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 4 differs from the plan.
+  - An execution's `settings` JSON keeps only the keys that are set (`ExecutionSettings.to_json`), so a new row no longer holds `"input_resize": null` and the like. Readers always used `get`, and older rows still read; one function now builds the snapshot for the recorder and the import (D10). Keeping each writer's own key list was rejected: it is the duplicate the step removes. The schema is unchanged.
+  - `ExecutionRow` counts its successful runs (`succeeded`) in the query that reads it, so `HistoryReader` no longer asks the store a second time.
+  - `Store.open` refuses a missing file in `browse` mode instead of creating it, so browsing can never create the database, whatever a caller checked first.
+  - `parse_id` in `tui/history.py` was removed for `state.ids.parse_bare_number` (D13).
+
 - **Design decision** [M11]: Where Step 3 differs from the plan.
   - One run through draw-things-cli, and how it ended, moved to `RunLauncher` (`jobs/launcher.py`), and the prompt pairs and `config_override` to `jobs/prompt_pairs.py` and `jobs/overrides.py`, to keep `JobExecutor` and `JobParser` under the size limits.
   - `JobExecutor.run(job, JobRunOptions)` replaced the keyword list; its tools are one `MediaTools` value (`jobs/media/toolkit.py`).

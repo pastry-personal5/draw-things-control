@@ -25,7 +25,7 @@ from draw_things_control.jobs.events import JobEvent, JobStarted, combine_observ
 from draw_things_control.jobs.executor import JobExecutor, JobRunOptions
 from draw_things_control.jobs.files import read_job
 from draw_things_control.state.recorder import ExecutionRecorder
-from draw_things_control.state.store import StateError, Store
+from draw_things_control.state.store import StateError, Store, StoreMode
 from draw_things_control.tui.job_files import error_text
 from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun, PastRun, PastRunFound
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
@@ -301,7 +301,7 @@ class DrawThingsApp(App[None]):
         lock.acquire()
         try:
             # The store keeps one connection per thread, so this thread opens and closes its own.
-            store = Store(retention_days=self.settings.history_retention_days)
+            store = Store.open(mode=StoreMode.RUN, retention_days=self.settings.history_retention_days)
             try:
                 try:
                     store.sweep_interrupted()
@@ -323,12 +323,12 @@ class DrawThingsApp(App[None]):
     def past_run(store: Store) -> PastRun | None:
         """The latest successful run of any job, to estimate from; None when there is none or the store cannot say."""
         try:
-            run = store.latest_succeeded_run()
+            run = store.executions.latest_succeeded_run()
         except (sqlite3.Error, ValueError):
             return None
-        if run is None or not run.get("seconds"):
+        if run is None or not run.seconds:
             return None
-        return PastRun(float(run["seconds"]), command_settings(run.get("command") or []).steps)
+        return PastRun(float(run.seconds), command_settings(run.command).steps)
 
     def on_past_run_found(self, message: PastRunFound) -> None:
         if self.live is not None:

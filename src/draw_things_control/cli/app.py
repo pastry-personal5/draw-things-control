@@ -35,7 +35,7 @@ from draw_things_control.jobs.media.video_color import tag_video_colors
 from draw_things_control.jobs.text import job_summary, plan_lines, report_ignored_config
 from draw_things_control.state.history_import import import_history
 from draw_things_control.state.recorder import ExecutionRecorder
-from draw_things_control.state.store import StateError, Store
+from draw_things_control.state.store import StateError, Store, StoreMode
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
@@ -73,7 +73,7 @@ def held_run_lock(command: str) -> Iterator[RunLock]:
 def open_store(settings: GlobalConfig) -> Store:
     """Open the state store, exiting with code 1 and the cause if it cannot be used."""
     try:
-        return Store(retention_days=settings.history_retention_days)
+        return Store.open(mode=StoreMode.RUN, retention_days=settings.history_retention_days)
     except (StateError, RunLockError, sqlite3.Error) as error:
         logger.error("{}", error)
         raise typer.Exit(code=1) from error

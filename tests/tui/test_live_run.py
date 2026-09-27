@@ -22,6 +22,7 @@ from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.events import JobStarted, RunStarted
 from draw_things_control.jobs.parsing import load_job
+from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryReader
@@ -104,8 +105,8 @@ class LiveRunTests(TuiTestCase):
         self.assertEqual([row[1:3] + row[4:] for row in history], [["sunset-walk", "succeeded", "2/2"]])
         self.assertIn("walk.yaml finished (succeeded)", after)
         [execution] = self.executions()
-        self.assertEqual((execution["status"], execution["exit_code"], execution["seed"]), ("succeeded", 0, 42))
-        self.assertEqual([run["status"] for run in execution["runs"]], ["succeeded", "succeeded"])
+        self.assertEqual((execution.status, execution.exit_code, execution.seed), ("succeeded", 0, 42))
+        self.assertEqual([run.status for run in execution.runs], ["succeeded", "succeeded"])
         self.assertTrue(run_lock_is_free())
         self.assertEqual([runner.grace for runner in runs.runners], [3, 3])
 
@@ -136,10 +137,10 @@ class LiveRunTests(TuiTestCase):
 
     async def test_a_new_job_moves_the_history_cursor_unless_the_history_is_being_browsed(self) -> None:
         self.write_data_job()
-        store = Store()
+        store = Store.open()
         self.addCleanup(store.close)
-        old = store.start_execution(job_name="old", job_file="/jobs/old.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00", settings={})
-        store.finish_execution(old, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:01:00+00:00")
+        old = store.executions.start(NewExecution(job_name="old", job_file="/jobs/old.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00"))
+        store.executions.finish(old, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:01:00+00:00")
         original = MainScreen.job_event
 
         def browse_then_apply(screen: MainScreen, event: Any) -> None:
@@ -169,11 +170,11 @@ class LiveRunTests(TuiTestCase):
 
     async def test_a_job_is_estimated_from_the_latest_successful_run_before_it_reports_a_step(self) -> None:
         self.write_data_job()
-        store = Store()
+        store = Store.open()
         self.addCleanup(store.close)
-        other = store.start_execution(job_name="other", job_file="/jobs/other.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00", settings={})
-        store.start_run(other, 1, pair="p", positive="text", started_at="2026-09-20T09:00:00+00:00", command=["draw-things-cli", "generate", "--steps", "30"])
-        store.finish_run(other, 1, status="succeeded", exit_code=0, seconds=600.0, output="a.mov", last_frame=None)
+        other = store.executions.start(NewExecution(job_name="other", job_file="/jobs/other.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00"))
+        store.executions.start_run(other, 1, NewRun(pair="p", positive="text", started_at="2026-09-20T09:00:00+00:00", command=["draw-things-cli", "generate", "--steps", "30"]))
+        store.executions.finish_run(other, 1, status="succeeded", exit_code=0, seconds=600.0, output="a.mov", last_frame=None)
         gate = threading.Event()
         # No step lines: the run is estimated from the other job's run alone.
         runs = FakeRuns(gate=gate, lines=())
@@ -261,7 +262,7 @@ class LiveRunTests(TuiTestCase):
             self.assertIsInstance(app.screen, ConfirmScreen)
             await pilot.press("enter")
             await self.finish(pilot)
-        self.assertEqual(self.executions()[0]["status"], "interrupted")
+        self.assertEqual(self.executions()[0].status, "interrupted")
 
     async def test_a_finished_run_updates_its_row_without_reading_the_whole_history(self) -> None:
         self.write_data_job(run_count=3, prompt_pairs=[{"name": "walk", "positive": "walk"}])
@@ -274,8 +275,8 @@ class LiveRunTests(TuiTestCase):
             pages.append(arguments)
             return page(reader, *arguments, **options)
 
-        def count_update(pane: HistoryPane, request: int, rows: list[dict[str, Any]]) -> None:
-            updates.append([row["id"] for row in rows])
+        def count_update(pane: HistoryPane, request: int, rows: list[ExecutionRow]) -> None:
+            updates.append([row.id for row in rows])
             update(pane, request, rows)
 
         with mock.patch.object(HistoryReader, "page", count_page), mock.patch.object(HistoryPane, "update_rows", count_update):
@@ -289,7 +290,7 @@ class LiveRunTests(TuiTestCase):
         # One read for the new execution, one when the job ends; each run updates its row in place.
         self.assertEqual(len(pages) - before, 2)
         # The fake runs finish faster than the reads, so what each update found varies; that it read only this row does not.
-        self.assertEqual(updates, [[self.executions()[0]["id"]]] * 3)
+        self.assertEqual(updates, [[self.executions()[0].id]] * 3)
         self.assertEqual([row[2:] for row in history], [["succeeded", history[0][3], "3/3"]])
 
     async def test_the_job_is_read_again_when_it_is_run(self) -> None:
@@ -332,8 +333,8 @@ class LiveRunTests(TuiTestCase):
         self.assertIn("Job interrupted: 0/2 runs completed, exit code 130, stopped by SIGINT", self.log())
         self.assertEqual(len(runs.runners), 1)
         [execution] = self.executions()
-        self.assertEqual((execution["status"], execution["exit_code"]), ("interrupted", 130))
-        self.assertEqual([run["status"] for run in execution["runs"]], ["interrupted"])
+        self.assertEqual((execution.status, execution.exit_code), ("interrupted", 130))
+        self.assertEqual([run.status for run in execution.runs], ["interrupted"])
         self.assertTrue(run_lock_is_free())
 
     async def test_stop_during_a_cooldown_ends_it_at_once(self) -> None:
@@ -358,7 +359,7 @@ class LiveRunTests(TuiTestCase):
         self.assertIn("Job interrupted: 1/2 runs completed, exit code 130", self.log())
         self.assertEqual(len(runs.runners), 1)
         [execution] = self.executions()
-        self.assertEqual((execution["status"], execution["exit_code"]), ("interrupted", 130))
+        self.assertEqual((execution.status, execution.exit_code), ("interrupted", 130))
 
     async def test_a_busy_lock_starts_nothing_and_the_next_run_runs(self) -> None:
         self.write_data_job()
@@ -397,7 +398,7 @@ class LiveRunTests(TuiTestCase):
         self.write_data_job()
         runs = FakeRuns()
         app = self.app(runs)
-        with mock.patch.object(Store, "reserve_execution_number", side_effect=sqlite3.OperationalError("database is locked")):
+        with mock.patch.object(ExecutionRepository, "reserve_number", side_effect=sqlite3.OperationalError("database is locked")):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.start(pilot)
                 await self.finish(pilot)
@@ -499,7 +500,7 @@ class LiveRunTests(TuiTestCase):
                     await self.wait_for(pilot, lambda: not pilot.app.is_running, "the app to exit")
                 self.assertEqual(app.return_code, 0)
                 self.assertTrue(run_lock_is_free())
-                self.assertEqual(self.executions()[0]["exit_code"], 130)
+                self.assertEqual(self.executions()[0].exit_code, 130)
 
     async def test_a_signal_stops_the_job_then_quits_with_128_plus_n(self) -> None:
         self.write_data_job()
@@ -513,7 +514,7 @@ class LiveRunTests(TuiTestCase):
         self.assertEqual(app.return_code, 143)
         self.assertEqual(runs.runners[0].shutdown_signal, signal.SIGTERM)
         [execution] = self.executions()
-        self.assertEqual((execution["status"], execution["exit_code"], execution["signal"]), ("interrupted", 143, "SIGTERM"))
+        self.assertEqual((execution.status, execution.exit_code, execution.signal), ("interrupted", 143, "SIGTERM"))
         self.assertTrue(run_lock_is_free())
 
     async def test_a_signal_without_a_job_quits_at_once(self) -> None:
@@ -578,7 +579,7 @@ class LiveRunTests(TuiTestCase):
         self.assertTrue(run_lock_is_free())
         self.assertEqual(runs.runners, [])
         [execution] = self.executions()
-        self.assertEqual((execution["status"], execution["exit_code"]), ("interrupted", 130))
+        self.assertEqual((execution.status, execution.exit_code), ("interrupted", 130))
 
     async def test_signals_stay_handled_until_the_worker_ends_after_the_app_has_gone(self) -> None:
         self.write_data_job()
@@ -615,7 +616,7 @@ class LiveRunTests(TuiTestCase):
             gate.set()
             await self.wait_for(pilot, lambda: not pilot.app.is_running, "the app to exit")
         self.assertEqual(app.return_code, 130)
-        self.assertEqual(self.executions()[0]["signal"], "SIGINT")
+        self.assertEqual(self.executions()[0].signal, "SIGINT")
 
     async def test_the_log_shows_the_redacted_command(self) -> None:
         self.write_data_job()
@@ -679,11 +680,11 @@ class SigtermTests(JobTestCase):
                 process.wait()
         self.assertEqual(process.returncode, 143, stderr.decode())
         with mock.patch.object(run_lock, "STATE_DIRECTORY", state):
-            store = Store()
+            store = Store.open()
             try:
-                [row] = store.list_executions()
+                [row] = store.executions.page()
             finally:
                 store.close()
             self.assertTrue(run_lock_is_free())
-        self.assertEqual((row["status"], row["exit_code"], row["signal"]), ("interrupted", 143, "SIGTERM"))
+        self.assertEqual((row.status, row.exit_code, row.signal), ("interrupted", 143, "SIGTERM"))
         self.assertEqual((state / "run.lock").read_text(encoding="utf-8"), "")

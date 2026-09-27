@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import unittest
 
+from draw_things_control.state.ids import MAX_NUMBER, parse_bare_number
 from draw_things_control.tui.commands import COMMAND_NAMES, Command, CommandError, CommandSuggester, completions, help_text, parse, usage
-from draw_things_control.tui.history import MAX_ID, parse_id
 
 
 class ParseTests(unittest.TestCase):
@@ -42,11 +42,11 @@ class ParseTests(unittest.TestCase):
 
 class IdTests(unittest.TestCase):
     def test_only_ascii_digits_that_sqlite_can_hold_are_ids(self) -> None:
-        self.assertEqual(parse_id("42"), 42)
-        self.assertEqual(parse_id(str(MAX_ID)), MAX_ID)
-        for text in ("0", "-1", "+1", "1.0", "²", "١", "٣", "99999999999999999999", str(MAX_ID + 1), "", " 1"):
+        self.assertEqual(parse_bare_number("42"), 42)
+        self.assertEqual(parse_bare_number(str(MAX_NUMBER)), MAX_NUMBER)
+        for text in ("0", "-1", "+1", "1.0", "²", "١", "٣", "99999999999999999999", str(MAX_NUMBER + 1), "", " 1"):
             with self.subTest(text=text):
-                self.assertIsNone(parse_id(text))
+                self.assertIsNone(parse_bare_number(text))
 
 
 class CompletionTests(unittest.TestCase):

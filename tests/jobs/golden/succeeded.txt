@@ -201,7 +201,6 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
         "cooldown_seconds": 90.0,
         "cooldown_source": "job",
         "input": "ROOT/input/first-frame.png",
-        "input_resize": null,
         "output_directory": "ROOT/output/sunset-walk"
       },
       "signal": null,

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from rich.style import Style
 from rich.text import Text
@@ -20,8 +20,8 @@ from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.definition import GenerationMode, JobDefinition
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted, RunStatus
 from draw_things_control.jobs.text import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
+from draw_things_control.state.executions import ExecutionRow, RunRow
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
-from draw_things_control.tui.history import execution_label, is_imported, run_file
 from draw_things_control.tui.job_files import JobDetails, JobRow
 from draw_things_control.tui.live_run import LiveRun
 
@@ -30,15 +30,15 @@ VIDEO_MODES = {mode.value for mode in GenerationMode if mode.is_video}
 STATUS_STYLE = {RunStatus.RUNNING: "bold cyan", RunStatus.SUCCEEDED: "green", RunStatus.FAILED: "red", RunStatus.TIMED_OUT: "red", RunStatus.INTERRUPTED: "yellow", "pending": "dim"}
 
 
-def history_cells(row: dict[str, Any]) -> tuple[Text, ...]:
+def history_cells(row: ExecutionRow) -> tuple[Text, ...]:
     """The pane's row: ID, job name, status, start time, and runs succeeded of total."""
     try:
-        started = datetime.fromisoformat(row["started_at"]).astimezone().strftime("%m-%d %H:%M")
+        started = datetime.fromisoformat(row.started_at).astimezone().strftime("%m-%d %H:%M")
     except (TypeError, ValueError):
-        started = str(row["started_at"])
-    total = row["total_runs"] if row["total_runs"] is not None else "?"
-    status = row["status"]
-    return (Text(execution_label(row)), Text(row["job_name"]), Text(status, style=STATUS_STYLE.get(status, "")), Text(started), Text(f"{row.get('succeeded', 0)}/{total}"))
+        started = str(row.started_at)
+    total = row.total_runs if row.total_runs is not None else "?"
+    status = row.status
+    return (Text(row.label), Text(row.job_name), Text(status, style=STATUS_STYLE.get(status, "")), Text(started), Text(f"{row.succeeded}/{total}"))
 
 
 def jobs_text(rows: list[JobRow], running: str | None, message: str | None) -> Text:
@@ -443,80 +443,80 @@ def result_text(live: LiveRun) -> Text:
     return text
 
 
-def file_text(execution: dict[str, Any], name: str | None) -> str:
+def file_text(execution: ExecutionRow, name: str | None) -> str:
     """A run's file as a full path, marked when it no longer exists."""
-    path = run_file(execution, name)
+    path = execution.run_file(name)
     if path is None:
         return name or "-"
     return str(path) if path.exists() else f"{path} (missing)"
 
 
-def stored_cooldown_text(execution: dict[str, Any]) -> str:
+def stored_cooldown_text(execution: ExecutionRow) -> str:
     """An execution's cooldown and source, from the resolved mapping when it was recorded, else the old seconds, which mean manual."""
-    source = f"({execution.get('cooldown_source') or '-'})"
-    mapping = (execution.get("settings") or {}).get("cooldown")
+    source = f"({execution.cooldown_source or '-'})"
+    mapping = execution.settings.cooldown
     if isinstance(mapping, dict):
         try:
             return f"{policy_text(parse_cooldown(mapping, 'cooldown'))} {source}"
         except ValueError:
             pass
-    seconds = execution.get("cooldown_seconds")
+    seconds = execution.cooldown_seconds
     return f"{seconds_text(seconds)} {source}" if seconds is not None else "-"
 
 
-def execution_text(execution: dict[str, Any]) -> Text:
+def execution_text(execution: ExecutionRow) -> Text:
     """One execution as it ran, from the stored row, and each of its runs; never the current job file."""
-    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}", style="bold")
-    if is_imported(execution):
+    text = Text(f"Execution {execution.label}: {execution.job_name}", style="bold")
+    if execution.imported:
         text.append("  imported", style="yellow")
     text.append("\n")
-    signal = f", stopped by {execution['signal']}" if execution.get("signal") else ""
+    signal = f", stopped by {execution.signal}" if execution.signal else ""
     settings = execution_settings(execution)
     for label, value in (
-        ("status", f"{execution['status']}, exit code {execution['exit_code'] if execution['exit_code'] is not None else '-'}{signal}"),
-        ("job file", execution["job_file"]),
-        ("mode", execution["mode"]),
-        ("model", execution.get("model") or "-"),
+        ("status", f"{execution.status}, exit code {execution.exit_code if execution.exit_code is not None else '-'}{signal}"),
+        ("job file", execution.job_file),
+        ("mode", execution.mode),
+        ("model", execution.model or "-"),
         ("refiner", refiner_text(settings)),
         ("CFG", number_text(settings.cfg)),
         ("shift", number_text(settings.shift)),
-        ("seed", f"{execution['seed']} ({execution.get('seed_source') or '-'})" if execution.get("seed") is not None else "-"),
+        ("seed", f"{execution.seed} ({execution.seed_source or '-'})" if execution.seed is not None else "-"),
         ("cooldown", stored_cooldown_text(execution)),
-        ("started", execution["started_at"]),
-        ("finished", execution.get("finished_at") or "-"),
-        ("manifest", execution.get("manifest_path") or "-"),
-        ("log", execution.get("log_path") or "-"),
+        ("started", execution.started_at),
+        ("finished", execution.finished_at or "-"),
+        ("manifest", execution.manifest_path or "-"),
+        ("log", execution.log_path or "-"),
     ):
         text.append(f"  {label}: ", style="bold")
         text.append(f"{value}\n")
-    if execution.get("recovered_at"):
-        text.append(f"  closed as interrupted at {execution['recovered_at']}, after the process that ran it ended\n", style="yellow")
+    if execution.recovered_at:
+        text.append(f"  closed as interrupted at {execution.recovered_at}, after the process that ran it ended\n", style="yellow")
     notes = execution_notes(execution)
     # Each run's arguments after the first with a command: only what changed since the run before.
     previous: PreviousRun | None = None
-    for run in execution["runs"]:
-        text.append(f"\nRun {run['number']} ", style="bold")
-        text.append(run["status"], style=STATUS_STYLE.get(run["status"], ""))
-        seconds = f", {seconds_text(run['seconds'])}" if run.get("seconds") is not None else ""
-        text.append(f" (pair {run['pair']}{seconds}, exit code {run['exit_code'] if run.get('exit_code') is not None else '-'})\n")
+    for run in execution.runs:
+        text.append(f"\nRun {run.number} ", style="bold")
+        text.append(run.status, style=STATUS_STYLE.get(run.status, ""))
+        seconds = f", {seconds_text(run.seconds)}" if run.seconds is not None else ""
+        text.append(f" (pair {run.pair}{seconds}, exit code {run.exit_code if run.exit_code is not None else '-'})\n")
         text.append("  steps: ", style="bold")
         text.append(f"{run_steps(run) or '-'}, output {output_measure_text(run)}\n")
-        prompt_block(text, "positive", "green", run.get("positive"))
-        prompt_block(text, "negative", "red", run.get("negative"))
+        prompt_block(text, "positive", "green", run.positive)
+        prompt_block(text, "negative", "red", run.negative)
         text.append("\n")
-        for label, value in (("input", run.get("input") or "-"), ("output", file_text(execution, run.get("output"))), ("last frame", file_text(execution, run.get("last_frame")) if run.get("last_frame") else None)):
+        for label, value in (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None)):
             if value is not None:
                 text.append(f"  {label}: ", style="bold")
                 text.append(f"{value}\n")
-        if run.get("cooldown_after_seconds") is not None:
+        if run.cooldown_after_seconds is not None:
             text.append("  cooldown after: ", style="bold")
-            text.append(f"{seconds_text(run['cooldown_after_seconds'])}\n")
-        if run.get("command"):
+            text.append(f"{seconds_text(run.cooldown_after_seconds)}\n")
+        if run.command:
             # The arguments as a table, never the command line with its bare --config-json.
             text.append("\n")
-            arguments = argument_rows(run["command"], notes)
+            arguments = argument_rows(run.command, notes)
             text.append_text(arguments_text(arguments, previous))
-            previous = (int(run["number"]), arguments)
+            previous = (int(run.number), arguments)
     text.rstrip()
     return text
 
@@ -536,14 +536,14 @@ def number_text(value: float | None) -> str:
     return "-" if value is None else f"{value:g}"
 
 
-def execution_settings(execution: dict[str, Any]) -> CommandSettings:
+def execution_settings(execution: ExecutionRow) -> CommandSettings:
     """The execution's settings, from the first run with a readable command; the model falls back to the execution's own."""
-    for run in execution.get("runs") or []:
-        if run.get("command"):
-            settings = command_settings(run["command"])
+    for run in execution.runs:
+        if run.command:
+            settings = command_settings(run.command)
             if settings != CommandSettings():
-                return settings if settings.model else CommandSettings(execution.get("model"), settings.refiner_model, settings.refiner_start, settings.cfg, settings.shift, settings.steps)
-    return CommandSettings(model=execution.get("model") or None)
+                return settings if settings.model else CommandSettings(execution.model, settings.refiner_model, settings.refiner_start, settings.cfg, settings.shift, settings.steps)
+    return CommandSettings(model=execution.model or None)
 
 
 def refiner_text(settings: CommandSettings, width: int | None = None) -> str:
@@ -555,14 +555,14 @@ def refiner_text(settings: CommandSettings, width: int | None = None) -> str:
     return name + start
 
 
-def succeeded_runs(execution: dict[str, Any]) -> list[dict[str, Any]]:
+def succeeded_runs(execution: ExecutionRow) -> tuple[RunRow, ...]:
     """The runs the detail widget lists: those that finished successfully, in run order."""
-    return [run for run in execution.get("runs") or [] if run.get("status") == RunStatus.SUCCEEDED]
+    return execution.succeeded_runs
 
 
-def size_text(runs: list[dict[str, Any]]) -> str:
+def size_text(runs: Sequence[RunRow]) -> str:
     """The measured output size of ``runs`` as ``832x448``; ``sizes vary`` when they differ, ``size -`` with none measured."""
-    sizes = {(run["output_width"], run["output_height"]) for run in runs if run.get("output_width") and run.get("output_height")}
+    sizes = {(run.output_width, run.output_height) for run in runs if run.output_width and run.output_height}
     if not sizes:
         return "size -"
     if len(sizes) > 1:
@@ -571,8 +571,8 @@ def size_text(runs: list[dict[str, Any]]) -> str:
     return f"{width}x{height}"
 
 
-def run_steps(run: dict[str, Any]) -> int | None:
-    return command_settings(run["command"]).steps if run.get("command") else None
+def run_steps(run: RunRow) -> int | None:
+    return command_settings(run.command).steps if run.command else None
 
 
 def reveal_action(execution_id: int, run_number: int) -> str:
@@ -602,15 +602,15 @@ class ExecutionDetail:
     runs: tuple[DetailRun, ...]
 
 
-def execution_detail(execution: dict[str, Any]) -> ExecutionDetail:
+def execution_detail(execution: ExecutionRow) -> ExecutionDetail:
     """Read the execution for the detail widget; it looks for every output file, so it runs off the UI thread."""
-    video = str(execution.get("mode") or "") in VIDEO_MODES
+    video = str(execution.mode or "") in VIDEO_MODES
     runs = succeeded_runs(execution)
     listed = []
     for run in runs:
-        path = run_file(execution, run.get("output"))
-        listed.append(DetailRun(int(run["number"]), run.get("output_frames") if video else None, run_steps(run), run.get("seconds"), run.get("output") or None, path is not None and path.exists()))
-    return ExecutionDetail(int(execution["id"]), execution_settings(execution), size_text(runs), tuple(listed))
+        path = execution.run_file(run.output)
+        listed.append(DetailRun(int(run.number), run.output_frames if video else None, run_steps(run), run.seconds, run.output or None, path is not None and path.exists()))
+    return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed))
 
 
 def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | None) -> tuple[Text, list[int]]:
@@ -647,26 +647,26 @@ def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | N
     return text, shown
 
 
-def output_measure_text(run: dict[str, Any]) -> str:
+def output_measure_text(run: RunRow) -> str:
     """A run's measured output: ``832x448, 81 frames``; ``not measured`` when it was not."""
-    if not (run.get("output_width") and run.get("output_height")):
+    if not (run.output_width and run.output_height):
         return "not measured"
-    frames = f", {run['output_frames']} frames" if run.get("output_frames") else ""
-    return f"{run['output_width']}x{run['output_height']}{frames}"
+    frames = f", {run.output_frames} frames" if run.output_frames else ""
+    return f"{run.output_width}x{run.output_height}{frames}"
 
 
 # The prompt flags, which /get param leaves out; /get prompts shows them.
 PROMPT_FLAGS = ("--prompt", "--negative-prompt", "--prompt-file", "--negative-prompt-file")
 
 
-def find_run(execution: dict[str, Any], run_number: int | None) -> dict[str, Any] | str:
+def find_run(execution: ExecutionRow, run_number: int | None) -> RunRow | str:
     """The run numbered ``run_number``, or, without one, the first run with a saved command; else why there is none."""
-    runs = execution.get("runs") or []
+    runs = execution.runs
     if run_number is not None:
-        match = next((run for run in runs if run["number"] == run_number), None)
-        return match if match is not None else f"Execution {execution_label(execution)} has no run {run_number}"
-    first = next((run for run in runs if run.get("command")), None)
-    return first if first is not None else f"Execution {execution_label(execution)} has no run with a saved command"
+        match = next((run for run in runs if run.number == run_number), None)
+        return match if match is not None else f"Execution {execution.label} has no run {run_number}"
+    first = next((run for run in runs if run.command), None)
+    return first if first is not None else f"Execution {execution.label} has no run with a saved command"
 
 
 def prompt_block(text: Text, label: str, style: str, value: str | None) -> str:
@@ -679,35 +679,43 @@ def prompt_block(text: Text, label: str, style: str, value: str | None) -> str:
     return prompt
 
 
-def prompts_text(execution: dict[str, Any], which: str, run_number: int | None) -> tuple[Text, tuple[str, str] | None]:
+class _Prompts(NamedTuple):
+    """The prompts of a pair that several runs shared."""
+
+    positive: str
+    negative: str | None
+
+
+def prompts_text(execution: ExecutionRow, which: str, run_number: int | None) -> tuple[Text, tuple[str, str] | None]:
     """``positive``, ``negative``, or both (``prompts``): each prompt pair once with the runs that used it, or one run's.
 
     Each label stands on its own line with a blank line before it, and its prompt starts on the next line, so a prompt
     reads and selects as a block. Also returns what to copy to the clipboard and what to call it: the prompts alone for
     ``positive`` or ``negative``, the labelled prompts for ``prompts``; None when there is no prompt.
     """
-    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}", style="bold")
+    text = Text(f"Execution {execution.label}: {execution.job_name}", style="bold")
+    groups: list[tuple[str, RunRow | _Prompts]]
     if run_number is not None:
         run = find_run(execution, run_number)
         if isinstance(run, str):
             return Text(run, style="red"), None
-        groups = [(f"Run {run['number']} (pair {run['pair']})", run)]
+        groups = [(f"Run {run.number} (pair {run.pair})", run)]
     else:
         # Each pair once, in the order it first ran, with every run that used it.
         pairs: dict[tuple[str, str, str | None], list[int]] = {}
-        for run in execution.get("runs") or []:
-            pairs.setdefault((run["pair"], run["positive"], run.get("negative")), []).append(int(run["number"]))
+        for run in execution.runs:
+            pairs.setdefault((run.pair, run.positive, run.negative), []).append(int(run.number))
         if not pairs:
             text.append("\n  no runs", style="dim")
             return text, None
-        groups = [(f"Pair {pair} (run{'s' if len(numbers) != 1 else ''} {', '.join(str(number) for number in numbers)})", {"positive": positive, "negative": negative}) for (pair, positive, negative), numbers in pairs.items()]
+        groups = [(f"Pair {pair} (run{'s' if len(numbers) != 1 else ''} {', '.join(str(number) for number in numbers)})", _Prompts(positive, negative)) for (pair, positive, negative), numbers in pairs.items()]
     copied: list[str] = []
     for heading, run in groups:
         text.append(f"\n{heading}\n", style="bold")
         for label, style in (("positive", "green"), ("negative", "red")):
             if which not in (label, "prompts"):
                 continue
-            prompt = prompt_block(text, label, style, run.get(label))
+            prompt = prompt_block(text, label, style, getattr(run, label))
             if prompt:
                 copied.append(f"{label}:\n{prompt}" if which == "prompts" else prompt)
     if not copied:
@@ -715,19 +723,19 @@ def prompts_text(execution: dict[str, Any], which: str, run_number: int | None) 
     return text, ("\n\n".join(copied), "prompts" if which == "prompts" else f"{which} prompt{'s' if len(copied) > 1 else ''}")
 
 
-def parameters_text(execution: dict[str, Any], run_number: int | None) -> Text:
+def parameters_text(execution: ExecutionRow, run_number: int | None) -> Text:
     """A run's draw-things-cli arguments without its prompts, as two tables (the flags, then --config-json), marking the
     job's overrides and every value a flag replaced."""
     run = find_run(execution, run_number)
     if isinstance(run, str):
         return Text(run, style="red")
-    command = run.get("command") or []
+    command = run.command or []
     if not command:
-        return Text(f"Run {run['number']} of execution {execution_label(execution)} has no saved command", style="red")
-    total = len(execution.get("runs") or [])
-    text = Text(f"Execution {execution_label(execution)}: {execution['job_name']}, run {run['number']} of {total}: draw-things-cli arguments", style="bold")
-    if execution.get("config_file"):
-        text.append(f" (configuration {execution['config_file']})")
+        return Text(f"Run {run.number} of execution {execution.label} has no saved command", style="red")
+    total = len(execution.runs)
+    text = Text(f"Execution {execution.label}: {execution.job_name}, run {run.number} of {total}: draw-things-cli arguments", style="bold")
+    if execution.config_file:
+        text.append(f" (configuration {execution.config_file})")
     text.append("\n")
     text.append_text(arguments_table(command, execution_notes(execution)))
     text.rstrip()
@@ -752,10 +760,10 @@ def override_notes(config_override: dict[str, Any] | None, sized: bool) -> dict[
     return notes
 
 
-def execution_notes(execution: dict[str, Any]) -> dict[str, str]:
+def execution_notes(execution: ExecutionRow) -> dict[str, str]:
     """``override_notes`` for a stored execution, from the job settings it ran with; a resize plan means a desired size."""
-    settings = execution.get("settings") or {}
-    return override_notes(settings.get("config_override"), settings.get("input_resize") is not None)
+    settings = execution.settings
+    return override_notes(settings.config_override, settings.input_resize is not None)
 
 
 def argument_rows(command: Sequence[str], notes: dict[str, str]) -> tuple[list[Row], list[Row]]:

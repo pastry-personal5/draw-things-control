@@ -17,7 +17,9 @@ from draw_things_control.cli.app import app, create_job_runner
 from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.run_lock import RunLock
+from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.executor import JobRunOptions
+from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution
 from draw_things_control.state.store import Store
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
@@ -37,7 +39,7 @@ class StateCliTests(JobTestCase):
         self.fake_service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: executable,
-            frame_extractor=lambda video, png: png.write_bytes(b"png"),
+            frame_extractor=self.extract,
             require_ffmpeg=lambda: "ffmpeg",
             random_number=lambda: next(numbers),
             handle_signals=False,
@@ -69,24 +71,33 @@ class StateCliTests(JobTestCase):
     def run_job(self, *extra: str):
         return self.invoke("run-job", str(self.job_path), "--executable", "draw-things-cli", *extra)
 
+    @staticmethod
+    def extract(video: Path, png: Path) -> None:
+        png.write_bytes(b"png")
+
+    def stored(self, execution_id: int) -> ExecutionRow:
+        execution = self.store().executions.get(execution_id)
+        assert execution is not None
+        return execution
+
     def store(self) -> Store:
         self.state.mkdir(exist_ok=True)
-        store = Store(self.state / "dtc.db")
+        store = Store.open(self.state / "dtc.db")
         self.addCleanup(store.close)
         return store
 
     def test_run_job_records_the_execution_even_without_job_records(self) -> None:
         result = self.run_job()
         self.assertEqual(result.exit_code, 0, result.output)
-        [row] = self.store().list_executions()
-        self.assertEqual((row["job_name"], row["status"], row["manifest_path"]), ("sunset-walk", "succeeded", None))
-        self.assertEqual(len(self.store().get_execution(row["id"])["runs"]), 2)
+        [row] = self.store().executions.page()
+        self.assertEqual((row.job_name, row.status, row.manifest_path), ("sunset-walk", "succeeded", None))
+        self.assertEqual(len(self.stored(row.id).runs), 2)
         self.assertEqual((self.state / "run.lock").read_text(), "")
 
     def test_a_failed_job_keeps_its_exit_code_and_is_recorded(self) -> None:
         self.results[1] = FakeResult(return_code=3)
         self.assertEqual(self.run_job().exit_code, 3)
-        self.assertEqual(self.store().list_executions()[0]["status"], "failed")
+        self.assertEqual(self.store().executions.page()[0].status, "failed")
 
     def test_a_busy_lock_exits_75_with_the_message_and_starts_nothing(self) -> None:
         with RunLock("run-job"):
@@ -96,7 +107,7 @@ class StateCliTests(JobTestCase):
             self.assertEqual(outcome.exit_code, 75)
         self.assertEqual(self.runs_started, 0)
         self.assertEqual(self.messages[0], f"Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.")
-        self.assertEqual(self.store().list_executions(), [])
+        self.assertEqual(self.store().executions.page(), [])
 
     def test_commands_that_start_nothing_work_while_the_lock_is_held(self) -> None:
         executable = self.root / "draw-things-cli"
@@ -116,6 +127,7 @@ class StateCliTests(JobTestCase):
         script = "import sys, time; from pathlib import Path; from draw_things_control.core.run_lock import RunLock; lock = RunLock('run-job', directory=Path(sys.argv[1])); lock.acquire(); print('held', flush=True); time.sleep(60)"
         self.state.mkdir()
         holder = subprocess.Popen([sys.executable, "-c", script, str(self.state)], stdout=subprocess.PIPE, text=True)
+        assert holder.stdout is not None
         self.addCleanup(holder.stdout.close)
         self.addCleanup(holder.wait)
         self.assertEqual(holder.stdout.readline().strip(), "held")
@@ -148,26 +160,27 @@ class StateCliTests(JobTestCase):
         self.assertTrue(run_lock.run_lock_is_free(directory=self.state))
 
     def test_a_row_left_running_by_a_crash_is_closed_by_the_next_run(self) -> None:
-        crashed = self.store().start_execution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2026-09-24T10:00:00+00:00")
+        crashed = self.store().executions.start(NewExecution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2026-09-24T10:00:00+00:00"))
         self.assertEqual(self.run_job().exit_code, 0)
-        execution = self.store().get_execution(crashed)
-        self.assertEqual(execution["status"], "interrupted")
-        self.assertIsNotNone(execution["recovered_at"])
+        execution = self.stored(crashed)
+        self.assertEqual(execution.status, "interrupted")
+        self.assertIsNotNone(execution.recovered_at)
 
     def test_history_retention_days_prunes_when_a_run_opens_the_store(self) -> None:
         store = self.store()
-        old = store.start_execution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2020-01-01T10:00:00+00:00")
-        store.finish_execution(old, status="succeeded", exit_code=0, signal=None, finished_at="2020-01-01T11:00:00+00:00")
+        old = store.executions.start(NewExecution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2020-01-01T10:00:00+00:00"))
+        store.executions.finish(old, status="succeeded", exit_code=0, signal=None, finished_at="2020-01-01T11:00:00+00:00")
         self.write_global_config("history_retention_days: 0\n")
         self.run_job()
-        self.assertIsNotNone(store.get_execution(old))
+        self.assertIsNotNone(store.executions.get(old))
         self.write_global_config("history_retention_days: 14\n")
         self.run_job()
-        self.assertIsNone(store.get_execution(old))
+        self.assertIsNone(store.executions.get(old))
 
     def test_the_runner_reports_its_child_with_the_executable_name(self) -> None:
         on_start = mock.Mock()
         runner = create_job_runner(DrawThingsGenerateArguments(model="m.ckpt", executable="/opt/bin/my-cli"), None, 1, None, on_start)
+        assert runner._on_start is not None
         runner._on_start(4242)
         on_start.assert_called_once_with(4242, "my-cli")
         self.assertIsNone(create_job_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._on_start)
@@ -176,15 +189,15 @@ class StateCliTests(JobTestCase):
         seen: list[object] = []
         run = self.fake_service.run
 
-        def recording_run(job: object, options: JobRunOptions):
+        def recording_run(job: JobDefinition, options: JobRunOptions):
             seen.append(options.on_child_start)
             return run(job, options)
 
         with mock.patch.object(self.fake_service, "run", recording_run):
             self.assertEqual(self.run_job().exit_code, 0)
         [on_child_start] = seen
-        self.assertIsInstance(on_child_start.__self__, RunLock)
-        self.assertEqual(on_child_start.__func__, RunLock.record_child)
+        self.assertIsInstance(getattr(on_child_start, "__self__", None), RunLock)
+        self.assertEqual(getattr(on_child_start, "__func__", None), RunLock.record_child)
         self.assertFalse(hasattr(cli, "_active_lock"))
 
     def test_import_history_imports_once_and_reports_counts(self) -> None:
@@ -200,7 +213,7 @@ class StateCliTests(JobTestCase):
         second = self.invoke("import-history")
         self.assertIn("Imported 1, skipped 0", first.stdout)
         self.assertIn("Imported 0, skipped 1", second.stdout)
-        self.assertEqual(len(self.store().list_executions()), 1)
+        self.assertEqual(len(self.store().executions.page()), 1)
         self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["name"], "sunset-walk")
         # The run recorded its ID in the manifest; imported again into a fresh database, the execution takes the next
         # free number (E0001 again here, so there is nothing to add).
@@ -215,21 +228,21 @@ class StateCliTests(JobTestCase):
         (self.state / "dtc.db").unlink()
         store = self.store()
         for _ in range(4):
-            store.reserve_execution_number()
+            store.executions.reserve_number()
         store.close()
         imported = self.invoke("import-history")
         self.assertIn(f"  E0005: {manifest} (its manifest says E0001)\n", imported.stdout)
-        [row] = self.store().list_executions()
-        self.assertEqual(row["execution_number"], 5)
+        [row] = self.store().executions.page()
+        self.assertEqual(row.execution_number, 5)
 
     def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
         self.write_global_config("write_job_records: true\n")
-        with mock.patch.object(Store, "reserve_execution_number", side_effect=sqlite3.OperationalError("database is locked")):
+        with mock.patch.object(ExecutionRepository, "reserve_number", side_effect=sqlite3.OperationalError("database is locked")):
             result = self.run_job()
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(self.runs_started, 0)
         self.assertFalse(self.output_directory.exists())
-        self.assertEqual(self.store().list_executions(), [])
+        self.assertEqual(self.store().executions.page(), [])
         self.assertTrue(any("Cannot give the execution an ID" in message and "the job was not started" in message for message in self.messages), self.messages)
 
     def test_import_history_reads_another_directory_and_rejects_a_missing_one(self) -> None:

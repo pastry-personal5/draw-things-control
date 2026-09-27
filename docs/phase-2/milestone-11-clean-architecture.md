@@ -193,11 +193,12 @@ src/draw_things_control/
 │   ├── inputs/               # size.py, resize.py
 │   └── media/                # tools.py (find ffmpeg, ffprobe), toolkit.py (MediaTools), frames.py, info.py, video_color.py
 ├── state/
-│   ├── database.py           # file mode, a connection per thread, migrations, transactions (new)
-│   ├── executions.py         # ExecutionRepository, NewExecution, ExecutionRow, RunRow (new)
+│   ├── schema.py             # the migrations (from store.py)
+│   ├── database.py           # Database: file mode, a connection per thread, migrations, transactions; StateError (new)
+│   ├── executions.py         # ExecutionRepository, NewExecution, NewRun, ExecutionRow, RunRow, ExecutionSettings (new)
 │   ├── job_ids.py            # JobIdRepository (new)
 │   ├── settings.py           # SettingsRepository (new)
-│   ├── store.py              # Store: opens the database in a mode, holds the repositories
+│   ├── store.py              # Store: opens the database in a mode, holds the repositories; pruning
 │   └── recorder.py, ids.py, history_import.py
 ├── services/                 # (new)
 │   ├── toolkit.py            # Toolkit: runner factory, executable lookup, media tools; builds executors

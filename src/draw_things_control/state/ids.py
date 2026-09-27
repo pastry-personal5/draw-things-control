@@ -38,3 +38,14 @@ def parse_typed_id(text: str, letter: str) -> int | None:
         return None
     number = int(digits)
     return number if 0 < number <= MAX_NUMBER else None
+
+
+def parse_bare_number(text: str) -> int | None:
+    """A number typed without a letter (a run number): ASCII digits only, above 0, and small enough for SQLite; None otherwise."""
+    if not (text.isascii() and text.isdecimal()):
+        return None
+    digits = text.lstrip("0") or "0"
+    if len(digits) > MAX_DIGITS:
+        return None
+    number = int(digits)
+    return number if 0 < number <= MAX_NUMBER else None

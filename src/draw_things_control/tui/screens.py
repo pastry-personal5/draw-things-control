@@ -17,9 +17,9 @@ from textual.widgets import DataTable, Input, RichLog, Rule, Static
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_typed_id
+from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_bare_number, parse_typed_id
 from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
-from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, execution_label, parse_id, reveal_run
+from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, reveal_run
 from draw_things_control.tui.job_files import JobCatalog, JobDetails, JobListing, add_plan, read_details
 from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, JobDefinitionPane, StatusPane, natural_descending
 from draw_things_control.tui.text import Arguments, PreviousRun, argument_rows, details_text, event_text, execution_text, jobs_text, override_notes, parameters_text, prompts_text, question_text, result_text, status_line_text
@@ -126,7 +126,7 @@ class MainScreen(Screen[None]):
 
     def execution_ids(self) -> list[str]:
         """The loaded executions' IDs, newest first, for completion."""
-        return [execution_label(row) for row in self.history.executions.values()]
+        return [row.label for row in self.history.executions.values()]
 
     def focus_command_line(self) -> None:
         self.command_line.focus()
@@ -262,7 +262,7 @@ class MainScreen(Screen[None]):
         number = parse_typed_id(text, EXECUTION_LETTER)
         if number is not None:
             return number
-        bare = parse_id(text)
+        bare = parse_bare_number(text)
         if bare is not None:
             raise CommandError(f"Use {execution_id_text(bare)}: an execution ID begins with {EXECUTION_LETTER}")
         raise CommandError(f"Usage: {usage(command, word)}")
@@ -270,7 +270,7 @@ class MainScreen(Screen[None]):
     @staticmethod
     def number(text: str, command: str, word: str | None = None) -> int:
         """A run number, or a usage error for ``command`` (and its ``word``, for /get)."""
-        number = parse_id(text)
+        number = parse_bare_number(text)
         if number is None:
             raise CommandError(f"Usage: {usage(command, word)}")
         return number
@@ -338,7 +338,7 @@ class MainScreen(Screen[None]):
     def show_execution(self, number: int) -> None:
         assert self.reader is not None
         execution = self.reader.numbered(number)
-        self.app.call_from_thread(self.say, execution_text(execution) if isinstance(execution, dict) else Text(execution, style="red"))
+        self.app.call_from_thread(self.say, Text(execution, style="red") if isinstance(execution, str) else execution_text(execution))
 
     @work(thread=True, group="execution")
     def show_part(self, word: str, number: int, run: int | None) -> None:

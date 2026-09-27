@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from draw_things_control.state.executions import ExecutionRow, NewExecution
 from draw_things_control.state.history_import import import_history
 from draw_things_control.state.store import Store
 
@@ -45,8 +46,13 @@ class ImportHistoryTests(unittest.TestCase):
         self.root = Path(self._temporary.name)
         self.outputs = self.root / "output"
         (self.outputs / "walk").mkdir(parents=True)
-        self.store = Store(self.root / "dtc.db", retention_days=14, clock=lambda: NOW)
+        self.store = Store.open(self.root / "dtc.db", retention_days=14, clock=lambda: NOW)
         self.addCleanup(self.store.close)
+
+    def stored(self, execution_id: int) -> ExecutionRow:
+        execution = self.store.executions.get(execution_id)
+        assert execution is not None
+        return execution
 
     def write(self, name: str, data: object, folder: str = "walk") -> Path:
         path = self.outputs / folder / name
@@ -62,10 +68,10 @@ class ImportHistoryTests(unittest.TestCase):
         self.write("new-job.json", manifest(cooldown_seconds=None, cooldown_source="global_config", cooldown=mapping))
         self.write("old-job.json", manifest(days_ago=2, cooldown_seconds=900.0, cooldown_source="global_config"), folder="old")
         self.assertEqual(self.run_import().imported, 2)
-        new, old = (self.store.get_execution(row["id"]) for row in self.store.list_executions())
-        self.assertEqual((new["cooldown_seconds"], new["settings"]["cooldown"]), (None, mapping))
-        self.assertEqual((old["cooldown_seconds"], old["settings"]["cooldown_seconds"]), (900.0, 900.0))
-        self.assertNotIn("cooldown", old["settings"])
+        new, old = (self.stored(row.id) for row in self.store.executions.page())
+        self.assertEqual((new.cooldown_seconds, new.settings.cooldown), (None, mapping))
+        self.assertEqual((old.cooldown_seconds, old.settings.cooldown_seconds), (900.0, 900.0))
+        self.assertIsNone(old.settings.cooldown)
 
     def test_measured_outputs_are_copied_and_manifests_without_them_still_import(self) -> None:
         measured = manifest()
@@ -74,21 +80,21 @@ class ImportHistoryTests(unittest.TestCase):
         self.write("measured-job.json", measured)
         self.write("old-job.json", manifest(days_ago=2), folder="old")
         self.assertEqual(self.run_import().imported, 2)
-        new, old = (self.store.get_execution(row["id"]) for row in self.store.list_executions())
+        new, old = (self.stored(row.id) for row in self.store.executions.page())
         # A positive whole number is read as every source is (text of digits too); anything else is unknown, as a hand-edited manifest may hold.
-        self.assertEqual([(run["output_width"], run["output_height"], run["output_frames"]) for run in new["runs"]], [(832, 448, 81), (832, None, None)])
-        self.assertEqual([(run["output_width"], run["output_frames"]) for run in old["runs"]], [(None, None), (None, None)])
+        self.assertEqual([(run.output_width, run.output_height, run.output_frames) for run in new.runs], [(832, 448, 81), (832, None, None)])
+        self.assertEqual([(run.output_width, run.output_frames) for run in old.runs], [(None, None), (None, None)])
 
     def test_manifests_in_job_subdirectories_are_imported_with_their_runs(self) -> None:
         path = self.write("walk-job.json", manifest())
         report = self.run_import()
         self.assertEqual((report.imported, report.skipped, report.expired, report.unreadable), (1, 0, 0, 0))
-        [row] = self.store.list_executions()
-        execution = self.store.get_execution(row["id"])
-        self.assertEqual((execution["job_name"], execution["status"], execution["seed"], execution["manifest_path"], execution["total_runs"]), ("walk", "succeeded", 42, str(path.resolve()), 2))
-        self.assertEqual((execution["job_yaml"], execution["model"], execution["exit_code"], execution["signal"]), (None, None, None, None))
-        self.assertEqual(execution["log_path"], str(path.parent / "walk-job.log"))
-        self.assertEqual([(run["number"], run["output"]) for run in execution["runs"]], [(1, "out-1.mov"), (2, "out-2.mov")])
+        [row] = self.store.executions.page()
+        execution = self.stored(row.id)
+        self.assertEqual((execution.job_name, execution.status, execution.seed, execution.manifest_path, execution.total_runs), ("walk", "succeeded", 42, str(path.resolve()), 2))
+        self.assertEqual((execution.job_yaml, execution.model, execution.exit_code, execution.signal), (None, None, None, None))
+        self.assertEqual(execution.log_path, str(path.parent / "walk-job.log"))
+        self.assertEqual([(run.number, run.output) for run in execution.runs], [(1, "out-1.mov"), (2, "out-2.mov")])
 
     def test_importing_twice_imports_once_and_never_modifies_a_manifest(self) -> None:
         path = self.write("walk-job.json", manifest())
@@ -96,14 +102,14 @@ class ImportHistoryTests(unittest.TestCase):
         self.run_import()
         report = self.run_import()
         self.assertEqual((report.imported, report.skipped), (0, 1))
-        self.assertEqual(len(self.store.list_executions()), 1)
+        self.assertEqual(len(self.store.executions.page()), 1)
         self.assertEqual(path.read_bytes(), before)
 
     def test_a_manifest_already_recorded_live_is_not_imported_again(self) -> None:
         path = self.write("walk-job.json", manifest())
-        self.store.start_execution(job_name="walk", job_file="/data/walk.yaml", mode="i2v", started_at=stamp(1), manifest_path=str(path.resolve()))
+        self.store.executions.start(NewExecution(job_name="walk", job_file="/data/walk.yaml", mode="i2v", started_at=stamp(1), manifest_path=str(path.resolve())))
         self.assertEqual(self.run_import().skipped, 1)
-        self.assertEqual(len(self.store.list_executions()), 1)
+        self.assertEqual(len(self.store.executions.page()), 1)
 
     def test_files_that_are_not_manifests_are_counted_unreadable_and_left_alone(self) -> None:
         self.write("notes.json", {"hello": "world"})
@@ -116,7 +122,7 @@ class ImportHistoryTests(unittest.TestCase):
         (self.outputs / "walk" / "image.png").write_bytes(b"png")
         report = self.run_import()
         self.assertEqual((report.imported, report.unreadable), (0, 4))
-        self.assertEqual(self.store.list_executions(), [])
+        self.assertEqual(self.store.executions.page(), [])
         self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
 
     def test_manifests_older_than_the_retention_period_are_expired_not_imported(self) -> None:
@@ -124,10 +130,10 @@ class ImportHistoryTests(unittest.TestCase):
         self.write("recent.json", manifest(days_ago=13))
         report = self.run_import()
         self.assertEqual((report.imported, report.expired), (1, 1))
-        self.assertEqual(self.store.list_executions()[0]["started_at"], stamp(13))
+        self.assertEqual(self.store.executions.page()[0].started_at, stamp(13))
 
     def test_zero_retention_imports_everything(self) -> None:
-        store = Store(self.root / "forever.db", retention_days=0, clock=lambda: NOW)
+        store = Store.open(self.root / "forever.db", retention_days=0, clock=lambda: NOW)
         self.addCleanup(store.close)
         self.write("old.json", manifest(days_ago=400))
         self.assertEqual(import_history(store, self.outputs, clock=NOW).imported, 1)
@@ -135,10 +141,10 @@ class ImportHistoryTests(unittest.TestCase):
     def test_a_manifest_left_running_by_a_crash_imports_as_interrupted(self) -> None:
         self.write("crashed.json", manifest(status="running"))
         self.run_import()
-        execution = self.store.get_execution(self.store.list_executions()[0]["id"])
-        self.assertEqual((execution["status"], [run["status"] for run in execution["runs"]]), ("interrupted", ["succeeded", "interrupted"]))
-        self.assertIsNotNone(execution["recovered_at"])
-        self.assertIsNotNone(execution["finished_at"])
+        execution = self.stored(self.store.executions.page()[0].id)
+        self.assertEqual((execution.status, [run.status for run in execution.runs]), ("interrupted", ["succeeded", "interrupted"]))
+        self.assertIsNotNone(execution.recovered_at)
+        self.assertIsNotNone(execution.finished_at)
 
     def test_a_crashed_manifest_older_than_retention_is_expired_not_restamped_and_reimported(self) -> None:
         self.write("crashed.json", manifest(status="running", days_ago=15))
@@ -148,5 +154,5 @@ class ImportHistoryTests(unittest.TestCase):
     def test_the_run_number_is_the_position_not_the_batch_field(self) -> None:
         self.write("walk-job.json", manifest(runs=3))
         self.run_import()
-        execution = self.store.get_execution(self.store.list_executions()[0]["id"])
-        self.assertEqual([run["number"] for run in execution["runs"]], [1, 2, 3])
+        execution = self.stored(self.store.executions.page()[0].id)
+        self.assertEqual([run.number for run in execution.runs], [1, 2, 3])

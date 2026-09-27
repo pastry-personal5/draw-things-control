@@ -17,7 +17,7 @@ from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.files import job_files, read_job
 from draw_things_control.jobs.text import PLACEHOLDER_SEED, PlanStep, plan_header, plan_steps
 from draw_things_control.state.ids import JOB_LETTER, job_id_text, parse_typed_id
-from draw_things_control.state.store import Store
+from draw_things_control.state.store import Store, StoreMode
 from draw_things_control.tui.commands import SORT_KEYS
 from draw_things_control.tui.history import database_path
 
@@ -122,7 +122,7 @@ class JobCatalog:
         id_error = None
         if self.gives_ids:
             try:
-                numbers = self._open().assign_job_ids([path.name for path in paths], local_timestamp(datetime.now()))
+                numbers = self._open().job_ids.assign([path.name for path in paths], local_timestamp(datetime.now()))
             except Exception as error:
                 # Not only the store's errors: an uncreatable state directory raises RunLockError, and a worker must not raise.
                 id_error = f"Cannot give job IDs: {error}"
@@ -151,7 +151,7 @@ class JobCatalog:
         """The remembered sort (key, descending); the default when none is kept or the store cannot say."""
         try:
             store = self._open(create=False)
-            value = store.setting(SORT_SETTING) if store is not None else None
+            value = store.settings.get(SORT_SETTING) if store is not None else None
         except Exception:
             return DEFAULT_SORT
         key, _, direction = (value or "").partition(" ")
@@ -164,7 +164,7 @@ class JobCatalog:
             if choice <= self._saved_choice:
                 return None
             try:
-                self._open().set_setting(SORT_SETTING, f"{key} {'desc' if descending else 'asc'}")
+                self._open().settings.set(SORT_SETTING, f"{key} {'desc' if descending else 'asc'}")
             except Exception as error:
                 return f"Cannot keep the sort: {error}"
             self._saved_choice = choice
@@ -193,7 +193,7 @@ class JobCatalog:
             return missing
         try:
             store = self._open(create=False)
-            known = store.job_definition(number) if store is not None else None
+            known = store.job_ids.lookup(number) if store is not None else None
         except Exception as error:
             return f"Cannot look up {job_id_text(number)}: {error}"
         if known is None:
@@ -234,7 +234,7 @@ class JobCatalog:
             if self._store is None:
                 if not create and not database_path().exists():
                     return None
-                self._store = Store(retention_days=self.settings.history_retention_days, prune_on_open=False)
+                self._store = Store.open(mode=StoreMode.WRITE if create else StoreMode.BROWSE, retention_days=self.settings.history_retention_days)
             return self._store
 
 

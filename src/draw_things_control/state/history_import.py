@@ -12,8 +12,9 @@ from typing import Any
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.numbers import positive_whole
 from draw_things_control.jobs.events import JobStatus, RunStatus
+from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun, epoch
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
-from draw_things_control.state.store import Store, epoch
+from draw_things_control.state.store import Store
 
 MANIFEST_KEYS = ("job_file", "name", "mode", "seed", "started_at", "runs")
 
@@ -40,19 +41,19 @@ def import_history(store: Store, directory: Path, *, clock: datetime | None = No
         key = str(path.resolve())
         try:
             manifest = _read_manifest(path)
-            if store.has_manifest(key):
+            if store.executions.has_manifest(key):
                 report.skipped += 1
                 continue
             execution, runs = _convert(manifest, path, key, now)
             # A manifest left 'running' has no real finish time; judge it by its start, or each import would restamp it and bring back a pruned row.
-            aged = execution["started_at"] if manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING and not manifest.get("finished_at") else execution["finished_at"] or execution["started_at"]
+            aged = execution.started_at if manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING and not manifest.get("finished_at") else execution.finished_at or execution.started_at
             if cutoff is not None and epoch(aged) < cutoff:
                 report.expired += 1
                 continue
         except (OSError, ValueError, TypeError, KeyError):
             report.unreadable += 1
             continue
-        _row, number = store.import_execution(execution, runs)
+        _row, number = store.executions.import_execution(execution, runs)
         report.imported += 1
         # The next free number, whatever the start time; a manifest's own ID (its execution was pruned, or state/ was
         # deleted) is reported beside it, so the two can be matched, and never reused.
@@ -80,60 +81,66 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[NewExecution, list[NewRun]]:
     # A phase 1 process that crashed left its manifest 'running'; import it as the sweep would close it.
     stale = manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING
     finished_at = manifest.get("finished_at") or (now if stale else None)
     log_file = manifest.get("log_file")
-    execution = {
-        "job_name": str(manifest["name"]),
-        "job_file": str(manifest["job_file"]),
-        "mode": str(manifest["mode"]),
-        "status": JobStatus.INTERRUPTED if stale else str(manifest["status"]),
-        "seed": int(manifest["seed"]),
-        "seed_source": manifest.get("seed_source"),
-        "cooldown_seconds": manifest.get("cooldown_seconds"),
-        "cooldown_source": manifest.get("cooldown_source"),
-        "total_runs": len(manifest["runs"]),
-        "started_at": str(manifest["started_at"]),
-        "finished_at": finished_at,
-        "manifest_path": key,
-        "log_path": str(path.parent / log_file) if log_file else None,
-        "config_file": manifest.get("config_file"),
-        "recovered_at": now if stale else None,
-        "settings": {"config_file": manifest.get("config_file"), "config_override": manifest.get("config_override"), "input_resize": manifest.get("input_resize"), "cooldown_seconds": manifest.get("cooldown_seconds"), "cooldown_source": manifest.get("cooldown_source")},
-    }
     # Manifests from before the cooldown mapping have only cooldown_seconds, which means manual.
-    if isinstance(manifest.get("cooldown"), dict):
-        execution["settings"]["cooldown"] = manifest["cooldown"]
-    epoch(execution["started_at"])
-    if finished_at is not None:
-        epoch(finished_at)
+    cooldown = manifest["cooldown"] if isinstance(manifest.get("cooldown"), dict) else None
     # The manifest's per-run 'batch' field is ignored: the run number is the position in the list.
     runs = [_convert_run(run) for run in manifest["runs"]]
+    execution = NewExecution(
+        job_name=str(manifest["name"]),
+        job_file=str(manifest["job_file"]),
+        mode=str(manifest["mode"]),
+        status=JobStatus.INTERRUPTED if stale else str(manifest["status"]),
+        seed=int(manifest["seed"]),
+        seed_source=manifest.get("seed_source"),
+        cooldown_seconds=manifest.get("cooldown_seconds"),
+        cooldown_source=manifest.get("cooldown_source"),
+        total_runs=len(runs),
+        started_at=str(manifest["started_at"]),
+        finished_at=finished_at,
+        manifest_path=key,
+        log_path=str(path.parent / log_file) if log_file else None,
+        config_file=manifest.get("config_file"),
+        recovered_at=now if stale else None,
+        settings=ExecutionSettings(
+            config_file=manifest.get("config_file"),
+            config_override=manifest.get("config_override"),
+            input_resize=manifest.get("input_resize"),
+            cooldown_seconds=manifest.get("cooldown_seconds"),
+            cooldown_source=manifest.get("cooldown_source"),
+            cooldown=cooldown,
+        ),
+    )
+    epoch(execution.started_at)
+    if finished_at is not None:
+        epoch(finished_at)
     return execution, runs
 
 
-def _convert_run(run: dict[str, Any]) -> dict[str, Any]:
+def _convert_run(run: dict[str, Any]) -> NewRun:
     status = run.get("status", RunStatus.RUNNING)
-    converted = {
-        "pair": str(run["pair"]),
-        "positive": str(run["positive"]),
-        "negative": run.get("negative"),
-        "input": run.get("input"),
-        "resized_input": run.get("resized_input"),
-        "output": run.get("output"),
-        "last_frame": run.get("last_frame"),
-        "command": list(run.get("command") or []),
-        "started_at": str(run["started_at"]),
-        "seconds": run.get("seconds"),
-        "exit_code": run.get("exit_code"),
-        "status": RunStatus.INTERRUPTED if status == RunStatus.RUNNING else str(status),
-        "cooldown_after_seconds": run.get("cooldown_after_seconds"),
+    converted = NewRun(
+        pair=str(run["pair"]),
+        positive=str(run["positive"]),
+        negative=run.get("negative"),
+        input=run.get("input"),
+        resized_input=run.get("resized_input"),
+        output=run.get("output"),
+        last_frame=run.get("last_frame"),
+        command=list(run.get("command") or []),
+        started_at=str(run["started_at"]),
+        seconds=run.get("seconds"),
+        exit_code=run.get("exit_code"),
+        status=RunStatus.INTERRUPTED if status == RunStatus.RUNNING else str(status),
+        cooldown_after_seconds=run.get("cooldown_after_seconds"),
         # Measured sizes, from manifests written since they were recorded; older ones have none.
-        "output_width": positive_whole(run.get("output_width")),
-        "output_height": positive_whole(run.get("output_height")),
-        "output_frames": positive_whole(run.get("output_frames")),
-    }
-    epoch(converted["started_at"])
+        output_width=positive_whole(run.get("output_width")),
+        output_height=positive_whole(run.get("output_height")),
+        output_frames=positive_whole(run.get("output_frames")),
+    )
+    epoch(converted.started_at)
     return converted

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import signal
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from draw_things_control.jobs.events import JobEvent, combine_observers, event_t
 from draw_things_control.jobs.media.info import MediaInfo
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.state.recorder import ExecutionRecorder
-from draw_things_control.state.store import Store
+from draw_things_control.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, TalkingRunner
 
@@ -73,7 +74,7 @@ class JobCharacterizationTests(JobTestCase):
         self.addCleanup(logger.remove, sink)
         self.state = self.root / "state"
         self.state.mkdir()
-        self.store = Store(self.state / "dtc.db", prune_on_open=False, clock=lambda: NOW)
+        self.store = Store.open(self.state / "dtc.db", mode=StoreMode.WRITE, clock=lambda: NOW)
         self.addCleanup(self.store.close)
 
     def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: Any = None, on_start: Any = None) -> FakeRunner:
@@ -115,14 +116,21 @@ class JobCharacterizationTests(JobTestCase):
         return TEMPORARY_COPY.sub("TMPCOPY/", OFFSET.sub(r"\1+ZZ:ZZ", text.replace(str(self.root), "ROOT")))
 
     def database(self) -> str:
-        executions = self.store.list_executions()
+        """The rows the store kept, read from the file as they are stored."""
+        connection = sqlite3.connect(self.state / "dtc.db")
+        connection.row_factory = sqlite3.Row
+        self.addCleanup(connection.close)
         rows = []
-        for execution in executions:
-            full = self.store.get_execution(execution["id"])
-            assert full is not None
-            runs = [{key: value for key, value in run.items() if key not in NOT_KEPT} for run in full.pop("runs")]
-            rows.append({"execution": {key: value for key, value in full.items() if key not in NOT_KEPT}, "runs": runs})
+        for execution in connection.execute("SELECT * FROM executions ORDER BY id"):
+            runs = [self.stored(run, "command") for run in connection.execute("SELECT * FROM runs WHERE execution_id = ? ORDER BY number", (execution["id"],))]
+            rows.append({"execution": self.stored(execution, "settings"), "runs": runs})
         return json.dumps(rows, indent=2, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def stored(row: sqlite3.Row, json_column: str) -> dict[str, Any]:
+        data = {key: row[key] for key in row.keys() if key not in NOT_KEPT}
+        data[json_column] = json.loads(data[json_column])
+        return data
 
     def check(self, name: str, text: str) -> None:
         path = GOLDEN / f"{name}.txt"

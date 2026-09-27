@@ -20,8 +20,9 @@ from textual.worker import get_current_worker
 
 from draw_things_control.core.run_lock import run_lock_is_free
 from draw_things_control.jobs.events import JobEvent, JobStatus, RunOutput
+from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.tui.commands import SORT_KEYS
-from draw_things_control.tui.history import PAGE_SIZE, HistoryFilter, HistoryPage, HistoryReader, execution_label, reveal_run
+from draw_things_control.tui.history import PAGE_SIZE, HistoryFilter, HistoryPage, HistoryReader, reveal_run
 from draw_things_control.tui.job_files import JobCatalog, JobListing, JobRow
 from draw_things_control.tui.job_watch import JobWatcher
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, LiveRun
@@ -330,7 +331,7 @@ class HistoryPane(DataTable[Text]):
         # Not ``filter``, ``rows``, or ``loading``: DataTable and Widget already use those names.
         self.history_filter = HistoryFilter()
         # The executions shown, by ID.
-        self.executions: dict[int, dict[str, Any]] = {}
+        self.executions: dict[int, ExecutionRow] = {}
         # Whether no older execution is left to read.
         self.all_read = True
         self.reading = False
@@ -400,9 +401,9 @@ class HistoryPane(DataTable[Text]):
             self.clear()
             self.executions = {}
         for row in page.rows:
-            if row["id"] not in self.executions:
-                self.executions[row["id"]] = row
-                self.add_row(*history_cells(row), key=str(row["id"]))
+            if row.id not in self.executions:
+                self.executions[row.id] = row
+                self.add_row(*history_cells(row), key=str(row.id))
         self.all_read = page.complete
         # Text, not str: a str title is parsed as markup, and the filter and error texts are the user's or the store's.
         self.border_title = Text(f"Execution History: {history_filter.text()}" if history_filter.text() else "Execution History")
@@ -426,16 +427,16 @@ class HistoryPane(DataTable[Text]):
         if not isinstance(rows, str):
             self.app.call_from_thread(self.update_rows, request, rows)
 
-    def update_rows(self, request: int, rows: list[dict[str, Any]]) -> None:
+    def update_rows(self, request: int, rows: list[ExecutionRow]) -> None:
         if not self.is_attached or request != self.read_count:
             return
         for row in rows:
-            if row["id"] not in self.executions:
+            if row.id not in self.executions:
                 continue
-            self.executions[row["id"]] = row
+            self.executions[row.id] = row
             for column, cell in zip(self.column_keys, history_cells(row), strict=True):
-                self.update_cell(str(row["id"]), column, cell, update_width=True)
-        self.post_message(self.RowsUpdated([row["id"] for row in rows]))
+                self.update_cell(str(row.id), column, cell, update_width=True)
+        self.post_message(self.RowsUpdated([row.id for row in rows]))
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         # The next page loads when the cursor reaches the last row.
@@ -449,7 +450,7 @@ class HistoryPane(DataTable[Text]):
         was_held = self.other_process_running
         held = self.check_lock()
         if held or was_held:
-            self.check(self.read_count, self.history_filter, [execution_id for execution_id, row in self.executions.items() if row["status"] == JobStatus.RUNNING])
+            self.check(self.read_count, self.history_filter, [execution_id for execution_id, row in self.executions.items() if row.status == JobStatus.RUNNING])
 
     @work(thread=True, exclusive=True, group="history-poll")
     def check(self, request: int, history_filter: HistoryFilter, running: list[int]) -> None:
@@ -500,7 +501,7 @@ class ExecutionPane(VerticalScroll):
         self.reader = reader
         self.say = say
         self.leave = leave
-        self.execution: dict[str, Any] | None = None
+        self.execution: ExecutionRow | None = None
         # What the widget shows of the execution, read with it.
         self.detail: ExecutionDetail | None = None
         # The run numbers listed, in order, and the one selected.
@@ -513,7 +514,7 @@ class ExecutionPane(VerticalScroll):
 
     @property
     def execution_id(self) -> int | None:
-        return self.execution["id"] if self.execution is not None else None
+        return self.execution.id if self.execution is not None else None
 
     def compose(self) -> ComposeResult:
         yield ExecutionBody(id="execution-body")
@@ -550,11 +551,11 @@ class ExecutionPane(VerticalScroll):
     def read_execution(self, request: int, execution_id: int) -> None:
         execution = self.reader.execution(execution_id)
         # Read here, off the UI thread: it looks for every output file, which a redraw must not.
-        detail = execution_detail(execution) if isinstance(execution, dict) else None
+        detail = None if isinstance(execution, str) else execution_detail(execution)
         if not get_current_worker().is_cancelled:
             self.app.call_from_thread(self.show_execution, request, execution_id, execution, detail)
 
-    def show_execution(self, request: int, execution_id: int, execution: dict[str, Any] | str, detail: ExecutionDetail | None = None) -> None:
+    def show_execution(self, request: int, execution_id: int, execution: ExecutionRow | str, detail: ExecutionDetail | None = None) -> None:
         if not self.is_attached or request != self.read_count:
             return
         if isinstance(execution, str):
@@ -576,8 +577,8 @@ class ExecutionPane(VerticalScroll):
             body.update(self.message)
             return
         # Text, not str: a str title is parsed as markup, and the job name is the user's.
-        title = Text(f"Execution {execution_label(self.execution)}: {self.execution['job_name']} ")
-        title.append(self.execution["status"], style=STATUS_STYLE.get(self.execution["status"], ""))
+        title = Text(f"Execution {self.execution.label}: {self.execution.job_name} ")
+        title.append(self.execution.status, style=STATUS_STYLE.get(self.execution.status, ""))
         self.border_title = title
         text, self.shown = execution_detail_text(self.detail, self.scrollable_content_region.width, self.selected)
         body.update(text)
