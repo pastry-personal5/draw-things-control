@@ -9,11 +9,11 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, TextIO
+from typing import Protocol, TextIO, TypeVar
 
 from loguru import logger
 
-from draw_things_control.core.draw_things_arguments import CommandArguments, DrawThingsGenerateArguments
+from draw_things_control.core.arguments import CommandArguments, DrawThingsGenerateArguments
 from draw_things_control.core.process.groups import process_group_alive, send_to_process_group
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor, OutputStream, ProcessMessage
 from draw_things_control.core.process.signals import install_signal_handlers, restore_signal_handlers
@@ -48,10 +48,13 @@ class StoppableRunner(Runner, Protocol):
 ChildStartCallback = Callable[[int, str], None]
 
 
-class RunnerFactory(Protocol):
+R_co = TypeVar("R_co", bound=Runner, covariant=True)
+
+
+class RunnerFactory(Protocol[R_co]):
     """Creates the runner for one request; ``on_message`` receives each line the child prints, and ``on_start`` its PID and name; either may be None."""
 
-    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> StoppableRunner: ...
+    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> R_co: ...
 
 
 @dataclass(frozen=True)

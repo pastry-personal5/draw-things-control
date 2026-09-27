@@ -7,10 +7,12 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from draw_things_control.core.configuration import load_config
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_config import load_config
+from draw_things_control.core.errors import ToolMissingError
+from draw_things_control.core.generation import GenerateRequest, GenerationService, require_executable
 
 
 @dataclass(frozen=True)
@@ -30,15 +32,16 @@ class FakeRunner:
 
 class GenerationServiceTests(unittest.TestCase):
     def test_preview_does_not_find_or_launch_executable(self) -> None:
-        def unexpected(*_args: object) -> None:
+        def unexpected(*_args: object) -> Any:
             self.fail("Dry run must not inspect or launch an executable")
 
         service = GenerationService(runner_factory=unexpected, find_executable=unexpected, config_loader=unexpected)
         arguments = DrawThingsGenerateArguments(model="example.ckpt", cloud_compute=True, api_key="secret")
         outcome = service.execute(arguments, dry_run=True, timeout=None, shutdown_grace=10)
         self.assertEqual(outcome.exit_code, 0)
-        self.assertIn("[redacted]", outcome.command_preview)
-        self.assertNotIn("secret", outcome.command_preview)
+        preview = outcome.command_preview or ""
+        self.assertIn("[redacted]", preview)
+        self.assertNotIn("secret", preview)
 
     def test_timeout_maps_to_shell_exit_code_124(self) -> None:
         captured: list[tuple[float | None, float]] = []
@@ -82,12 +85,9 @@ class GenerationServiceTests(unittest.TestCase):
         self.assertEqual(received, [(arguments, None, 1, None, None), (arguments, None, 1, callback, print)])
 
 
-def generate_options(**changes: object) -> dict[str, object]:
-    """The options the generate command passes to prepare, all unset except ``changes``."""
-    names = ("models_dir", "model", "prompt", "prompt_file", "negative_prompt", "negative_prompt_file", "steps", "cfg", "width", "height", "frames", "strength", "seed", "config_json", "config_file", "image", "audio", "audio_encoder_file", "segment_frames", "cond_frames", "output", "video_format", "terminal_image_protocol", "download_missing", "remote_url", "remote_port", "remote_tls", "remote_shared_secret", "api_key", "cloud_api_base_url")
-    flags = ("avc", "terminal_image", "disable_preview", "offline", "remote", "cloud_compute")
-    options: dict[str, object] = dict.fromkeys(names) | dict.fromkeys(flags, False) | {"executable": "draw-things-cli"}
-    return options | changes
+def generate_options(**changes: Any) -> GenerateRequest:
+    """The request the generate command builds, all unset except ``changes``."""
+    return GenerateRequest(**changes)
 
 
 class ConfigurationFileTests(unittest.TestCase):
@@ -120,7 +120,7 @@ class ConfigurationFileTests(unittest.TestCase):
         self.assertNotIn("--config-file", command)
         self.assertEqual(command.count("--config-json"), 1)
         preview = self.service.execute(arguments, dry_run=True, timeout=None, shutdown_grace=1).command_preview
-        split = shlex.split(preview)
+        split = shlex.split(preview or "")
         self.assertEqual(json.loads(split[split.index("--config-json") + 1]), {"model": "base.ckpt", "steps": 8, "shift": 3.99, "loras": [], "sharpness": 0.5})
         self.service.execute(arguments, dry_run=False, timeout=None, shutdown_grace=1)
         self.assertEqual(self.launched, [arguments])
@@ -130,13 +130,6 @@ class ConfigurationFileTests(unittest.TestCase):
         config = self.write("wan.YML", "model: base.ckpt\n")
         arguments = self.service.prepare(generate_options(config_file=config))
         self.assertEqual((arguments.config_file, arguments.config_json), (None, '{"model":"base.ckpt"}'))
-
-    def test_json_file_is_passed_through(self) -> None:
-        config = self.write("wan.json", '{"model": "base.ckpt", "steps": 30}')
-        arguments = self.service.prepare(generate_options(config_file=config, config_json='{"steps": 8}'))
-        self.assertEqual((arguments.config_file, arguments.config_json), (config, '{"steps": 8}'))
-        command = list(arguments.command)
-        self.assertEqual(command[command.index("--config-file") + 1], str(config))
 
     def test_the_format_follows_the_name_given_not_a_symlink_target(self) -> None:
         target = self.write("v3", "model: base.ckpt\n")
@@ -149,3 +142,16 @@ class ConfigurationFileTests(unittest.TestCase):
         config = self.write("wan.yaml", "model: a\nmodel: b\n")
         with self.assertRaisesRegex(ValueError, r"wan\.yaml \(key 'model' appears twice on line 2\)"):
             self.service.prepare(generate_options(config_file=config))
+
+
+class RequireExecutableTests(unittest.TestCase):
+    def test_a_missing_executable_is_a_tool_error_that_is_still_a_value_error(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"Could not find 'nope' on PATH\. Install Draw Things CLI or pass --executable"):
+            require_executable(lambda name: None, "nope")
+        try:
+            require_executable(lambda name: None, "nope")
+        except ToolMissingError as error:
+            self.assertEqual(error.code, "tool_missing")
+
+    def test_a_found_executable_is_returned(self) -> None:
+        self.assertEqual(require_executable(lambda name: f"/bin/{name}", "draw-things-cli"), "/bin/draw-things-cli")

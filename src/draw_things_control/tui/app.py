@@ -16,7 +16,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
 
-from draw_things_control.core.draw_things_arguments import command_settings
+from draw_things_control.core.arguments import command_settings
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock

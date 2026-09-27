@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.process.output import OutputProcessor, OutputStream
 from draw_things_control.jobs.job_service import JobService
 

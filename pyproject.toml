@@ -52,7 +52,6 @@ venv = ".venv"
 ignore = [
     "tests/state",  # Step 4: the store returns typed rows
     "tests/jobs/test_job_service.py",  # Step 3
-    "tests/core/test_service.py",  # Step 2
     "tests/tui/test_job_definitions.py",  # Step 6
     "tests/cli/test_state_cli.py",  # Step 5
 ]

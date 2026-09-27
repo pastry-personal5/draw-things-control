@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from draw_things_control.core.draw_things_arguments import CommandSettings, DrawThingsGenerateArguments, command_arguments, command_settings
+from draw_things_control.core.arguments import CONFIG_ONLY_KEYS, FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, OVERRIDE_TARGETS, CommandSettings, DrawThingsGenerateArguments, command_arguments, command_settings, override_arguments
 from draw_things_control.core.numbers import positive_whole, setting_number
 
 
@@ -98,3 +98,30 @@ class NumberTests(unittest.TestCase):
     def test_numbers_from_json_text_and_ffprobe_read_alike(self) -> None:
         self.assertEqual([setting_number(value) for value in (5, 5.0, "5", "5.0", True, "N/A", None, 10**400, float("nan"))], [5.0, 5.0, 5.0, 5.0, None, None, None, None, None])
         self.assertEqual([positive_whole(value) for value in (81, 81.0, "81", "81.5", 0, -1, "0", False, "N/A", 10**400)], [81, 81, 81, None, None, None, None, None, None, None])
+
+
+class OverrideTableTests(unittest.TestCase):
+    def test_each_override_key_has_one_target(self) -> None:
+        self.assertEqual(
+            {key: target for key, target in OVERRIDE_TARGETS.items() if target[0] is None},
+            {"refiner_model": (None, "refinerModel"), "refiner_start": (None, "refinerStart"), "shift": (None, "shift")},
+        )
+        self.assertEqual(CONFIG_ONLY_KEYS, {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift"})
+        self.assertEqual(FLAG_CONFIG_KEYS["--cfg"], "guidanceScale")
+        self.assertEqual(OVERRIDE_ARGUMENTS["frame_count"], "--frames")
+        self.assertEqual(OVERRIDE_ARGUMENTS["shift"], "shift")
+
+    def test_every_flag_target_is_an_attribute_of_the_arguments(self) -> None:
+        for key, (flag, _config_key) in OVERRIDE_TARGETS.items():
+            if flag is not None:
+                with self.subTest(key):
+                    self.assertIn(flag[2:].replace("-", "_"), DrawThingsGenerateArguments.__dataclass_fields__)
+
+    def test_overrides_become_the_arguments_they_set(self) -> None:
+        override = {"steps": 8, "guidance_scale": 5.0, "frame_count": 81, "strength": 0.5, "shift": 3.0, "refiner_model": "r.ckpt", "width": None}
+        self.assertEqual(override_arguments(override), {"steps": 8, "cfg": 5.0, "frames": 81, "strength": 0.5})
+
+    def test_a_flag_wins_over_the_same_config_json_key_when_settings_are_read_back(self) -> None:
+        command = ("draw-things-cli", "generate", "--cfg", "4", "--steps", "9", "--config-json", '{"guidanceScale": 7, "steps": 30, "shift": 3.99}')
+        settings = command_settings(command)
+        self.assertEqual((settings.cfg, settings.steps, settings.shift), (4.0, 9, 3.99))

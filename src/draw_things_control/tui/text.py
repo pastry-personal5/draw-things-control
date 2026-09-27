@@ -13,8 +13,8 @@ from typing import Any
 from rich.style import Style
 from rich.text import Text
 
+from draw_things_control.core.arguments import FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, CommandSettings, command_arguments, command_settings, config_json
 from draw_things_control.core.cooldown import parse_cooldown
-from draw_things_control.core.draw_things_arguments import CommandSettings, command_arguments, command_settings, config_json
 from draw_things_control.core.numbers import setting_number
 from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.job_definition import GenerationMode, JobDefinition
@@ -657,22 +657,6 @@ def output_measure_text(run: dict[str, Any]) -> str:
 
 # The prompt flags, which /get param leaves out; /get prompts shows them.
 PROMPT_FLAGS = ("--prompt", "--negative-prompt", "--prompt-file", "--negative-prompt-file")
-# The --config-json key each flag replaces when both are given (a flag wins, as draw-things-cli applies them).
-FLAG_CONFIG_KEYS = {"--model": "model", "--steps": "steps", "--cfg": "guidanceScale", "--width": "width", "--height": "height", "--frames": "numFrames", "--strength": "strength", "--seed": "seed"}
-# A job's configuration overrides, and the flag or --config-json key each becomes (JobService._plan_run and build_config_json).
-OVERRIDE_ARGUMENTS = {
-    "model": "--model",
-    "steps": "--steps",
-    "guidance_scale": "--cfg",
-    "width": "--width",
-    "height": "--height",
-    "frame_count": "--frames",
-    "strength": "--strength",
-    "seed": "--seed",
-    "refiner_model": "refinerModel",
-    "refiner_start": "refinerStart",
-    "shift": "shift",
-}
 
 
 def find_run(execution: dict[str, Any], run_number: int | None) -> dict[str, Any] | str:

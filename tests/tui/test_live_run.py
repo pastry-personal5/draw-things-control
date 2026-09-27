@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core import run_lock
-from draw_things_control.core.draw_things_arguments import redact_command
+from draw_things_control.core.arguments import redact_command
 from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.job_definition import load_job

@@ -58,7 +58,7 @@ different file.
 | Command | Purpose |
 |---------|---------|
 | `generate` | Generate one image or video |
-| `validate-config FILE` | Check a Draw Things YAML or JSON configuration |
+| `validate-config FILE` | Check a Draw Things YAML configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
 | `run-job FILE` | Run every generation in a job, chained |
 | `import-history` | Import phase 1 job manifests into the execution history |
@@ -97,7 +97,7 @@ Common options:
 | `-m`, `--model` | Model file; may come from the configuration instead. An explicit `--model` wins |
 | `-p`, `--prompt`, `--negative-prompt` | Prompt text |
 | `--prompt-file`, `--negative-prompt-file` | Read from a file, or `-` for stdin (only one may use stdin) |
-| `--config-file` (alias `--config`) | YAML or JSON configuration file; see [base configurations](#base-configurations). None is used by default |
+| `--config-file` (alias `--config`) | YAML configuration file, passed to `draw-things-cli` inline with `--config-json`; see [base configurations](#base-configurations). None is used by default |
 | `--image` | Reference image; repeat for several, in order |
 | `--steps`, `--cfg`, `--width`, `--height`, `--frames`, `--strength`, `-s/--seed` | Generation settings; left out, Draw Things picks its recommended values |
 | `-o`, `--output` | Output file. Without it, the image previews in the terminal |
@@ -143,13 +143,11 @@ with its name and the line or key path, for example `loras[0].version`:
 - The keys a merge (`<<`) brings in follow the same rules, though the mapping
   itself may override them.
 
-Where each format is accepted:
-
-| Used by | YAML (`.yaml`, `.yml`) | JSON (`.json`) |
-|---------|------------------------|----------------|
-| A job's `config_file` | Yes | No: rejected, naming the YAML file with the same name if there is one |
-| `generate --config-file` | Yes, passed inline with `--config-json`, any `--config-json` merged on top | Yes, passed to `draw-things-cli` as a file |
-| `validate-config` | Yes | Yes |
+Every command takes YAML only: a job's `config_file`, `generate --config-file`
+(any `--config-json` is merged on top), and `validate-config`. A `.json` file is
+rejected (exit code 2), naming the YAML file with the same name if there is
+one beside it, and is never changed. Job files and the global configuration
+are read by the same strict rules.
 
 Check a file before use:
 
@@ -159,7 +157,7 @@ uv run dtc validate-config data/params/image-to-video-wan-2-2.example.yaml
 
 The files in `data/params/`, YAML and JSON alike, are yours: this tool reads
 them and never changes them. The JSON files from before YAML support are left
-as they are; each has a YAML copy with the same name (`.yaml`) for jobs to use.
+as they are; each has a YAML copy with the same name (`.yaml`) to use instead.
 
 ## Jobs: chained runs
 

@@ -20,7 +20,7 @@ from unittest import mock
 
 from loguru import logger
 
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.process.output import OutputStream
 from draw_things_control.jobs import job_service
 from draw_things_control.jobs.job_definition import JobDefinition, load_job

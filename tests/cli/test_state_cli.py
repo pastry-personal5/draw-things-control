@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from draw_things_control.cli import app as cli
 from draw_things_control.cli.app import app, create_job_runner
 from draw_things_control.core import run_lock
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.job_service import JobService
 from draw_things_control.state.store import Store
@@ -44,7 +44,7 @@ class StateCliTests(JobTestCase):
             cooldown=lambda seconds: seconds,
         )
         for patcher in (
-            mock.patch("draw_things_control.core.generation_config.PARAMS_DIRECTORY", self.params),
+            mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params),
             mock.patch.object(run_lock, "STATE_DIRECTORY", self.state),
             mock.patch.object(cli, "job_service", self.fake_service),
         ):

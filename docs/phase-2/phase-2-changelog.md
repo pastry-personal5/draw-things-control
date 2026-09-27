@@ -5,6 +5,11 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 2 differs from the plan.
+  - `generate` and `validate-config` look for the YAML twin of a refused JSON file beside it, not in `data/params/`; the two are the same for the project's own files.
+  - `argument_rows` and `_config_value` stay in the TUI, since they write words for a person; only the override table moved to `core/arguments.py`.
+  - `RunnerFactory` is one generic protocol (`RunnerFactory[Runner]` for the generation use case, `RunnerFactory[StoppableRunner]` for jobs), so the two uses share one declaration.
+
 - **Design decision** [M11]: Where Step 1 differs from the plan.
   - Pyright starts with `ignore` entries for the test files that later steps rewrite (159 of 226 errors, mostly optional subscripts of store rows that Step 4 types), instead of fixing them twice. Each step removes its entries.
   - `ProjectPaths` is defined in Step 1 and is the one source of the project's directories, but passing it down instead of patching module constants happens in the step that rewrites each layer.

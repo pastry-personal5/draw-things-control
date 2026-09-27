@@ -15,32 +15,53 @@ class DrawThingsCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
 
-    def test_load_config_rejects_non_object(self) -> None:
+    def test_load_config_rejects_non_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
-            path.write_text("[]", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "JSON object"):
+            path = Path(directory) / "config.yaml"
+            path.write_text("[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must contain one YAML mapping"):
                 load_config(path)
+
+    def test_json_configurations_are_refused_and_left_as_they_are(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "wan.json").write_text('{"model": "example.ckpt"}', encoding="utf-8")
+            (root / "solo.json").write_text("{}", encoding="utf-8")
+            (root / "wan.yaml").write_text("model: example.ckpt\n", encoding="utf-8")
+            for command in (["validate-config", str(root / "wan.json")], ["generate", "--config-file", str(root / "wan.json"), "--dry-run"]):
+                with self.subTest(command=command[0]):
+                    result = self.runner.invoke(app, command)
+                    self.assertEqual(result.exit_code, 2, result.output)
+            self.assertEqual(self.runner.invoke(app, ["validate-config", str(root / "wan.json")]).exit_code, 2)
+            with self.assertRaisesRegex(ValueError, r"wan\.json is JSON; use wan\.yaml instead"):
+                load_config(root / "wan.json")
+            with self.assertRaisesRegex(ValueError, r"solo\.json is JSON, but this command needs a YAML configuration; write solo\.yaml in"):
+                load_config(root / "solo.json")
+            with self.assertRaisesRegex(ValueError, r"must be a YAML file"):
+                load_config(root / "wan.txt")
+            self.assertEqual((root / "wan.json").read_text(encoding="utf-8"), '{"model": "example.ckpt"}')
+            self.assertEqual(sorted(path.name for path in root.iterdir()), ["solo.json", "wan.json", "wan.yaml"])
 
     def test_example_shape_uses_model_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config = root / "config.json"
+            config = root / "config.yaml"
             image = root / "source.png"
-            config.write_text(json.dumps({"model": "example.ckpt"}), encoding="utf-8")
+            config.write_text("model: example.ckpt\n", encoding="utf-8")
             image.touch()
             result = self.runner.invoke(app, ["generate", "--config-file", str(config), "--image", str(image), "--output", str(root / "output.mov"), "--dry-run"])
             self.assertEqual(result.exit_code, 0, result.output)
             command = shlex.split(result.stdout.strip())
-            self.assertIn("--config-file", command)
+            self.assertNotIn("--config-file", command)
+            self.assertEqual(command[command.index("--config-json") + 1], '{"model":"example.ckpt"}')
             self.assertEqual(command[command.index("--model") + 1], "example.ckpt")
             self.assertEqual(command[command.index("--image") + 1], str(image.resolve()))
 
     def test_explicit_model_overrides_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config = root / "config.json"
-            config.write_text(json.dumps({"model": "config.ckpt"}), encoding="utf-8")
+            config = root / "config.yaml"
+            config.write_text("model: config.ckpt\n", encoding="utf-8")
             result = self.runner.invoke(app, ["generate", "--config", str(config), "-m", "override.ckpt", "--dry-run"])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("--model override.ckpt", result.stdout)
@@ -83,8 +104,8 @@ class DrawThingsCliTests(unittest.TestCase):
 
     def test_validate_config_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.json"
-            config.write_text('{"model": "example.ckpt"}', encoding="utf-8")
+            config = Path(directory) / "config.yaml"
+            config.write_text("model: example.ckpt\n", encoding="utf-8")
             result = self.runner.invoke(app, ["validate-config", str(config)])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("example.ckpt", result.stdout)

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import overload
 
-from draw_things_control.core import generation_config
+from draw_things_control.core import draw_things_config
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_definition import JobDefinition
@@ -92,7 +92,7 @@ class JobCatalog:
     @property
     def gives_ids(self) -> bool:
         try:
-            return self.directory.expanduser().resolve() == generation_config.JOBS_DIRECTORY.resolve()
+            return self.directory.expanduser().resolve() == draw_things_config.JOBS_DIRECTORY.resolve()
         except OSError:
             return False
 
@@ -216,7 +216,7 @@ class JobCatalog:
             row, dependencies = JobRow(path, None, error_text(path, error), changed=changed), None
         else:
             row = JobRow(path, job, changed=changed)
-            inputs = ((job.input,) if job.input is not None else ()) + (generation_config.PARAMS_DIRECTORY / job.config_file,)
+            inputs = ((job.input,) if job.input is not None else ()) + (draw_things_config.PARAMS_DIRECTORY / job.config_file,)
             dependencies = tuple((dependency, signature(dependency)) for dependency in inputs)
         with self._lock:
             self._cache[path] = (own, dependencies, row)

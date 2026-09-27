@@ -6,7 +6,7 @@ import signal
 from dataclasses import replace
 from unittest import mock
 
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
 from draw_things_control.jobs.job_events import combine_observers
 from draw_things_control.jobs.job_service import JobService, PlannedRun

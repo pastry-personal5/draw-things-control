@@ -291,13 +291,13 @@ says otherwise.
 
 - One table in `core/arguments.py` says, for each job override key, the flag
   or `--config-json` key it becomes. `JobPlanner`, `build_config_json`,
-  `command_settings`, and the TUI's argument table read it (D8). The argument
-  rows (`argument_rows`, value comparison) move to `core/arguments.py`; only
-  their layout as text stays in the TUI.
+  `command_settings`, and the TUI's argument table read it (D8). The
+  argument rows (`argument_rows`, `_config_value`) stay in the TUI: they
+  write words for a person, and the API returns the command itself.
 - `generate --config-file` and `validate-config` read YAML only (owner
   decision). A `.json` file is refused with exit code 2 and a message that
-  names the YAML file of the same stem in `data/params/` when there is one,
-  from the same function that tells jobs so today; the JSON file is never
+  names the YAML file of the same stem beside it when there is one, from the
+  same function that tells jobs so today (a job looks in `data/params/`); the JSON file is never
   touched. `load_config`'s JSON branch goes, and the builder no longer writes
   `--config-file`: a YAML configuration always reaches `draw-things-cli` as
   `--config-json`. The flag stays in `GENERATE_FLAGS`, so saved commands

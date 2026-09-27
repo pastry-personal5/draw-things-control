@@ -34,7 +34,7 @@ class JobDefinitionTests(TuiTestCase):
     def setUp(self) -> None:
         super().setUp()
         # The test's data directory stands for the project's data/jobs/, the one directory whose files get IDs.
-        patcher = mock.patch("draw_things_control.core.generation_config.JOBS_DIRECTORY", self.data)
+        patcher = mock.patch("draw_things_control.core.draw_things_config.JOBS_DIRECTORY", self.data)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -231,7 +231,7 @@ class JobCatalogTests(TuiTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        patcher = mock.patch("draw_things_control.core.generation_config.JOBS_DIRECTORY", self.data)
+        patcher = mock.patch("draw_things_control.core.draw_things_config.JOBS_DIRECTORY", self.data)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.catalog = JobCatalog(self.data, self.global_config)

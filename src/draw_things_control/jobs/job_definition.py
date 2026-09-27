@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, NoReturn
 
-from draw_things_control.core import generation_config
+from draw_things_control.core import draw_things_config
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, parse_cooldown, replaced_cooldown_message
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.numbers import is_int, is_number
@@ -147,7 +147,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
     writes the copy right away passes ``decode_input=False``, since writing it decodes the input anyway.
     """
-    params_directory = params_directory or generation_config.PARAMS_DIRECTORY
+    params_directory = params_directory or draw_things_config.PARAMS_DIRECTORY
     path = path.expanduser().resolve()
     data, source_text = read_yaml_file(path, "Job file", show_source=True)
     fail = _Failure(path)
@@ -179,7 +179,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
     if not isinstance(config_file, str):
         fail("config_file", "must be a file name")
     try:
-        base_config = generation_config.load_base_config(config_file, params_directory)
+        base_config = draw_things_config.load_base_config(config_file, params_directory)
     except ValueError as error:
         raise ValueError(f"{path}: {error}") from error
     base_seed = base_config.get("seed")

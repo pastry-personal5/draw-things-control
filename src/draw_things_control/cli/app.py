@@ -14,11 +14,11 @@ from typing import Annotated
 import typer
 from loguru import logger
 
-from draw_things_control.core import generation_config
-from draw_things_control.core.configuration import load_config
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
+from draw_things_control.core import draw_things_config
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_config import load_config
 from draw_things_control.core.exit_codes import EXIT_BUSY
-from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.generation import GenerateRequest, GenerationService
 from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor
 from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner
@@ -36,7 +36,7 @@ from draw_things_control.state.store import StateError, Store
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
-DEFAULT_DATA_DIRECTORY = generation_config.JOBS_DIRECTORY
+DEFAULT_DATA_DIRECTORY = draw_things_config.JOBS_DIRECTORY
 
 
 @contextmanager
@@ -178,7 +178,7 @@ def generate(
     for wrapper_option in ("dry_run", "timeout", "shutdown_grace"):
         options.pop(wrapper_option)
     with invalid_input_exits():
-        arguments = service.prepare(options)
+        arguments = service.prepare(GenerateRequest(**{**options, "image": tuple(options["image"] or ())}))
         if dry_run:
             outcome = service.execute(arguments, dry_run=True, timeout=timeout, shutdown_grace=shutdown_grace)
         else:

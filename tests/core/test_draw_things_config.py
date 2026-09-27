@@ -4,8 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from draw_things_control.core.configuration import load_config
-from draw_things_control.core.generation_config import PARAMS_DIRECTORY, build_config_json, find_config_file, load_base_config
+from draw_things_control.core.draw_things_config import PARAMS_DIRECTORY, build_config_json, find_config_file, load_base_config, load_config
 
 
 class GenerationConfigTests(unittest.TestCase):
@@ -113,13 +112,6 @@ class GenerationConfigTests(unittest.TestCase):
     def test_repeated_non_recursive_aliases_are_accepted(self) -> None:
         path = self.write("base.yaml", "lora: &lora {file: l.ckpt, weight: 0.5}\nloras: [*lora, *lora]\n")
         self.assertEqual(load_config(path)["loras"], [{"file": "l.ckpt", "weight": 0.5}] * 2)
-
-    def test_the_example_yaml_configuration_equals_its_json_file(self) -> None:
-        # Reads data/params/ only. The untracked -default files are the owner's to change, so only the tracked example is compared.
-        name = "image-to-video-wan-2-2.example"
-        json_config, yaml_config = load_config(PARAMS_DIRECTORY / f"{name}.json"), load_config(PARAMS_DIRECTORY / f"{name}.yaml")
-        self.assertEqual(yaml_config, json_config)
-        self.assertEqual(list(yaml_config), list(json_config))
 
     def test_named_config_keys_override_the_base(self) -> None:
         base = {"refinerModel": "base.ckpt", "refinerStart": 0.2, "shift": 1.0, "steps": 30}

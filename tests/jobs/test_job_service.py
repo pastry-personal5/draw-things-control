@@ -17,8 +17,8 @@ from unittest import mock
 from loguru import logger
 from PIL import Image
 
+from draw_things_control.core.arguments import DrawThingsGenerateArguments, redact_command
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments, redact_command
 from draw_things_control.core.process.output import OutputStream, ProcessMessage
 from draw_things_control.core.process.signals import install_signal_handlers, restore_signal_handlers
 from draw_things_control.jobs import job_service

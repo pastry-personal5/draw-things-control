@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -23,8 +23,36 @@ GENERATE_FLAGS = (
 )  # fmt: skip
 # The flags written with a value after them; the rest stand alone.
 VALUE_FLAGS = frozenset(flag for flag, kind in GENERATE_FLAGS if kind in ("value", "images"))
+# What each job override key (``config_override`` in a job file) becomes: the draw-things-cli flag it sets, if it has one,
+# and the ``--config-json`` key it replaces. A flag wins over the same key in ``--config-json``, as draw-things-cli applies them.
+OVERRIDE_TARGETS: dict[str, tuple[str | None, str]] = {
+    "model": ("--model", "model"),
+    "steps": ("--steps", "steps"),
+    "guidance_scale": ("--cfg", "guidanceScale"),
+    "width": ("--width", "width"),
+    "height": ("--height", "height"),
+    "frame_count": ("--frames", "numFrames"),
+    "strength": ("--strength", "strength"),
+    "seed": ("--seed", "seed"),
+    "refiner_model": (None, "refinerModel"),
+    "refiner_start": (None, "refinerStart"),
+    "shift": (None, "shift"),
+}
+# The override keys draw-things-cli has no flag for, and their Draw Things names.
+CONFIG_ONLY_KEYS = {key: config_key for key, (flag, config_key) in OVERRIDE_TARGETS.items() if flag is None}
+# The --config-json key each flag replaces when both are given.
+FLAG_CONFIG_KEYS = {flag: config_key for flag, config_key in OVERRIDE_TARGETS.values() if flag is not None}
+# The --config-json key of each override key.
+_CONFIG_KEY = {key: config_key for key, (_flag, config_key) in OVERRIDE_TARGETS.items()}
+# The flag, or else the --config-json key, each override key becomes.
+OVERRIDE_ARGUMENTS = {key: flag or config_key for key, (flag, config_key) in OVERRIDE_TARGETS.items()}
 # The flags whose value is a credential, which is never shown or saved.
 SECRET_FLAGS = frozenset(("--api-key", "--remote-shared-secret"))
+
+
+def override_arguments(override: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``DrawThingsGenerateArguments`` keywords that the job overrides set, by the flag each becomes; a key with no flag is skipped."""
+    return {flag[2:].replace("-", "_"): override[key] for key, (flag, _config_key) in OVERRIDE_TARGETS.items() if flag is not None and override.get(key) is not None}
 
 
 def redact_command(command: Sequence[str]) -> list[str]:
@@ -182,12 +210,12 @@ def command_settings(command: Sequence[str]) -> CommandSettings:
             flags.setdefault(flag, value)
     config = _config_json(flags.get("--config-json"))
     return CommandSettings(
-        model=flags.get("--model") or _text(config.get("model")),
-        refiner_model=_text(config.get("refinerModel")),
-        refiner_start=setting_number(config.get("refinerStart")),
-        cfg=setting_number(flags["--cfg"]) if "--cfg" in flags else setting_number(config.get("guidanceScale")),
-        shift=setting_number(config.get("shift")),
-        steps=positive_whole(flags["--steps"]) if "--steps" in flags else positive_whole(config.get("steps")),
+        model=flags.get("--model") or _text(config.get(_CONFIG_KEY["model"])),
+        refiner_model=_text(config.get(_CONFIG_KEY["refiner_model"])),
+        refiner_start=setting_number(config.get(_CONFIG_KEY["refiner_start"])),
+        cfg=setting_number(flags["--cfg"]) if "--cfg" in flags else setting_number(config.get(_CONFIG_KEY["guidance_scale"])),
+        shift=setting_number(config.get(_CONFIG_KEY["shift"])),
+        steps=positive_whole(flags["--steps"]) if "--steps" in flags else positive_whole(config.get(_CONFIG_KEY["steps"])),
     )
 
 

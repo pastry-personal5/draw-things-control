@@ -18,13 +18,12 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from draw_things_control.core.arguments import DrawThingsGenerateArguments, override_arguments, redact_command
 from draw_things_control.core.clock import Clock, local_timestamp
-from draw_things_control.core.configuration import load_config
 from draw_things_control.core.cooldown import CooldownWait
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.draw_things_config import build_config_json, load_config
 from draw_things_control.core.exit_codes import exit_code_for_signal, signal_for_exit_code
-from draw_things_control.core.generation_config import build_config_json
-from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.generation import GenerationService, require_executable
 from draw_things_control.core.process.output import MessageCallback, ProcessMessage
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import install_signal_handlers, interruptible_wait, restore_signal_handlers
@@ -118,7 +117,7 @@ class JobService:
 
     def __init__(
         self,
-        runner_factory: RunnerFactory,
+        runner_factory: RunnerFactory[StoppableRunner],
         find_executable: Callable[[str], str | None],
         frame_extractor: FrameExtractor,
         require_ffmpeg: Callable[[], object],
@@ -551,27 +550,12 @@ class JobService:
         if job.size is not None:
             width, height = job.size
             config["width"], config["height"] = job.size
-        arguments = DrawThingsGenerateArguments(
-            model=job.model,
-            executable=executable,
-            prompt=pair.positive,
-            negative_prompt=pair.negative,
-            steps=override.steps,
-            cfg=override.guidance_scale,
-            width=width,
-            height=height,
-            frames=override.frame_count,
-            strength=override.strength,
-            seed=seed,
-            config_json=json.dumps(config, separators=(",", ":")),
-            image=run_input,
-            output=output,
-        )
+        flags = {**override_arguments(override.as_dict()), "model": job.model, "width": width, "height": height, "seed": seed}
+        arguments = DrawThingsGenerateArguments(executable=executable, prompt=pair.positive, negative_prompt=pair.negative, config_json=json.dumps(config, separators=(",", ":")), image=run_input, output=output, **flags)
         return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments)
 
     def _check_tools(self, job: JobDefinition, executable: str) -> None:
-        if self._find_executable(executable) is None:
-            raise ValueError(f"Could not find '{executable}' on PATH. Install Draw Things CLI or pass --executable with its path.")
+        require_executable(self._find_executable, executable)
         if job.mode.is_video:
             self._require_ffmpeg()
             # A video job that could not measure its outputs would record no actual size, so it does not start.
