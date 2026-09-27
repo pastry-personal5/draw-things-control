@@ -27,7 +27,7 @@ In scope:
 Out of scope:
 
 - Editing, deleting, or deduplicating any `dt-config/*.json` file. They stay
-  exactly as they are ([development rules](../development-rules.md#project-layout)).
+  exactly as they are ([development rules](../../development-rules.md#project-layout)).
 - A conversion command. The conversion is done once, by hand, in this
   milestone; after it, people write YAML themselves.
 - Writing any configuration file from the app. It reads YAML and passes

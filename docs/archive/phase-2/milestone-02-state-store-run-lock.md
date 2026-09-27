@@ -55,8 +55,8 @@ Out of scope:
 ### Dependency direction
 
 The recorder consumes `jobs/job_events.py`, so `state` depends on `jobs`. The
-rule in [development-rules.md](../development-rules.md), `AGENTS.md`, and
-[architecture.md](../architecture.md) becomes `cli`, `tui`, `server` ->
+rule in [development-rules.md](../../development-rules.md), `AGENTS.md`, and
+[architecture.md](../../architecture.md) becomes `cli`, `tui`, `server` ->
 `state` -> `jobs` -> `core`; `jobs` never imports `state`, so the CLI wires the
 recorder in as an observer. Moving the event types into `core/` was rejected:
 they describe `JobService` concepts. `core/run_lock.py` stays in `core/`.
@@ -229,7 +229,7 @@ same way.
 ## Documentation
 
 In the same change: add exit code 75 to the exit-code list in
-[architecture.md](../architecture.md) and the [user guide](../user-guide.md);
+[architecture.md](../../architecture.md) and the [user guide](../../user-guide.md);
 document `import-history`, the `state/` directory, `history_retention_days`,
 and the orphaned-child guard in the user guide; update the source layout and the
 import-direction line in architecture, `development-rules.md`, and `AGENTS.md`;

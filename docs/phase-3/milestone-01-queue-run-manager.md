@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
 **Status:** planned
-**Depends on:** [Phase 2](../phase-2/README.md), Milestones 01 and 02
+**Depends on:** [Phase 2](../archive/phase-2/README.md), Milestones 01 and 02
 
 ## Goal
 
@@ -37,9 +37,8 @@ Out of scope:
   message. Schema is a forward migration of the Phase 2 store.
 - Submitting takes a job file name, validates it, and stores the text and
   settings. The stored text, not the file, is what runs: the worker parses it
-  when the job starts with a new `load_job_text(text, global_config, ...)`
-  in `jobs/parsing.py`, which shares all validation with `load_job`
-  (which becomes a thin wrapper that reads the file). Input files are
+  when the job starts with `load_job_text(text, path, global_config, params_directory)`
+  in `jobs/parsing.py` (Phase 2 built it; it shares all validation with `load_job`). Input files are
   checked when the job starts, so a file removed in the meantime fails the
   job, naming the path, before any run begins.
 - States:
@@ -58,7 +57,7 @@ Out of scope:
 - FIFO order. Position is the submission order.
 - Finished entries (`succeeded`, `failed`, `cancelled`, `interrupted`) are
   pruned with the rest of the history under `history_retention_days`
-  ([Phase 2, Milestone 02](../phase-2/milestone-02-state-store-run-lock.md#retention)).
+  ([Phase 2, Milestone 02](../archive/phase-2/milestone-02-state-store-run-lock.md#retention)).
   `queued` and `running` entries never are. A pruned entry can no longer be
   resumed.
 
@@ -71,8 +70,8 @@ Out of scope:
   usable for browsing and history, and the busy message names `serve` as
   the holder.
 - It takes the oldest `queued` entry and runs it with
-  `JobRunSession.run(observers=...)` (which holds no lock of its own when the
-  server passes the one it holds), recording runs
+  `JobRunSession.run(observers=..., lock=...)` (which uses and leaves held the
+  lock the server passes), recording runs
   through the Phase 2 recorder.
 - After a job finishes, the worker waits the finished job's resolved
   `cooldown` (from the snapshot; since Phase 2 Milestone 07 a

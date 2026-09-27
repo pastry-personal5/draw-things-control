@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 2: Terminal UI for Humans](README.md)
 **Status:** done
-**Depends on:** [Phase 1](../archive/phase-1/README.md)
+**Depends on:** [Phase 1](../phase-1/README.md)
 
 ## Goal
 
@@ -165,7 +165,7 @@ anything that test finds.
 ## Documentation
 
 In the same change: update the Phase 2 bullet in
-[architecture.md](../architecture.md) (events, `cancel()`, no `LogObserver`),
+[architecture.md](../../architecture.md) (events, `cancel()`, no `LogObserver`),
 the code-layout paragraph in the [phase document](README.md), and the recorder
 description in [Milestone 02](milestone-02-state-store-run-lock.md) (drop "composed
 with the CLI's log observer"; it is combined with a UI observer instead). Add

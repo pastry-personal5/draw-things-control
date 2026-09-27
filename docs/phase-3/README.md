@@ -53,9 +53,9 @@ before anything can be submitted or written.
 
 ## Depends on
 
-[Phase 2](../phase-2/README.md): job events and `cancel()`, the state store,
+[Phase 2](../archive/phase-2/README.md): job events and `cancel()`, the state store,
 and the run lock, in the layout that
-[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md) gives
+[Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) gives
 them. Those are used unchanged; the server is one more front end beside the
 CLI and the TUI.
 
@@ -77,7 +77,7 @@ or `state/` as fits: a queue repository in `state/`, and a worker built on
 `services/job_runs.py`. The parts a server shares with the CLI and the TUI
 (`Toolkit`, `JobRunSession`, `JobCatalog`, `HistoryReader`, `event_to_dict`,
 the error codes) are in `services/`, `jobs/`, and `core/` already, from
-[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md).
+[Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md).
 
 ## Changelog
 

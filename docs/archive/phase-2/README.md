@@ -1,6 +1,6 @@
 # Phase 2: Terminal UI for Humans
 
-**Status:** in-progress
+**Status:** done (2026-09-27)
 
 ## Goal
 
@@ -46,7 +46,7 @@ processes from driving the GPU at once.
 - Editing `data/params/*.json` or the global configuration from anywhere.
 - Parallel generation. One run at a time, machine-wide.
 - A queue of jobs. Phase 2 runs one job at a time; queuing is
-  [Phase 3](../phase-3/README.md).
+  [Phase 3](../../phase-3/README.md).
 - Recording the one-off `generate` command in the state store. It takes the
   run lock, but it is not a job and stays out of history.
 - Image or video preview inside the terminal.
@@ -87,7 +87,7 @@ as AGENTS.md requires.
 ## Code layout
 
 All code lives in the `src/draw_things_control/` package (see
-[architecture](../architecture.md)). The TUI lives in `tui/`. Shared new
+[architecture](../../architecture.md)). The TUI lives in `tui/`. Shared new
 modules: `jobs/events.py` (Milestone 01), and `state/store.py`,
 `state/recorder.py`, `state/history_import.py`, and `core/run_lock.py`
 (Milestone 02).

@@ -76,7 +76,8 @@ Keep documents current in the same change that alters behavior.
 | this file | Rules for changing the project |
 | `AGENTS.md` | Short instructions for AI agents |
 | `docs/research/` | Saved upstream help and background notes |
-| `docs/phase-<n>/` | Plans and decisions, described below |
+| `docs/phase-<n>/` | Plans and decisions of the current and planned phases, described below |
+| `docs/archive/phase-<n>/` | A finished phase's documents, moved here unchanged when the phase is done |
 
 ### Phases and milestones
 
@@ -96,6 +97,7 @@ docs/phase-<n>/phase-<n>-changelog.md           # changelog
 - Link every new milestone from its phase document. Update statuses when work
   lands. Never renumber milestones; append new ones.
 - Phase documents carry a `**Status:**` line under the title.
+- When a phase is done, set its status to `done (YYYY-MM-DD)`, move its directory to `docs/archive/`, and fix the links to it.
 
 ### Changelog
 

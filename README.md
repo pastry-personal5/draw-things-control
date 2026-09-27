@@ -33,7 +33,7 @@ uv run dtc tui
 - [User guide](docs/user-guide.md): commands, jobs, outputs, and the terminal UI
 - [Architecture](docs/architecture.md): modules, process supervision, exit codes
 - [Development rules](docs/development-rules.md): style, checks, docs, git
-- [Plans and changelogs](docs/README.md): phases 1 to 3
+- [Plans and changelogs](docs/README.md): phases 1 to 3 (1 and 2 are archived)
 
 ## Development
 

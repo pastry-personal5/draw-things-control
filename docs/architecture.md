@@ -49,7 +49,7 @@ other, except that the `dtc tui` command in `cli/app.py` starts the TUI app.
 Nothing below the front ends imports Typer, Textual, or a web framework.
 Launch with `dtc` or `python -m draw_things_control`.
 
-Phase plans: [1](archive/phase-1/README.md), [2](phase-2/README.md),
+Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 [3](phase-3/README.md). Each phase reuses the layers below it unchanged.
 
 ## Modules
@@ -95,7 +95,7 @@ failed, or the state database or lock cannot be used; 2 invalid input; 75 run
 lock held by another run; 124 timeout; 128+N stopped by signal N (130 for
 Ctrl-C); otherwise the CLI's own code.
 
-## Phase 2: TUI and shared state (in progress)
+## Phase 2: TUI and shared state (done)
 
 Adds what every later front end needs, without changing the CLI's behavior.
 

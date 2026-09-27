@@ -7,6 +7,7 @@
 - [Development rules](development-rules.md): style, checks, documentation, git
 - Plans and decisions, by phase:
   - [Phase 1](archive/phase-1/README.md): jobs and chained runs (done)
-  - [Phase 2](phase-2/README.md): terminal UI, state store, run lock (in progress)
+  - [Phase 2](archive/phase-2/README.md): terminal UI, state store, run lock (done)
   - [Phase 3](phase-3/README.md): API server and MCP server (planned)
+  Finished phases live in [archive/](archive/).
 - [Research](research/): saved upstream help and the original example command
