@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
+if TYPE_CHECKING:
+    from loguru import Record
 
-def _format(record: dict[str, Any]) -> str:
+
+def _format(record: Record) -> str:
     # Child lines already start with "[stdout +1.2s]" or "[stderr +1.2s]".
     stream = "" if record["extra"].get("child_stream") else "[app] "
     return "{time:YYYY-MM-DD HH:mm:ss.SSS} " + stream + "{message}\n{exception}"

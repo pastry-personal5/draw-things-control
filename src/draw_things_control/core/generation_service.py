@@ -8,35 +8,13 @@ import signal
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-from draw_things_control.core.configuration import is_yaml_file
-from draw_things_control.core.draw_things_arguments import SECRET_FLAGS, DrawThingsGenerateArguments
-from draw_things_control.core.process_output import MessageCallback
-
-
-class RunResult(Protocol):
-    """The process outcome needed by the generation use case."""
-
-    return_code: int
-    timed_out: bool
-    termination_signal: signal.Signals | None
-
-
-class Runner(Protocol):
-    """A runner that executes one prepared generation request."""
-
-    def run(self) -> RunResult: ...
-
-
-# Receives the PID and executable name of a child once it has started, for example RunLock.record_child.
-ChildStartCallback = Callable[[int, str], None]
-
-
-class RunnerFactory(Protocol):
-    """Creates the runner for one request; ``on_message`` receives each line the child prints, and ``on_start`` its PID and name; either may be None."""
-
-    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> Runner: ...
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.exit_codes import EXIT_TIMEOUT, exit_code_for_child_signal, exit_code_for_signal
+from draw_things_control.core.process.output import MessageCallback
+from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, RunResult
+from draw_things_control.core.yaml_files import is_yaml_file
 
 
 @dataclass(frozen=True)
@@ -153,13 +131,13 @@ class GenerationService:
     def _exit_code(result: RunResult) -> int:
         """Map a run to a shell exit code by cause, not by the child's own code."""
         if result.timed_out:
-            return 124
+            return EXIT_TIMEOUT
         if result.termination_signal is not None:
             # Stopped by the wrapper: report the signal even if the child exited 0.
-            return 128 + result.termination_signal.value
+            return exit_code_for_signal(result.termination_signal)
         if result.return_code < 0:
             # Killed by a signal from outside the wrapper.
-            return 128 - result.return_code
+            return exit_code_for_child_signal(result.return_code)
         return result.return_code
 
     @staticmethod
@@ -175,15 +153,6 @@ class GenerationService:
             return path
         return cls._input_file(Path(path), name)
 
-    @staticmethod
-    def redact_command(command: tuple[str, ...]) -> list[str]:
-        """Return the command with credential values replaced, safe to show or save."""
-        display = list(command)
-        for index, token in enumerate(display[:-1]):
-            if token in SECRET_FLAGS:
-                display[index + 1] = "[redacted]"
-        return display
-
     @classmethod
     def _format_preview(cls, command: tuple[str, ...]) -> str:
-        return shlex.join(cls.redact_command(command))
+        return shlex.join(redact_command(command))

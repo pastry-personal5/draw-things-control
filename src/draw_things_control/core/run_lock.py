@@ -10,23 +10,23 @@ from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 
-from draw_things_control.core.global_config import PROJECT_ROOT
+from draw_things_control.core.errors import BusyError, StateUnavailableError
+from draw_things_control.core.paths import DEFAULT_PATHS, LOCK_FILE_NAME
+from draw_things_control.core.process.groups import process_group_alive
 
 # Fixed, not configurable: every process must share one lock file, whatever configuration it loads.
-STATE_DIRECTORY = PROJECT_ROOT / "state"
-LOCK_FILE_NAME = "run.lock"
-EX_TEMPFAIL = 75
+STATE_DIRECTORY = DEFAULT_PATHS.state
 # A read-only screen probes the lock by holding it for an instant, so a busy lock is retried this long before it is reported.
 BUSY_RETRY_SECONDS = 0.25
 _RETRY_INTERVAL_SECONDS = 0.025
 CHILD_EXECUTABLE_NAME = "draw-things-cli"
 
 
-class RunLockBusy(Exception):
+class RunLockBusy(BusyError):
     """Another run holds the lock, or its draw-things-cli child is still running."""
 
 
-class RunLockError(Exception):
+class RunLockError(StateUnavailableError):
     """The lock file cannot be created or locked, for a reason other than being busy."""
 
 
@@ -54,16 +54,6 @@ def is_draw_things_process(pid: int, name: str = CHILD_EXECUTABLE_NAME) -> bool:
     command = Path(result.stdout.strip()).name
     # Some systems truncate the command name to 15 characters.
     return result.returncode == 0 and bool(command) and (command == name or (len(command) == 15 and name.startswith(command)))
-
-
-def _process_group_alive(process_group_id: int) -> bool:
-    try:
-        os.killpg(process_group_id, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 class RunLock:
@@ -152,7 +142,7 @@ class RunLock:
         if not parts or not parts[0].isdigit():
             return None
         pid, name = int(parts[0]), parts[1].strip() if len(parts) == 2 else CHILD_EXECUTABLE_NAME
-        return (pid, name) if pid > 1 and _process_group_alive(pid) and self._child_check(pid, name) else None
+        return (pid, name) if pid > 1 and process_group_alive(pid, denied_means_alive=True) and self._child_check(pid, name) else None
 
     def _busy_message(self, descriptor: int) -> str:
         lines = self._read(descriptor).splitlines()

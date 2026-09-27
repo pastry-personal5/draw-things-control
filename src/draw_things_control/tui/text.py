@@ -13,10 +13,10 @@ from typing import Any
 from rich.style import Style
 from rich.text import Text
 
-from draw_things_control.core.configuration import is_yaml_file
+from draw_things_control.core.cooldown import parse_cooldown
 from draw_things_control.core.draw_things_arguments import CommandSettings, command_arguments, command_settings, config_json
-from draw_things_control.core.global_config import parse_cooldown
 from draw_things_control.core.numbers import setting_number
+from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.job_definition import GenerationMode, JobDefinition
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
@@ -792,8 +792,9 @@ def argument_rows(command: Sequence[str], notes: dict[str, str]) -> tuple[list[R
     for key, value in config.items():
         marks = [notes[key]] if key in notes else []
         flag = replaced_by.get(key)
-        if flag is not None and given[flag] is not None and not _same_value(given[flag], value):
-            marks.append(f"replaced by {flag} {given[flag]}")
+        flag_value = given[flag] if flag is not None else None
+        if flag is not None and flag_value is not None and not _same_value(flag_value, value):
+            marks.append(f"replaced by {flag} {flag_value}")
         config_rows.append((key, _config_value(value), "; ".join(marks)))
     return flag_rows, config_rows
 

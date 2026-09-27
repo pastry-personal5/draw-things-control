@@ -14,42 +14,30 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.configuration import load_config
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_control.core.draw_things_runner import install_signal_handlers, interruptible_wait, restore_signal_handlers
+from draw_things_control.core.cooldown import CooldownWait
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.exit_codes import exit_code_for_signal, signal_for_exit_code
 from draw_things_control.core.generation_config import build_config_json
-from draw_things_control.core.generation_service import ChildStartCallback, GenerationService, Runner
-from draw_things_control.core.global_config import CooldownWait
-from draw_things_control.core.process_output import MessageCallback, ProcessMessage
+from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.process.output import MessageCallback, ProcessMessage
+from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
+from draw_things_control.core.process.signals import install_signal_handlers, interruptible_wait, restore_signal_handlers
 from draw_things_control.jobs.job_definition import JobDefinition, PromptPair
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, RunFinished, RunOutput, RunStarted, notify
 from draw_things_control.jobs.job_log import add_job_log, remove_job_log
 from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
 from draw_things_control.jobs.job_report import auto_wait_text, cooldown_summary, report_ignored_config, seconds_text
 from draw_things_control.jobs.media_info import MediaInfo
-from draw_things_control.jobs.output_naming import Clock, RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
+from draw_things_control.jobs.output_naming import RandomNumber, job_file_stem, last_frame_path, next_output_path, random_four_digits
 
 if TYPE_CHECKING:
     from draw_things_control.jobs.input_resize import TemporaryInput
-
-
-class StoppableRunner(Runner, Protocol):
-    """A runner the job can ask to stop when it receives a signal."""
-
-    def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None: ...
-
-
-class RunnerFactory(Protocol):
-    """Creates a run's runner; ``on_message`` receives each line the child prints, or is None when nothing observes the job.
-
-    ``on_start``, when given, receives the child's PID and executable name once it has started.
-    """
-
-    def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> StoppableRunner: ...
 
 
 FrameExtractor = Callable[[Path, Path], None]
@@ -188,7 +176,7 @@ class JobService:
             runs.append(run)
             current_input = run.last_frame or run.output
         # The job's timeout was checked when it was loaded, so each command only needs its credentials redacted.
-        commands = tuple(tuple(GenerationService.redact_command(run.arguments.command)) for run in runs)
+        commands = tuple(tuple(redact_command(run.arguments.command)) for run in runs)
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), commands=commands)
 
     def run(self, job: JobDefinition, *, executable: str, shutdown_grace: float, write_records: bool = False, observer: JobObserver | None = None, on_child_start: ChildStartCallback | None = None, reserve_execution_id: Callable[[], str] | None = None) -> JobOutcome:
@@ -426,7 +414,7 @@ class JobService:
             input=str(execution.job.input if number == 1 else run.input) if run.input is not None else None,
             output=run.output.name,
             last_frame=None,
-            command=GenerationService.redact_command(run.arguments.command),
+            command=redact_command(run.arguments.command),
             started_at=self._timestamp(),
             resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
         )
@@ -483,7 +471,7 @@ class JobService:
         """Mark the job interrupted by ``received_signal``; return its exit code."""
         logger.warning("Job stopped by {} {}", received_signal.name, where)
         manifest.status = "interrupted"
-        return 128 + received_signal.value
+        return exit_code_for_signal(received_signal)
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
         self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames))
@@ -491,10 +479,8 @@ class JobService:
     @staticmethod
     def _exit_signal(exit_code: int) -> str | None:
         """The name of the signal a 128+N exit code stands for, or None."""
-        try:
-            return signal.Signals(exit_code - 128).name if exit_code > 128 else None
-        except ValueError:
-            return None
+        received = signal_for_exit_code(exit_code)
+        return received.name if received is not None else None
 
     def _output_callback(self, number: int) -> MessageCallback | None:
         """A callback that turns each child line of run ``number`` into a RunOutput, or None without an observer."""
@@ -529,7 +515,7 @@ class JobService:
                 self._frame_extractor(run.output, run.last_frame)
             except ValueError as error:
                 if self._interrupt is not None:
-                    return "interrupted", 128 + self._interrupt.value
+                    return "interrupted", exit_code_for_signal(self._interrupt)
                 logger.error("{}", error)
                 return "failed", 1
             record.last_frame = run.last_frame.name
@@ -606,7 +592,7 @@ class JobService:
         return runner
 
     def _timestamp(self) -> str:
-        return self._clock().astimezone().isoformat(timespec="seconds")
+        return local_timestamp(self._clock())
 
     def _handle_signal(self, received_signal: signal.Signals) -> None:
         self._interrupt = received_signal

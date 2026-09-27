@@ -48,7 +48,7 @@ def run_estimate(live: LiveRun, now: float) -> Estimate:
         # a refiner, or a video's segments count fewer or more than --steps. Otherwise the past run's whole time stands.
         if past is None:
             return Estimate(fraction)
-        if past.steps != last.total:
+        if past.steps is None or past.steps != last.total:
             return Estimate(fraction, _past_left(live, now, past))
         return Estimate(fraction, _positive((last.total - last.step) * past.seconds / past.steps - (now - last.at)))
     rate = (last.at - first.at) / (last.step - first.step)

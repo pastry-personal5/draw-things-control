@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import overload
 
 from draw_things_control.core import generation_config
+from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.job_definition import JobDefinition
 from draw_things_control.jobs.job_report import PLACEHOLDER_SEED, PlanStep, job_files, plan_header, plan_steps, read_job
@@ -120,7 +121,7 @@ class JobCatalog:
         id_error = None
         if self.gives_ids:
             try:
-                numbers = self._open().assign_job_ids([path.name for path in paths], datetime.now().astimezone().isoformat(timespec="seconds"))
+                numbers = self._open().assign_job_ids([path.name for path in paths], local_timestamp(datetime.now()))
             except Exception as error:
                 # Not only the store's errors: an uncreatable state directory raises RunLockError, and a worker must not raise.
                 id_error = f"Cannot give job IDs: {error}"

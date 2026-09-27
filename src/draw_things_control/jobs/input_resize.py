@@ -8,6 +8,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from loguru import logger
@@ -60,7 +61,8 @@ def to_srgb(image: Image.Image) -> Image.Image:
         except (ImageCms.PyCMSError, OSError, ValueError) as error:
             logger.warning("Could not convert the input's embedded color profile to sRGB ({}); using its pixel values as they are, so colors may shift", error)
         else:
-            return converted
+            if converted is not None:
+                return converted
     return image.convert("RGB")
 
 
@@ -77,7 +79,7 @@ def _to_8_bit_gray(image: Image.Image) -> Image.Image:
     """Scale a 16-bit or 32-bit grayscale image to 8 bits, rounding to the nearest level."""
     if image.mode == "F":
         # Float images are taken as 0.0 to 1.0 when they fit, otherwise as 0 to 65535.
-        low, high = image.getextrema()
+        low, high = cast(tuple[float, float], image.getextrema())
         scale = 255 if 0 <= low and high <= 1 else 255 / 65535
         return image.point(lambda value: value * scale + 0.5).convert("L")
     return image.convert("I").point(lambda value: value * (255 / 65535) + 0.5).convert("L")

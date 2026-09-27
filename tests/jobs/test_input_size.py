@@ -52,7 +52,7 @@ class ResizePlanTests(unittest.TestCase):
     def test_width_alone_derives_height_and_crops(self) -> None:
         plan = self.plan((1920, 1080), width=850)
         self.assertEqual((plan.target_size, plan.fit, plan.scaled_size), ((832, 448), "crop", (832, 468)))
-        self.assertAlmostEqual(plan.crop_percent, 20 / 468 * 100)
+        self.assertAlmostEqual(plan.crop_percent, 20 / 468 * 100)  # pyright: ignore[reportCallIssue, reportArgumentType]  (crop_percent is an exact Fraction, which unittest's stubs do not accept)
         self.assertEqual(plan.describe("photo.jpg"), "Input photo.jpg (1920x1080) will be scaled to 832x468 and cropped to 832x448 (4.3%) for run 1")
 
     def test_height_alone_derives_width_and_crops(self) -> None:

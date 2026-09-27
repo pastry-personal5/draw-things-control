@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core import run_lock
-from draw_things_control.core.generation_service import GenerationService
+from draw_things_control.core.draw_things_arguments import redact_command
 from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.job_definition import load_job
@@ -442,7 +442,7 @@ class LiveRunTests(TuiTestCase):
             self.assertIn("sunset-walk: finished", self.text(app, "run-line"))
 
     async def test_the_output_pane_keeps_the_last_lines_as_written(self) -> None:
-        from draw_things_control.core.process_output import OutputStream
+        from draw_things_control.core.process.output import OutputStream
 
         self.write_data_job(run_count=1, prompt_pairs=[{"name": "walk", "positive": "walk"}])
         lines = tuple((OutputStream.STDOUT, f"line {number} [x]") for number in range(MAX_OUTPUT_LINES + 150)) + tuple((OutputStream.STDOUT, f"{step}/8 {step * 12}%") for step in range(1, 9))
@@ -621,7 +621,7 @@ class LiveRunTests(TuiTestCase):
         self.write_data_job()
         runs = FakeRuns()
         app = self.app(runs)
-        command = GenerationService.redact_command(["draw-things-cli", "generate", "--api-key", "sekret-value", "--remote-shared-secret", "hush-value"])
+        command = redact_command(("draw-things-cli", "generate", "--api-key", "sekret-value", "--remote-shared-secret", "hush-value"))
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             app.live = LiveRun(load_job(self.data / "walk.yaml", self.global_config), self.data / "walk.yaml")

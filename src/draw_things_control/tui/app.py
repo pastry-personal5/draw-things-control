@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from textual import work
 from textual.app import App
@@ -16,6 +17,7 @@ from textual.binding import Binding
 from textual.message import Message
 
 from draw_things_control.core.draw_things_arguments import command_settings
+from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.job_definition import JobDefinition
@@ -78,7 +80,7 @@ class DrawThingsApp(App[None]):
         self.stop_signal: signal.Signals | None = None
         self.quit_when_stopped = False
         self.exit_signal: signal.Signals | None = None
-        self._previous_handlers: dict[signal.Signals, object] = {}
+        self._previous_handlers: dict[signal.Signals, Any] = {}
         self._unmounted = False
         # Records the running job; set on the worker thread, read on the main thread once JobStarted arrives.
         self._recorder: ExecutionRecorder | None = None
@@ -149,7 +151,7 @@ class DrawThingsApp(App[None]):
         if self.job_running:
             self.request_stop(received)
         else:
-            self.exit(return_code=128 + self.exit_signal.value)
+            self.exit(return_code=exit_code_for_signal(self.exit_signal))
 
     @property
     def main(self) -> MainScreen | None:
@@ -357,4 +359,4 @@ class DrawThingsApp(App[None]):
         if self.main is not None:
             self.main.job_ended()
         if self.quit_when_stopped:
-            self.exit(return_code=128 + self.exit_signal.value if self.exit_signal is not None else 0)
+            self.exit(return_code=exit_code_for_signal(self.exit_signal) if self.exit_signal is not None else 0)

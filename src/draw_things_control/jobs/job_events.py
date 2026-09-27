@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 
-from draw_things_control.core.global_config import CooldownPolicy
+from draw_things_control.core.cooldown import CooldownPolicy
 
 # Every ``at`` is a local ISO 8601 timestamp with an offset, from the job service's clock.
 

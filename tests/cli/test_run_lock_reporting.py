@@ -64,6 +64,7 @@ class RunLockReportingTests(JobTestCase):
             if holder.poll() is None:
                 holder.kill()
             holder.wait()
+            assert holder.stdout is not None
             holder.stdout.close()
             if child is not None:
                 try:

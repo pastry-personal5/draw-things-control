@@ -114,6 +114,10 @@ class TagVideoColorsTests(unittest.TestCase):
 
 
 class JobTaggingTests(JobTestCase):
+    def extract(self, video: Path, png: Path) -> None:
+        self.order.append("extract")
+        png.write_bytes(b"png")
+
     def setUp(self) -> None:
         super().setUp()
         self.order: list[str] = []
@@ -122,7 +126,7 @@ class JobTaggingTests(JobTestCase):
         self.service = JobService(
             runner_factory=lambda arguments, timeout, grace, on_message=None, on_start=None: FakeRunner(arguments, FakeResult(), write_output=True),
             find_executable=lambda executable: executable,
-            frame_extractor=lambda video, png: (self.order.append("extract"), png.write_bytes(b"png")),
+            frame_extractor=self.extract,
             require_ffmpeg=lambda: "ffmpeg",
             clock=lambda: NOW,
             random_number=lambda: next(numbers),

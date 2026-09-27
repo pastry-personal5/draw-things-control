@@ -85,7 +85,9 @@ class CompletionTests(unittest.TestCase):
                 for completed in found:
                     self.assertTrue(completed.startswith(line))
                     # The name parses back whole, as the last argument.
-                    self.assertIn(parse(completed).arguments[-1], jobs)
+                    command = parse(completed)
+                    assert command is not None
+                    self.assertIn(command.arguments[-1], jobs)
 
     def test_the_command_word_completes_in_any_case(self) -> None:
         self.assertEqual(completions("/APPLY wa", self.JOBS), ["/APPLY walk.yaml", "/APPLY wave.yml"])

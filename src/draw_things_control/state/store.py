@@ -10,10 +10,12 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 
+from draw_things_control.core.clock import local_timestamp
+from draw_things_control.core.errors import StateUnavailableError
 from draw_things_control.core.run_lock import ensure_state_directory
 
 DATABASE_FILE_NAME = "dtc.db"
@@ -109,7 +111,7 @@ def _delete_log(path: Path) -> None:
         logger.warning("Could not delete the old log {}: {}", path, error.strerror)
 
 
-class StateError(Exception):
+class StateError(StateUnavailableError):
     """The state database cannot be used: a newer schema, no WAL support, or a file that will not open."""
 
 
@@ -304,7 +306,7 @@ class Store:
         Only call this while holding the run lock: that proves no runner is alive, and it keeps a run that
         is about to start from having its own new row swept.
         """
-        now = self._clock().astimezone().isoformat(timespec="seconds")
+        now = local_timestamp(self._clock())
         with self._transaction() as connection:
             connection.execute("UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND execution_id IN (SELECT id FROM executions WHERE status = 'running')")
             cursor = connection.execute("UPDATE executions SET status = 'interrupted', recovered_at = ?, finished_at = ?, finished_epoch = ? WHERE status = 'running'", (now, now, epoch(now)))
@@ -401,7 +403,7 @@ class Store:
             values["execution_number"] = _next_number(connection, "execution")
         values["status"] = values["status"] or "running"
         values["settings"] = json.dumps(fields.get("settings") or {}, ensure_ascii=False)
-        values["started_epoch"] = epoch(values["started_at"])
+        values["started_epoch"] = epoch(cast(str, values["started_at"]))
         finished = values["finished_at"]
         values["finished_epoch"] = epoch(finished) if finished is not None else None
         columns = ", ".join(values)
@@ -412,7 +414,7 @@ class Store:
     def _insert_run(connection: sqlite3.Connection, execution_id: int, number: int, fields: dict[str, Any]) -> None:
         values = {column: fields.get(column) for column in RUN_COLUMNS}
         values["command"] = json.dumps(fields.get("command") or [], ensure_ascii=False)
-        values["started_epoch"] = epoch(values["started_at"])
+        values["started_epoch"] = epoch(cast(str, values["started_at"]))
         columns = ", ".join(("execution_id", "number", *values))
         connection.execute(f"INSERT INTO runs ({columns}) VALUES ({', '.join('?' for _ in range(len(values) + 2))})", (execution_id, number, *values.values()))
 

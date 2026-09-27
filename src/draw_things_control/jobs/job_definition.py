@@ -6,10 +6,13 @@ import re
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from draw_things_control.core import generation_config
-from draw_things_control.core.global_config import DEFAULT_COOLDOWN, CooldownPolicy, GlobalConfig, is_number, parse_cooldown, read_yaml_mapping, replaced_cooldown_message
+from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, parse_cooldown, replaced_cooldown_message
+from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.numbers import is_int, is_number
+from draw_things_control.core.yaml_files import read_yaml_file
 from draw_things_control.jobs.input_size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
@@ -133,7 +136,7 @@ class JobDefinition:
         if self.config_override.seed is not None:
             return self.config_override.seed, "config_override"
         seed = self.base_config.get("seed")
-        if _is_int(seed) and seed >= 0:
+        if is_int(seed) and seed >= 0:
             return seed, "config_file"
         return None, "random"
 
@@ -146,7 +149,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
     """
     params_directory = params_directory or generation_config.PARAMS_DIRECTORY
     path = path.expanduser().resolve()
-    data, source_text = read_yaml_mapping(path, "Job file")
+    data, source_text = read_yaml_file(path, "Job file", show_source=True)
     fail = _Failure(path)
     if "cooldown_seconds" in data:
         raise ValueError(f"{path}: {replaced_cooldown_message(data['cooldown_seconds'])}")
@@ -167,7 +170,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
 
     input_path = _input_path(fail, data, mode, global_config)
     run_count = data["run_count"]
-    if not _is_int(run_count) or run_count < 1:
+    if not is_int(run_count) or run_count < 1:
         fail("run_count", "must be an integer >= 1")
     prompt_pairs = _prompt_pairs(fail, data["prompt_pairs"], run_count)
     output_directory, extension = _output(fail, data.get("output", {}), mode, name, global_config)
@@ -180,7 +183,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
     except ValueError as error:
         raise ValueError(f"{path}: {error}") from error
     base_seed = base_config.get("seed")
-    if _is_int(base_seed) and base_seed > MAX_SEED:
+    if is_int(base_seed) and base_seed > MAX_SEED:
         fail("config_file", f"{config_file} sets seed {base_seed}, above the largest seed {MAX_SEED}")
     ignored_config = {key: base_config.pop(key) for key in IGNORED_CONFIG_KEYS.get(mode, ()) if key in base_config}
     override = _config_override(fail, data.get("config_override", {}), mode)
@@ -228,7 +231,7 @@ class _Failure:
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def __call__(self, field: str, problem: str) -> Any:
+    def __call__(self, field: str, problem: str) -> NoReturn:
         raise ValueError(f"{self._path}: '{field}' {problem}")
 
 
@@ -262,7 +265,7 @@ def _desired_size(fail: _Failure, data: dict[str, Any], mode: GenerationMode) ->
     for key in given:
         if not mode.requires_input:
             fail(key, f"is not allowed in {mode} jobs, which have no input image")
-        if not _is_int(data[key]) or not 1 <= data[key] <= MAX_DESIRED_SIZE:
+        if not is_int(data[key]) or not 1 <= data[key] <= MAX_DESIRED_SIZE:
             fail(key, f"must be an integer from 1 to {MAX_DESIRED_SIZE}")
     max_crop = data.get("max_input_crop_percent")
     if max_crop is not None:
@@ -336,7 +339,7 @@ def _prompt_pairs(fail: _Failure, value: Any, run_count: int) -> tuple[PromptPai
         if negative is not None and not isinstance(negative, str):
             fail(f"{field}.negative", "must be text")
         runs = item.get("runs", [])
-        if not isinstance(runs, list) or not all(_is_int(number) for number in runs):
+        if not isinstance(runs, list) or not all(is_int(number) for number in runs):
             fail(f"{field}.runs", "must be a list of run numbers")
         default = item.get("default", False)
         if not isinstance(default, bool):
@@ -398,16 +401,16 @@ def _config_override(fail: _Failure, value: Any, mode: GenerationMode) -> Config
         if key in value and (not is_number(value[key]) or not low <= value[key] <= high):
             fail(field(key), f"must be a number from {low} to {high}")
     for key, minimum in (("steps", 1), ("frame_count", 1)):
-        if key in value and (not _is_int(value[key]) or value[key] < minimum):
+        if key in value and (not is_int(value[key]) or value[key] < minimum):
             fail(field(key), f"must be an integer >= {minimum}")
-    if "seed" in value and (not _is_int(value["seed"]) or not 0 <= value["seed"] <= MAX_SEED):
+    if "seed" in value and (not is_int(value["seed"]) or not 0 <= value["seed"] <= MAX_SEED):
         fail(field("seed"), f"must be an integer from 0 to {MAX_SEED}")
     if "guidance_scale" in value and (not is_number(value["guidance_scale"]) or value["guidance_scale"] < 0):
         fail(field("guidance_scale"), "must be a number >= 0")
     if "shift" in value and (not is_number(value["shift"]) or value["shift"] <= 0):
         fail(field("shift"), "must be a number > 0")
     for key in ("width", "height"):
-        if key in value and (not _is_int(value[key]) or value[key] <= 0 or value[key] % 64):
+        if key in value and (not is_int(value[key]) or value[key] <= 0 or value[key] % 64):
             fail(field(key), "must be a positive multiple of 64")
     if "frame_count" in value and not mode.is_video:
         fail(field("frame_count"), "is not allowed in i2i jobs")
@@ -422,14 +425,10 @@ def _job_size(fail: _Failure, override: ConfigOverride, base_config: dict[str, A
         if from_override is not None:
             size.append(from_override)
             sources.append("config_override")
-        elif _is_int(base_config.get(key)) and base_config[key] > 0:
+        elif is_int(base_config.get(key)) and base_config[key] > 0:
             size.append(base_config[key])
             sources.append(f"config_file {config_file}")
         else:
             fail(f"config_override.{key}", f"is required because {config_file} sets no {key}; the input image is checked against it")
     source = f"width and height from {sources[0]}" if sources[0] == sources[1] else f"width from {sources[0]}, height from {sources[1]}"
     return (size[0], size[1]), source
-
-
-def _is_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)

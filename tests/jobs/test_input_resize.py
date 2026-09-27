@@ -1,5 +1,7 @@
 """Tests for decoding and resizing a job's first input image."""
 
+# Pillow types getpixel, getextrema, getbbox, and getdata as wide unions (float, tuple, or None) that these checks index and unpack.
+# pyright: reportIndexIssue=false, reportOptionalSubscript=false, reportGeneralTypeIssues=false, reportOptionalIterable=false, reportArgumentType=false, reportOperatorIssue=false, reportCallIssue=false
 from __future__ import annotations
 
 import tempfile

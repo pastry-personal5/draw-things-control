@@ -394,6 +394,7 @@ class HistoryPane(DataTable[Text]):
         if not self.is_attached or request != self.read_count:
             return
         self.reading = False
+        selected = None
         if page.offset == 0:
             selected = self.selected
             self.clear()

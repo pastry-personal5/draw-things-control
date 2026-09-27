@@ -76,7 +76,7 @@ modules).
 | D15 | The stale-worker-result check (`request != self.read_count`, five times), and the scrollbar height rule (twice) | `tui/panes.py` | `tui/panes/base.py` |
 | D16 | Status words as quoted literals (57 of them: `"running"`, `"succeeded"`, ...) | throughout | `RunStatus`, `JobStatus` enums in `jobs/events.py` |
 | D17 | The signals that stop a job (`SIGHUP`, `SIGINT`, `SIGTERM`) | `core/draw_things_runner.py`, `tui/app.py` (both `HANDLED_SIGNALS`) | `core/process/signals.py` |
-| D18 | A number as a person writes it, three ways (`1200`, `0.5`, never `1e-05`) | `core/global_config.py` (`_number_text`), `jobs/job_report.py` (`seconds_text`, `share_text`), `tui/text.py` (`number_text`) | `core/numbers.py` |
+| D18 | A number as a person writes it in YAML (`1200`, `90.5`) | `core/global_config.py` (`_number_text`), and the same test in `core/numbers.py` | `number_text` in `core/numbers.py`. `jobs/job_report.py`'s `seconds_text` (never an exponent) and `tui/text.py`'s `number_text` (`%g`, `-` when unknown) write different things and stay |
 
 ### Long units
 
@@ -254,16 +254,24 @@ says otherwise.
   the end of the milestone.
 - Pyright joins the `dev` extra with a `[tool.pyright]` section in
   `pyproject.toml` (`typeCheckingMode = "standard"`, `src` and `tests`, the
-  project's `.venv`), and `make typecheck`, run by `make check`. The errors
-  it finds in today's code are fixed first, so every later step is checked.
+  project's `.venv`), and `make typecheck`, run by `make check`. The 226
+  errors it found are fixed in `src/` and in the small test files. The test
+  files whose subject a later step rewrites (`tests/state`, `test_job_service`,
+  `test_service`, `test_job_definitions`, `test_state_cli`; 159 errors, mostly
+  optional subscripts of store rows) are in pyright's `ignore` list, and each
+  step removes its entries; the list is empty when the milestone is done.
   An ignore comment names its rule and says why. The PyPI package downloads
   Node the first time it runs, so the first check needs the network once.
   Pyright's documentation is fetched through Context7 first.
-- `core/paths.py`: a frozen `ProjectPaths`, built from the project root.
-  Front ends build it once and pass it down; the CLI keeps it in Typer's
-  context object, which `main()` sets and a test passes with
-  `CliRunner.invoke(..., obj=paths)`, so no new option is needed. Tests build
-  one in a temporary directory instead of patching globals (D1).
+- `core/paths.py`: a frozen `ProjectPaths`, built from the project root, and
+  the one place the project's directories are worked out (D1); the module
+  constants that tests patch (`STATE_DIRECTORY`, `PARAMS_DIRECTORY`, ...) now
+  read it. Passing it down instead of patching happens layer by layer, in the
+  step that rewrites each layer: `state/` in Step 4, the CLI (which keeps it
+  in Typer's context object, which a test passes with
+  `CliRunner.invoke(..., obj=paths)`, so no new option is needed) and
+  `services/` in Step 5, and the TUI in Step 6. Step 7 checks that no test
+  patches a path.
 - `core/errors.py` (see [Errors and exit codes](#errors-and-exit-codes)).
   An error's text is today's message, so the CLI prints the same line.
   `RunLockBusy`, `RunLockError`, and `StateError` become `DtcError`s.

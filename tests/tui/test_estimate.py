@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from rich.text import Text
 
-from draw_things_control.core.global_config import CooldownPolicy
+from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.job_definition import load_job
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted
 from draw_things_control.tui.estimate import job_estimate, moment, run_estimate

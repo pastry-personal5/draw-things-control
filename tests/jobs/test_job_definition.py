@@ -9,7 +9,7 @@ from unittest import mock
 
 from PIL import Image
 
-from draw_things_control.core.global_config import DEFAULT_COOLDOWN, CooldownPolicy
+from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from draw_things_control.jobs.job_definition import GenerationMode, load_job
 from draw_things_control.jobs.job_report import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
 from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
@@ -187,7 +187,9 @@ class JobDefinitionTests(JobTestCase):
         for value in (-1, 101, "10", False):
             with self.subTest(value=value):
                 self.assert_invalid("'max_input_crop_percent' must be a number from 0 to 100", desired_input_width=832, max_input_crop_percent=value)
-        self.assertEqual(self.load(desired_input_width=832, max_input_crop_percent=2.5).input_resize.max_crop_percent, 2.5)
+        resize = self.load(desired_input_width=832, max_input_crop_percent=2.5).input_resize
+        assert resize is not None
+        self.assertEqual(resize.max_crop_percent, 2.5)
 
     def test_crop_over_the_limit_names_the_job_file(self) -> None:
         self.write_image("panorama.png", (6000, 400))

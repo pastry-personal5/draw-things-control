@@ -17,11 +17,12 @@ from loguru import logger
 from draw_things_control.core import generation_config
 from draw_things_control.core.configuration import load_config
 from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_control.core.draw_things_runner import DrawThingsProcessRunner
-from draw_things_control.core.generation_service import ChildStartCallback, GenerationService
+from draw_things_control.core.exit_codes import EXIT_BUSY
+from draw_things_control.core.generation_service import GenerationService
 from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig
-from draw_things_control.core.process_output import MessageCallback, OutputProcessor
-from draw_things_control.core.run_lock import EX_TEMPFAIL, RunLock, RunLockBusy, RunLockError
+from draw_things_control.core.process.output import MessageCallback, OutputProcessor
+from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner
+from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError
 from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg, require_ffprobe
 from draw_things_control.jobs.job_definition import JobDefinition
 from draw_things_control.jobs.job_report import job_summary, plan_lines, read_settings, report_ignored_config
@@ -56,7 +57,7 @@ def held_run_lock(command: str) -> Iterator[RunLock]:
         lock.acquire()
     except RunLockBusy as error:
         logger.error("{}", error)
-        raise typer.Exit(code=EX_TEMPFAIL) from error
+        raise typer.Exit(code=EXIT_BUSY) from error
     except RunLockError as error:
         logger.error("{}", error)
         raise typer.Exit(code=1) from error

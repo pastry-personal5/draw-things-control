@@ -149,7 +149,7 @@ def _video_path(data: bytearray, moov: Box) -> list[Box] | None:
         minf = _child(data, mdia, b"minf")
         stbl = _child(data, minf, b"stbl") if minf else None
         stsd = _child(data, stbl, b"stsd") if stbl else None
-        if stsd is None:
+        if minf is None or stbl is None or stsd is None:
             continue
         # stsd: version and flags (4), entry count (4), then the entries.
         entries = _boxes_in(data, stsd.body + 8, stsd.end)

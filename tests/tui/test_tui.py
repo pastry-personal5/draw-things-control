@@ -515,8 +515,8 @@ class TuiCommandTests(JobTestCase):
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")), mock.patch.object(JobService, "cancel") as cancel:
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertIsInstance(result.exception, RuntimeError)
-        cancel.assert_called_once_with(signal.SIGINT)
-        cli.configure_logging.assert_called_once_with()
+        cancel.assert_called_once_with(signal.SIGINT)  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
+        cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_run_job_keeps_a_service_that_handles_signals(self) -> None:
         self.assertTrue(cli.job_service._handle_signals)
@@ -525,7 +525,7 @@ class TuiCommandTests(JobTestCase):
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 1)
-        cli.configure_logging.assert_called_once_with()
+        cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_an_invalid_global_configuration_exits_with_2_before_the_app_starts(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run:

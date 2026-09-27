@@ -1,4 +1,4 @@
-.PHONY: run check lint format test
+.PHONY: run check lint format typecheck test
 
 run:
 	uv run dtc --help
@@ -10,7 +10,10 @@ lint:
 format:
 	uv run --extra dev ruff format .
 
+typecheck:
+	uv run --extra dev pyright
+
 test:
 	uv run python -m unittest discover -s tests -t . -v
 
-check: lint test
+check: lint typecheck test

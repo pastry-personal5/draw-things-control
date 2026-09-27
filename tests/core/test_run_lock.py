@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from draw_things_control.core import run_lock
@@ -43,7 +44,7 @@ class RunLockTests(unittest.TestCase):
                 if stream is not None:
                     stream.close()
 
-    def lock(self, **options: object) -> RunLock:
+    def lock(self, **options: Any) -> RunLock:
         return RunLock("run-job", directory=self.directory, retry_seconds=0, **options)
 
     def start_holder(self, child_pid: int | None = None) -> subprocess.Popen:

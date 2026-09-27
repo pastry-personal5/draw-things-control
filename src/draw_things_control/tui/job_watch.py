@@ -15,7 +15,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver, ObservedWatch
 
-from draw_things_control.jobs.job_report import JOB_SUFFIXES
+from draw_things_control.core.yaml_files import is_yaml_file
 
 # Events that change nothing: inotify reports reads, including the catalog's own.
 IGNORED_EVENTS = frozenset({"opened", "closed_no_write"})
@@ -105,4 +105,4 @@ class JobWatcher(FileSystemEventHandler):
         if path in files:
             return True
         # A job file in the directory; any other file there (an editor's swap file) is not listed.
-        return path.parent == self.directory and not path.name.startswith(".") and path.suffix.lower() in JOB_SUFFIXES
+        return path.parent == self.directory and not path.name.startswith(".") and is_yaml_file(path)

@@ -8,13 +8,13 @@ import subprocess
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from rich.text import Text
 from textual.content import Content
 
-from draw_things_control.core.global_config import CooldownPolicy
+from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
 from draw_things_control.jobs.job_definition import load_job
 from draw_things_control.jobs.job_events import CooldownStarted, RunStarted
@@ -269,6 +269,7 @@ class HistoryTests(HistoryCase):
         (self.outputs / "one.mov").write_bytes(b"video")
         path = self.outputs / "one.mov"
         app = self.app()
+        message = ""
         failures = (FileNotFoundError(2, "No such file or directory", "open"), subprocess.CompletedProcess(["open"], 1, "", "LSOpenURLsWithRole() failed\n"))
         for failure in failures:
             with self.subTest(failure=failure):
@@ -294,7 +295,7 @@ class HistoryTests(HistoryCase):
             for text in ("[/]", "[bold]x"):
                 await self.command(pilot, f"/filter name '{text}'")
                 # The getter gives the title back as markup; read as markup, it must be the text as typed.
-                titles.append(Text.from_markup(table.border_title).plain)
+                titles.append(Text.from_markup(str(table.border_title)).plain)
             self.assertTrue(app.is_running)
         self.assertEqual(titles, ["Execution History: name [/]", "Execution History: name [bold]x"])
 
@@ -307,10 +308,10 @@ class HistoryTests(HistoryCase):
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
             table = app.screen.query_one(HistoryPane)
-            subtitle = Text.from_markup(table.border_subtitle).plain
+            subtitle = Text.from_markup(str(table.border_subtitle)).plain
             detail = await self.detail(pilot, execution_id)
             self.assertTrue(app.is_running)
-            self.assertFalse(app.screen.history.reading)
+            self.assertFalse(cast(MainScreen, app.screen).history.reading)
             connection.execute("UPDATE executions SET settings = '{}' WHERE id = ?", (execution_id,))
             connection.commit()
             await self.command(pilot, "/get history")

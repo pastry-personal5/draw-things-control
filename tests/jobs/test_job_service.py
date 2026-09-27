@@ -17,11 +17,10 @@ from unittest import mock
 from loguru import logger
 from PIL import Image
 
-from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments
-from draw_things_control.core.draw_things_runner import install_signal_handlers, restore_signal_handlers
-from draw_things_control.core.generation_service import GenerationService
-from draw_things_control.core.global_config import CooldownPolicy
-from draw_things_control.core.process_output import OutputStream, ProcessMessage
+from draw_things_control.core.cooldown import CooldownPolicy
+from draw_things_control.core.draw_things_arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.process.output import OutputStream, ProcessMessage
+from draw_things_control.core.process.signals import install_signal_handlers, restore_signal_handlers
 from draw_things_control.jobs import job_service
 from draw_things_control.jobs.job_definition import JobDefinition, load_job
 from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
@@ -716,7 +715,7 @@ class JobServiceTests(JobTestCase):
         arguments = self.calls[0][0]
         self.assertEqual((first.number, first.total, first.pair, first.positive, first.negative), (1, 3, "only", "text", None))
         self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), arguments.output.name, arguments.output.stem + "-last-frame.png"))
-        self.assertEqual(first.command, tuple(GenerationService.redact_command(arguments.command)))
+        self.assertEqual(first.command, tuple(redact_command(arguments.command)))
         self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, arguments.output.name, first.last_frame))
         self.assertEqual((cooldown.after_run, cooldown.seconds, cooldown.until, cooldown.mode, cooldown.ratio, cooldown.run_seconds, cooldown.bound), (1, 900.0, "15:45:12", "manual", None, first_done.seconds, None))
         self.assertEqual((cooled.waited_seconds, cooled.cut_short), (900.0, False))

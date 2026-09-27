@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.numbers import positive_whole
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.store import Store, epoch
@@ -32,7 +33,7 @@ class ImportReport:
 def import_history(store: Store, directory: Path, *, clock: datetime | None = None) -> ImportReport:
     """Insert every manifest under ``directory`` that the store does not have; never touch a manifest file."""
     report = ImportReport()
-    now = (clock or datetime.now()).astimezone().isoformat(timespec="seconds")
+    now = local_timestamp(clock or datetime.now())
     cutoff = store.retention_cutoff()
     for path in _manifest_candidates(directory):
         key = str(path.resolve())

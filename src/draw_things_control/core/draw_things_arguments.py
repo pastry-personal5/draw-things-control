@@ -27,12 +27,22 @@ VALUE_FLAGS = frozenset(flag for flag, kind in GENERATE_FLAGS if kind in ("value
 SECRET_FLAGS = frozenset(("--api-key", "--remote-shared-secret"))
 
 
+def redact_command(command: Sequence[str]) -> list[str]:
+    """Return the command with credential values replaced, safe to show or save."""
+    display = list(command)
+    for index, token in enumerate(display[:-1]):
+        if token in SECRET_FLAGS:
+            display[index + 1] = "[redacted]"
+    return display
+
+
 class CommandArguments(Protocol):
     """A typed object capable of producing an executable command."""
 
     @property
     def command(self) -> tuple[str, ...]:
         """Return the executable and its arguments."""
+        ...
 
 
 @dataclass(frozen=True)

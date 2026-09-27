@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 1 differs from the plan.
+  - Pyright starts with `ignore` entries for the test files that later steps rewrite (159 of 226 errors, mostly optional subscripts of store rows that Step 4 types), instead of fixing them twice. Each step removes its entries.
+  - `ProjectPaths` is defined in Step 1 and is the one source of the project's directories, but passing it down instead of patching module constants happens in the step that rewrites each layer.
+  - Only the two identical number writers became `number_text` (D18); the TUI's `%g` and `seconds_text` write different things.
+  - Job files and the global configuration keep quoting the YAML source in a syntax error (`show_source`), which a TUI test pins; Draw Things configurations keep their shorter message.
+
 - **Owner decision** [M11]: From a second interview on the Milestone 11 plan.
   - The work is on a `refactor/m11` branch, one commit per step, merged to `main` by the owner; committing straight to `main`, and leaving it uncommitted, were offered.
   - `event_to_dict` is built now, and the Phase 3 documents are updated in Step 7; leaving either for Phase 3 was offered.

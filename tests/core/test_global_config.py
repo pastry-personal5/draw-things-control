@@ -5,7 +5,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from draw_things_control.core.global_config import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, load_global_config, parse_cooldown
+from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, parse_cooldown
+from draw_things_control.core.global_config import load_global_config
 
 
 class GlobalConfigTests(unittest.TestCase):

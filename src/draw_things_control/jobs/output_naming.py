@@ -7,7 +7,8 @@ from collections.abc import Callable, Collection
 from datetime import datetime
 from pathlib import Path
 
-Clock = Callable[[], datetime]
+from draw_things_control.core.clock import Clock
+
 RandomNumber = Callable[[], int]
 TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
 MAX_ATTEMPTS = 100
