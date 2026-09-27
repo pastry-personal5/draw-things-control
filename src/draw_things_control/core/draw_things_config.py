@@ -6,16 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from draw_things_control.core.arguments import CONFIG_ONLY_KEYS
-from draw_things_control.core.paths import DEFAULT_PATHS
 from draw_things_control.core.yaml_files import YAML_SUFFIXES, is_yaml_file, parse_yaml_mapping
 
-# The Draw Things configurations a job names in config_file: data/params/ in the repository.
-PARAMS_DIRECTORY = DEFAULT_PATHS.params
-# The job files: the TUI's default data directory, and the only one whose files get job IDs (J0001).
-JOBS_DIRECTORY = DEFAULT_PATHS.jobs
 
-
-def find_config_file(name: str, directory: Path = PARAMS_DIRECTORY) -> Path:
+def find_config_file(name: str, directory: Path) -> Path:
     """Resolve a bare configuration file name inside the params directory (data/params/)."""
     if not name or "/" in name or "\\" in name or name in {".", ".."} or ".." in Path(name).parts:
         raise ValueError(f"'config_file' must be a file name in {directory}, not a path: {name}")
@@ -53,7 +47,7 @@ def load_config(path: Path) -> dict[str, Any]:
     return parse_yaml_mapping(text, path, "Configuration", require_json=True)
 
 
-def load_base_config(name: str, directory: Path = PARAMS_DIRECTORY) -> dict[str, Any]:
+def load_base_config(name: str, directory: Path) -> dict[str, Any]:
     """Load the named YAML base configuration as an object JSON can hold."""
     return load_config(find_config_file(name, directory))
 

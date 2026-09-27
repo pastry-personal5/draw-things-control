@@ -26,7 +26,7 @@ IGNORED_CONFIG_KEYS = {"i2v": ("batchCount",)}
 DesiredSize = tuple[int | None, int | None, float | None]
 
 
-def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | None = None, *, decode_input: bool = True) -> JobDefinition:
+def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
@@ -37,7 +37,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path | N
     return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path | None = None, *, decode_input: bool = True) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read."""
     data = parse_yaml_mapping(text, path, "Job file", show_source=True)
     return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
@@ -46,10 +46,10 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path | None = None, *, decode_input: bool = True) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> None:
         self._path = path
         self._global_config = global_config
-        self._params_directory = params_directory or draw_things_config.PARAMS_DIRECTORY
+        self._params_directory = params_directory
         self._decode_input = decode_input
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:

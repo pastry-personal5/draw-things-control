@@ -48,7 +48,3 @@ typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
-# Milestone 11 removes each entry in the step that rewrites its subject; the list is empty when the milestone is done.
-ignore = [
-    "tests/tui/test_job_definitions.py",  # Step 6
-]

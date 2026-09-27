@@ -19,14 +19,15 @@ from textual.message import Message
 from draw_things_control.core.arguments import command_settings
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.run_lock import RunLock
+from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import JobEvent, JobStarted, combine_observers
-from draw_things_control.jobs.executor import JobExecutor, JobRunOptions
+from draw_things_control.jobs.events import JobEvent, JobStarted
+from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.files import read_job
+from draw_things_control.services.job_details import error_text
+from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.state.recorder import ExecutionRecorder
-from draw_things_control.state.store import StateError, Store, StoreMode
-from draw_things_control.tui.job_files import error_text
+from draw_things_control.state.store import Store
 from draw_things_control.tui.live_run import JobEventMessage, JobWorkerEnded, LiveRun, PastRun, PastRunFound
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
 from draw_things_control.tui.text import confirm_run_text, question_text
@@ -67,9 +68,10 @@ class DrawThingsApp(App[None]):
         Binding("ctrl+c", "interrupt", "Quit", show=False, priority=True),
     ]
 
-    def __init__(self, *, settings: GlobalConfig, data_directory: Path, executable: str, job_executor: JobExecutor, shutdown_grace: float = 10.0) -> None:
+    def __init__(self, *, settings: GlobalConfig, paths: ProjectPaths, data_directory: Path, executable: str, job_executor: JobExecutor, shutdown_grace: float = 10.0) -> None:
         super().__init__()
         self.settings = settings
+        self.paths = paths
         self.data_directory = data_directory
         self.executable = executable
         self.job_executor = job_executor
@@ -232,7 +234,7 @@ class DrawThingsApp(App[None]):
     def read_for_run(self, path: Path) -> None:
         # Read now, so an edit since the list was read is used; the input is decoded when run 1's copy is written, as run-job does.
         try:
-            job = read_job(path, self.settings, decode_input=False)[0]
+            job = read_job(path, self.settings, self.paths, decode_input=False)[0]
         except (ValueError, OSError) as error:
             self.post_message(ReadForRunFailed(path, error_text(path, error)))
             return
@@ -296,28 +298,15 @@ class DrawThingsApp(App[None]):
             self.remove_signal_handlers()
 
     def execute(self, job: JobDefinition) -> None:
-        """Take the lock, sweep, and run the job with its events recorded and posted; runs on the worker thread."""
-        lock = RunLock("tui")
-        lock.acquire()
-        try:
-            # The store keeps one connection per thread, so this thread opens and closes its own.
-            store = Store.open(mode=StoreMode.RUN, retention_days=self.settings.history_retention_days)
-            try:
-                try:
-                    store.sweep_interrupted()
-                except sqlite3.Error as error:
-                    raise StateError(f"Cannot use the state database {store.path}: {error}") from error
-                # Posted before any event, so the run can be estimated from its first moment.
-                self.post_message(PastRunFound(self.past_run(store)))
-                # The recorder comes first, so its row exists before JobStarted is posted.
-                self._recorder = ExecutionRecorder(store)
-                observer = combine_observers(self._recorder, self.post_event, self.stop_if_requested)
-                # The execution's ID is reserved before the job starts; a job that cannot get one does not start, and the worker says why.
-                self.job_executor.run(job, JobRunOptions(executable=self.executable, shutdown_grace=self.shutdown_grace, write_records=self.settings.write_job_records, observer=observer, on_child_start=lock.record_child, reserve_execution_id=self._recorder.reserve))
-            finally:
-                store.close()
-        finally:
-            lock.release()
+        """Run the job with its events recorded and posted, under the run lock; runs on the worker thread."""
+        session = JobRunSession(self.paths, self.job_executor, self.settings)
+
+        def before_run(store: Store, recorder: ExecutionRecorder) -> None:
+            # Posted before any event, so the run can be estimated from its first moment; the recorder is known before JobStarted.
+            self.post_message(PastRunFound(self.past_run(store)))
+            self._recorder = recorder
+
+        session.run(job, holder="tui", executable=self.executable, shutdown_grace=self.shutdown_grace, observers=(self.post_event, self.stop_if_requested), before_run=before_run)
 
     @staticmethod
     def past_run(store: Store) -> PastRun | None:

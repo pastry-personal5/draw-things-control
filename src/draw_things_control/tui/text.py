@@ -20,9 +20,10 @@ from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.definition import GenerationMode, JobDefinition
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted, RunStatus
 from draw_things_control.jobs.text import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
+from draw_things_control.services.job_catalog import JobRow
+from draw_things_control.services.job_details import JobDetails
 from draw_things_control.state.executions import ExecutionRow, RunRow
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
-from draw_things_control.tui.job_files import JobDetails, JobRow
 from draw_things_control.tui.live_run import LiveRun
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start"}

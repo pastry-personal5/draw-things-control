@@ -2,14 +2,14 @@
 
 import shlex
 from pathlib import Path
-from unittest import mock
 
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import app, create_job_runner, create_runner
+from draw_things_control.cli.app import CliServices, app
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from tests.fixtures import JobTestCase, job_data
+from draw_things_control.services.toolkit import create_job_runner, create_runner
+from tests.fixtures import FakeToolkit, JobTestCase, job_data
 
 
 class JobCliTests(JobTestCase):
@@ -19,34 +19,34 @@ class JobCliTests(JobTestCase):
         self.global_path = self.root / "global-config.yaml"
         self.global_path.write_text(f"version: 1\ninput_directory: {self.input_directory}\noutput_directory: {self.output_directory}\n", encoding="utf-8")
         self.job_path = self.write_job(job_data())
-        # The commands read the repository's data/params/; point it at the test's copy.
-        patcher = mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.services = CliServices(self.paths, FakeToolkit())
+
+    def invoke(self, arguments: list[str]):
+        return self.runner.invoke(app, arguments, obj=self.services)
 
     def test_validate_job_reports_runs_and_paths(self) -> None:
-        result = self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
+        result = self.invoke(["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("runs: 5 (walk, wave, walk, wave, walk)", result.stdout)
         self.assertIn(str(self.output_directory / "sunset-walk"), result.stdout)
 
     def test_invalid_job_and_missing_global_config_exit_with_2(self) -> None:
         bad_job = self.write_job(job_data(mode="t2i"), name="bad.yaml")
-        self.assertEqual(self.runner.invoke(app, ["validate-job", str(bad_job), "--global-config", str(self.global_path)]).exit_code, 2)
-        self.assertEqual(self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.root / "absent.yaml")]).exit_code, 2)
+        self.assertEqual(self.invoke(["validate-job", str(bad_job), "--global-config", str(self.global_path)]).exit_code, 2)
+        self.assertEqual(self.invoke(["validate-job", str(self.job_path), "--global-config", str(self.root / "absent.yaml")]).exit_code, 2)
 
     def test_a_job_naming_a_json_configuration_exits_with_2(self) -> None:
         (self.params / "base.json").write_text("{}", encoding="utf-8")
         job = self.write_job(job_data(config_file="base.json"), name="json.yaml")
         for command in (["validate-job"], ["run-job", "--dry-run"]):
             with self.subTest(command[0]):
-                self.assertEqual(self.runner.invoke(app, [*command, str(job), "--global-config", str(self.global_path)]).exit_code, 2)
+                self.assertEqual(self.invoke([*command, str(job), "--global-config", str(self.global_path)]).exit_code, 2)
 
     def test_dry_run_prints_every_command_and_writes_nothing(self) -> None:
         executable_stub = self.root / "draw-things-cli"
         executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
         executable_stub.chmod(0o755)
-        result = self.runner.invoke(app, ["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
+        result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
         self.assertEqual(result.exit_code, 0, result.output)
         commands = [shlex.split(line) for line in result.stdout.splitlines() if not line.startswith("#")]
         self.assertEqual(len(commands), 5)
@@ -74,7 +74,7 @@ class JobCliTests(JobTestCase):
         executable_stub = self.root / "draw-things-cli"
         executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
         executable_stub.chmod(0o755)
-        result = self.runner.invoke(app, ["run-job", str(job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
+        result = self.invoke(["run-job", str(job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
         self.assertEqual(result.exit_code, 0, result.output)
         first = next(shlex.split(line) for line in result.stdout.splitlines() if not line.startswith("#"))
         self.assertEqual(first[first.index("--image") + 1], "<photo.jpg resized to 832x448>")
@@ -83,13 +83,13 @@ class JobCliTests(JobTestCase):
 
     def test_validate_job_and_dry_run_show_the_cooldown(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")
-        result = self.runner.invoke(app, ["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
+        result = self.invoke(["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("  cooldown: 900 s between runs, from global_config (4 waits, 1 h total)", result.stdout)
         executable_stub = self.root / "draw-things-cli"
         executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
         executable_stub.chmod(0o755)
-        result = self.runner.invoke(app, ["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
+        result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
         self.assertEqual(result.exit_code, 0, result.output)
         lines = result.stdout.splitlines()
         self.assertTrue(lines[0].endswith(", cooldown 900 s (global_config)"), lines[0])
@@ -99,7 +99,7 @@ class JobCliTests(JobTestCase):
     def test_job_can_turn_off_the_global_cooldown(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")
         job_path = self.write_job(job_data(cooldown={"mode": "off"}), name="no-cooldown.yaml")
-        result = self.runner.invoke(app, ["validate-job", str(job_path), "--global-config", str(self.global_path)])
+        result = self.invoke(["validate-job", str(job_path), "--global-config", str(self.global_path)])
         self.assertIn("  cooldown: off (job)", result.stdout)
         bad = self.write_job(job_data(cooldown={"mode": "manual", "seconds": 4000}), name="bad.yaml")
         self.assertEqual(self.invalid(bad), "'cooldown.seconds' must be a number of seconds from 0 to 3600")
@@ -109,7 +109,7 @@ class JobCliTests(JobTestCase):
         logged: list[str] = []
         sink = logger.add(lambda message: logged.append(str(message).rstrip("\n")), format="{message}", level="ERROR")
         try:
-            result = self.runner.invoke(app, ["validate-job", str(job_path), "--global-config", str(self.global_path)])
+            result = self.invoke(["validate-job", str(job_path), "--global-config", str(self.global_path)])
         finally:
             logger.remove(sink)
         self.assertEqual(result.exit_code, 2)

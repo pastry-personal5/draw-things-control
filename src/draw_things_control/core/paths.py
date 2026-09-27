@@ -7,6 +7,9 @@ from pathlib import Path
 
 DATABASE_FILE_NAME = "dtc.db"
 LOCK_FILE_NAME = "run.lock"
+# As a person names them in messages: relative to the project root.
+GLOBAL_CONFIG_RELATIVE = Path("config/global-config.yaml")
+EXAMPLE_GLOBAL_CONFIG_RELATIVE = Path("config/global-config.example.yaml")
 
 
 @dataclass(frozen=True)
@@ -17,11 +20,11 @@ class ProjectPaths:
 
     @property
     def global_config(self) -> Path:
-        return self.root / "config" / "global-config.yaml"
+        return self.root / GLOBAL_CONFIG_RELATIVE
 
     @property
     def example_global_config(self) -> Path:
-        return self.root / "config" / "global-config.example.yaml"
+        return self.root / EXAMPLE_GLOBAL_CONFIG_RELATIVE
 
     @property
     def jobs(self) -> Path:

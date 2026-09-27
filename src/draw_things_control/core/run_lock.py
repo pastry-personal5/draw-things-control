@@ -11,11 +11,9 @@ from pathlib import Path
 from types import TracebackType
 
 from draw_things_control.core.errors import BusyError, StateUnavailableError
-from draw_things_control.core.paths import DEFAULT_PATHS, LOCK_FILE_NAME
+from draw_things_control.core.paths import LOCK_FILE_NAME
 from draw_things_control.core.process.groups import process_group_alive
 
-# Fixed, not configurable: every process must share one lock file, whatever configuration it loads.
-STATE_DIRECTORY = DEFAULT_PATHS.state
 # A read-only screen probes the lock by holding it for an instant, so a busy lock is retried this long before it is reported.
 BUSY_RETRY_SECONDS = 0.25
 _RETRY_INTERVAL_SECONDS = 0.025
@@ -30,14 +28,8 @@ class RunLockError(StateUnavailableError):
     """The lock file cannot be created or locked, for a reason other than being busy."""
 
 
-def state_directory() -> Path:
-    """The directory of the database and the lock; read on each call so tests can point it elsewhere."""
-    return STATE_DIRECTORY
-
-
-def ensure_state_directory() -> Path:
-    """Create the state directory if needed and return it."""
-    directory = state_directory()
+def ensure_state_directory(directory: Path) -> Path:
+    """Create the state directory (the project's ``ProjectPaths.state``: every process must share one lock file) if needed and return it."""
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as error:
@@ -65,7 +57,7 @@ class RunLock:
     releases the lock but not the GPU.
     """
 
-    def __init__(self, command: str, *, directory: Path | None = None, retry_seconds: float = BUSY_RETRY_SECONDS, child_check: Callable[[int, str], bool] = is_draw_things_process) -> None:
+    def __init__(self, command: str, *, directory: Path, retry_seconds: float = BUSY_RETRY_SECONDS, child_check: Callable[[int, str], bool] = is_draw_things_process) -> None:
         self._command = command
         self._directory = directory
         self._retry_seconds = retry_seconds
@@ -115,8 +107,7 @@ class RunLock:
         self.release()
 
     def _open(self) -> int:
-        directory = self._directory if self._directory is not None else ensure_state_directory()
-        path = directory / LOCK_FILE_NAME
+        path = ensure_state_directory(self._directory) / LOCK_FILE_NAME
         try:
             return os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         except OSError as error:
@@ -162,13 +153,13 @@ class RunLock:
         os.ftruncate(descriptor, len(data))
 
 
-def run_lock_is_free(*, directory: Path | None = None) -> bool:
+def run_lock_is_free(*, directory: Path) -> bool:
     """Whether no run holds the lock, for read-only screens; the file is left as it is.
 
     The probe holds the lock for an instant, which RunLock's retry window absorbs.
     """
     try:
-        descriptor = os.open((directory or state_directory()) / LOCK_FILE_NAME, os.O_RDWR)
+        descriptor = os.open(directory / LOCK_FILE_NAME, os.O_RDWR)
     except FileNotFoundError:
         return True
     except OSError:

@@ -12,17 +12,26 @@ from unittest import mock
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli import app as cli
-from draw_things_control.cli.app import app, create_job_runner
+from draw_things_control.cli.app import CliServices, app
 from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.executor import JobRunOptions
+from draw_things_control.services.toolkit import create_job_runner
 from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution
 from draw_things_control.state.store import Store
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
+
+
+class BlockedState(ProjectPaths):
+    """The project's paths, except that the state directory would have to be made below a file."""
+
+    @property
+    def state(self) -> Path:
+        return self.root / "blocker" / "state"
 
 
 class StateCliTests(JobTestCase):
@@ -45,13 +54,7 @@ class StateCliTests(JobTestCase):
             handle_signals=False,
             cooldown=lambda seconds: seconds,
         )
-        for patcher in (
-            mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params),
-            mock.patch.object(run_lock, "STATE_DIRECTORY", self.state),
-            mock.patch.object(cli, "job_executor", self.fake_service),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.services = CliServices(self.paths, FakeToolkit(self.fake_service))
         sink = logger.add(lambda message: self.messages.append(str(message).strip()), format="{message}", level="ERROR")
         self.addCleanup(logger.remove, sink)
 
@@ -66,7 +69,7 @@ class StateCliTests(JobTestCase):
         return FakeRunner(arguments, self.results.get(self.runs_started, FakeResult()), write_output=True)
 
     def invoke(self, *arguments: str):
-        return self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)])
+        return self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)], obj=self.services)
 
     def run_job(self, *extra: str):
         return self.invoke("run-job", str(self.job_path), "--executable", "draw-things-cli", *extra)
@@ -100,9 +103,9 @@ class StateCliTests(JobTestCase):
         self.assertEqual(self.store().executions.page()[0].status, "failed")
 
     def test_a_busy_lock_exits_75_with_the_message_and_starts_nothing(self) -> None:
-        with RunLock("run-job"):
+        with RunLock("run-job", directory=self.state):
             result = self.run_job()
-            generate = self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--output", str(self.root / "x.png")])
+            generate = self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--output", str(self.root / "x.png")], obj=self.services)
         for outcome in (result, generate):
             self.assertEqual(outcome.exit_code, 75)
         self.assertEqual(self.runs_started, 0)
@@ -113,11 +116,11 @@ class StateCliTests(JobTestCase):
         executable = self.root / "draw-things-cli"
         executable.write_text("#!/bin/sh\n", encoding="utf-8")
         executable.chmod(0o755)
-        with RunLock("run-job"):
+        with RunLock("run-job", directory=self.state):
             self.assertEqual(self.run_job("--dry-run").exit_code, 0)
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
-            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")]).exit_code, 0)
-            self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"]).exit_code, 0)
+            self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")], obj=self.services).exit_code, 0)
+            self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"], obj=self.services).exit_code, 0)
             # None of those touched the database.
             self.assertFalse((self.state / "dtc.db").exists())
             self.output_directory.mkdir()
@@ -139,8 +142,8 @@ class StateCliTests(JobTestCase):
     def test_an_unwritable_state_directory_stops_before_anything_starts(self) -> None:
         blocker = self.root / "blocker"
         blocker.write_text("")
-        with mock.patch.object(run_lock, "STATE_DIRECTORY", blocker / "state"):
-            result = self.run_job()
+        self.services = CliServices(BlockedState(self.root), FakeToolkit(self.fake_service))
+        result = self.run_job()
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(self.runs_started, 0)
         self.assertIn("Cannot create the state directory", self.messages[0])
@@ -198,7 +201,6 @@ class StateCliTests(JobTestCase):
         [on_child_start] = seen
         self.assertIsInstance(getattr(on_child_start, "__self__", None), RunLock)
         self.assertEqual(getattr(on_child_start, "__func__", None), RunLock.record_child)
-        self.assertFalse(hasattr(cli, "_active_lock"))
 
     def test_import_history_imports_once_and_reports_counts(self) -> None:
         self.write_global_config("write_job_records: true\n")

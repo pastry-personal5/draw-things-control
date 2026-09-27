@@ -18,10 +18,12 @@ from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
 from draw_things_control.jobs.events import CooldownStarted, RunStarted
 from draw_things_control.jobs.parsing import load_job
+from draw_things_control.services.history import HistoryFilter, HistoryPage
+from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader, copy_to_pasteboard
+from draw_things_control.tui.desktop import copy_to_pasteboard
 from draw_things_control.tui.panes import ExecutionBody, ExecutionPane, HistoryPane, JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.text import argument_rows, confirm_run_text, event_text, override_notes, parameters_text, reveal_action, stored_cooldown_text
@@ -54,8 +56,8 @@ class HistoryCase(TuiTestCase):
         return self.make_app(FakeRuns().service)
 
     def store(self) -> Store:
-        ensure_state_directory()
-        store = Store.open()
+        ensure_state_directory(self.state)
+        store = Store.open(self.paths.database)
         self.addCleanup(store.close)
         return store
 
@@ -135,7 +137,7 @@ class HistoryTests(HistoryCase):
     async def test_pages_load_at_the_last_row_and_a_refresh_keeps_them_and_the_selection(self) -> None:
         ids = [self.add(f"job{number}", number) for number in range(8)]
         app = self.app()
-        with mock.patch("draw_things_control.tui.panes.PAGE_SIZE", 3), mock.patch("draw_things_control.tui.history.PAGE_SIZE", 3):
+        with mock.patch("draw_things_control.tui.panes.PAGE_SIZE", 3), mock.patch("draw_things_control.services.history.PAGE_SIZE", 3):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 table = app.screen.query_one(HistoryPane)
@@ -162,7 +164,7 @@ class HistoryTests(HistoryCase):
             await self.settle(pilot)
             free = self.columns(app, 2, 4)
         self.assertEqual(free, [["interrupted", "0/1"]])
-        lock = RunLock("run-job")
+        lock = RunLock("run-job", directory=self.state)
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.app()
@@ -231,7 +233,7 @@ class HistoryTests(HistoryCase):
         )
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("draw_things_control.tui.history.reveal_in_finder", reveal):
+        with mock.patch("draw_things_control.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 detail = await self.detail(pilot, execution_id)
@@ -247,7 +249,7 @@ class HistoryTests(HistoryCase):
         (self.outputs / "two.mov").write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("draw_things_control.tui.history.reveal_in_finder", reveal):
+        with mock.patch("draw_things_control.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 results = {}
@@ -275,7 +277,7 @@ class HistoryTests(HistoryCase):
         for failure in failures:
             with self.subTest(failure=failure):
                 run = mock.Mock(side_effect=failure) if isinstance(failure, Exception) else mock.Mock(return_value=failure)
-                with mock.patch("draw_things_control.tui.history.subprocess.run", run):
+                with mock.patch("draw_things_control.tui.desktop.subprocess.run", run):
                     async with app.run_test(size=(140, 40)) as pilot:
                         await self.settle(pilot)
                         await self.command(pilot, f"/reveal E{execution_id:04d}")
@@ -350,7 +352,7 @@ class HistoryTests(HistoryCase):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.command(pilot, "/filter status succeeded")
-                lock = RunLock("run-job")
+                lock = RunLock("run-job", directory=self.state)
                 lock.acquire()
                 self.addCleanup(lock.release)
                 running = self.add("walk", 5, status=None, runs=("running",))
@@ -366,7 +368,7 @@ class HistoryTests(HistoryCase):
     async def test_one_store_is_opened_and_closed_with_the_screen(self) -> None:
         self.add("walk", 0)
         app = self.app()
-        with mock.patch("draw_things_control.tui.history.Store", wraps=Store) as store_class, mock.patch.object(HistoryReader, "close", autospec=True, side_effect=HistoryReader.close) as close:
+        with mock.patch("draw_things_control.services.store_provider.Store", wraps=Store) as store_class, mock.patch.object(StoreProvider, "close", autospec=True, side_effect=StoreProvider.close) as close:
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 for line in ("/get history", "/describe execution E0001", "/filter name w", "/filter off"):
@@ -449,7 +451,7 @@ class ExecutionDetailTests(HistoryCase):
             (self.outputs / name).write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("draw_things_control.tui.history.reveal_in_finder", reveal):
+        with mock.patch("draw_things_control.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.shown(pilot, execution_id)
@@ -501,7 +503,7 @@ class ExecutionDetailTests(HistoryCase):
             (self.outputs / name).write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("draw_things_control.tui.history.reveal_in_finder", reveal):
+        with mock.patch("draw_things_control.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.shown(pilot, execution_id)
@@ -712,11 +714,11 @@ class RunStartedTextTests(unittest.TestCase):
 class PasteboardTests(unittest.TestCase):
     def test_the_text_goes_to_pbcopy_as_utf_8_and_failures_say_why(self) -> None:
         done = subprocess.CompletedProcess(["pbcopy"], 0)
-        with mock.patch("draw_things_control.tui.history.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("draw_things_control.tui.history.subprocess.run", return_value=done) as run:
+        with mock.patch("draw_things_control.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("draw_things_control.tui.desktop.subprocess.run", return_value=done) as run:
             self.assertIsNone(copy_to_pasteboard("a café [slow]"))
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pbcopy"])
         self.assertEqual((run.call_args.kwargs["input"], run.call_args.kwargs["env"]["LC_CTYPE"]), ("a café [slow]".encode(), "UTF-8"))
-        with mock.patch("draw_things_control.tui.history.shutil.which", return_value=None):
+        with mock.patch("draw_things_control.tui.desktop.shutil.which", return_value=None):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy was not found")
-        with mock.patch("draw_things_control.tui.history.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("draw_things_control.tui.history.subprocess.run", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
+        with mock.patch("draw_things_control.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("draw_things_control.tui.desktop.subprocess.run", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy exited with 1")

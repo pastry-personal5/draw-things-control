@@ -1,0 +1,51 @@
+"""The real tools every front end uses: draw-things-cli, ffmpeg, and ffprobe, and the services built on them."""
+
+from __future__ import annotations
+
+import shutil
+from collections.abc import Callable
+from pathlib import Path
+
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.draw_things_config import load_config
+from draw_things_control.core.generation import GenerationService
+from draw_things_control.core.process.output import MessageCallback, OutputProcessor
+from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner, RunnerFactory, StoppableRunner
+from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.jobs.media.frames import extract_last_frame
+from draw_things_control.jobs.media.info import measure_output
+from draw_things_control.jobs.media.toolkit import MediaTools
+from draw_things_control.jobs.media.tools import require_ffmpeg, require_ffprobe
+from draw_things_control.jobs.media.video_color import tag_video_colors
+
+
+def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
+    """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints, ``on_start`` its PID and executable name."""
+    # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
+    capture_output = arguments.output is not None and not arguments.terminal_image
+    name = Path(arguments.executable).name
+    on_pid = (lambda pid: on_start(pid, name)) if on_start is not None else None
+    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_pid)
+
+
+def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
+    """Create a run's runner; JobExecutor owns signal handling and forwards signals to it."""
+    return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
+
+
+class Toolkit:
+    """The tools of this machine. Built once by a front end, which asks it for the services that use them; a test builds one
+    with fake tools, or overrides ``generation_service`` and ``job_executor``."""
+
+    def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: RunnerFactory[StoppableRunner] = create_job_runner) -> None:
+        self._find_executable = find_executable
+        self._media = media or MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output)
+        self._job_runner_factory = job_runner_factory
+
+    def generation_service(self) -> GenerationService:
+        """The service behind ``generate``: one draw-things-cli run, with the caller's terminal for its preview."""
+        return GenerationService(runner_factory=create_runner, find_executable=self._find_executable, config_loader=load_config)
+
+    def job_executor(self, *, handle_signals: bool = True) -> JobExecutor:
+        """A job executor; ``handle_signals`` must be False for jobs run off the main thread."""
+        return JobExecutor(runner_factory=self._job_runner_factory, find_executable=self._find_executable, media=self._media, handle_signals=handle_signals)

@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 5 differs from the plan.
+  - Passing `ProjectPaths` down instead of patching landed for every layer in this step (the plan said layer by layer): `RunLock`, `Store.open`, `load_job`, `find_config_file`, and `load_global_config` take their directories, and the module constants `STATE_DIRECTORY`, `PARAMS_DIRECTORY`, `JOBS_DIRECTORY`, and `DEFAULT_GLOBAL_CONFIG` are gone. `--global-config` and `--data-dir` default to the project's own through the context.
+  - One `StoreProvider` replaces the three stores the TUI's catalog, reader, and sort opened.
+  - `errors_exit` and `exit_code_for_error` (Step 7's one mapping from error codes to exit codes) landed here, since the CLI was rewritten around `CliServices`.
+  - `tui/history.py` is gone: the reader moved to `services/history.py`, and the reveal and clipboard functions to `tui/desktop.py` (Step 6's plan).
+
 - **Design decision** [M11]: Where Step 4 differs from the plan.
   - An execution's `settings` JSON keeps only the keys that are set (`ExecutionSettings.to_json`), so a new row no longer holds `"input_resize": null` and the like. Readers always used `get`, and older rows still read; one function now builds the snapshot for the recorder and the import (D10). Keeping each writer's own key list was rejected: it is the duplicate the step removes. The schema is unchanged.
   - `ExecutionRow` counts its successful runs (`succeeded`) in the query that reads it, so `HistoryReader` no longer asks the store a second time.

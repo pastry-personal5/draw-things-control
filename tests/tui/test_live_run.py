@@ -16,16 +16,16 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import redact_command
-from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
+from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.paths import DEFAULT_PATHS
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.events import JobStarted, RunStarted
 from draw_things_control.jobs.parsing import load_job
+from draw_things_control.services.history import HistoryReader
 from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.history import HistoryReader
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, JobEventMessage, LiveRun, PastRun
 from draw_things_control.tui.panes import ExecutionPane, HistoryPane
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
@@ -107,7 +107,7 @@ class LiveRunTests(TuiTestCase):
         [execution] = self.executions()
         self.assertEqual((execution.status, execution.exit_code, execution.seed), ("succeeded", 0, 42))
         self.assertEqual([run.status for run in execution.runs], ["succeeded", "succeeded"])
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
         self.assertEqual([runner.grace for runner in runs.runners], [3, 3])
 
     async def test_the_status_widget_follows_the_job_and_keeps_its_end(self) -> None:
@@ -137,7 +137,7 @@ class LiveRunTests(TuiTestCase):
 
     async def test_a_new_job_moves_the_history_cursor_unless_the_history_is_being_browsed(self) -> None:
         self.write_data_job()
-        store = Store.open()
+        store = Store.open(self.paths.database)
         self.addCleanup(store.close)
         old = store.executions.start(NewExecution(job_name="old", job_file="/jobs/old.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00"))
         store.executions.finish(old, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:01:00+00:00")
@@ -170,7 +170,7 @@ class LiveRunTests(TuiTestCase):
 
     async def test_a_job_is_estimated_from_the_latest_successful_run_before_it_reports_a_step(self) -> None:
         self.write_data_job()
-        store = Store.open()
+        store = Store.open(self.paths.database)
         self.addCleanup(store.close)
         other = store.executions.start(NewExecution(job_name="other", job_file="/jobs/other.yaml", mode="i2v", started_at="2026-09-20T09:00:00+00:00"))
         store.executions.start_run(other, 1, NewRun(pair="p", positive="text", started_at="2026-09-20T09:00:00+00:00", command=["draw-things-cli", "generate", "--steps", "30"]))
@@ -194,7 +194,7 @@ class LiveRunTests(TuiTestCase):
         self.assertIn("ends ~", status[1])
 
     async def test_a_job_another_process_is_running_is_shown_when_the_tui_opens(self) -> None:
-        lock = RunLock("run-job")
+        lock = RunLock("run-job", directory=self.state)
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.app(FakeRuns())
@@ -335,7 +335,7 @@ class LiveRunTests(TuiTestCase):
         [execution] = self.executions()
         self.assertEqual((execution.status, execution.exit_code), ("interrupted", 130))
         self.assertEqual([run.status for run in execution.runs], ["interrupted"])
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
 
     async def test_stop_during_a_cooldown_ends_it_at_once(self) -> None:
         self.write_data_job(cooldown={"mode": "manual", "seconds": 600})
@@ -364,7 +364,7 @@ class LiveRunTests(TuiTestCase):
     async def test_a_busy_lock_starts_nothing_and_the_next_run_runs(self) -> None:
         self.write_data_job()
         self.state.mkdir()
-        other = RunLock("run-job")
+        other = RunLock("run-job", directory=self.state)
         other.acquire()
         runs = FakeRuns()
         app = self.app(runs)
@@ -380,7 +380,7 @@ class LiveRunTests(TuiTestCase):
         self.assertIn("Job succeeded", self.log())
         self.assertEqual(len(runs.runners), 2)
         self.assertEqual(len(self.executions()), 1)
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
 
     async def test_a_job_that_fails_before_it_starts_records_nothing(self) -> None:
         self.write_data_job()
@@ -391,7 +391,7 @@ class LiveRunTests(TuiTestCase):
             await self.finish(pilot)
         self.assertIn("Did not start: Could not find 'draw-things-cli' on PATH", self.log())
         self.assertEqual(self.executions(), [])
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
         self.assertFalse(self.output_directory.exists())
 
     async def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
@@ -499,7 +499,7 @@ class LiveRunTests(TuiTestCase):
                     gate.set()
                     await self.wait_for(pilot, lambda: not pilot.app.is_running, "the app to exit")
                 self.assertEqual(app.return_code, 0)
-                self.assertTrue(run_lock_is_free())
+                self.assertTrue(run_lock_is_free(directory=self.state))
                 self.assertEqual(self.executions()[0].exit_code, 130)
 
     async def test_a_signal_stops_the_job_then_quits_with_128_plus_n(self) -> None:
@@ -515,7 +515,7 @@ class LiveRunTests(TuiTestCase):
         self.assertEqual(runs.runners[0].shutdown_signal, signal.SIGTERM)
         [execution] = self.executions()
         self.assertEqual((execution.status, execution.exit_code, execution.signal), ("interrupted", 143, "SIGTERM"))
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
 
     async def test_a_signal_without_a_job_quits_at_once(self) -> None:
         for received in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -549,9 +549,9 @@ class LiveRunTests(TuiTestCase):
         self.assertTrue(runs.runners[0].stopped.wait(5))
         self.assertEqual(runs.runners[0].shutdown_signal, signal.SIGINT)
         deadline = time.monotonic() + 5
-        while not run_lock_is_free() and time.monotonic() < deadline:
+        while not run_lock_is_free(directory=self.state) and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
 
     async def test_an_app_that_ends_before_the_job_has_begun_still_stops_it(self) -> None:
         self.write_data_job()
@@ -576,7 +576,7 @@ class LiveRunTests(TuiTestCase):
             deadline = time.monotonic() + 5
             while not app._worker_done.is_set() and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
         self.assertEqual(runs.runners, [])
         [execution] = self.executions()
         self.assertEqual((execution.status, execution.exit_code), ("interrupted", 130))
@@ -600,7 +600,7 @@ class LiveRunTests(TuiTestCase):
         while signal.getsignal(signal.SIGTERM) is not before and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
         self.assertIs(signal.getsignal(signal.SIGTERM), before)
-        self.assertTrue(run_lock_is_free())
+        self.assertTrue(run_lock_is_free(directory=self.state))
 
     async def test_a_signal_while_stopping_keeps_the_stopping_signals_exit_code(self) -> None:
         self.write_data_job()
@@ -625,7 +625,7 @@ class LiveRunTests(TuiTestCase):
         command = redact_command(("draw-things-cli", "generate", "--api-key", "sekret-value", "--remote-shared-secret", "hush-value"))
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
-            app.live = LiveRun(load_job(self.data / "walk.yaml", self.global_config), self.data / "walk.yaml")
+            app.live = LiveRun(load_job(self.data / "walk.yaml", self.global_config, self.params), self.data / "walk.yaml")
             app.post_message(JobEventMessage(RunStarted(at="", number=1, total=2, pair="walk", positive="walk", negative=None, input=None, resized_input=None, output="out.mov", last_frame=None, command=tuple(command))))
             await pilot.pause()
             status = self.text(app, "run-line")
@@ -659,12 +659,11 @@ class LiveRunTests(TuiTestCase):
 
 class SigtermTests(JobTestCase):
     def test_sigterm_to_a_running_tui_stops_the_job_and_exits_with_143(self) -> None:
-        data = self.root / "data"
-        data.mkdir()
-        self.write_job(job_data(**TWO_RUNS), name="data/walk.yaml")
-        state = self.root / "state"
+        self.paths.jobs.mkdir(parents=True)
+        self.write_job(job_data(**TWO_RUNS), name="data/jobs/walk.yaml")
+        state = self.paths.state
         started = self.root / "started"
-        process = subprocess.Popen([sys.executable, "-m", "tests.tui.sigterm_app", str(self.root), str(started)], cwd=PROJECT_ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen([sys.executable, "-m", "tests.tui.sigterm_app", str(self.root), str(started)], cwd=DEFAULT_PATHS.root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             deadline = time.monotonic() + 30
             while not started.exists():
@@ -679,12 +678,11 @@ class SigtermTests(JobTestCase):
                 process.kill()
                 process.wait()
         self.assertEqual(process.returncode, 143, stderr.decode())
-        with mock.patch.object(run_lock, "STATE_DIRECTORY", state):
-            store = Store.open()
-            try:
-                [row] = store.executions.page()
-            finally:
-                store.close()
-            self.assertTrue(run_lock_is_free())
+        store = Store.open(self.paths.database)
+        try:
+            [row] = store.executions.page()
+        finally:
+            store.close()
+        self.assertTrue(run_lock_is_free(directory=state))
         self.assertEqual((row.status, row.exit_code, row.signal), ("interrupted", 143, "SIGTERM"))
         self.assertEqual((state / "run.lock").read_text(encoding="utf-8"), "")

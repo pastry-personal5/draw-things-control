@@ -5,18 +5,24 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from rich.text import Text
+from textual.app import App
 
+from draw_things_control.core.errors import DtcError
 from draw_things_control.core.run_lock import RunLockError
 from draw_things_control.jobs.parsing import load_job
-from draw_things_control.tui import job_files
+from draw_things_control.services import job_catalog
+from draw_things_control.services.job_catalog import JobCatalog, JobRow
+from draw_things_control.services.store_provider import StoreProvider
+from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.job_files import JobCatalog, JobRow
+from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
 from draw_things_control.tui.panes import JobDefinitionPane
 from draw_things_control.tui.screens import ConfirmScreen
@@ -33,10 +39,9 @@ ONE_PAIR = [{"name": "only", "positive": "walk"}]
 class JobDefinitionTests(TuiTestCase):
     def setUp(self) -> None:
         super().setUp()
-        # The test's data directory stands for the project's data/jobs/, the one directory whose files get IDs.
-        patcher = mock.patch("draw_things_control.core.draw_things_config.JOBS_DIRECTORY", self.data)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # The project's data/jobs/ is the one directory whose files get IDs.
+        self.data = self.paths.jobs
+        self.data.mkdir(parents=True)
 
     def app(self, *, data: Path | None = None) -> DrawThingsApp:
         return self.make_app(make_service(frozenset()), data=data)
@@ -45,7 +50,7 @@ class JobDefinitionTests(TuiTestCase):
         os.utime(path, (when, when))
 
     @staticmethod
-    def rows(app: DrawThingsApp) -> list[list[str]]:
+    def rows(app: App[Any]) -> list[list[str]]:
         table = app.screen.query_one(JobDefinitionPane)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
@@ -147,7 +152,7 @@ class JobDefinitionTests(TuiTestCase):
             # Only y runs; n cancels, and the job did not start.
             await pilot.press("n")
             await self.settle(pilot)
-            running = pilot.app.job_running
+            running = cast(DrawThingsApp, pilot.app).job_running
             await pilot.press("escape")
             focused = pilot.app.focused
         self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", described)
@@ -160,7 +165,7 @@ class JobDefinitionTests(TuiTestCase):
             await self.settle(pilot)
             table = pilot.app.screen.query_one(JobDefinitionPane)
             self.write_data_job("wave.yaml")
-            with mock.patch.object(job_files, "read_job", wraps=job_files.read_job) as read:
+            with mock.patch.object(job_catalog, "read_job", wraps=job_catalog.read_job) as read:
                 table.load()
                 await self.settle(pilot)
             names = sorted(row[1] for row in self.rows(pilot.app))
@@ -231,11 +236,18 @@ class JobCatalogTests(TuiTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        patcher = mock.patch("draw_things_control.core.draw_things_config.JOBS_DIRECTORY", self.data)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.catalog = JobCatalog(self.data, self.global_config)
-        self.addCleanup(self.catalog.close)
+        self.data = self.paths.jobs
+        self.data.mkdir(parents=True)
+        self.store = StoreProvider(self.paths, 14)
+        self.addCleanup(self.store.close)
+        self.catalog = JobCatalog(self.data, self.global_config, self.paths, self.store)
+        self.sort = SortPreference(self.store)
+
+    def find(self, name: str, rows: Sequence[JobRow] = ()) -> Path | str:
+        try:
+            return self.catalog.find(name, rows)
+        except DtcError as error:
+            return str(error)
 
     def valid(self) -> dict[str, bool]:
         return {row.path.name: row.job is not None for row in self.catalog.read().rows}
@@ -260,7 +272,7 @@ class JobCatalogTests(TuiTestCase):
     def test_a_valid_unchanged_job_is_not_read_again_and_a_deleted_one_is_forgotten(self) -> None:
         walk = self.write_data_job("walk.yaml")
         self.catalog.read()
-        with mock.patch.object(job_files, "read_job", wraps=job_files.read_job) as read:
+        with mock.patch.object(job_catalog, "read_job", wraps=job_catalog.read_job) as read:
             self.catalog.read()
             self.assertEqual(read.call_count, 0)
             self.catalog.read(fresh=True)
@@ -272,7 +284,7 @@ class JobCatalogTests(TuiTestCase):
     def test_a_name_that_is_the_only_spelling_of_an_id_is_still_an_error(self) -> None:
         # From J10000 up, every spelling of the ID is the same text.
         with mock.patch.object(self.catalog, "_find_file", return_value=self.data / "a.yaml"), mock.patch.object(self.catalog, "_find_id", return_value=self.data / "b.yaml"):
-            self.assertEqual(self.catalog.find("J10000", []), "'J10000' is both the job file a.yaml and the job ID J10000 (b.yaml); type a.yaml or J10000")
+            self.assertEqual(self.find("J10000", []), "'J10000' is both the job file a.yaml and the job ID J10000 (b.yaml); type a.yaml or J10000")
 
     def test_a_job_id_is_found_before_the_list_is_read_and_a_name_that_is_both_is_an_error(self) -> None:
         self.write_data_job("a.yaml")
@@ -283,33 +295,33 @@ class JobCatalogTests(TuiTestCase):
         # Listed by file name: J0002.yaml is J0001, a.yaml J0002, j1.yaml J0003.
         self.assertEqual(numbers, {"J0002.yaml": 1, "a.yaml": 2, "j1.yaml": 3})
         # Without the rows (as right after the TUI opens), the store answers.
-        self.assertEqual(self.catalog.find("j2", []), self.data / "a.yaml")
-        self.assertEqual(self.catalog.find("J0003"), self.data / "j1.yaml")
+        self.assertEqual(self.find("j2", []), self.data / "a.yaml")
+        self.assertEqual(self.find("J0003"), self.data / "j1.yaml")
         # j1 is the file j1.yaml, and also the ID J0001 of another file: neither runs, and both are named.
-        self.assertEqual(self.catalog.find("j1", rows), "'j1' is both the job file j1.yaml and the job ID J0001 (J0002.yaml); type j1.yaml or J0001")
-        self.assertEqual(self.catalog.find("J0002", rows), "'J0002' is both the job file J0002.yaml and the job ID J0002 (a.yaml); type J0002.yaml or J2")
+        self.assertEqual(self.find("j1", rows), "'j1' is both the job file j1.yaml and the job ID J0001 (J0002.yaml); type j1.yaml or J0001")
+        self.assertEqual(self.find("J0002", rows), "'J0002' is both the job file J0002.yaml and the job ID J0002 (a.yaml); type J0002.yaml or J2")
         # A full file name is never an ID; j3 is j1.yaml's own ID, so there is nothing to choose between.
-        self.assertEqual(self.catalog.find("j1.yaml", rows), self.data / "j1.yaml")
-        self.assertEqual(self.catalog.find("j3", rows), self.data / "j1.yaml")
+        self.assertEqual(self.find("j1.yaml", rows), self.data / "j1.yaml")
+        self.assertEqual(self.find("j3", rows), self.data / "j1.yaml")
         (self.data / "a.yaml").unlink()
-        self.assertEqual(self.catalog.find("j2", []), f"J0002 is a.yaml, which is no longer in {self.data}")
-        self.assertEqual(self.catalog.find("J9", rows), f"No job file has the ID J0009 in {self.data}")
+        self.assertEqual(self.find("j2", []), f"J0002 is a.yaml, which is no longer in {self.data}")
+        self.assertEqual(self.find("J9", rows), f"No job file has the ID J0009 in {self.data}")
 
     def test_an_unusable_state_directory_is_reported_and_never_raises(self) -> None:
         self.write_data_job("walk.yaml")
-        with mock.patch.object(job_files.Store, "open", side_effect=RunLockError("Cannot create the state directory")):
+        with mock.patch.object(Store, "open", side_effect=RunLockError("Cannot create the state directory")):
             listing = self.catalog.read()
             self.assertEqual(listing.id_error, "Cannot give job IDs: Cannot create the state directory")
             self.assertEqual([row.number for row in listing.rows], [None])
-            self.assertEqual(self.catalog.keep_sort("name", False, 1), "Cannot keep the sort: Cannot create the state directory")
-            self.assertEqual(self.catalog.find("J1"), f"No job file has the ID J0001 in {self.data}")
-        self.assertEqual(self.catalog.sort(), ("changed", True))
+            self.assertEqual(self.sort.keep("name", False, 1), "Cannot keep the sort: Cannot create the state directory")
+            self.assertEqual(self.find("J1"), f"No job file has the ID J0001 in {self.data}")
+        self.assertEqual(self.sort.sort(), ("changed", True))
 
     def test_a_later_sort_choice_is_never_overwritten_by_an_earlier_one(self) -> None:
-        self.assertIsNone(self.catalog.keep_sort("name", False, 2))
+        self.assertIsNone(self.sort.keep("name", False, 2))
         # The first choice's save arrives last: it is dropped.
-        self.assertIsNone(self.catalog.keep_sort("runs", True, 1))
-        self.assertEqual(self.catalog.sort(), ("name", False))
+        self.assertIsNone(self.sort.keep("runs", True, 1))
+        self.assertEqual(self.sort.sort(), ("name", False))
 
 
 class JobDefinitionPaneTests(JobDefinitionTests):

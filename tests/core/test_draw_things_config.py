@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from draw_things_control.core.draw_things_config import PARAMS_DIRECTORY, build_config_json, find_config_file, load_base_config, load_config
+from draw_things_control.core.draw_things_config import build_config_json, find_config_file, load_base_config, load_config
 
 
 class GenerationConfigTests(unittest.TestCase):
@@ -20,9 +20,6 @@ class GenerationConfigTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def test_config_directory_is_the_repository_folder(self) -> None:
-        self.assertEqual(PARAMS_DIRECTORY, Path(__file__).resolve().parents[2] / "data" / "params")
-
     def test_bare_yaml_name_is_found_in_the_directory(self) -> None:
         for name in ("base.yaml", "base.yml", "BASE.YML"):
             with self.subTest(name):
@@ -33,7 +30,7 @@ class GenerationConfigTests(unittest.TestCase):
     def test_paths_are_rejected(self) -> None:
         for name in ("../pyproject.toml", "params/x.yaml", "/etc/hosts", ".."):
             with self.subTest(name), self.assertRaisesRegex(ValueError, "not a path"):
-                find_config_file(name)
+                find_config_file(name, self.directory)
 
     def test_other_extensions_are_rejected(self) -> None:
         self.write("base.txt", "model: m.ckpt\n")

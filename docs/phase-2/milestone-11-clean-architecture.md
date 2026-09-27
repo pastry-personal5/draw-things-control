@@ -201,14 +201,17 @@ src/draw_things_control/
 │   ├── store.py              # Store: opens the database in a mode, holds the repositories; pruning
 │   └── recorder.py, ids.py, history_import.py
 ├── services/                 # (new)
-│   ├── toolkit.py            # Toolkit: runner factory, executable lookup, media tools; builds executors
+│   ├── toolkit.py            # Toolkit: runner factory, executable lookup, media tools; builds the generation service and executors
 │   ├── job_runs.py           # JobRunSession: a recorded job run, for the CLI, the TUI, and the queue worker
+│   ├── store_provider.py     # StoreProvider: the store a browsing front end opens when needed and keeps (new)
 │   ├── job_catalog.py        # JobCatalog (from tui/job_files.py)
 │   ├── job_details.py        # read_details, add_plan (from tui/job_files.py)
-│   └── history.py            # HistoryReader, output paths (from tui/history.py)
+│   └── history.py            # HistoryReader, HistoryFilter, HistoryPage (from tui/history.py)
 ├── cli/app.py
 └── tui/
-    ├── app.py, screens.py, controller.py (new), signals.py (new), desktop.py (reveal, pbcopy; new)
+    ├── app.py, screens.py, controller.py (new), signals.py (new), desktop.py (reveal, pbcopy; from history.py)
+    ├── reader.py             # PaneHistory: the history for the panes, failures as text (new)
+    ├── job_sort.py           # SortPreference: the Job Definition widget's kept sort (new)
     ├── commands.py, widgets.py, job_watch.py, live_run.py, estimate.py
     ├── panes/                # base.py, status.py, cli_output.py, job_definitions.py, history.py, execution.py
     └── text/                 # jobs.py, status.py, events.py, execution.py, arguments.py, tables.py
@@ -388,6 +391,9 @@ says otherwise.
 - `Toolkit` (in `services/toolkit.py`) holds the real tools and builds the
   `GenerationService` and the `JobExecutor`, with `handle_signals` as a
   parameter. The CLI and the TUI get it from here, not from `cli/app.py`.
+  The CLI keeps it, with the `ProjectPaths`, in `CliServices` in Typer's
+  context object (`main` builds it; a test passes its own), so a command
+  takes its directories and tools from there and no test patches a path.
 - `JobRunSession` runs a job with its execution recorded: it takes the run
   lock (or is given one the caller already holds, as the Phase 3 server
   will), opens the store in `run` mode, sweeps, gives the caller the latest
@@ -396,10 +402,13 @@ says otherwise.
   worker call it (D12). It raises `DtcError`s; the CLI maps them to exit
   codes and the TUI to messages.
 - `JobCatalog`, the job details, and `HistoryReader` move here from `tui/`,
-  typed, and without the TUI's sort keys. They raise `DtcError`s instead of
-  returning `X | str`; the TUI's worker helper turns an error into a message,
-  so no Textual worker can raise (the rule stays, in one place). The sort
-  choice stays a TUI setting, read and written through `SettingsRepository`.
+  typed, and without the TUI's sort keys. `HistoryReader` and
+  `JobCatalog.find` raise `DtcError`s instead of returning `X | str`; the
+  TUI's `PaneHistory` turns an error into a message, so no Textual worker can
+  raise (the rule stays, in one place). The sort choice stays a TUI setting
+  (`SortPreference`), read and written through `SettingsRepository`. One
+  `StoreProvider` opens the browsing store for the catalog, the reader, and the
+  sort, so the screen keeps one store.
 
 ### Step 6: `tui/`
 

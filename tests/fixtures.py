@@ -14,10 +14,12 @@ from PIL import Image
 
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
 from draw_things_control.jobs.media.info import MediaInfo
 from draw_things_control.jobs.media.toolkit import MediaTools
+from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, RunRow
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
@@ -53,9 +55,10 @@ class JobTestCase(unittest.TestCase):
         self.root = Path(self._temporary.name).resolve()
         self.input_directory = self.root / "input"
         self.output_directory = self.root / "output"
-        self.params = self.root / "params"
+        self.paths = ProjectPaths(self.root)
+        self.params = self.paths.params
         self.input_directory.mkdir()
-        self.params.mkdir()
+        self.params.mkdir(parents=True)
         # No cooldown unless a test sets one: the default auto cooldown would follow a fake run with a wait of 0 or 1 second, by chance.
         self.global_config = GlobalConfig(input_directory=self.input_directory, output_directory=self.output_directory, cooldown=CooldownPolicy(mode="off"))
         self.write_base_config(BASE_CONFIG)
@@ -166,3 +169,14 @@ def execution_row(**changes: Any) -> ExecutionRow:
         recovered_at=None,
     )
     return replace(base, **changes)
+
+
+class FakeToolkit(Toolkit):
+    """A Toolkit whose job executor is the one a test built; without one, the real one."""
+
+    def __init__(self, executor: JobExecutor | None = None) -> None:
+        super().__init__()
+        self._executor = executor
+
+    def job_executor(self, *, handle_signals: bool = True) -> JobExecutor:
+        return self._executor or super().job_executor(handle_signals=handle_signals)

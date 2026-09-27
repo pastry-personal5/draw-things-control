@@ -18,14 +18,16 @@ from textual.widgets import DataTable, RichLog, Static
 from textual.widgets.data_table import ColumnKey
 from textual.worker import get_current_worker
 
-from draw_things_control.core.run_lock import run_lock_is_free
 from draw_things_control.jobs.events import JobEvent, JobStatus, RunOutput
+from draw_things_control.services.history import PAGE_SIZE, HistoryFilter, HistoryPage
+from draw_things_control.services.job_catalog import JobCatalog, JobListing, JobRow
 from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.tui.commands import SORT_KEYS
-from draw_things_control.tui.history import PAGE_SIZE, HistoryFilter, HistoryPage, HistoryReader, reveal_run
-from draw_things_control.tui.job_files import JobCatalog, JobListing, JobRow
+from draw_things_control.tui.desktop import reveal_run
+from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, LiveRun
+from draw_things_control.tui.reader import PaneHistory
 from draw_things_control.tui.text import STATUS_STYLE, ExecutionDetail, execution_detail, execution_detail_text, history_cells, job_definition_cells, job_display_names, run_line_text, sort_job_rows, status_lines
 
 # How often the history is checked while another process runs a job, and the data directory for changed job files when
@@ -118,9 +120,10 @@ class JobDefinitionPane(DataTable[Text]):
         Binding("escape", "leave", "Command line", show=False),
     ]
 
-    def __init__(self, catalog: JobCatalog, *, describe: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, catalog: JobCatalog, sort_preference: SortPreference, *, describe: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
         super().__init__(cursor_type="row", zebra_stripes=True, **options)
         self.catalog = catalog
+        self.sort_preference = sort_preference
         self.describe_job = describe
         self.run_job = run
         self.announce_listing = announce
@@ -192,7 +195,7 @@ class JobDefinitionPane(DataTable[Text]):
 
     @work(thread=True, exclusive=True, group="job-definitions-sort")
     def read_sort(self) -> None:
-        key, descending = self.catalog.sort()
+        key, descending = self.sort_preference.sort()
         self.app.call_from_thread(self.apply_sort, key, descending)
 
     def apply_sort(self, key: str, descending: bool) -> None:
@@ -253,7 +256,7 @@ class JobDefinitionPane(DataTable[Text]):
 
     @work(thread=True, group="job-definitions-keep")
     def keep_sort(self, key: str, descending: bool, choice: int) -> None:
-        error = self.catalog.keep_sort(key, descending, choice)
+        error = self.sort_preference.keep(key, descending, choice)
         if error is not None:
             self.app.call_from_thread(self.set_message, error)
 
@@ -321,7 +324,7 @@ class HistoryPane(DataTable[Text]):
             self.execution_id = execution_id
             self.message = message
 
-    def __init__(self, reader: HistoryReader, *, busy: Callable[[], bool], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, reader: PaneHistory, *, busy: Callable[[], bool], leave: Callable[[], None], **options: Any) -> None:
         super().__init__(cursor_type="row", zebra_stripes=True, **options)
         self.reader = reader
         self.busy = busy
@@ -359,7 +362,7 @@ class HistoryPane(DataTable[Text]):
 
     def check_lock(self) -> bool:
         """Whether another process holds the run lock now; posts LockChanged when that changes."""
-        held = not self.busy() and not run_lock_is_free()
+        held = not self.busy() and not self.reader.lock_is_free()
         if held != self.other_process_running:
             self.other_process_running = held
             self.post_message(self.LockChanged())
@@ -496,7 +499,7 @@ class ExecutionPane(VerticalScroll):
         Binding("escape", "leave", "Command line", show=False),
     ]
 
-    def __init__(self, reader: HistoryReader, *, say: Callable[[Text | str, str], None], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, reader: PaneHistory, *, say: Callable[[Text | str, str], None], leave: Callable[[], None], **options: Any) -> None:
         super().__init__(**options)
         self.reader = reader
         self.say = say

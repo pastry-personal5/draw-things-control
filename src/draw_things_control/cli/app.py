@@ -1,128 +1,90 @@
-"""Typer interface and application wiring for Draw Things control."""
+"""Typer interface for Draw Things control: the commands, their options, and how an error ends one."""
 
 from __future__ import annotations
 
-import shutil
 import signal
 import sqlite3
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from loguru import logger
 
-from draw_things_control.core import draw_things_config
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_config import load_config
-from draw_things_control.core.exit_codes import EXIT_BUSY
-from draw_things_control.core.generation import GenerateRequest, GenerationService
-from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, GlobalConfig
-from draw_things_control.core.process.output import MessageCallback, OutputProcessor
-from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner
-from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError
+from draw_things_control.core.errors import DtcError
+from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE, exit_code_for_error
+from draw_things_control.core.generation import GenerateRequest
+from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
+from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.executor import JobExecutor, JobRunOptions
 from draw_things_control.jobs.files import read_job as load_job_and_settings
 from draw_things_control.jobs.files import read_settings
-from draw_things_control.jobs.media.frames import extract_last_frame
-from draw_things_control.jobs.media.info import measure_output
-from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.jobs.media.tools import require_ffmpeg, require_ffprobe
-from draw_things_control.jobs.media.video_color import tag_video_colors
 from draw_things_control.jobs.text import job_summary, plan_lines, report_ignored_config
+from draw_things_control.services.job_runs import JobRunSession
+from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.state.history_import import import_history
-from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import StateError, Store, StoreMode
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 
-DEFAULT_DATA_DIRECTORY = draw_things_config.JOBS_DIRECTORY
+
+@dataclass(frozen=True)
+class CliServices:
+    """What every command needs from the machine: where the project's files are, and the real tools. ``main`` builds it once; a
+    test passes its own with ``CliRunner.invoke(..., obj=...)``."""
+
+    paths: ProjectPaths
+    toolkit: Toolkit
+
+
+def services_of(ctx: typer.Context) -> CliServices:
+    """The context's services, or the project's own when a command runs without ``main``."""
+    return ctx.obj if isinstance(ctx.obj, CliServices) else CliServices(DEFAULT_PATHS, Toolkit())
 
 
 @contextmanager
-def invalid_input_exits() -> Iterator[None]:
-    """Log a ValueError (invalid input, configuration, or job) and exit with code 2."""
+def errors_exit() -> Iterator[None]:
+    """Log an error that stops a command (invalid input, a busy run lock, an unusable state store) and exit with its code."""
     try:
         yield
+    except DtcError as error:
+        logger.error("{}", error)
+        raise typer.Exit(code=exit_code_for_error(error)) from error
     except ValueError as error:
         logger.error("{}", error)
-        raise typer.Exit(code=2) from error
+        raise typer.Exit(code=EXIT_INVALID_INPUT) from error
 
 
 @contextmanager
-def held_run_lock(command: str) -> Iterator[RunLock]:
-    """Hold the machine-wide run lock for ``command``, or exit 75 if a run is in progress, 1 if it cannot be taken."""
-    lock = RunLock(command)
-    try:
-        lock.acquire()
-    except RunLockBusy as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=EXIT_BUSY) from error
-    except RunLockError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=1) from error
-    try:
-        yield lock
-    finally:
-        lock.release()
-
-
-def open_store(settings: GlobalConfig) -> Store:
-    """Open the state store, exiting with code 1 and the cause if it cannot be used."""
-    try:
-        return Store.open(mode=StoreMode.RUN, retention_days=settings.history_retention_days)
-    except (StateError, RunLockError, sqlite3.Error) as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=1) from error
-
-
-@contextmanager
-def open_state(settings: GlobalConfig) -> Iterator[Store]:
+def open_state(paths: ProjectPaths, settings: GlobalConfig) -> Iterator[Store]:
     """Open the state store for a command and close it afterwards; a database failure exits with code 1."""
-    store = open_store(settings)
+    with errors_exit():
+        try:
+            store = Store.open(paths.database, mode=StoreMode.RUN, retention_days=settings.history_retention_days)
+        except sqlite3.Error as error:
+            raise StateError(f"Cannot use the state database {paths.database}: {error}") from error
     try:
         yield store
     except sqlite3.Error as error:
         logger.error("Cannot use the state database {}: {}", store.path, error)
-        raise typer.Exit(code=1) from error
+        raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
     finally:
         store.close()
 
 
-def load_settings(global_config: Path) -> GlobalConfig:
-    """Load the global configuration, exiting with code 2 if it is invalid."""
-    with invalid_input_exits():
-        return read_settings(global_config)
+def load_settings(global_config: Path | None, paths: ProjectPaths) -> GlobalConfig:
+    """Load the global configuration (the project's own without a path), exiting with code 2 if it is invalid."""
+    with errors_exit():
+        return read_settings(global_config or paths.global_config, paths)
 
-
-def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
-    """Connect the generation use case to its process adapter; ``on_message`` receives each line the child prints, ``on_start`` its PID and executable name."""
-    # Without an output file, draw-things-cli previews in the terminal, so it must inherit it.
-    capture_output = arguments.output is not None and not arguments.terminal_image
-    name = Path(arguments.executable).name
-    on_pid = (lambda pid: on_start(pid, name)) if on_start is not None else None
-    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_pid)
-
-
-def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
-    """Create a run's runner; JobExecutor owns signal handling and forwards signals to it."""
-    return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
-
-
-def create_job_executor(*, handle_signals: bool = True) -> JobExecutor:
-    """The JobExecutor every front end uses to run jobs with the real tools; ``handle_signals`` must be False for jobs run off the main thread."""
-    media = MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output)
-    return JobExecutor(runner_factory=create_job_runner, find_executable=shutil.which, media=media, handle_signals=handle_signals)
-
-
-service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
-job_executor = create_job_executor()
 
 JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
-GlobalConfigOption = Annotated[Path, typer.Option("--global-config", help="Global configuration file.")]
+GlobalConfigOption = Annotated[Path | None, typer.Option("--global-config", help="Global configuration file; default: config/global-config.yaml in the project.")]
 ExecutableOption = Annotated[str, typer.Option(help="Draw Things CLI executable.")]
 
 
@@ -135,6 +97,7 @@ def configure_logging() -> None:
 
 @app.command()
 def generate(
+    ctx: typer.Context,
     models_dir: Annotated[Path | None, typer.Option(help="Models directory.")] = None,
     model: Annotated[str | None, typer.Option("--model", "-m", help="Model reference; may also come from a configuration.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", "-p", help="Prompt text.")] = None,
@@ -177,16 +140,18 @@ def generate(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the command without running it.")] = False,
 ) -> None:
     """Generate an image or video with Draw Things."""
+    services = services_of(ctx)
     # Typer has converted these callback values; its context still holds raw strings.
     options = locals().copy()
-    for wrapper_option in ("dry_run", "timeout", "shutdown_grace"):
+    for wrapper_option in ("ctx", "services", "dry_run", "timeout", "shutdown_grace"):
         options.pop(wrapper_option)
-    with invalid_input_exits():
+    service = services.toolkit.generation_service()
+    with errors_exit():
         arguments = service.prepare(GenerateRequest(**{**options, "image": tuple(options["image"] or ())}))
         if dry_run:
             outcome = service.execute(arguments, dry_run=True, timeout=timeout, shutdown_grace=shutdown_grace)
         else:
-            with held_run_lock("generate") as lock:
+            with RunLock("generate", directory=services.paths.state) as lock:
                 outcome = service.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace, on_start=lock.record_child)
     if outcome.command_preview is not None:
         typer.echo(outcome.command_preview)
@@ -199,23 +164,23 @@ def generate(
 
 
 @app.command("validate-config")
-def validate_config(config: Annotated[Path, typer.Argument(help="YAML or JSON configuration file to validate.")]) -> None:
-    """Validate a Draw Things YAML or JSON configuration file."""
-    with invalid_input_exits():
+def validate_config(config: Annotated[Path, typer.Argument(help="YAML configuration file to validate.")]) -> None:
+    """Validate a Draw Things YAML configuration file."""
+    with errors_exit():
         settings = load_config(config.expanduser())
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
 
 
-def read_job(job_file: Path, global_config: Path, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
+def read_job(job_file: Path, global_config: Path | None, paths: ProjectPaths, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the global configuration and the job, exiting with code 2 if either is invalid."""
-    with invalid_input_exits():
-        return load_job_and_settings(job_file, global_config, decode_input=decode_input)
+    with errors_exit():
+        return load_job_and_settings(job_file, global_config or paths.global_config, paths, decode_input=decode_input)
 
 
 @app.command("validate-job")
-def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG) -> None:
+def validate_job(ctx: typer.Context, job_file: JobFileArgument, global_config: GlobalConfigOption = None) -> None:
     """Validate a job file without running anything."""
-    job, _settings = read_job(job_file, global_config)
+    job, _settings = read_job(job_file, global_config, services_of(ctx).paths)
     report_ignored_config(job)
     typer.echo(f"Valid job: {job.path}")
     for label, value in job_summary(job):
@@ -224,49 +189,48 @@ def validate_job(job_file: JobFileArgument, global_config: GlobalConfigOption = 
 
 @app.command("run-job")
 def run_job(
+    ctx: typer.Context,
     job_file: JobFileArgument,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print every command without running anything.")] = False,
     executable: ExecutableOption = "draw-things-cli",
     shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
-    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+    global_config: GlobalConfigOption = None,
 ) -> None:
     """Run every generation in a job, chaining each output into the next run."""
+    services = services_of(ctx)
     # A real run decodes the input when it writes run 1's copy, so it skips the validation decode.
-    job, settings = read_job(job_file, global_config, decode_input=dry_run)
-    with invalid_input_exits():
+    job, settings = read_job(job_file, global_config, services.paths, decode_input=dry_run)
+    executor = services.toolkit.job_executor()
+    with errors_exit():
         if dry_run:
             report_ignored_config(job)
-            preview = job_executor.preview(job, executable=executable)
+            preview = executor.preview(job, executable=executable)
             for line in plan_lines(job, preview):
                 typer.echo(line)
             return
-        with held_run_lock("run-job") as lock, open_state(settings) as store:
-            # Holding the lock proves no runner is alive, so any row still 'running' is a crash.
-            store.sweep_interrupted()
-            recorder = ExecutionRecorder(store)
-            try:
-                # The execution's ID is reserved before the job starts; a job that cannot get one does not start.
-                options = JobRunOptions(executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=recorder, on_child_start=lock.record_child, reserve_execution_id=recorder.reserve)
-                outcome = job_executor.run(job, options)
-            except StateError as error:
-                logger.error("{}; the job was not started", error)
-                raise typer.Exit(code=1) from error
+        try:
+            outcome = JobRunSession(services.paths, executor, settings).run(job, holder="run-job", executable=executable, shutdown_grace=shutdown_grace)
+        except StateError as error:
+            logger.error("{}; the job was not started", error)
+            raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
     if outcome.exit_code:
         raise typer.Exit(code=outcome.exit_code)
 
 
 @app.command("import-history")
 def import_history_command(
+    ctx: typer.Context,
     directory: Annotated[Path | None, typer.Option(help="Directory to search for job manifests; default: the configured output directory.")] = None,
-    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+    global_config: GlobalConfigOption = None,
 ) -> None:
     """Import phase 1 job manifests into the execution history; safe to repeat."""
-    settings = load_settings(global_config)
+    paths = services_of(ctx).paths
+    settings = load_settings(global_config, paths)
     search = (directory or settings.output_directory).expanduser()
     if not search.is_dir():
         logger.error("Not a directory: {}", search)
-        raise typer.Exit(code=2)
-    with open_state(settings) as store:
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    with open_state(paths, settings) as store:
         report = import_history(store, search)
     for given, recorded, manifest in report.given:
         typer.echo(f"  {given}: {manifest}{f' (its manifest says {recorded})' if recorded is not None else ''}")
@@ -275,22 +239,24 @@ def import_history_command(
 
 @app.command("tui")
 def tui_command(
-    data_dir: Annotated[Path, typer.Option("--data-dir", help="Directory of job files.")] = DEFAULT_DATA_DIRECTORY,
+    ctx: typer.Context,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir", help="Directory of job files; default: data/jobs in the project.")] = None,
     executable: ExecutableOption = "draw-things-cli",
     shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
-    global_config: GlobalConfigOption = DEFAULT_GLOBAL_CONFIG,
+    global_config: GlobalConfigOption = None,
 ) -> None:
     """Browse, run, and watch the jobs in the data directory in a terminal UI."""
     if shutdown_grace < 0:
         logger.error("--shutdown-grace must not be negative")
-        raise typer.Exit(code=2)
-    settings = load_settings(global_config)
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    services = services_of(ctx)
+    settings = load_settings(global_config, services.paths)
     # Imported here, so the other commands do not load Textual.
     from draw_things_control.tui.app import DrawThingsApp
 
     # Jobs run on a worker thread, where signal handlers cannot be installed; the app handles signals itself.
-    tui_executor = create_job_executor(handle_signals=False)
-    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_executor=tui_executor, shutdown_grace=shutdown_grace)
+    tui_executor = services.toolkit.job_executor(handle_signals=False)
+    tui = DrawThingsApp(settings=settings, paths=services.paths, data_directory=(data_dir or services.paths.jobs).expanduser(), executable=executable, job_executor=tui_executor, shutdown_grace=shutdown_grace)
     # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
     logger.remove()
     try:
@@ -304,11 +270,11 @@ def tui_command(
         raise typer.Exit(code=tui.return_code)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:
     """Run the Typer app and preserve its command exit status."""
     configure_logging()
     try:
-        app(args=list(argv) if argv is not None else None, prog_name="dtc")
+        app(args=list(argv) if argv is not None else None, prog_name="dtc", obj=services or CliServices(DEFAULT_PATHS, Toolkit()))
     except SystemExit as error:
         return int(error.code or 0)
     return 0

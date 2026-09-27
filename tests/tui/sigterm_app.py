@@ -9,11 +9,11 @@ import asyncio
 import sys
 import threading
 from pathlib import Path
-from unittest import mock
 
 from loguru import logger
 
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.screens import ConfirmScreen, MainScreen
 from draw_things_control.tui.widgets import CommandInput
@@ -25,7 +25,8 @@ def main() -> int:
     logger.remove()
     runs = FakeRuns(block=True)
     threading.Thread(target=lambda: runs.started.wait(30) and started.touch(), daemon=True).start()
-    app = DrawThingsApp(settings=GlobalConfig(input_directory=root / "input", output_directory=root / "output"), data_directory=root / "data", executable="draw-things-cli", job_executor=runs.service)
+    paths = ProjectPaths(root)
+    app = DrawThingsApp(settings=GlobalConfig(input_directory=root / "input", output_directory=root / "output"), paths=paths, data_directory=paths.jobs, executable="draw-things-cli", job_executor=runs.service)
 
     async def start_job(pilot) -> None:
         while not isinstance(app.screen, MainScreen):
@@ -38,8 +39,7 @@ def main() -> int:
         while app.live is None:
             await asyncio.sleep(0.02)
 
-    with mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", root / "params"), mock.patch("draw_things_control.core.run_lock.STATE_DIRECTORY", root / "state"):
-        app.run(headless=True, auto_pilot=start_job)
+    app.run(headless=True, auto_pilot=start_job)
     return app.return_code or 0
 
 

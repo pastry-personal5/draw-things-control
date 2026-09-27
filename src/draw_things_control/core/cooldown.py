@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from draw_things_control.core.numbers import is_number, number_text
-from draw_things_control.core.paths import DEFAULT_PATHS
+from draw_things_control.core.paths import EXAMPLE_GLOBAL_CONFIG_RELATIVE
 
 MAX_COOLDOWN_SECONDS = 3600
 COOLDOWN_ERROR = f"must be a number of seconds from 0 to {MAX_COOLDOWN_SECONDS}"
@@ -117,4 +117,4 @@ def replaced_cooldown_message(value: Any) -> str:
         same = "{mode: off}"
     else:
         same = f"{{mode: manual, seconds: {number_text(value) if is_cooldown(value) else 900}}}"
-    return f"'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {same} for the same wait, or use mode auto or off (see {DEFAULT_PATHS.example_global_config.relative_to(DEFAULT_PATHS.root)})"
+    return f"'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {same} for the same wait, or use mode auto or off (see {EXAMPLE_GLOBAL_CONFIG_RELATIVE})"

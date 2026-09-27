@@ -13,10 +13,11 @@ from textual.color import Color
 from typer.testing import CliRunner
 
 from draw_things_control.cli import app as cli
-from draw_things_control.core.global_config import PROJECT_ROOT
+from draw_things_control.core.paths import DEFAULT_PATHS
 from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import plan_header, plan_steps
+from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
 from draw_things_control.tui.panes import JobDefinitionPane
@@ -204,7 +205,7 @@ class TuiTests(TuiTestCase):
         self.assertIn("wave: run 2", shown)
         # The plan run-job --dry-run prints for this file, from the same steps and with the same output names, in words:
         # its header without "# ", then each run's wait, heading, and arguments as a table instead of its command line.
-        job = load_job(path, self.global_config)
+        job = load_job(path, self.global_config, self.params)
         preview = make_service().preview(job, executable="draw-things-cli")
         plan = shown.split("Dry-run plan\n\n")[1]
         header = "".join(f"{line}\n" for line in plan_header(job, preview))
@@ -494,7 +495,7 @@ class TuiCommandTests(JobTestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             run.assert_called_once_with()
             options = init.call_args.kwargs
-            self.assertEqual(options["data_directory"], PROJECT_ROOT / "data" / "jobs")
+            self.assertEqual(options["data_directory"], DEFAULT_PATHS.jobs)
             self.assertEqual(options["executable"], "/opt/dtc/cli")
             self.assertEqual(options["settings"].output_directory, self.output_directory)
             self.assertIsInstance(options["job_executor"], JobExecutor)
@@ -519,7 +520,7 @@ class TuiCommandTests(JobTestCase):
         cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_run_job_keeps_a_service_that_handles_signals(self) -> None:
-        self.assertTrue(cli.job_executor._handle_signals)
+        self.assertTrue(Toolkit().job_executor()._handle_signals)
 
     def test_a_failed_app_exits_with_its_return_code_and_logging_is_restored(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):

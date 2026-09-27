@@ -10,7 +10,7 @@ from loguru import logger
 
 from draw_things_control.core.clock import Clock
 from draw_things_control.core.paths import DATABASE_FILE_NAME
-from draw_things_control.core.run_lock import ensure_state_directory, state_directory
+from draw_things_control.core.run_lock import ensure_state_directory
 from draw_things_control.state.database import Database, StateError
 from draw_things_control.state.executions import ExecutionRepository
 from draw_things_control.state.job_ids import JobIdRepository
@@ -56,10 +56,10 @@ class Store:
         self.settings = SettingsRepository(database)
 
     @classmethod
-    def open(cls, path: Path | None = None, *, mode: StoreMode = StoreMode.RUN, retention_days: int = DEFAULT_RETENTION_DAYS, clock: Clock = datetime.now) -> Store:
-        """Open the database at ``path`` (the project's, by default) in ``mode``; raises StateError when it cannot be used."""
-        if path is None:
-            path = (state_directory() if mode is StoreMode.BROWSE else ensure_state_directory()) / DATABASE_FILE_NAME
+    def open(cls, path: Path, *, mode: StoreMode = StoreMode.RUN, retention_days: int = DEFAULT_RETENTION_DAYS, clock: Clock = datetime.now) -> Store:
+        """Open the database at ``path`` in ``mode``, creating its directory when the mode creates the database; raises StateError when it cannot be used."""
+        if mode is not StoreMode.BROWSE:
+            ensure_state_directory(path.parent)
         database = Database(path, create=mode is not StoreMode.BROWSE)
         store = cls(database, retention_days=retention_days, clock=clock)
         if mode is StoreMode.RUN:

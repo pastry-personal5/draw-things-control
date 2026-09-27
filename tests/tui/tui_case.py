@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import yaml
 from loguru import logger
 from rich.text import Text
 from textual.widgets import RichLog, Static
@@ -27,13 +28,10 @@ from tests.fixtures import JobTestCase, job_data
 class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.data = self.root / "data"
+        # Not the project's data/jobs/, whose files get job IDs (and so make the state database); a test about IDs uses it.
+        self.data = self.root / "jobs-elsewhere"
         self.data.mkdir()
-        self.state = self.root / "state"
-        for target, value in (("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params), ("draw_things_control.core.run_lock.STATE_DIRECTORY", self.state)):
-            patcher = mock.patch(target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.state = self.paths.state
         # As dtc tui leaves it: no sink writes to the terminal while the app runs.
         logger.remove()
         self.addCleanup(logger.add, sys.stderr)
@@ -51,11 +49,12 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
 
     def write_data_job(self, name: str, **changes: object) -> Path:
-        self.write_job(job_data(**changes), name=f"data/{name}")
-        return self.data / name
+        path = self.data / name
+        path.write_text(yaml.safe_dump(job_data(**changes), sort_keys=False), encoding="utf-8")
+        return path
 
     def make_app(self, service: JobExecutor, *, data: Path | None = None, executable: str = "draw-things-cli", settings: GlobalConfig | None = None, shutdown_grace: float = 10.0) -> DrawThingsApp:
-        return DrawThingsApp(settings=settings or self.global_config, data_directory=data or self.data, executable=executable, job_executor=service, shutdown_grace=shutdown_grace)
+        return DrawThingsApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, executable=executable, job_executor=service, shutdown_grace=shutdown_grace)
 
     async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
         deadline = time.monotonic() + timeout
@@ -103,7 +102,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
     def executions(self) -> list[ExecutionRow]:
-        store = Store.open()
+        store = Store.open(self.paths.database)
         try:
             rows = (store.executions.get(row.id) for row in store.executions.page())
             return [row for row in rows if row is not None]

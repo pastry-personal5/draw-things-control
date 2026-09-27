@@ -5,20 +5,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from draw_things_control.core.global_config import GlobalConfig, load_global_config
+from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.parsing import load_job
 
 
-def read_settings(global_config: Path) -> GlobalConfig:
+def read_settings(global_config: Path, paths: ProjectPaths) -> GlobalConfig:
     """Load the global configuration; raises ValueError if it is invalid."""
-    return load_global_config(global_config.expanduser())
+    path = global_config.expanduser()
+    return load_global_config(path, is_default=path == paths.global_config)
 
 
-def read_job(job_file: Path, global_config: Path | GlobalConfig, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
+def read_job(job_file: Path, global_config: Path | GlobalConfig, paths: ProjectPaths, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the job and the global configuration (a path, or one already loaded); raises ValueError if either is invalid."""
-    settings = global_config if isinstance(global_config, GlobalConfig) else read_settings(global_config)
-    return load_job(job_file, settings, decode_input=decode_input), settings
+    settings = global_config if isinstance(global_config, GlobalConfig) else read_settings(global_config, paths)
+    return load_job(job_file, settings, paths.params, decode_input=decode_input), settings
 
 
 def job_files(directory: Path) -> list[Path]:

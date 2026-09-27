@@ -8,12 +8,9 @@ from typing import Any
 
 from draw_things_control.core.cooldown import CooldownPolicy, parse_cooldown, replaced_cooldown_message
 from draw_things_control.core.numbers import is_int
-from draw_things_control.core.paths import DEFAULT_PATHS
+from draw_things_control.core.paths import EXAMPLE_GLOBAL_CONFIG_RELATIVE, GLOBAL_CONFIG_RELATIVE
 from draw_things_control.core.yaml_files import read_yaml_file
 
-PROJECT_ROOT = DEFAULT_PATHS.root
-DEFAULT_GLOBAL_CONFIG = DEFAULT_PATHS.global_config
-EXAMPLE_GLOBAL_CONFIG = DEFAULT_PATHS.example_global_config
 GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown", "history_retention_days"}
 DEFAULT_HISTORY_RETENTION_DAYS = 14
 MAX_HISTORY_RETENTION_DAYS = 3650
@@ -33,10 +30,10 @@ class GlobalConfig:
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
 
 
-def load_global_config(path: Path = DEFAULT_GLOBAL_CONFIG) -> GlobalConfig:
-    """Parse and validate the global configuration file."""
+def load_global_config(path: Path, *, is_default: bool = False) -> GlobalConfig:
+    """Parse and validate the global configuration file; ``is_default`` says it is the project's own, whose absence the message explains how to fix."""
     if not path.exists():
-        hint = f"; copy {EXAMPLE_GLOBAL_CONFIG.relative_to(PROJECT_ROOT)} to {DEFAULT_GLOBAL_CONFIG.relative_to(PROJECT_ROOT)} and edit its paths" if path == DEFAULT_GLOBAL_CONFIG else ""
+        hint = f"; copy {EXAMPLE_GLOBAL_CONFIG_RELATIVE} to {GLOBAL_CONFIG_RELATIVE} and edit its paths" if is_default else ""
         raise ValueError(f"Global configuration not found: {path}{hint}")
     data = read_yaml_file(path, "Global configuration", show_source=True)[0]
     if "cooldown_seconds" in data:

@@ -7,11 +7,10 @@ from unittest import mock
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli import app as cli
-from draw_things_control.cli.app import app
+from draw_things_control.cli.app import CliServices, app
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import job_summary
-from tests.fixtures import BASE_CONFIG, JobTestCase, job_data, job_executor
+from tests.fixtures import BASE_CONFIG, FakeToolkit, JobTestCase, job_data, job_executor
 
 CONFIG_JSON = '{"model":"base.ckpt","refinerModel":"base-refiner.ckpt","refinerStart":0.2,"width":832,"height":448,"seed":42,"steps":30}'
 IGNORED = [
@@ -34,15 +33,13 @@ class JobOutputTests(JobTestCase):
         self.job_path = self.write_job(job_data(run_count=3, prompt_pairs=pairs, input="photo.jpg", desired_input_width=850, config_file="batch.yaml", config_override={"steps": 8}))
         numbers = itertools.count(1000)
         service = job_executor(runner_factory=mock.Mock(), find_executable=lambda executable: executable, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg", clock=lambda: datetime(2026, 9, 24, 15, 30, 12), random_number=lambda: next(numbers), random_seed=lambda: 777)
-        for patcher in (mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params), mock.patch.object(cli, "job_executor", service)):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.services = CliServices(self.paths, FakeToolkit(service))
         self.logged: list[str] = []
         sink = logger.add(lambda message: self.logged.append(str(message).rstrip("\n").replace(str(self.root), "ROOT")), format="{level} {message}")
         self.addCleanup(logger.remove, sink)
 
     def invoke(self, *arguments: str) -> str:
-        result = self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)])
+        result = self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)], obj=self.services)
         self.assertEqual(result.exit_code, 0, result.output)
         return result.stdout.replace(str(self.root), "ROOT")
 
@@ -89,8 +86,8 @@ class JobOutputTests(JobTestCase):
 
     def test_job_summary_can_describe_a_random_seed_its_own_way(self) -> None:
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
-        random_job = load_job(self.write_job(job_data(config_file="noseed.yaml"), name="noseed.yaml"), self.global_config)
-        seeded_job = load_job(self.job_path, self.global_config)
+        random_job = load_job(self.write_job(job_data(config_file="noseed.yaml"), name="noseed.yaml"), self.global_config, self.params)
+        seeded_job = load_job(self.job_path, self.global_config, self.params)
         self.assertEqual(dict(job_summary(random_job))["seed"], "(random, drawn when the job starts) (random)")
         self.assertEqual(dict(job_summary(random_job, random_seed_text="random (later)"))["seed"], "random (later)")
         self.assertEqual(dict(job_summary(seeded_job, random_seed_text="random (later)"))["seed"], "42 (config_file)")

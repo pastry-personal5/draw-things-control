@@ -14,14 +14,20 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
+from draw_things_control.core.errors import DtcError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished, RunStarted
 from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.services.history import STATUSES, HistoryFilter, HistoryReader
+from draw_things_control.services.job_catalog import JobCatalog, JobListing
+from draw_things_control.services.job_details import JobDetails, add_plan, read_details
+from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_bare_number, parse_typed_id
 from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
-from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, reveal_run
-from draw_things_control.tui.job_files import JobCatalog, JobDetails, JobListing, add_plan, read_details
+from draw_things_control.tui.desktop import copy_to_pasteboard, reveal_run
+from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.panes import CliPane, ExecutionPane, HistoryPane, JobDefinitionPane, StatusPane, natural_descending
+from draw_things_control.tui.reader import PaneHistory
 from draw_things_control.tui.text import Arguments, PreviousRun, argument_rows, details_text, event_text, execution_text, jobs_text, override_notes, parameters_text, prompts_text, question_text, result_text, status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
@@ -48,7 +54,8 @@ class MainScreen(Screen[None]):
         super().__init__()
         # The data directory's job files and their IDs; the Job Definition widget reads through it.
         self.catalog: JobCatalog | None = None
-        self.reader: HistoryReader | None = None
+        self.reader: PaneHistory | None = None
+        self.store: StoreProvider | None = None
 
     @property
     def dtc(self) -> DrawThingsApp:
@@ -80,7 +87,8 @@ class MainScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         # The history pane reads through it; the detail and reveal commands too. Closed when the screen goes.
-        self.reader = HistoryReader(self.dtc.settings.history_retention_days)
+        self.store = StoreProvider(self.dtc.paths, self.dtc.settings.history_retention_days)
+        self.reader = PaneHistory(HistoryReader(self.dtc.paths, self.store))
         with Horizontal(id="main"):
             with Vertical(id="left"):
                 yield StatusPane(id="status")
@@ -88,8 +96,8 @@ class MainScreen(Screen[None]):
                 yield MessageLog(id="messages", max_lines=MAX_MESSAGE_LINES, wrap=True, min_width=20)
             with Vertical(id="right"):
                 # First in the right column, so Tab goes command line, Job Definition, Execution History, Execution.
-                self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings)
-                yield JobDefinitionPane(self.catalog, describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
+                self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings, self.dtc.paths, self.store)
+                yield JobDefinitionPane(self.catalog, SortPreference(self.store), describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
                 yield HistoryPane(self.reader, busy=lambda: self.dtc.job_running, leave=self.focus_command_line, id="history")
                 yield ExecutionPane(self.reader, say=self.say, leave=self.focus_command_line, id="execution")
         yield Rule(line_style="solid", classes="command-rule")
@@ -110,10 +118,8 @@ class MainScreen(Screen[None]):
         self.render_live()
 
     def on_unmount(self) -> None:
-        if self.reader is not None:
-            self.reader.close()
-        if self.catalog is not None:
-            self.catalog.close()
+        if self.store is not None:
+            self.store.close()
 
     def on_resize(self, event: events.Resize) -> None:
         # The draw-things-cli pane gives up lines, down to its least, so Messages keeps its least on a short terminal.
@@ -251,10 +257,10 @@ class MainScreen(Screen[None]):
 
     def job_path(self, name: str) -> Path:
         assert self.catalog is not None
-        path = self.catalog.find(name, self.jobs.job_rows)
-        if isinstance(path, str):
-            raise CommandError(path)
-        return path
+        try:
+            return self.catalog.find(name, self.jobs.job_rows)
+        except DtcError as error:
+            raise CommandError(str(error)) from error
 
     @staticmethod
     def execution_number(text: str, command: str, word: str | None = None) -> int:
@@ -286,7 +292,7 @@ class MainScreen(Screen[None]):
 
     @work(thread=True, group="details")
     def load_details(self, path: Path, settings: GlobalConfig, executor: JobExecutor, executable: str) -> None:
-        details = read_details(path, settings)
+        details = read_details(path, settings, self.dtc.paths)
         if details.job is not None:
             details = add_plan(details, executor, executable)
         self.app.call_from_thread(self.show_details, path, details)

@@ -172,12 +172,11 @@ class RunLockTests(unittest.TestCase):
         self.assertIn(b"run-job", (self.directory / "run.lock").read_bytes())
 
     def test_the_state_directory_is_created_on_demand_and_errors_are_reported(self) -> None:
-        with mock.patch.object(run_lock, "STATE_DIRECTORY", self.directory / "nested" / "state"):
-            self.assertTrue(ensure_state_directory().is_dir())
-            with RunLock("generate"):
-                self.assertTrue((self.directory / "nested" / "state" / "run.lock").is_file())
+        nested = self.directory / "nested" / "state"
+        self.assertTrue(ensure_state_directory(nested).is_dir())
+        with RunLock("generate", directory=nested):
+            self.assertTrue((nested / "run.lock").is_file())
         blocker = self.directory / "file"
         blocker.write_text("")
-        with mock.patch.object(run_lock, "STATE_DIRECTORY", blocker / "state"):
-            with self.assertRaisesRegex(RunLockError, "Cannot create the state directory"):
-                RunLock("generate").acquire()
+        with self.assertRaisesRegex(RunLockError, "Cannot create the state directory"):
+            RunLock("generate", directory=blocker / "state").acquire()

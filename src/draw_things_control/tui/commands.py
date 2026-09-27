@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from rich.text import Text
 from textual.suggester import Suggester
 
-from draw_things_control.tui.history import STATUSES
+from draw_things_control.services.history import STATUSES
 
 PREFIX = "/"
 # Name, arguments, and what it does, in the order help lists them. For /get and /describe, the first argument names
