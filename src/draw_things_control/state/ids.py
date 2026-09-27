@@ -33,11 +33,7 @@ def parse_typed_id(text: str, letter: str) -> int | None:
     match = _TYPED.fullmatch(text.strip()) if text.isascii() else None
     if match is None or match.group(1).upper() != letter.upper():
         return None
-    digits = match.group(2).lstrip("0") or "0"
-    if len(digits) > MAX_DIGITS:
-        return None
-    number = int(digits)
-    return number if 0 < number <= MAX_NUMBER else None
+    return parse_bare_number(match.group(2))
 
 
 def parse_bare_number(text: str) -> int | None:

@@ -5,6 +5,13 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Change** [M11]: fixes from the code review of the branch.
+  - `StoreProvider` refuses `get()` after `close()`, so a worker still running cannot reopen a store nobody closes.
+  - `Database._connect` closes its connection when a `PRAGMA` fails.
+  - `parse_typed_id` calls `parse_bare_number` for the digits.
+  - `ProjectPaths.example_global_config` and `lock_file` are removed, as nothing used them.
+  - `tests/test_architecture.py` checks the size limits (at most 400 lines a module, 250 a class, 40 a function; the options of `generate` are exempt), and the rules say "at most" to match.
+
 - **Change** [M11]: Milestone 11 is done.
   - The package has a `services/` layer, and `core/`, `jobs/`, `state/`, and `tui/` are split into smaller modules: no module is over 400 lines, no class over 250, and no function over 40, apart from the options of `generate`.
   - `tests/test_architecture.py` enforces the import direction, pyright (`standard`) is part of `make check`, and no test patches a path.

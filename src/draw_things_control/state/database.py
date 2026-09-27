@@ -87,6 +87,7 @@ class Database:
             raise StateError(f"Cannot create the state database {self._path}: {error.strerror}") from error
 
     def _connect(self) -> sqlite3.Connection:
+        connection: sqlite3.Connection | None = None
         try:
             # Autocommit; transactions are explicit, so BEGIN IMMEDIATE takes the write lock up front.
             connection = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False)
@@ -95,6 +96,8 @@ class Database:
             mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             connection.execute("PRAGMA foreign_keys = ON")
         except sqlite3.Error as error:
+            if connection is not None:
+                connection.close()
             raise StateError(f"Cannot open the state database {self._path}: {error}") from error
         if str(mode).lower() != "wal":
             connection.close()

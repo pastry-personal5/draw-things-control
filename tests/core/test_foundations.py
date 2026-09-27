@@ -22,8 +22,8 @@ class PathsTests(unittest.TestCase):
     def test_every_path_is_below_the_root(self) -> None:
         paths = ProjectPaths(Path("/project"))
         self.assertEqual(
-            (paths.global_config, paths.example_global_config, paths.jobs, paths.params, paths.state, paths.lock_file, paths.database),
-            (Path("/project/config/global-config.yaml"), Path("/project/config/global-config.example.yaml"), Path("/project/data/jobs"), Path("/project/data/params"), Path("/project/state"), Path("/project/state/run.lock"), Path("/project/state/dtc.db")),
+            (paths.global_config, paths.jobs, paths.params, paths.state, paths.database),
+            (Path("/project/config/global-config.yaml"), Path("/project/data/jobs"), Path("/project/data/params"), Path("/project/state"), Path("/project/state/dtc.db")),
         )
 
     def test_the_default_paths_are_this_project(self) -> None:

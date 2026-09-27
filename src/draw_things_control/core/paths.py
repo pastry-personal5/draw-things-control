@@ -23,10 +23,6 @@ class ProjectPaths:
         return self.root / GLOBAL_CONFIG_RELATIVE
 
     @property
-    def example_global_config(self) -> Path:
-        return self.root / EXAMPLE_GLOBAL_CONFIG_RELATIVE
-
-    @property
     def jobs(self) -> Path:
         """The job files: the TUI's default data directory, and the only one whose files get job IDs (J0001)."""
         return self.root / "data" / "jobs"
@@ -40,10 +36,6 @@ class ProjectPaths:
     def state(self) -> Path:
         """The state database and the run lock: fixed, since every process must share one lock file."""
         return self.root / "state"
-
-    @property
-    def lock_file(self) -> Path:
-        return self.state / LOCK_FILE_NAME
 
     @property
     def database(self) -> Path:

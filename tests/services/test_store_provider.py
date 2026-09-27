@@ -1,6 +1,7 @@
 """Tests for the store a browsing front end shares: opened when needed, kept, and never created by a read."""
 
 from draw_things_control.services.store_provider import StoreProvider
+from draw_things_control.state.database import StateError
 from tests.fixtures import JobTestCase
 
 
@@ -20,13 +21,11 @@ class StoreProviderTests(JobTestCase):
         self.assertIs(provider.get(create=False), store)
         self.assertIs(provider.get(create=True), store)
 
-    def test_close_closes_it_and_the_next_get_opens_another(self) -> None:
+    def test_after_close_no_worker_can_open_another(self) -> None:
         provider = StoreProvider(self.paths, 14)
-        first = provider.get(create=True)
+        self.assertIsNotNone(provider.get(create=True))
         provider.close()
-        second = provider.get(create=False)
-        self.addCleanup(provider.close)
-        self.assertIsNotNone(second)
-        self.assertIsNot(first, second)
-        provider.close()
+        for create in (False, True):
+            with self.subTest(create=create), self.assertRaisesRegex(StateError, "closed"):
+                provider.get(create=create)
         provider.close()

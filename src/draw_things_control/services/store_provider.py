@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 
 from draw_things_control.core.paths import ProjectPaths
+from draw_things_control.state.database import StateError
 from draw_things_control.state.store import Store, StoreMode
 
 
@@ -19,11 +20,14 @@ class StoreProvider:
         self._paths = paths
         self._retention_days = retention_days
         self._store: Store | None = None
+        self._closed = False
         self._lock = threading.Lock()
 
     def get(self, *, create: bool) -> Store | None:
-        """The store, or None when ``create`` is false and there is no database yet; raises StateError when it cannot be used."""
+        """The store, or None when ``create`` is false and there is no database yet; raises StateError when it cannot be used or the provider is closed."""
         with self._lock:
+            if self._closed:
+                raise StateError("The state store is closed")
             if self._store is None:
                 path = self._paths.database
                 if not create and not path.exists():
@@ -33,6 +37,7 @@ class StoreProvider:
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             store, self._store = self._store, None
         if store is not None:
             store.close()
