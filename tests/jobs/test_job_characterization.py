@@ -22,15 +22,15 @@ from loguru import logger
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.process.output import OutputStream
-from draw_things_control.jobs import job_service
-from draw_things_control.jobs.job_definition import JobDefinition, load_job
-from draw_things_control.jobs.job_events import JobEvent, combine_observers
-from draw_things_control.jobs.job_service import JobService
-from draw_things_control.jobs.media_info import MediaInfo
+from draw_things_control.jobs import launcher as launcher_module
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.events import JobEvent, combine_observers, event_to_dict
+from draw_things_control.jobs.media.info import MediaInfo
+from draw_things_control.jobs.parsing import load_job
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import Store
-from tests.fixtures import JobTestCase, job_data
-from tests.jobs.test_job_service import FakeResult, FakeRunner, TalkingRunner
+from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.jobs.test_executor import FakeResult, FakeRunner, TalkingRunner
 
 GOLDEN = Path(__file__).parent / "golden"
 NOW = datetime(2026, 9, 24, 15, 30, 12)
@@ -51,7 +51,7 @@ class JobCharacterizationTests(JobTestCase):
         self.cooldowns: list[float] = []
         self.on_cooldown = lambda seconds: seconds
         self.on_extract = lambda video, png: None
-        self.service = JobService(
+        self.service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: executable,
             frame_extractor=self.extract,
@@ -65,7 +65,7 @@ class JobCharacterizationTests(JobTestCase):
         )
         # Each run takes 12.5 s: the service reads the clock at the start and the end of a run.
         readings = itertools.count(step=12.5)
-        patcher = mock.patch.object(job_service, "time", mock.Mock(monotonic=lambda: next(readings)))
+        patcher = mock.patch.object(launcher_module, "time", mock.Mock(monotonic=lambda: next(readings)))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.logged: list[str] = []
@@ -98,14 +98,14 @@ class JobCharacterizationTests(JobTestCase):
     def snapshot(self, job: JobDefinition) -> str:
         events: list[JobEvent] = []
         recorder = ExecutionRecorder(self.store)
-        outcome = self.service.run(job, executable="draw-things-cli", shutdown_grace=10.0, write_records=True, observer=combine_observers(recorder, events.append), reserve_execution_id=recorder.reserve)
+        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=10.0, write_records=True, observer=combine_observers(recorder, events.append), reserve_execution_id=recorder.reserve)
         assert outcome.manifest is not None and outcome.log is not None
         manifest = json.loads(outcome.manifest.read_text(encoding="utf-8"))
         sections = [
             ("OUTCOME", f"exit_code={outcome.exit_code} completed_runs={outcome.completed_runs} total_runs={outcome.total_runs} manifest={outcome.manifest.name} log={outcome.log.name}"),
             ("COOLDOWN WAITS", repr(self.cooldowns)),
             ("LOG LINES", "\n".join(self.logged)),
-            ("EVENTS", "\n".join(repr(event) for event in events)),
+            ("EVENTS", "\n".join(json.dumps(event_to_dict(event), sort_keys=True, ensure_ascii=False) for event in events)),
             ("MANIFEST", json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True)),
             ("JOB LOG FILE", LOG_TIME.sub("<time>", outcome.log.read_text(encoding="utf-8"))),
             ("STATE STORE", self.database()),

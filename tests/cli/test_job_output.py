@@ -9,10 +9,9 @@ from typer.testing import CliRunner
 
 from draw_things_control.cli import app as cli
 from draw_things_control.cli.app import app
-from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_report import job_summary
-from draw_things_control.jobs.job_service import JobService
-from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
+from draw_things_control.jobs.parsing import load_job
+from draw_things_control.jobs.text import job_summary
+from tests.fixtures import BASE_CONFIG, JobTestCase, job_data, job_executor
 
 CONFIG_JSON = '{"model":"base.ckpt","refinerModel":"base-refiner.ckpt","refinerStart":0.2,"width":832,"height":448,"seed":42,"steps":30}'
 IGNORED = [
@@ -34,8 +33,8 @@ class JobOutputTests(JobTestCase):
         pairs = [{"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "default": True}]
         self.job_path = self.write_job(job_data(run_count=3, prompt_pairs=pairs, input="photo.jpg", desired_input_width=850, config_file="batch.yaml", config_override={"steps": 8}))
         numbers = itertools.count(1000)
-        service = JobService(runner_factory=mock.Mock(), find_executable=lambda executable: executable, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg", clock=lambda: datetime(2026, 9, 24, 15, 30, 12), random_number=lambda: next(numbers), random_seed=lambda: 777)
-        for patcher in (mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params), mock.patch.object(cli, "job_service", service)):
+        service = job_executor(runner_factory=mock.Mock(), find_executable=lambda executable: executable, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg", clock=lambda: datetime(2026, 9, 24, 15, 30, 12), random_number=lambda: next(numbers), random_seed=lambda: 777)
+        for patcher in (mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params), mock.patch.object(cli, "job_executor", service)):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.logged: list[str] = []

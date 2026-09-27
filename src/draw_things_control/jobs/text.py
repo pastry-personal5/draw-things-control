@@ -1,46 +1,24 @@
-"""Read jobs and describe them as text, for every front end; nothing here prints or exits, and only report_ignored_config logs."""
+"""Describe jobs as text, for every front end; nothing here prints or exits, and only report_ignored_config logs."""
 
 from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.global_config import GlobalConfig, load_global_config
-from draw_things_control.core.yaml_files import is_yaml_file
-from draw_things_control.jobs.job_definition import JobDefinition, PromptPair, load_job
+from draw_things_control.jobs.definition import JobDefinition, PromptPair
 
 if TYPE_CHECKING:
-    from draw_things_control.jobs.job_service import JobPreview, PlannedRun
+    from draw_things_control.jobs.planning import JobPreview, PlannedRun
 
 # The seed a front end shows in a plan for a job with no configured seed, so the plan is the same every time it is shown.
 PLACEHOLDER_SEED = 0
 RANDOM_SEED_TEXT = "random (drawn when the job starts)"
 PLACEHOLDER_SEED_NOTE = f"The job sets no seed: the commands use the placeholder seed {PLACEHOLDER_SEED}, and a run replaces it with a seed drawn when the job starts."
-
-
-def read_settings(global_config: Path) -> GlobalConfig:
-    """Load the global configuration; raises ValueError if it is invalid."""
-    return load_global_config(global_config.expanduser())
-
-
-def read_job(job_file: Path, global_config: Path | GlobalConfig, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
-    """Load the job and the global configuration (a path, or one already loaded); raises ValueError if either is invalid."""
-    settings = global_config if isinstance(global_config, GlobalConfig) else read_settings(global_config)
-    return load_job(job_file, settings, decode_input=decode_input), settings
-
-
-def job_files(directory: Path) -> list[Path]:
-    """The ``*.yaml`` and ``*.yml`` files (in any letter case) directly in ``directory``, by file name; dotfiles and sub-directories are skipped.
-
-    Raises OSError if the directory cannot be read.
-    """
-    return sorted((path for path in directory.iterdir() if is_yaml_file(path) and not path.name.startswith(".") and path.is_file()), key=lambda path: path.name)
 
 
 def seconds_text(seconds: float) -> str:
@@ -88,14 +66,14 @@ def policy_text(policy: CooldownPolicy) -> str:
     return "off"
 
 
-def cooldown_summary(job: JobDefinition, source_prefix: str = "") -> str:
-    """The job's cooldown and its source, for example ``cooldown 900 s (from global_config)``."""
-    policy, source = job.cooldown, f"({source_prefix}{job.cooldown_source})"
+def cooldown_summary(policy: CooldownPolicy, source: str, source_prefix: str = "") -> str:
+    """A cooldown and its source, for example ``cooldown 900 s (from global_config)``."""
+    where = f"({source_prefix}{source})"
     if policy.mode == "auto":
-        return f"cooldown auto, {share_text(policy.ratio)} of each run, {bounds_text(policy)} {source}"
+        return f"cooldown auto, {share_text(policy.ratio)} of each run, {bounds_text(policy)} {where}"
     if policy.mode == "manual" and policy.seconds > 0:
-        return f"cooldown {seconds_text(policy.seconds)} {source}"
-    return f"no cooldown {source}"
+        return f"cooldown {seconds_text(policy.seconds)} {where}"
+    return f"no cooldown {where}"
 
 
 def cooldown_details(job: JobDefinition) -> str:
@@ -189,7 +167,7 @@ class PlanStep:
 def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
     """The dry-run plan's lines before its runs, as text without the ``# `` the CLI adds."""
     return [
-        f"Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job)}",
+        f"Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job.cooldown, job.cooldown_source)}",
         "Output names are examples; a real run generates new ones.",
     ]
 

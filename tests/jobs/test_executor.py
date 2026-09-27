@@ -9,9 +9,11 @@ import shutil
 import signal
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from loguru import logger
@@ -21,14 +23,36 @@ from draw_things_control.core.arguments import DrawThingsGenerateArguments, reda
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.process.output import OutputStream, ProcessMessage
 from draw_things_control.core.process.signals import install_signal_handlers, restore_signal_handlers
-from draw_things_control.jobs import job_service
-from draw_things_control.jobs.job_definition import JobDefinition, load_job
-from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
-from draw_things_control.jobs.job_service import JobService
-from draw_things_control.jobs.media_info import MediaInfo
-from tests.fixtures import JobTestCase, job_data
+from draw_things_control.jobs import launcher as launcher_module
+from draw_things_control.jobs import records
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
+from draw_things_control.jobs.executor import JobOutcome
+from draw_things_control.jobs.media.info import MediaInfo
+from draw_things_control.jobs.parsing import load_job
+from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
+
+
+def saved_log(outcome: JobOutcome) -> Path:
+    assert outcome.log is not None
+    return outcome.log
+
+
+def saved_manifest(outcome: JobOutcome) -> Path:
+    assert outcome.manifest is not None
+    return outcome.manifest
+
+
+def output_of(arguments: DrawThingsGenerateArguments) -> Path:
+    assert arguments.output is not None
+    return arguments.output
+
+
+def image_of(arguments: DrawThingsGenerateArguments) -> Path:
+    assert arguments.image is not None
+    return arguments.image
 
 
 @dataclass(frozen=True)
@@ -58,7 +82,7 @@ class FakeRunner:
 class TalkingRunner(FakeRunner):
     """A runner that reports child lines through its on_message callback, as the process runner does."""
 
-    def __init__(self, arguments: DrawThingsGenerateArguments, on_message: object, lines: tuple[tuple[OutputStream, str], ...]) -> None:
+    def __init__(self, arguments: DrawThingsGenerateArguments, on_message: Callable[[ProcessMessage], None], lines: tuple[tuple[OutputStream, str], ...]) -> None:
         super().__init__(arguments, FakeResult(), write_output=True)
         self.on_message = on_message
         self.lines = lines
@@ -86,7 +110,7 @@ class BlockingRunner(FakeRunner):
         self.stopped.set()
 
 
-class JobServiceTests(JobTestCase):
+class JobExecutorTests(JobTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.calls: list[tuple[DrawThingsGenerateArguments, float | None, float]] = []
@@ -95,7 +119,7 @@ class JobServiceTests(JobTestCase):
         self.missing_output: set[int] = set()
         self.extracted: list[tuple[Path, Path]] = []
         numbers = itertools.count(1000)
-        self.service = JobService(
+        self.service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: executable,
             frame_extractor=self.extract,
@@ -123,10 +147,10 @@ class JobServiceTests(JobTestCase):
         return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def run_job(self, job: JobDefinition, write_records: bool = True):
-        return self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records)
+        return run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records)
 
     def manifest(self, outcome) -> dict:
-        return json.loads(outcome.manifest.read_text(encoding="utf-8"))
+        return json.loads(saved_manifest(outcome).read_text(encoding="utf-8"))
 
     def test_i2v_runs_chain_last_frames_in_run_order(self) -> None:
         job = self.job(run_count=4, prompt_pairs=[{"name": "walk", "positive": "walk", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "runs": [2, 4]}], run_timeout_seconds=60)
@@ -137,7 +161,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(self.calls[0][0].image, job.input)
         for (previous, _t, _g), (current, _t2, _g2), (_video, frame) in zip(self.calls, self.calls[1:], self.extracted, strict=False):
             self.assertEqual(current.image, frame)
-            self.assertEqual(frame.name, previous.output.stem + "-last-frame.png")
+            self.assertEqual(frame.name, output_of(previous).stem + "-last-frame.png")
         self.assertEqual({(timeout, grace) for _a, timeout, grace in self.calls}, {(60.0, 2)})
         names = sorted(path.name for path in job.output_directory.iterdir())
         self.assertEqual(len([name for name in names if name.endswith(".mov")]), 4)
@@ -146,8 +170,8 @@ class JobServiceTests(JobTestCase):
         manifest = self.manifest(outcome)
         self.assertEqual(manifest["status"], "succeeded")
         self.assertEqual([(index, run["pair"], run["status"]) for index, run in enumerate(manifest["runs"], 1)], [(1, "walk", "succeeded"), (2, "wave", "succeeded"), (3, "walk", "succeeded"), (4, "wave", "succeeded")])
-        self.assertIn("Run 4/4 (pair wave)", outcome.log.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["log_file"], outcome.log.name)
+        self.assertIn("Run 4/4 (pair wave)", saved_log(outcome).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["log_file"], saved_log(outcome).name)
 
     def test_t2v_first_run_has_no_image(self) -> None:
         self.run_job(self.job(mode="t2v", input=None, run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
@@ -156,7 +180,7 @@ class JobServiceTests(JobTestCase):
 
     def test_i2i_chains_png_outputs_without_extraction(self) -> None:
         self.run_job(self.job(mode="i2i", run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
-        self.assertEqual(self.calls[0][0].output.suffix, ".png")
+        self.assertEqual(output_of(self.calls[0][0]).suffix, ".png")
         self.assertEqual(self.calls[1][0].image, self.calls[0][0].output)
         self.assertEqual(self.extracted, [])
 
@@ -196,9 +220,9 @@ class JobServiceTests(JobTestCase):
         self.assertEqual((outcome.exit_code, len(self.calls)), (130, 1))
         manifest = self.manifest(outcome)
         self.assertEqual((manifest["status"], manifest["runs"][0]["status"]), ("interrupted", "interrupted"))
-        self.assertTrue((self.calls[0][0].output).exists())
-        self.assertEqual(manifest["runs"][0]["output"], self.calls[0][0].output.name)
-        self.assertIn("partial output kept", outcome.log.read_text(encoding="utf-8"))
+        self.assertTrue(output_of(self.calls[0][0]).exists())
+        self.assertEqual(manifest["runs"][0]["output"], output_of(self.calls[0][0]).name)
+        self.assertIn("partial output kept", saved_log(outcome).read_text(encoding="utf-8"))
 
     def test_timed_out_run_is_recorded(self) -> None:
         self.results[1] = FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM)
@@ -209,9 +233,9 @@ class JobServiceTests(JobTestCase):
     def test_signal_between_runs_stops_before_the_next_run(self) -> None:
         def extract_then_interrupt(video: Path, png: Path) -> None:
             self.extract(video, png)
-            self.service._interrupt = signal.SIGTERM
+            self.service.cancel(signal.SIGTERM)
 
-        self.service._frame_extractor = extract_then_interrupt
+        self.service.knobs.frame_extractor = extract_then_interrupt
         outcome = self.run_job(self.job())
         self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls)), (143, 1, 1))
         self.assertEqual(self.manifest(outcome)["status"], "interrupted")
@@ -237,19 +261,19 @@ class JobServiceTests(JobTestCase):
         json_job = replace(yaml_job, base_config=json.loads((self.params / "wan.json").read_text(encoding="utf-8")))
         yaml_plan, json_plan = (self.service.preview(job, executable="draw-things-cli", seed=1) for job in (yaml_job, json_job))
         self.assertEqual([run.arguments.config_json for run in yaml_plan.runs], [run.arguments.config_json for run in json_plan.runs])
-        self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', yaml_plan.runs[0].arguments.config_json)
+        self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', yaml_plan.runs[0].arguments.config_json or "")
         self.assertNotIn("--config-file", yaml_plan.runs[0].arguments.command)
 
     def test_missing_tools_fail_before_anything_runs(self) -> None:
-        self.service._find_executable = lambda _executable: None
+        self.service.knobs.find_executable = lambda _executable: None
         with self.assertRaisesRegex(ValueError, "Could not find 'draw-things-cli'"):
             self.run_job(self.job())
 
         def no_ffmpeg() -> str:
             raise ValueError("Could not find 'ffmpeg'")
 
-        self.service._find_executable = lambda executable: executable
-        self.service._require_ffmpeg = no_ffmpeg
+        self.service.knobs.find_executable = lambda executable: executable
+        self.service.knobs.require_ffmpeg = no_ffmpeg
         with self.assertRaisesRegex(ValueError, "ffmpeg"):
             self.run_job(self.job())
         with self.assertRaisesRegex(ValueError, "ffmpeg"):
@@ -267,15 +291,15 @@ class JobServiceTests(JobTestCase):
             return "E0012"
 
         events: list[object] = []
-        outcome = self.service.run(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}]), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
+        outcome = run_job_with(self.service, self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}]), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
         self.assertEqual((outcome.exit_code, reserved), (0, ["E0012"]))
         self.assertEqual(self.manifest(outcome)["execution_id"], "E0012")
         self.assertEqual([event.execution_id for event in events if isinstance(event, JobStarted)], ["E0012"])
-        self.assertIn("execution E0012", outcome.log.read_text(encoding="utf-8"))
+        self.assertIn("execution E0012", saved_log(outcome).read_text(encoding="utf-8"))
         # A job the checks refuse never takes a number.
-        self.service._find_executable = lambda _executable: None
+        self.service.knobs.find_executable = lambda _executable: None
         with self.assertRaises(ValueError):
-            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, reserve_execution_id=reserve)
+            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, reserve_execution_id=reserve)
         self.assertEqual(reserved, ["E0012"])
 
     def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
@@ -287,7 +311,7 @@ class JobServiceTests(JobTestCase):
 
         events: list[object] = []
         with self.assertRaises(NoStore):
-            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
+            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, reserve_execution_id=reserve)
         self.assertEqual((events, self.calls), ([], []))
         self.assertFalse(self.output_directory.exists())
 
@@ -295,7 +319,7 @@ class JobServiceTests(JobTestCase):
         def no_ffprobe() -> str:
             raise ValueError("Could not find 'ffprobe' beside ffmpeg or on PATH")
 
-        self.service._require_ffprobe = no_ffprobe
+        self.service.knobs.require_ffprobe = no_ffprobe
         with self.assertRaisesRegex(ValueError, "ffprobe"):
             self.run_job(self.job())
         with self.assertRaisesRegex(ValueError, "ffprobe"):
@@ -314,9 +338,9 @@ class JobServiceTests(JobTestCase):
             self.assertEqual(len(self.extracted), len(measured))
             return MediaInfo(832, 448, 77 + len(measured))
 
-        self.service._output_measurer = measure
+        self.service.knobs.output_measurer = measure
         events: list[object] = []
-        outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
         finished = [event for event in events if isinstance(event, RunFinished)]
         self.assertEqual([(event.output_width, event.output_height, event.output_frames) for event in finished], [(832, 448, 78), (832, 448, 79)])
         self.assertEqual(measured, [arguments.output for arguments, _timeout, _grace in self.calls])
@@ -332,14 +356,14 @@ class JobServiceTests(JobTestCase):
         warnings: list[str] = []
         sink = logger.add(lambda message: warnings.append(message.record["message"]), level="WARNING")
         self.addCleanup(logger.remove, sink)
-        self.service._output_measurer = cannot
+        self.service.knobs.output_measurer = cannot
         outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}]))
         self.assertEqual(outcome.exit_code, 0)
         self.assertEqual([(run["output_width"], run["output_frames"]) for run in self.manifest(outcome)["runs"]], [(None, None)])
         self.assertTrue(any("Could not measure" in warning and "ffprobe exited with 1" in warning for warning in warnings), warnings)
 
         calls: list[Path] = []
-        self.service._output_measurer = lambda path: calls.append(path) or MediaInfo(1, 1, 1)
+        self.service.knobs.output_measurer = lambda path: calls.append(path) or MediaInfo(1, 1, 1)
         self.results[len(self.calls) + 1] = FakeResult(return_code=3)
         self.assertEqual(self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])).exit_code, 3)
         self.assertEqual(calls, [])
@@ -348,7 +372,7 @@ class JobServiceTests(JobTestCase):
         def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             raise ValueError("Could not start executable draw-things-cli: Permission denied")
 
-        self.service._runner_factory = cannot_start
+        self.service.knobs.runner_factory = cannot_start
         job = self.job()
         with self.assertRaisesRegex(ValueError, "Could not start"):
             self.run_job(job)
@@ -361,7 +385,7 @@ class JobServiceTests(JobTestCase):
             raise KeyboardInterrupt
 
         self.service._handle_signals = True
-        with mock.patch("draw_things_control.jobs.job_service.install_signal_handlers", interrupted), mock.patch("draw_things_control.jobs.job_service.remove_job_log", wraps=job_service.remove_job_log) as remove:
+        with mock.patch("draw_things_control.jobs.executor.install_signal_handlers", interrupted), mock.patch("draw_things_control.jobs.records.remove_job_log", wraps=records.remove_job_log) as remove:
             with self.assertRaises(KeyboardInterrupt):
                 self.run_job(self.job())
         remove.assert_called_once()
@@ -371,11 +395,11 @@ class JobServiceTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448, "batchCount": 3}, name="batch.yaml")
         outcome = self.run_job(self.job(config_file="batch.yaml", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertNotIn("batchCount", json.loads(self.calls[0][0].config_json or "{}"))
-        self.assertIn("Ignoring batchCount (3) from config_file batch.yaml", outcome.log.read_text(encoding="utf-8"))
+        self.assertIn("Ignoring batchCount (3) from config_file batch.yaml", saved_log(outcome).read_text(encoding="utf-8"))
 
     def test_records_are_off_by_default(self) -> None:
         job = self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
-        outcome = self.service.run(job, executable="draw-things-cli", shutdown_grace=2)
+        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.manifest, outcome.log), (0, None, None))
         names = sorted(path.name for path in job.output_directory.iterdir())
         self.assertEqual(len(names), 4)
@@ -399,18 +423,18 @@ class JobServiceTests(JobTestCase):
         def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             # Look at the image while the run is happening, since the copy is gone afterwards.
             if not self.calls:
-                with Image.open(arguments.image) as image:
+                with Image.open(image_of(arguments)) as image:
                     seen.append(image.size)
             return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
-        self.service._runner_factory = create_runner
+        self.service.knobs.runner_factory = create_runner
         job = self.resize_job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])
         outcome = self.run_job(job)
         self.assertEqual(outcome.exit_code, 0)
         first, second = self.calls[0][0], self.calls[1][0]
         self.assertEqual(seen, [(832, 448)])
-        self.assertEqual(first.image.name, "photo-832x448.png")
-        self.assertFalse(first.image.parent.exists())
+        self.assertEqual(image_of(first).name, "photo-832x448.png")
+        self.assertFalse(image_of(first).parent.exists())
         self.assertEqual(second.image, self.extracted[0][1])
         for arguments in (first, second):
             config = json.loads(arguments.config_json or "{}")
@@ -422,7 +446,7 @@ class JobServiceTests(JobTestCase):
         self.assertIsNone(manifest["runs"][1]["resized_input"])
         self.assertEqual(manifest["input_resize"]["fit"], "crop")
         self.assertEqual(manifest["input_resize"]["target_size"], [832, 448])
-        log = outcome.log.read_text(encoding="utf-8")
+        log = saved_log(outcome).read_text(encoding="utf-8")
         self.assertIn("will be scaled to 832x468 and cropped to 832x448 (4.3%)", log)
         self.assertIn("Run 1 input: temporary copy", log)
 
@@ -433,17 +457,17 @@ class JobServiceTests(JobTestCase):
                 self.results[1] = result
                 self.run_job(self.resize_job())
                 self.assertEqual(len(self.calls), 1)
-                self.assertFalse(self.calls[0][0].image.parent.exists())
+                self.assertFalse(image_of(self.calls[0][0]).parent.exists())
 
     def test_temporary_copy_is_removed_when_the_job_raises(self) -> None:
         def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             self.calls.append((arguments, timeout, grace))
             raise KeyboardInterrupt
 
-        self.service._runner_factory = cannot_start
+        self.service.knobs.runner_factory = cannot_start
         with self.assertRaises(KeyboardInterrupt):
             self.run_job(self.resize_job())
-        self.assertFalse(self.calls[0][0].image.parent.exists())
+        self.assertFalse(image_of(self.calls[0][0]).parent.exists())
 
     def test_upright_input_at_the_target_is_used_as_is(self) -> None:
         # The 832x448 input already has the calculated size, however the keys reach it (850 floors to 832).
@@ -452,7 +476,7 @@ class JobServiceTests(JobTestCase):
                 self.calls.clear()
                 job = self.job(**keys)
                 self.assertIsNone(job.input_copy)
-                with mock.patch("draw_things_control.jobs.input_resize.resize_image") as resize, mock.patch("draw_things_control.jobs.input_resize.tempfile.mkdtemp") as mkdtemp:
+                with mock.patch("draw_things_control.jobs.inputs.resize.resize_image") as resize, mock.patch("draw_things_control.jobs.inputs.resize.tempfile.mkdtemp") as mkdtemp:
                     outcome = self.run_job(job)
                 resize.assert_not_called()
                 mkdtemp.assert_not_called()
@@ -460,21 +484,21 @@ class JobServiceTests(JobTestCase):
                 manifest = self.manifest(outcome)
                 self.assertEqual((manifest["input_resize"]["fit"], manifest["input_resize"]["target_size"]), ("none", [832, 448]))
                 self.assertIsNone(manifest["runs"][0]["resized_input"])
-                self.assertIn("Input first-frame.png is already 832x448; no resize needed", outcome.log.read_text(encoding="utf-8"))
+                self.assertIn("Input first-frame.png is already 832x448; no resize needed", saved_log(outcome).read_text(encoding="utf-8"))
                 preview = self.service.preview(job, executable="draw-things-cli")
                 self.assertEqual(preview.runs[0].input, job.input)
 
     def test_rotated_input_at_the_target_gets_an_upright_copy(self) -> None:
         self.write_image("rotated.jpg", (448, 832), orientation=6)
-        seen: list[tuple[int, int]] = []
+        seen: list[tuple[tuple[int, int], object]] = []
 
         def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             if not self.calls:
-                with Image.open(arguments.image) as image:
+                with Image.open(image_of(arguments)) as image:
                     seen.append((image.size, image.getexif().get(0x0112)))
             return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
-        self.service._runner_factory = create_runner
+        self.service.knobs.runner_factory = create_runner
         job = self.job(input="rotated.jpg", desired_input_width=832)
         self.run_job(job)
         self.assertNotEqual(self.calls[0][0].image, job.input)
@@ -490,7 +514,7 @@ class JobServiceTests(JobTestCase):
 
     def test_resize_failure_leaves_no_output_directory_or_manifest(self) -> None:
         job = self.resize_job()
-        with mock.patch("draw_things_control.jobs.input_resize.resize_image", side_effect=OSError("disk full")):
+        with mock.patch("draw_things_control.jobs.inputs.resize.resize_image", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(ValueError, "Could not resize input"):
                 self.run_job(job)
         self.assertFalse(job.output_directory.exists())
@@ -498,7 +522,7 @@ class JobServiceTests(JobTestCase):
 
     def test_preview_shows_a_placeholder_and_writes_nothing(self) -> None:
         job = self.resize_job()
-        with mock.patch("draw_things_control.jobs.input_resize.resize_image") as resize:
+        with mock.patch("draw_things_control.jobs.inputs.resize.resize_image") as resize:
             preview = self.service.preview(job, executable="draw-things-cli")
         resize.assert_not_called()
         command = preview.command_previews[0]
@@ -521,7 +545,7 @@ class JobServiceTests(JobTestCase):
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))["runs"] if manifest_path is not None else []
             waits.append((seconds, len(self.calls), [run["cooldown_after_seconds"] for run in saved]))
             if interrupt_on == len(waits):
-                self.service._interrupt = signal.SIGINT
+                self.service.cancel(signal.SIGINT)
                 return waited if waited is not None else seconds / 2
             return seconds
 
@@ -531,7 +555,7 @@ class JobServiceTests(JobTestCase):
     def run_times(self, *seconds: float) -> None:
         """Make the job service measure each run, in order, as taking ``seconds``."""
         readings = iter([value for run in seconds for value in (0.0, run)])
-        patcher = mock.patch.object(job_service, "time", mock.Mock(monotonic=lambda: next(readings)))
+        patcher = mock.patch.object(launcher_module, "time", mock.Mock(monotonic=lambda: next(readings)))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -549,7 +573,7 @@ class JobServiceTests(JobTestCase):
                 manifest = self.manifest(outcome)
                 self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"], manifest["cooldown"]), (900.0, "job", {"mode": "manual", "seconds": 900.0}))
                 self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [900.0, 900.0, None])
-                log = outcome.log.read_text(encoding="utf-8")
+                log = saved_log(outcome).read_text(encoding="utf-8")
                 self.assertIn("cooldown 900 s (from job)", log)
                 self.assertIn("Cooldown: waiting 900 s before run 2/3 (until 15:45:12)", log)
                 self.assertIn("Cooldown finished; starting run 3/3", log)
@@ -565,7 +589,7 @@ class JobServiceTests(JobTestCase):
                 waits.clear()
                 outcome = self.run_job(self.cooldown_job(cooldown=cooldown))
                 self.assertEqual(waits, [])
-                log = outcome.log.read_text(encoding="utf-8")
+                log = saved_log(outcome).read_text(encoding="utf-8")
                 self.assertIn("no cooldown (from job)", log)
                 self.assertNotIn("Cooldown", log)
                 self.assertEqual([run["cooldown_after_seconds"] for run in self.manifest(outcome)["runs"]], [None, None, None])
@@ -581,7 +605,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual((manifest["cooldown_seconds"], manifest["cooldown_source"], manifest["cooldown"]), (None, "global_config", {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 3600.0}))
         self.assertEqual([run["seconds"] for run in manifest["runs"]], [1200.0, 200.0, 1201.0, 10000.0, 5.0])
         self.assertEqual([run["cooldown_after_seconds"] for run in manifest["runs"]], [600.0, 300.0, 601.0, 3600.0, None])
-        log = outcome.log.read_text(encoding="utf-8")
+        log = saved_log(outcome).read_text(encoding="utf-8")
         self.assertIn("cooldown auto, half of each run, 5 min to 1 h (from global_config)", log)
         self.assertIn("Cooldown: waiting 10 min, half of run 1's 20 min, before run 2/5 (until 15:40:12)", log)
         self.assertIn("Cooldown: waiting 5 min (the minimum; half of run 2's 3 min 20 s is less) before run 3/5 (until 15:35:12)", log)
@@ -592,7 +616,7 @@ class JobServiceTests(JobTestCase):
         self.run_times(1200.0, 1200.0)
         outcome = self.run_job(self.cooldown_job(run_count=2, cooldown={"mode": "auto", "ratio": 0.25}))
         self.assertEqual([seconds for seconds, _runs, _saved in waits], [300.0])
-        self.assertIn("Cooldown: waiting 5 min, 25% of run 1's 20 min, before run 2/2", outcome.log.read_text(encoding="utf-8"))
+        self.assertIn("Cooldown: waiting 5 min, 25% of run 1's 20 min, before run 2/2", saved_log(outcome).read_text(encoding="utf-8"))
 
     def test_auto_cooldown_without_either_key(self) -> None:
         waits = self.fake_cooldown()
@@ -623,28 +647,28 @@ class JobServiceTests(JobTestCase):
         manifest = self.manifest(outcome)
         self.assertEqual(manifest["status"], "interrupted")
         self.assertEqual([(run["status"], run["cooldown_after_seconds"]) for run in manifest["runs"]], [("succeeded", 412.3)])
-        log = outcome.log.read_text(encoding="utf-8")
+        log = saved_log(outcome).read_text(encoding="utf-8")
         self.assertIn("Job stopped by SIGINT during the cooldown before run 2/3 (waited 412.3 s of 900 s)", log)
         self.assertNotIn("Cooldown finished", log)
 
     def test_real_cooldown_waits_and_is_ended_by_a_signal(self) -> None:
-        self.assertLess(self.service._wait_for_cooldown(0.05), 0.5)
-        self.assertGreaterEqual(self.service._wait_for_cooldown(0.05), 0.05)
-        service = JobService(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg")
+        self.assertLess(self.service._token.wait(0.05), 0.5)
+        self.assertGreaterEqual(self.service._token.wait(0.05), 0.05)
+        service = job_executor(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg")
         open_fds = set(os.listdir("/dev/fd"))
         previous_fd = signal.set_wakeup_fd(-1)
         signal.set_wakeup_fd(previous_fd)
-        handlers = install_signal_handlers(service._handle_signal)
+        handlers = install_signal_handlers(service._token.receive)
         timer = threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT))
         try:
             timer.start()
             started = time.monotonic()
-            waited = service._wait_for_cooldown(5)
+            waited = service._token.wait(5)
             elapsed = time.monotonic() - started
         finally:
             timer.cancel()
             restore_signal_handlers(handlers)
-        self.assertEqual(service._interrupt, signal.SIGINT)
+        self.assertEqual(service._token.requested, signal.SIGINT)
         self.assertLess(elapsed, 1)
         self.assertAlmostEqual(waited, elapsed, delta=0.05)
         # The previous wake-up fd is back, and the pipe is closed.
@@ -653,14 +677,14 @@ class JobServiceTests(JobTestCase):
 
     def test_signal_after_a_full_cooldown_stops_before_the_next_run(self) -> None:
         def full_wait_then_signal(seconds: float) -> float:
-            self.service._interrupt = signal.SIGTERM
+            self.service.cancel(signal.SIGTERM)
             return seconds
 
         self.cooldown = full_wait_then_signal
         outcome = self.run_job(self.cooldown_job(cooldown={"mode": "manual", "seconds": 900}))
         self.assertEqual((outcome.exit_code, len(self.calls)), (143, 1))
         self.assertEqual(self.manifest(outcome)["runs"][0]["cooldown_after_seconds"], 900.0)
-        log = outcome.log.read_text(encoding="utf-8")
+        log = saved_log(outcome).read_text(encoding="utf-8")
         self.assertIn("Job stopped by SIGTERM before run 2/3", log)
         self.assertNotIn("during the cooldown", log)
 
@@ -669,13 +693,13 @@ class JobServiceTests(JobTestCase):
         self.service._clock = lambda: utc_now
         outcome = self.run_job(self.cooldown_job(run_count=2, cooldown={"mode": "manual", "seconds": 90}))
         expected = (utc_now.astimezone() + timedelta(seconds=90)).strftime("%H:%M:%S")
-        self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", outcome.log.read_text(encoding="utf-8"))
+        self.assertIn(f"Cooldown: waiting 90 s before run 2/2 (until {expected})", saved_log(outcome).read_text(encoding="utf-8"))
 
     # Events and cancellation.
 
     def observed(self, job: JobDefinition) -> tuple:
         events: list = []
-        outcome = self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
         return outcome, events
 
     def start_in_thread(self, job: JobDefinition) -> tuple[threading.Thread, dict]:
@@ -685,7 +709,7 @@ class JobServiceTests(JobTestCase):
 
         def work() -> None:
             try:
-                result["outcome"] = self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=self.events.append)
+                result["outcome"] = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=self.events.append)
             except BaseException as error:
                 result["error"] = error
 
@@ -708,15 +732,15 @@ class JobServiceTests(JobTestCase):
         started, first, first_done, cooldown, cooled = events[:5]
         self.assertEqual((started.job_name, started.mode, started.total_runs, started.seed, started.seed_source), ("sunset-walk", "i2v", 3, 42, "config_file"))
         self.assertEqual((started.cooldown, started.cooldown_source, started.model, started.input), (CooldownPolicy(mode="manual", seconds=900.0), "job", "base.ckpt", str(job.input)))
-        self.assertEqual((started.job_file, started.manifest, started.log, started.at), (str(job.path), str(outcome.manifest), str(outcome.log), "2026-09-24T15:30:12" + started.at[19:]))
+        self.assertEqual((started.job_file, started.manifest, started.log, started.at), (str(job.path), str(saved_manifest(outcome)), str(saved_log(outcome)), "2026-09-24T15:30:12" + started.at[19:]))
         self.assertEqual(started.source_text, job.path.read_text(encoding="utf-8"))
         self.assertNotIn(started.source_text, repr(job))
         self.assertEqual(job, replace(job, source_text="# a comment\n"))
         arguments = self.calls[0][0]
         self.assertEqual((first.number, first.total, first.pair, first.positive, first.negative), (1, 3, "only", "text", None))
-        self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), arguments.output.name, arguments.output.stem + "-last-frame.png"))
+        self.assertEqual((first.input, first.output, first.last_frame), (str(job.input), output_of(arguments).name, output_of(arguments).stem + "-last-frame.png"))
         self.assertEqual(first.command, tuple(redact_command(arguments.command)))
-        self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, arguments.output.name, first.last_frame))
+        self.assertEqual((first_done.number, first_done.status, first_done.exit_code, first_done.output, first_done.last_frame), (1, "succeeded", 0, output_of(arguments).name, first.last_frame))
         self.assertEqual((cooldown.after_run, cooldown.seconds, cooldown.until, cooldown.mode, cooldown.ratio, cooldown.run_seconds, cooldown.bound), (1, 900.0, "15:45:12", "manual", None, first_done.seconds, None))
         self.assertEqual((cooled.waited_seconds, cooled.cut_short), (900.0, False))
         finished = events[-1]
@@ -752,11 +776,11 @@ class JobServiceTests(JobTestCase):
         lines = ((OutputStream.STDOUT, "loading"), (OutputStream.STDERR, "step 3/8"), (OutputStream.STDOUT, "done"))
         seen_arguments: list = []
 
-        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> TalkingRunner:
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: Any = None, on_start: object = None) -> TalkingRunner:
             seen_arguments.append(on_message)
             return TalkingRunner(arguments, on_message, lines)
 
-        self.service._runner_factory = factory
+        self.service.knobs.runner_factory = factory
         _outcome, events = self.observed(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
         output = [event for event in events if isinstance(event, RunOutput)]
         self.assertEqual([(event.number, event.stream, event.text, event.progress) for event in output], [(run, stream.value, text, (3, 8) if "3/8" in text else None) for run in (1, 2) for stream, text in lines])
@@ -774,20 +798,20 @@ class JobServiceTests(JobTestCase):
         def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             raise ValueError("Could not start executable draw-things-cli: Permission denied")
 
-        self.service._runner_factory = cannot_start
+        self.service.knobs.runner_factory = cannot_start
         events: list = []
         with self.assertRaisesRegex(ValueError, "Could not start"):
-            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
+            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
         self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, JobFinished])
         # The runner never wrote the file, so the event does not name it, though the manifest record still does.
         self.assertEqual((events[2].status, events[2].exit_code, events[2].output), ("failed", None, None))
         self.assertEqual((events[3].status, events[3].exit_code, events[3].completed_runs), ("failed", None, 0))
 
     def test_errors_before_the_job_starts_send_no_events(self) -> None:
-        self.service._find_executable = lambda _executable: None
+        self.service.knobs.find_executable = lambda _executable: None
         events: list = []
         with self.assertRaisesRegex(ValueError, "Could not find"):
-            self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
+            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
         self.assertEqual(events, [])
 
     def test_an_observer_that_raises_does_not_change_the_outcome(self) -> None:
@@ -796,7 +820,7 @@ class JobServiceTests(JobTestCase):
 
         expected = self.run_job(self.job(), write_records=False)
         recorded: list = []
-        outcome = self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2, observer=combine_observers(broken, recorded.append))
+        outcome = run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, observer=combine_observers(broken, recorded.append))
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (expected.exit_code, expected.completed_runs))
         # The observer after the broken one still saw every event.
         self.assertEqual((type(recorded[0]), type(recorded[-1])), (JobStarted, JobFinished))
@@ -808,7 +832,7 @@ class JobServiceTests(JobTestCase):
             runners.append(BlockingRunner(arguments))
             return runners[-1]
 
-        self.service._runner_factory = factory
+        self.service.knobs.runner_factory = factory
         thread, result = self.start_in_thread(self.job())
         self.wait_for_event(RunStarted)
         self.assertTrue(self.service.cancel())
@@ -821,7 +845,7 @@ class JobServiceTests(JobTestCase):
         self.assertEqual(self.manifest(result["outcome"])["status"], "interrupted")
 
     def test_cancel_ends_a_real_cooldown_wait_at_once(self) -> None:
-        self.service._cooldown = self.service._wait_for_cooldown
+        self.service._cooldown = self.service._token.wait
         open_fds = set(os.listdir("/dev/fd"))
         thread, result = self.start_in_thread(self.cooldown_job(cooldown={"mode": "manual", "seconds": 60}))
         self.wait_for_event(CooldownStarted)
@@ -853,7 +877,7 @@ class JobServiceTests(JobTestCase):
             runners.append(FakeRunner(arguments, FakeResult(), write_output=True))
             return runners[-1]
 
-        self.service._runner_factory = factory
+        self.service.knobs.runner_factory = factory
         outcome = self.run_job(self.job())
         self.assertEqual(runners[0].shutdown_signal, signal.SIGTERM)
         self.assertEqual(len(runners), 1)
@@ -865,12 +889,12 @@ class JobServiceTests(JobTestCase):
 
         def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
             try:
-                self.service.run(self.job(), executable="draw-things-cli", shutdown_grace=2)
+                run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2)
             except RuntimeError as error:
                 refusals.append(error)
             return self.create_runner(arguments, timeout, grace, on_message, on_start)
 
-        self.service._runner_factory = factory
+        self.service.knobs.runner_factory = factory
         outcome = self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         self.assertEqual(outcome.exit_code, 0)
         self.assertEqual(len(refusals), 1)

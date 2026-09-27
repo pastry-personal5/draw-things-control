@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from draw_things_control.jobs.events import RunStatus
 from draw_things_control.tui.live_run import FinishedRun, LiveRun, PastRun
 
 
@@ -81,7 +82,7 @@ def job_estimate(live: LiveRun, now: float) -> Estimate:
     if live.started is None or live.job_started_at is None or live.finished is not None:
         return Estimate()
     total = len(live.runs)
-    succeeded = [run for run in live.finished_runs if run.status == "succeeded"]
+    succeeded = [run for run in live.finished_runs if run.status == RunStatus.SUCCEEDED]
     full = _average([run.full_seconds for run in succeeded])
     child = _average([run.seconds for run in succeeded if run.seconds is not None])
     if live.cooldown is not None and live.cooldown_ends_at is not None:
@@ -121,7 +122,7 @@ def wait_fraction(live: LiveRun, now: float) -> tuple[float, float] | None:
 
 def last_succeeded(live: LiveRun) -> FinishedRun | None:
     """This job's last run that finished successfully; a failed run never replaces it."""
-    return next((run for run in reversed(live.finished_runs) if run.status == "succeeded"), None)
+    return next((run for run in reversed(live.finished_runs) if run.status == RunStatus.SUCCEEDED), None)
 
 
 def _current_left(live: LiveRun, now: float, full: float | None) -> float | None:

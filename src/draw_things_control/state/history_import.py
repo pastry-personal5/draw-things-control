@@ -11,6 +11,7 @@ from typing import Any
 
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.numbers import positive_whole
+from draw_things_control.jobs.events import JobStatus, RunStatus
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.store import Store, epoch
 
@@ -44,7 +45,7 @@ def import_history(store: Store, directory: Path, *, clock: datetime | None = No
                 continue
             execution, runs = _convert(manifest, path, key, now)
             # A manifest left 'running' has no real finish time; judge it by its start, or each import would restamp it and bring back a pruned row.
-            aged = execution["started_at"] if manifest.get("status", "running") == "running" and not manifest.get("finished_at") else execution["finished_at"] or execution["started_at"]
+            aged = execution["started_at"] if manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING and not manifest.get("finished_at") else execution["finished_at"] or execution["started_at"]
             if cutoff is not None and epoch(aged) < cutoff:
                 report.expired += 1
                 continue
@@ -81,14 +82,14 @@ def _read_manifest(path: Path) -> dict[str, Any]:
 
 def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     # A phase 1 process that crashed left its manifest 'running'; import it as the sweep would close it.
-    stale = manifest.get("status", "running") == "running"
+    stale = manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING
     finished_at = manifest.get("finished_at") or (now if stale else None)
     log_file = manifest.get("log_file")
     execution = {
         "job_name": str(manifest["name"]),
         "job_file": str(manifest["job_file"]),
         "mode": str(manifest["mode"]),
-        "status": "interrupted" if stale else str(manifest["status"]),
+        "status": JobStatus.INTERRUPTED if stale else str(manifest["status"]),
         "seed": int(manifest["seed"]),
         "seed_source": manifest.get("seed_source"),
         "cooldown_seconds": manifest.get("cooldown_seconds"),
@@ -114,7 +115,7 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
 
 
 def _convert_run(run: dict[str, Any]) -> dict[str, Any]:
-    status = run.get("status", "running")
+    status = run.get("status", RunStatus.RUNNING)
     converted = {
         "pair": str(run["pair"]),
         "positive": str(run["positive"]),
@@ -127,7 +128,7 @@ def _convert_run(run: dict[str, Any]) -> dict[str, Any]:
         "started_at": str(run["started_at"]),
         "seconds": run.get("seconds"),
         "exit_code": run.get("exit_code"),
-        "status": "interrupted" if status == "running" else str(status),
+        "status": RunStatus.INTERRUPTED if status == RunStatus.RUNNING else str(status),
         "cooldown_after_seconds": run.get("cooldown_after_seconds"),
         # Measured sizes, from manifests written since they were recorded; older ones have none.
         "output_width": positive_whole(run.get("output_width")),

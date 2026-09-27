@@ -15,8 +15,8 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.job_events import JobEvent, JobStarted, RunFinished, RunStarted
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished, RunStarted
+from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, CommandSuggester, help_text, parse, usage
 from draw_things_control.tui.history import STATUSES, HistoryFilter, HistoryReader, copy_to_pasteboard, execution_label, parse_id, reveal_run
@@ -201,7 +201,7 @@ class MainScreen(Screen[None]):
             raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution') else None)}")
 
     def describe_job(self, path: Path) -> None:
-        self.load_details(path, self.dtc.settings, self.dtc.job_service, self.dtc.executable)
+        self.load_details(path, self.dtc.settings, self.dtc.job_executor, self.dtc.executable)
 
     def command_sort(self, what: str, key: str, direction: str | None = None) -> None:
         """/sort jobs KEY [asc|desc]: the Job Definition widget's order, kept across sessions."""
@@ -285,10 +285,10 @@ class MainScreen(Screen[None]):
             self.say(listing.id_error, "yellow")
 
     @work(thread=True, group="details")
-    def load_details(self, path: Path, settings: GlobalConfig, service: JobService, executable: str) -> None:
+    def load_details(self, path: Path, settings: GlobalConfig, executor: JobExecutor, executable: str) -> None:
         details = read_details(path, settings)
         if details.job is not None:
-            details = add_plan(details, service, executable)
+            details = add_plan(details, executor, executable)
         self.app.call_from_thread(self.show_details, path, details)
 
     def show_details(self, path: Path, details: JobDetails) -> None:

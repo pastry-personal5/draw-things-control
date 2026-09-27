@@ -177,10 +177,13 @@ src/draw_things_control/
 │       └── groups.py         # process group checks and signals (new)
 ├── jobs/
 │   ├── definition.py         # JobDefinition, GenerationMode, PromptPair, ConfigOverride
-│   ├── parsing.py            # JobParser, load_job(path), load_job_text(text) (new)
+│   ├── parsing.py            # JobParser, load_job(path), load_job_text(text, path) (new)
+│   ├── prompt_pairs.py       # the prompt pairs and which pair each run uses (from job_definition.py)
+│   ├── overrides.py          # config_override (from job_definition.py)
 │   ├── files.py              # job_files, read_job, read_settings (from job_report.py)
 │   ├── planning.py           # JobPlanner, PlannedRun, JobPreview (new)
 │   ├── executor.py           # JobExecutor, JobRunOptions, JobOutcome (from job_service.py)
+│   ├── launcher.py           # RunLauncher: one run through draw-things-cli, and how it ended (new)
 │   ├── run_finisher.py       # tag the video, extract the last frame, measure (new)
 │   ├── records.py            # JobRecords: the manifest and the job log file (job_manifest.py + job_log.py)
 │   ├── log_writer.py         # JobLogWriter: the job's log lines, from its events (new)
@@ -188,7 +191,7 @@ src/draw_things_control/
 │   ├── text.py               # the text of job_report.py
 │   ├── output_naming.py
 │   ├── inputs/               # size.py, resize.py
-│   └── media/                # tools.py (find ffmpeg, ffprobe), frames.py, info.py, video_color.py
+│   └── media/                # tools.py (find ffmpeg, ffprobe), toolkit.py (MediaTools), frames.py, info.py, video_color.py
 ├── state/
 │   ├── database.py           # file mode, a connection per thread, migrations, transactions (new)
 │   ├── executions.py         # ExecutionRepository, NewExecution, ExecutionRow, RunRow (new)
@@ -319,6 +322,7 @@ says otherwise.
     `core/process/signals.py`, which `cancel()` and the cooldown wait share;
   - tagging, frame extraction, and measuring to `RunFinisher`, given one
     `MediaTools` value instead of five constructor arguments;
+  - one run through draw-things-cli, and how it ended, to `RunLauncher`;
   - the manifest and the job log file to `JobRecords`;
   - the job's log lines to `JobLogWriter`, so the executor no longer imports
     text.
@@ -345,8 +349,8 @@ says otherwise.
   cooldown policy as its mapping, and tuples as lists. No front end uses it
   yet.
 - `load_job` becomes `JobParser`, one method per part of the job file, in
-  `jobs/parsing.py`. `load_job_text(text, global_config, ...)` parses text
-  and `load_job(path, ...)` reads a file and calls it, as
+  `jobs/parsing.py`. `load_job_text(text, path, global_config, ...)` parses
+  text (`path` only names the file in messages) and `load_job(path, ...)` reads a file and calls it, as
   [Phase 3 Milestone 01](../phase-3/milestone-01-queue-run-manager.md)
   planned. Its errors are `InputError`s naming the `field`. The rename hints
   for `batch_count` and `batches` go (owner decision); the hint for

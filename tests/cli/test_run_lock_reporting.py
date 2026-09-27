@@ -13,16 +13,17 @@ from tests.fixtures import JobTestCase, job_data
 HOLDER = """
 import sys
 from pathlib import Path
-from draw_things_control.cli.app import create_job_service
+from draw_things_control.cli.app import create_job_executor
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.job_definition import load_job
+from draw_things_control.jobs.executor import JobRunOptions
+from draw_things_control.jobs.parsing import load_job
 root, executable = Path(sys.argv[1]), sys.argv[2]
 job = load_job(root / "job.yaml", GlobalConfig(input_directory=root / "input", output_directory=root / "output"), root / "params")
 lock = RunLock("run-job", directory=root / "state")
 lock.acquire()
 print("held", flush=True)
-create_job_service().run(job, executable=executable, shutdown_grace=1, on_child_start=lock.record_child)
+create_job_executor().run(job, JobRunOptions(executable=executable, shutdown_grace=1, on_child_start=lock.record_child))
 """
 
 

@@ -25,7 +25,7 @@ def main() -> int:
     logger.remove()
     runs = FakeRuns(block=True)
     threading.Thread(target=lambda: runs.started.wait(30) and started.touch(), daemon=True).start()
-    app = DrawThingsApp(settings=GlobalConfig(input_directory=root / "input", output_directory=root / "output"), data_directory=root / "data", executable="draw-things-cli", job_service=runs.service)
+    app = DrawThingsApp(settings=GlobalConfig(input_directory=root / "input", output_directory=root / "output"), data_directory=root / "data", executable="draw-things-cli", job_executor=runs.service)
 
     async def start_job(pilot) -> None:
         while not isinstance(app.screen, MainScreen):

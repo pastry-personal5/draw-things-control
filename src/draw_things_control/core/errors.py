@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 class DtcError(Exception):
     """An error a front end shows to its user instead of crashing. ``code`` says what kind it is."""
@@ -10,9 +12,18 @@ class DtcError(Exception):
 
 
 class InputError(DtcError, ValueError):
-    """Invalid input: a job file, a configuration, an option, or an input file. Still a ValueError, so code that catches one still does."""
+    """Invalid input: a job file, a configuration, an option, or an input file. Still a ValueError, so code that catches one still does.
+
+    ``field`` names the offending key (``config_override.steps``) and ``path`` the file, when the error has them; the text
+    already says both.
+    """
 
     code = "invalid_input"
+
+    def __init__(self, message: str, *, field: str | None = None, path: Path | None = None) -> None:
+        super().__init__(message)
+        self.field = field
+        self.path = path
 
 
 class ToolMissingError(InputError):

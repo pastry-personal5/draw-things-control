@@ -12,9 +12,10 @@ from typing import overload
 from draw_things_control.core import draw_things_config
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.job_definition import JobDefinition
-from draw_things_control.jobs.job_report import PLACEHOLDER_SEED, PlanStep, job_files, plan_header, plan_steps, read_job
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.jobs.files import job_files, read_job
+from draw_things_control.jobs.text import PLACEHOLDER_SEED, PlanStep, plan_header, plan_steps
 from draw_things_control.state.ids import JOB_LETTER, job_id_text, parse_typed_id
 from draw_things_control.state.store import Store
 from draw_things_control.tui.commands import SORT_KEYS
@@ -263,11 +264,11 @@ def read_details(path: Path, settings: GlobalConfig) -> JobDetails:
         return JobDetails(None, error_text(path, error))
 
 
-def add_plan(details: JobDetails, service: JobService, executable: str) -> JobDetails:
+def add_plan(details: JobDetails, executor: JobExecutor, executable: str) -> JobDetails:
     """The details with the job's dry-run plan, using the placeholder seed when the job sets none."""
     assert details.job is not None
     try:
-        preview = service.preview(details.job, executable=executable, seed=PLACEHOLDER_SEED)
+        preview = executor.preview(details.job, executable=executable, seed=PLACEHOLDER_SEED)
     except (ValueError, OSError) as error:
         return JobDetails(details.job, plan_error=str(error))
     job = details.job

@@ -13,8 +13,8 @@ from typing import Any
 
 from textual.message import Message
 
-from draw_things_control.jobs.job_definition import JobDefinition
-from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus
 
 MAX_OUTPUT_LINES = 2000
 
@@ -167,7 +167,7 @@ class LiveRun:
             self.job_started_at = self._clock()
         elif isinstance(event, RunStarted):
             run = self._run(event.number)
-            run.status = "running"
+            run.status = RunStatus.RUNNING
             self.active_run = event.number
             self.run_started_at = self._clock()
             self.active_output = event.output
@@ -206,7 +206,7 @@ class LiveRun:
 
     def reference_run(self) -> PastRun | None:
         """The run a run estimates from before its own rate: this job's last successful run, or else the store's latest."""
-        own = next((run for run in reversed(self.finished_runs) if run.status == "succeeded" and run.seconds), None)
+        own = next((run for run in reversed(self.finished_runs) if run.status == RunStatus.SUCCEEDED and run.seconds), None)
         if own is not None and own.seconds is not None:
             return PastRun(own.seconds, own.steps)
         return self.past_run

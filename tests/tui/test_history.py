@@ -16,8 +16,8 @@ from textual.content import Content
 
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
-from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_events import CooldownStarted, RunStarted
+from draw_things_control.jobs.events import CooldownStarted, RunStarted
+from draw_things_control.jobs.parsing import load_job
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryFilter, HistoryPage, HistoryReader, copy_to_pasteboard

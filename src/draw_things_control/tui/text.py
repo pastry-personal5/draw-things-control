@@ -1,4 +1,4 @@
-"""The text the TUI shows; job text comes from jobs.job_report, so it matches the CLI. Plain functions, no widgets."""
+"""The text the TUI shows; job text comes from jobs.text, so it matches the CLI. Plain functions, no widgets."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from draw_things_control.core.arguments import FLAG_CONFIG_KEYS, OVERRIDE_ARGUME
 from draw_things_control.core.cooldown import parse_cooldown
 from draw_things_control.core.numbers import setting_number
 from draw_things_control.core.yaml_files import is_yaml_file
-from draw_things_control.jobs.job_definition import GenerationMode, JobDefinition
-from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted
-from draw_things_control.jobs.job_report import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
+from draw_things_control.jobs.definition import GenerationMode, JobDefinition
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted, RunStatus
+from draw_things_control.jobs.text import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, auto_wait_text, cooldown_details, duration_text, ignored_config_lines, job_summary, pair_runs, policy_text, seconds_text
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
 from draw_things_control.tui.history import execution_label, is_imported, run_file
 from draw_things_control.tui.job_files import JobDetails, JobRow
@@ -27,7 +27,7 @@ from draw_things_control.tui.live_run import LiveRun
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start"}
 VIDEO_MODES = {mode.value for mode in GenerationMode if mode.is_video}
-STATUS_STYLE = {"running": "bold cyan", "succeeded": "green", "failed": "red", "timed_out": "red", "interrupted": "yellow", "pending": "dim"}
+STATUS_STYLE = {RunStatus.RUNNING: "bold cyan", RunStatus.SUCCEEDED: "green", RunStatus.FAILED: "red", RunStatus.TIMED_OUT: "red", RunStatus.INTERRUPTED: "yellow", "pending": "dim"}
 
 
 def history_cells(row: dict[str, Any]) -> tuple[Text, ...]:
@@ -557,7 +557,7 @@ def refiner_text(settings: CommandSettings, width: int | None = None) -> str:
 
 def succeeded_runs(execution: dict[str, Any]) -> list[dict[str, Any]]:
     """The runs the detail widget lists: those that finished successfully, in run order."""
-    return [run for run in execution.get("runs") or [] if run.get("status") == "succeeded"]
+    return [run for run in execution.get("runs") or [] if run.get("status") == RunStatus.SUCCEEDED]
 
 
 def size_text(runs: list[dict[str, Any]]) -> str:

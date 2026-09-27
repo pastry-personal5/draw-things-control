@@ -20,10 +20,10 @@ from draw_things_control.core.arguments import command_settings
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.job_definition import JobDefinition
-from draw_things_control.jobs.job_events import JobEvent, JobStarted, combine_observers
-from draw_things_control.jobs.job_report import read_job
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.events import JobEvent, JobStarted, combine_observers
+from draw_things_control.jobs.executor import JobExecutor, JobRunOptions
+from draw_things_control.jobs.files import read_job
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import StateError, Store
 from draw_things_control.tui.job_files import error_text
@@ -67,12 +67,12 @@ class DrawThingsApp(App[None]):
         Binding("ctrl+c", "interrupt", "Quit", show=False, priority=True),
     ]
 
-    def __init__(self, *, settings: GlobalConfig, data_directory: Path, executable: str, job_service: JobService, shutdown_grace: float = 10.0) -> None:
+    def __init__(self, *, settings: GlobalConfig, data_directory: Path, executable: str, job_executor: JobExecutor, shutdown_grace: float = 10.0) -> None:
         super().__init__()
         self.settings = settings
         self.data_directory = data_directory
         self.executable = executable
-        self.job_service = job_service
+        self.job_executor = job_executor
         self.shutdown_grace = shutdown_grace
         # The running job, or the last one started in this session.
         self.live: LiveRun | None = None
@@ -105,10 +105,10 @@ class DrawThingsApp(App[None]):
             self.remove_signal_handlers()
             return
         # However the app ends, asyncio then waits for the job's thread: stop the job so that wait ends within the shutdown grace.
-        # Set first, so a worker that has not reached JobService.run yet cancels on JobStarted.
+        # Set first, so a worker that has not reached JobExecutor.run yet cancels on JobStarted.
         if self.stop_signal is None:
             self.stop_signal = signal.SIGINT
-        self.job_service.cancel(self.stop_signal)
+        self.job_executor.cancel(self.stop_signal)
         # Until the worker ends, a second signal must not kill dtc and leave draw-things-cli running; the job is already stopping.
         with contextlib.suppress(RuntimeError):
             loop = asyncio.get_running_loop()
@@ -269,7 +269,7 @@ class DrawThingsApp(App[None]):
             return
         self.stop_signal = received
         self.live.request_stop()
-        self.job_service.cancel(received)
+        self.job_executor.cancel(received)
         self.say(f"Stopping the job ({received.name})", "yellow")
         if self.main is not None:
             self.main.render_live()
@@ -313,7 +313,7 @@ class DrawThingsApp(App[None]):
                 self._recorder = ExecutionRecorder(store)
                 observer = combine_observers(self._recorder, self.post_event, self.stop_if_requested)
                 # The execution's ID is reserved before the job starts; a job that cannot get one does not start, and the worker says why.
-                self.job_service.run(job, executable=self.executable, shutdown_grace=self.shutdown_grace, write_records=self.settings.write_job_records, observer=observer, on_child_start=lock.record_child, reserve_execution_id=self._recorder.reserve)
+                self.job_executor.run(job, JobRunOptions(executable=self.executable, shutdown_grace=self.shutdown_grace, write_records=self.settings.write_job_records, observer=observer, on_child_start=lock.record_child, reserve_execution_id=self._recorder.reserve))
             finally:
                 store.close()
         finally:
@@ -341,7 +341,7 @@ class DrawThingsApp(App[None]):
     def stop_if_requested(self, event: JobEvent) -> None:
         """A stop requested before the job had begun found nothing to cancel; cancel it now, before run 1."""
         if isinstance(event, JobStarted) and self.stop_signal is not None:
-            self.job_service.cancel(self.stop_signal)
+            self.job_executor.cancel(self.stop_signal)
 
     def on_job_event_message(self, message: JobEventMessage) -> None:
         if self.live is not None:

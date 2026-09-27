@@ -23,13 +23,16 @@ from draw_things_control.core.global_config import DEFAULT_GLOBAL_CONFIG, Global
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor
 from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner
 from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError
-from draw_things_control.jobs.frame_extraction import extract_last_frame, require_ffmpeg, require_ffprobe
-from draw_things_control.jobs.job_definition import JobDefinition
-from draw_things_control.jobs.job_report import job_summary, plan_lines, read_settings, report_ignored_config
-from draw_things_control.jobs.job_report import read_job as load_job_and_settings
-from draw_things_control.jobs.job_service import JobService
-from draw_things_control.jobs.media_info import measure_output
-from draw_things_control.jobs.video_color import tag_video_colors
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.executor import JobExecutor, JobRunOptions
+from draw_things_control.jobs.files import read_job as load_job_and_settings
+from draw_things_control.jobs.files import read_settings
+from draw_things_control.jobs.media.frames import extract_last_frame
+from draw_things_control.jobs.media.info import measure_output
+from draw_things_control.jobs.media.toolkit import MediaTools
+from draw_things_control.jobs.media.tools import require_ffmpeg, require_ffprobe
+from draw_things_control.jobs.media.video_color import tag_video_colors
+from draw_things_control.jobs.text import job_summary, plan_lines, report_ignored_config
 from draw_things_control.state.history_import import import_history
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import StateError, Store
@@ -105,17 +108,18 @@ def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None,
 
 
 def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
-    """Create a run's runner; JobService owns signal handling and forwards signals to it."""
+    """Create a run's runner; JobExecutor owns signal handling and forwards signals to it."""
     return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
 
 
-def create_job_service(*, handle_signals: bool = True) -> JobService:
-    """The JobService every front end uses to run jobs with the real tools; ``handle_signals`` must be False for jobs run off the main thread."""
-    return JobService(runner_factory=create_job_runner, find_executable=shutil.which, frame_extractor=extract_last_frame, require_ffmpeg=require_ffmpeg, video_tagger=tag_video_colors, handle_signals=handle_signals, require_ffprobe=require_ffprobe, output_measurer=measure_output)
+def create_job_executor(*, handle_signals: bool = True) -> JobExecutor:
+    """The JobExecutor every front end uses to run jobs with the real tools; ``handle_signals`` must be False for jobs run off the main thread."""
+    media = MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output)
+    return JobExecutor(runner_factory=create_job_runner, find_executable=shutil.which, media=media, handle_signals=handle_signals)
 
 
 service = GenerationService(runner_factory=create_runner, find_executable=shutil.which, config_loader=load_config)
-job_service = create_job_service()
+job_executor = create_job_executor()
 
 JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
 GlobalConfigOption = Annotated[Path, typer.Option("--global-config", help="Global configuration file.")]
@@ -232,7 +236,7 @@ def run_job(
     with invalid_input_exits():
         if dry_run:
             report_ignored_config(job)
-            preview = job_service.preview(job, executable=executable)
+            preview = job_executor.preview(job, executable=executable)
             for line in plan_lines(job, preview):
                 typer.echo(line)
             return
@@ -242,7 +246,8 @@ def run_job(
             recorder = ExecutionRecorder(store)
             try:
                 # The execution's ID is reserved before the job starts; a job that cannot get one does not start.
-                outcome = job_service.run(job, executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=recorder, on_child_start=lock.record_child, reserve_execution_id=recorder.reserve)
+                options = JobRunOptions(executable=executable, shutdown_grace=shutdown_grace, write_records=settings.write_job_records, observer=recorder, on_child_start=lock.record_child, reserve_execution_id=recorder.reserve)
+                outcome = job_executor.run(job, options)
             except StateError as error:
                 logger.error("{}; the job was not started", error)
                 raise typer.Exit(code=1) from error
@@ -284,15 +289,15 @@ def tui_command(
     from draw_things_control.tui.app import DrawThingsApp
 
     # Jobs run on a worker thread, where signal handlers cannot be installed; the app handles signals itself.
-    tui_service = create_job_service(handle_signals=False)
-    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_service=tui_service, shutdown_grace=shutdown_grace)
+    tui_executor = create_job_executor(handle_signals=False)
+    tui = DrawThingsApp(settings=settings, data_directory=data_dir.expanduser(), executable=executable, job_executor=tui_executor, shutdown_grace=shutdown_grace)
     # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
     logger.remove()
     try:
         tui.run()
     finally:
         # A backstop: the app stops a running job when it unmounts; this does nothing when no job runs.
-        tui_service.cancel(signal.SIGINT)
+        tui_executor.cancel(signal.SIGINT)
         configure_logging()
     # Textual sets a nonzero return code when the app ends on an error, after printing the traceback.
     if tui.return_code:

@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from draw_things_control.jobs.job_manifest import JobManifest, RunRecord, write_manifest
+from draw_things_control.jobs.events import JobStatus
+from draw_things_control.jobs.records import JobManifest, RunRecord, write_manifest
 
 
 class JobManifestTests(unittest.TestCase):
@@ -15,7 +16,7 @@ class JobManifestTests(unittest.TestCase):
             manifest = JobManifest(job_file="job.yaml", name="job", mode="i2v", config_file="base.json", config_override={}, seed=1, seed_source="random", cooldown_seconds=0.0, cooldown_source="default", cooldown={"mode": "off"}, started_at="t", log_file="job.log")
             write_manifest(path, manifest)
             manifest.runs.append(RunRecord(pair="walk", positive="p", negative=None, input=None, output="o.mov", last_frame=None, command=["x"], started_at="t"))
-            manifest.status = "succeeded"
+            manifest.status = JobStatus.SUCCEEDED
             write_manifest(path, manifest)
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "succeeded")

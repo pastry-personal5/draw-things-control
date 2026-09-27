@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from draw_things_control.jobs.job_events import CooldownEnded, JobEvent, JobFinished, JobStarted, RunFinished, RunStarted
+from draw_things_control.jobs.events import CooldownEnded, JobEvent, JobFinished, JobStarted, RunFinished, RunStarted
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.store import StateError, Store
 
@@ -37,7 +37,7 @@ class ExecutionRecorder:
         return None if self._failed or self._execution_id is None else self._label
 
     def reserve(self) -> str:
-        """Reserve the execution's ID for JobService.run; raises StateError when the store cannot give one, so the job
+        """Reserve the execution's ID for JobExecutor.run; raises StateError when the store cannot give one, so the job
         does not start."""
         try:
             self._label = execution_id_text(self._store.reserve_execution_number())

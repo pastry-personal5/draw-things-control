@@ -17,10 +17,10 @@ from draw_things_control.cli.app import app, create_job_runner
 from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.executor import JobRunOptions
 from draw_things_control.state.store import Store
-from tests.fixtures import JobTestCase, job_data
-from tests.jobs.test_job_service import FakeResult, FakeRunner
+from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.jobs.test_executor import FakeResult, FakeRunner
 
 
 class StateCliTests(JobTestCase):
@@ -34,7 +34,7 @@ class StateCliTests(JobTestCase):
         self.results: dict[int, FakeResult] = {}
         self.runs_started = 0
         numbers = itertools.count(1000)
-        self.fake_service = JobService(
+        self.fake_service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: executable,
             frame_extractor=lambda video, png: png.write_bytes(b"png"),
@@ -46,7 +46,7 @@ class StateCliTests(JobTestCase):
         for patcher in (
             mock.patch("draw_things_control.core.draw_things_config.PARAMS_DIRECTORY", self.params),
             mock.patch.object(run_lock, "STATE_DIRECTORY", self.state),
-            mock.patch.object(cli, "job_service", self.fake_service),
+            mock.patch.object(cli, "job_executor", self.fake_service),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -176,9 +176,9 @@ class StateCliTests(JobTestCase):
         seen: list[object] = []
         run = self.fake_service.run
 
-        def recording_run(*args: object, **kwargs: object):
-            seen.append(kwargs["on_child_start"])
-            return run(*args, **kwargs)
+        def recording_run(job: object, options: JobRunOptions):
+            seen.append(options.on_child_start)
+            return run(job, options)
 
         with mock.patch.object(self.fake_service, "run", recording_run):
             self.assertEqual(self.run_job().exit_code, 0)

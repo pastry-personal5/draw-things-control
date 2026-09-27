@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
+
+from draw_things_control.jobs.media.tools import find_ffprobe, require_ffmpeg
 
 # Draw Things' videos carry no color tags (the current CLI writes untagged H.264; older ones wrote ProRes tagged
 # smpte170m), so ffmpeg's PNG has no color chunks and viewers guess. The frame is converted to RGB first, at the
@@ -23,32 +24,6 @@ UNSPECIFIED = {"", "unknown", "unspecified", "reserved", "N/A"}
 def srgb_filter(matrix_known: bool) -> str:
     """The ffmpeg filter chain that converts to RGB (as BT.709 limited range when the video has no matrix) and labels sRGB."""
     return ",".join(part for part in (None if matrix_known else UNTAGGED_DECODE, SRGB_FORMATS, SRGB_LABEL) if part)
-
-
-def require_ffmpeg(executable: str = "ffmpeg") -> str:
-    """Return ffmpeg's path, or explain how to get it."""
-    path = shutil.which(executable)
-    if path is None:
-        raise ValueError(f"Could not find '{executable}' on PATH; video jobs need it to extract last frames (for example: brew install ffmpeg)")
-    return path
-
-
-def find_ffprobe(ffmpeg: str | None = None) -> str | None:
-    """ffprobe beside ``ffmpeg`` (the pair installed together; without one, the ffmpeg on PATH), or else on PATH; None when
-    there is neither. The preflight and the measuring both look here, so they find the same ffprobe."""
-    if ffmpeg is None:
-        ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is not None and Path(ffmpeg).with_name("ffprobe").exists():
-        return str(Path(ffmpeg).with_name("ffprobe"))
-    return shutil.which("ffprobe")
-
-
-def require_ffprobe(ffmpeg: str | None = None) -> str:
-    """Return ffprobe's path, or explain how to get it; video jobs need it to measure their outputs."""
-    path = find_ffprobe(ffmpeg)
-    if path is None:
-        raise ValueError("Could not find 'ffprobe' beside ffmpeg or on PATH; video jobs need it to measure their outputs (it comes with ffmpeg, for example: brew install ffmpeg)")
-    return path
 
 
 def has_matrix_tag(video: Path, ffmpeg: str) -> bool:

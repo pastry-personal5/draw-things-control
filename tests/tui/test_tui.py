@@ -14,20 +14,20 @@ from typer.testing import CliRunner
 
 from draw_things_control.cli import app as cli
 from draw_things_control.core.global_config import PROJECT_ROOT
-from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_report import plan_header, plan_steps
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.jobs.parsing import load_job
+from draw_things_control.jobs.text import plan_header, plan_steps
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
 from draw_things_control.tui.panes import JobDefinitionPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
-from tests.fixtures import JobTestCase
+from tests.fixtures import JobTestCase, TestExecutor, job_executor
 from tests.tui.tui_case import TuiTestCase
 
 
-def make_service(missing: frozenset[str] = frozenset()) -> JobService:
-    """A JobService whose tool checks pass unless the tool is in ``missing``, with fixed output names."""
+def make_service(missing: frozenset[str] = frozenset()) -> TestExecutor:
+    """A JobExecutor whose tool checks pass unless the tool is in ``missing``, with fixed output names."""
     numbers = itertools.count(1000)
 
     def require_ffmpeg() -> str:
@@ -35,7 +35,7 @@ def make_service(missing: frozenset[str] = frozenset()) -> JobService:
             raise ValueError("Could not find 'ffmpeg' on PATH")
         return "ffmpeg"
 
-    return JobService(
+    return job_executor(
         runner_factory=mock.Mock(side_effect=AssertionError("the TUI must not start a run")),
         find_executable=lambda executable: None if executable in missing else executable,
         frame_extractor=mock.Mock(),
@@ -272,7 +272,7 @@ class TuiTests(TuiTestCase):
     async def test_an_os_error_while_planning_shows_in_the_plan(self) -> None:
         self.write_data_job("walk.yaml")
         app = self.app()
-        with mock.patch.object(app.job_service, "preview", side_effect=PermissionError(13, "Permission denied", "/out")):
+        with mock.patch.object(app.job_executor, "preview", side_effect=PermissionError(13, "Permission denied", "/out")):
             async with app.run_test() as pilot:
                 await self.settle(pilot)
                 shown = await self.show(pilot, "walk")
@@ -497,9 +497,9 @@ class TuiCommandTests(JobTestCase):
             self.assertEqual(options["data_directory"], PROJECT_ROOT / "data" / "jobs")
             self.assertEqual(options["executable"], "/opt/dtc/cli")
             self.assertEqual(options["settings"].output_directory, self.output_directory)
-            self.assertIsInstance(options["job_service"], JobService)
+            self.assertIsInstance(options["job_executor"], JobExecutor)
             # Jobs run on a worker thread, where a service that installs signal handlers would raise.
-            self.assertFalse(options["job_service"]._handle_signals)
+            self.assertFalse(options["job_executor"]._handle_signals)
             self.assertEqual(options["shutdown_grace"], 10.0)
             self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--data-dir", str(self.root), "--shutdown-grace", "2.5"])
             self.assertEqual(init.call_args.kwargs["data_directory"], self.root)
@@ -512,14 +512,14 @@ class TuiCommandTests(JobTestCase):
         run.assert_not_called()
 
     def test_any_running_job_is_cancelled_after_the_app_returns(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")), mock.patch.object(JobService, "cancel") as cancel:
+        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")), mock.patch.object(JobExecutor, "cancel") as cancel:
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertIsInstance(result.exception, RuntimeError)
         cancel.assert_called_once_with(signal.SIGINT)  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
         cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_run_job_keeps_a_service_that_handles_signals(self) -> None:
-        self.assertTrue(cli.job_service._handle_signals)
+        self.assertTrue(cli.job_executor._handle_signals)
 
     def test_a_failed_app_exits_with_its_return_code_and_logging_is_restored(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):

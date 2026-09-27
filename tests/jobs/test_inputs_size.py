@@ -2,8 +2,8 @@
 
 import unittest
 
-from draw_things_control.jobs.input_size import floor_to_step, read_image_info, resize_plan
-from draw_things_control.jobs.job_definition import load_job
+from draw_things_control.jobs.inputs.size import floor_to_step, read_image_info, resize_plan
+from draw_things_control.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data
 
 

@@ -19,7 +19,7 @@ from textual.widgets.data_table import ColumnKey
 from textual.worker import get_current_worker
 
 from draw_things_control.core.run_lock import run_lock_is_free
-from draw_things_control.jobs.job_events import JobEvent, RunOutput
+from draw_things_control.jobs.events import JobEvent, JobStatus, RunOutput
 from draw_things_control.tui.commands import SORT_KEYS
 from draw_things_control.tui.history import PAGE_SIZE, HistoryFilter, HistoryPage, HistoryReader, execution_label, reveal_run
 from draw_things_control.tui.job_files import JobCatalog, JobListing, JobRow
@@ -449,7 +449,7 @@ class HistoryPane(DataTable[Text]):
         was_held = self.other_process_running
         held = self.check_lock()
         if held or was_held:
-            self.check(self.read_count, self.history_filter, [execution_id for execution_id, row in self.executions.items() if row["status"] == "running"])
+            self.check(self.read_count, self.history_filter, [execution_id for execution_id, row in self.executions.items() if row["status"] == JobStatus.RUNNING])
 
     @work(thread=True, exclusive=True, group="history-poll")
     def check(self, request: int, history_filter: HistoryFilter, running: list[int]) -> None:

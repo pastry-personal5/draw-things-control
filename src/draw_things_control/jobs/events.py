@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from enum import StrEnum
 from typing import Any
 
 from loguru import logger
@@ -11,6 +12,25 @@ from loguru import logger
 from draw_things_control.core.cooldown import CooldownPolicy
 
 # Every ``at`` is a local ISO 8601 timestamp with an offset, from the job service's clock.
+
+
+class RunStatus(StrEnum):
+    """How one run of a job stands or ended. The words are what manifests and the state store keep."""
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    INTERRUPTED = "interrupted"
+
+
+class JobStatus(StrEnum):
+    """How a job stands or ended."""
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 @dataclass(frozen=True)
@@ -81,7 +101,7 @@ class RunFinished:
 
     at: str
     number: int
-    status: str
+    status: RunStatus
     # None when the run raised before it had an exit code.
     exit_code: int | None
     seconds: float | None
@@ -127,7 +147,7 @@ class JobFinished:
     """The job ended: succeeded, failed, or interrupted. Always the last event of a started job."""
 
     at: str
-    status: str
+    status: JobStatus
     # None when the job raised before it had an exit code.
     exit_code: int | None
     completed_runs: int
@@ -156,3 +176,36 @@ def combine_observers(*observers: JobObserver) -> JobObserver:
             notify(observer, event)
 
     return observe
+
+
+# The name each event type goes by in JSON.
+EVENT_KINDS: dict[type, str] = {
+    JobStarted: "job_started",
+    RunStarted: "run_started",
+    RunOutput: "run_output",
+    RunFinished: "run_finished",
+    CooldownStarted: "cooldown_started",
+    CooldownEnded: "cooldown_ended",
+    JobFinished: "job_finished",
+}
+
+
+def event_to_dict(event: JobEvent) -> dict[str, Any]:
+    """The event as a mapping ``json.dumps`` accepts, for the event stream: a ``kind``, then each field; statuses as their
+    words, the cooldown policy as its mapping, and tuples as lists. Events hold no credential: a command is redacted."""
+    data: dict[str, Any] = {"kind": EVENT_KINDS[type(event)]}
+    for event_field in fields(event):
+        data[event_field.name] = _plain(getattr(event, event_field.name))
+    return data
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, CooldownPolicy):
+        return value.as_dict()
+    if isinstance(value, StrEnum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_plain(item) for item in value]
+    return value

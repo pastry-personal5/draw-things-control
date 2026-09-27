@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Design decision** [M11]: Where Step 3 differs from the plan.
+  - One run through draw-things-cli, and how it ended, moved to `RunLauncher` (`jobs/launcher.py`), and the prompt pairs and `config_override` to `jobs/prompt_pairs.py` and `jobs/overrides.py`, to keep `JobExecutor` and `JobParser` under the size limits.
+  - `JobExecutor.run(job, JobRunOptions)` replaced the keyword list; its tools are one `MediaTools` value (`jobs/media/toolkit.py`).
+  - The log lines are written when each event is emitted, before the observer sees it, and a job or run that raised (no exit code) writes none, as before. The characterization tests show the log lines, the manifest, the job log file, and the state store rows unchanged; only the events' repr differs, so they are now compared as `event_to_dict` JSON.
+  - The signal handlers are installed after the job's records are opened, as before, so an interrupt during setup still removes the log.
+
 - **Design decision** [M11]: Where Step 2 differs from the plan.
   - `generate` and `validate-config` look for the YAML twin of a refused JSON file beside it, not in `data/params/`; the two are the same for the project's own files.
   - `argument_rows` and `_config_value` stay in the TUI, since they write words for a person; only the override table moved to `core/arguments.py`.

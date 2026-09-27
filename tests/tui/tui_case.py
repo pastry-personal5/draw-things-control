@@ -15,7 +15,7 @@ from rich.text import Text
 from textual.widgets import RichLog, Static
 
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.job_service import JobService
+from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.panes import HistoryPane
@@ -53,8 +53,8 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.write_job(job_data(**changes), name=f"data/{name}")
         return self.data / name
 
-    def make_app(self, service: JobService, *, data: Path | None = None, executable: str = "draw-things-cli", settings: GlobalConfig | None = None, shutdown_grace: float = 10.0) -> DrawThingsApp:
-        return DrawThingsApp(settings=settings or self.global_config, data_directory=data or self.data, executable=executable, job_service=service, shutdown_grace=shutdown_grace)
+    def make_app(self, service: JobExecutor, *, data: Path | None = None, executable: str = "draw-things-cli", settings: GlobalConfig | None = None, shutdown_grace: float = 10.0) -> DrawThingsApp:
+        return DrawThingsApp(settings=settings or self.global_config, data_directory=data or self.data, executable=executable, job_executor=service, shutdown_grace=shutdown_grace)
 
     async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
         deadline = time.monotonic() + timeout

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.process.output import OutputProcessor, OutputStream
-from draw_things_control.jobs.job_service import JobService
+from tests.fixtures import job_executor
 
 FAKE_PID = 4242
 # Plain lines, a line with brackets, and the progress bar's lines, which the output pane must not hold.
@@ -70,7 +70,7 @@ class ScriptedRunner:
 
 
 class FakeRuns:
-    """A JobService whose runners are ScriptedRunners; every runner it made is kept in ``runners``."""
+    """A JobExecutor whose runners are ScriptedRunners; every runner it made is kept in ``runners``."""
 
     def __init__(self, *, lines: tuple[tuple[OutputStream, str], ...] = LINES, block: bool = False, gate: threading.Event | None = None, missing: frozenset[str] = frozenset()) -> None:
         self.lines = lines
@@ -78,7 +78,7 @@ class FakeRuns:
         self.gate = gate
         self.started = threading.Event()
         self.runners: list[ScriptedRunner] = []
-        self.service = JobService(
+        self.service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: None if executable in missing else executable,
             frame_extractor=self.extract,

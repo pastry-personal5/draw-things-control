@@ -20,8 +20,8 @@ from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import redact_command
 from draw_things_control.core.global_config import PROJECT_ROOT, GlobalConfig
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
-from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_events import JobStarted, RunStarted
+from draw_things_control.jobs.events import JobStarted, RunStarted
+from draw_things_control.jobs.parsing import load_job
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.history import HistoryReader
@@ -568,7 +568,7 @@ class LiveRunTests(TuiTestCase):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.start(pilot)
                 await self.wait_for(pilot, opened.is_set, "the worker to open the store")
-                # JobService.run has not begun, so there is no job to cancel yet.
+                # JobExecutor.run has not begun, so there is no job to cancel yet.
                 app.exit(return_code=1)
                 await pilot.pause()
             release.set()

@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from rich.text import Text
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.job_definition import load_job
-from draw_things_control.jobs.job_events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
+from draw_things_control.jobs.parsing import load_job
 from draw_things_control.tui.estimate import job_estimate, moment, run_estimate
 from draw_things_control.tui.live_run import LiveRun, PastRun
 from draw_things_control.tui.text import bar_line, end_text, status_lines, whole_duration
@@ -50,9 +50,9 @@ class EstimateTests(JobTestCase):
         self.at(at)
         live.apply(RunOutput(at=self.stamp(), number=live.active_run or 0, stream="stdout", text=f"{step}/{total}", progress=(step, total), percent=None))
 
-    def finish(self, live: LiveRun, at: float, number: int, seconds: float, status: str = "succeeded") -> None:
+    def finish(self, live: LiveRun, at: float, number: int, seconds: float, status: RunStatus = RunStatus.SUCCEEDED) -> None:
         self.at(at)
-        live.apply(RunFinished(at=self.stamp(), number=number, status=status, exit_code=0 if status == "succeeded" else 1, seconds=seconds, output=f"walk-{number}.mov", last_frame=None))
+        live.apply(RunFinished(at=self.stamp(), number=number, status=status, exit_code=0 if status == RunStatus.SUCCEEDED else 1, seconds=seconds, output=f"walk-{number}.mov", last_frame=None))
 
     def one_run(self, live: LiveRun, number: int, begin: float, *, load: float = 30.0, per_step: float = 10.0, tail: float = 20.0) -> float:
         """A whole run: loading, 40 steps, and a tail; returns when it finished."""
@@ -298,7 +298,7 @@ class EstimateTests(JobTestCase):
         self.assertEqual((lines[3], lines[4]), ("next: run 2/2", "last run took 7 min 10 s"))
         live.apply(CooldownEnded(at=self.stamp(), waited_seconds=100.0, cut_short=False))
         self.one_run(live, 2, end + 100)
-        live.apply(JobFinished(at=self.stamp(), status="succeeded", exit_code=0, completed_runs=2, total_runs=2, signal=None))
+        live.apply(JobFinished(at=self.stamp(), status=JobStatus.SUCCEEDED, exit_code=0, completed_runs=2, total_runs=2, signal=None))
         lines = [str(line) for line in status_lines(live, True, 60)]
         # A job another process starts afterwards is announced in its place.
         self.assertEqual(lines[0], f"finished (succeeded)  {live.path.stem}")
@@ -309,7 +309,7 @@ class EstimateTests(JobTestCase):
         live = self.live(runs=3)
         self.one_run(live, 1, 0)
         self.start(live, 2)
-        self.finish(live, self.clock.now + 5, 2, seconds=5.0, status="failed")
+        self.finish(live, self.clock.now + 5, 2, seconds=5.0, status=RunStatus.FAILED)
         self.assertEqual(str(status_lines(live, False, 60)[4]), "last run took 7 min 10 s")
         path = self.write_job(job_data())
         never = LiveRun(load_job(path, self.global_config, self.params), path, clock=self.clock)

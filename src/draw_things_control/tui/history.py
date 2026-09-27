@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from draw_things_control.core.run_lock import run_lock_is_free, state_directory
+from draw_things_control.jobs.events import JobStatus
 from draw_things_control.state.ids import MAX_DIGITS, execution_id_text
 from draw_things_control.state.store import DATABASE_FILE_NAME, StateError, Store
 
 PAGE_SIZE = 200
-STATUSES = ("succeeded", "failed", "interrupted", "running")
+STATUSES = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.RUNNING)
 
 
 @dataclass(frozen=True)

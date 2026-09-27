@@ -7,14 +7,15 @@ from dataclasses import replace
 from unittest import mock
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.jobs.job_definition import JobDefinition, load_job
-from draw_things_control.jobs.job_events import combine_observers
-from draw_things_control.jobs.job_service import JobService, PlannedRun
-from draw_things_control.jobs.media_info import MediaInfo
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.events import combine_observers
+from draw_things_control.jobs.media.info import MediaInfo
+from draw_things_control.jobs.parsing import load_job
+from draw_things_control.jobs.planning import PlannedRun
 from draw_things_control.state.recorder import ExecutionRecorder
 from draw_things_control.state.store import Store
-from tests.fixtures import JobTestCase, job_data
-from tests.jobs.test_job_service import NOW, FakeResult, FakeRunner
+from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
 
 
 class RecorderTests(JobTestCase):
@@ -25,7 +26,7 @@ class RecorderTests(JobTestCase):
         self.results: dict[int, FakeResult] = {}
         self.calls = 0
         numbers = itertools.count(1000)
-        self.service = JobService(
+        self.service = job_executor(
             runner_factory=self.create_runner,
             find_executable=lambda executable: executable,
             frame_extractor=lambda video, png: png.write_bytes(b"png"),
@@ -45,7 +46,7 @@ class RecorderTests(JobTestCase):
         return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def run_recorded(self, job: JobDefinition, *, write_records: bool, recorder: ExecutionRecorder | None = None):
-        return self.service.run(job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records, observer=recorder or ExecutionRecorder(self.store))
+        return run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records, observer=recorder or ExecutionRecorder(self.store))
 
     def test_an_execution_and_its_runs_match_the_manifest(self) -> None:
         job = self.job(run_count=3, prompt_pairs=[{"name": "only", "positive": "text", "negative": "blurry"}], cooldown={"mode": "manual", "seconds": 30})
@@ -65,7 +66,7 @@ class RecorderTests(JobTestCase):
         self.assertEqual((execution["settings"]["cooldown"], manifest["cooldown"]), ({"mode": "manual", "seconds": 30.0}, {"mode": "manual", "seconds": 30.0}))
 
     def test_the_measured_output_is_recorded_as_in_the_manifest(self) -> None:
-        self.service._output_measurer = lambda path: MediaInfo(832, 448, 81)
+        self.service.knobs.output_measurer = lambda path: MediaInfo(832, 448, 81)
         outcome = self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=True)
         manifest = json.loads(outcome.manifest.read_text(encoding="utf-8"))
         [row] = self.store.list_executions()
@@ -101,13 +102,13 @@ class RecorderTests(JobTestCase):
 
     def test_no_credential_reaches_the_store(self) -> None:
         secret = "hunter2-secret"
-        plan_run = self.service._plan_run
+        plan_run = self.service._planner.plan_run
 
         def plan_run_with_a_key(*arguments: object, **options: object) -> PlannedRun:
             run = plan_run(*arguments, **options)
             return replace(run, arguments=replace(run.arguments, cloud_compute=True, api_key=secret))
 
-        with mock.patch.object(self.service, "_plan_run", plan_run_with_a_key):
+        with mock.patch.object(self.service._planner, "plan_run", plan_run_with_a_key):
             self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False)
         self.assertIn("--api-key", self.store.get_execution(self.store.list_executions()[0]["id"])["runs"][0]["command"])
         self.assertNotIn(secret, "\n".join(self.store._connection().iterdump()))

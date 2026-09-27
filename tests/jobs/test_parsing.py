@@ -10,8 +10,10 @@ from unittest import mock
 from PIL import Image
 
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
-from draw_things_control.jobs.job_definition import GenerationMode, load_job
-from draw_things_control.jobs.job_report import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
+from draw_things_control.core.errors import InputError
+from draw_things_control.jobs.definition import GenerationMode
+from draw_things_control.jobs.parsing import load_job, load_job_text
+from draw_things_control.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
 from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 
@@ -23,9 +25,34 @@ class JobDefinitionTests(JobTestCase):
         with self.assertRaisesRegex(ValueError, field):
             self.load(**changes)
 
-    def test_renamed_batch_keys_name_their_replacements(self) -> None:
-        self.assert_invalid("'batch_count' was renamed to run_count", batch_count=5)
-        self.assert_invalid(r"'prompt_pairs\[0\]\.batches' was renamed to runs", prompt_pairs=[{"name": "a", "positive": "x", "batches": [1]}])
+    def test_the_old_batch_keys_are_unknown_keys(self) -> None:
+        self.assert_invalid("'batch_count' is not a known key", batch_count=5)
+        self.assert_invalid(r"'prompt_pairs\[0\]\.batches' is not a known key", prompt_pairs=[{"name": "a", "positive": "x", "batches": [1]}])
+
+    def test_the_old_cooldown_key_still_says_what_to_write(self) -> None:
+        self.assert_invalid(r"'cooldown_seconds' was replaced by 'cooldown'; write cooldown: \{mode: manual, seconds: 90\}", cooldown_seconds=90)
+
+    def test_an_error_carries_the_file_and_the_field(self) -> None:
+        with self.assertRaises(InputError) as caught:
+            self.load(run_count=0)
+        self.assertEqual((caught.exception.field, caught.exception.path, caught.exception.code), ("run_count", (self.root / "job.yaml"), "invalid_input"))
+        self.assertIn("'run_count' must be an integer >= 1", str(caught.exception))
+        self.assertIsInstance(caught.exception, ValueError)
+
+    def test_a_job_is_read_from_its_text_and_the_file_is_not_touched(self) -> None:
+        path = self.write_job(job_data())
+        text = path.read_text(encoding="utf-8")
+        path.unlink()
+        job = load_job_text(text, path, self.global_config, self.params)
+        self.assertEqual((job.name, job.path, job.source_text), ("sunset-walk", path, text))
+        self.assertFalse(path.exists())
+
+    def test_the_text_of_a_job_is_checked_as_a_file_is(self) -> None:
+        path = self.root / "queued.yaml"
+        with self.assertRaisesRegex(InputError, r"queued\.yaml: 'run_count' is required"):
+            load_job_text("version: 1\nname: x\nmode: t2v\nprompt_pairs: [{name: a, positive: x}]\nconfig_file: base.yaml\n", path, self.global_config, self.params)
+        with self.assertRaisesRegex(ValueError, r"Job file is not valid YAML: .*queued\.yaml"):
+            load_job_text("a: 1\na: 2\n", path, self.global_config, self.params)
 
     def test_valid_job_resolves_paths_and_defaults(self) -> None:
         job = self.load()
@@ -204,7 +231,7 @@ class JobDefinitionTests(JobTestCase):
         path.write_bytes(path.read_bytes()[:2000])
         self.load(input="noise.jpg")
         # Already the target and upright: the original is used as-is, so it is not decoded.
-        with mock.patch("draw_things_control.jobs.job_definition.decode_image") as decode:
+        with mock.patch("draw_things_control.jobs.parsing.decode_image") as decode:
             self.assertIsNone(self.load(input="noise.jpg", desired_input_width=832).input_copy)
         decode.assert_not_called()
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
@@ -213,7 +240,7 @@ class JobDefinitionTests(JobTestCase):
         load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.params, decode_input=False)
 
     def test_loading_a_job_does_not_import_the_resizer(self) -> None:
-        code = "import sys, draw_things_control.jobs.job_definition; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
+        code = "import sys, draw_things_control.jobs.parsing; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
         self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[2], check=False).returncode, 0)
 
     def test_image_over_the_pixel_limit_is_a_validation_error(self) -> None:

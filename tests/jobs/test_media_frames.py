@@ -8,8 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from draw_things_control.jobs import frame_extraction
-from draw_things_control.jobs.frame_extraction import extract_last_frame, srgb_filter
+from draw_things_control.jobs.media import frames as frame_extraction
+from draw_things_control.jobs.media import tools
+from draw_things_control.jobs.media.frames import extract_last_frame, srgb_filter
 
 
 def png_chunks(path: Path) -> list[str]:
@@ -34,7 +35,7 @@ class ExtractionCommandTests(unittest.TestCase):
             calls.append(command)
             return mock.Mock(returncode=0, stdout=probe_output, stderr="")
 
-        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(frame_extraction.shutil, "which", return_value="/usr/bin/ffprobe"), mock.patch.object(frame_extraction.subprocess, "run", side_effect=fake_run), tempfile.TemporaryDirectory() as directory:
+        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(tools.shutil, "which", return_value="/usr/bin/ffprobe"), mock.patch.object(frame_extraction.subprocess, "run", side_effect=fake_run), tempfile.TemporaryDirectory() as directory:
             png = Path(directory) / "frame.png"
             png.write_bytes(b"png")
             extract_last_frame(Path("clip.mov"), png)
@@ -56,7 +57,7 @@ class ExtractionCommandTests(unittest.TestCase):
         self.assertNotIn("scale=", self.extract("bt709\n")[self.extract("bt709\n").index("-vf") + 1])
 
     def test_a_failed_extraction_is_reported(self) -> None:
-        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(frame_extraction.shutil, "which", return_value=None), mock.patch.object(frame_extraction.subprocess, "run", return_value=mock.Mock(returncode=1, stderr="boom", stdout="")):
+        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(tools.shutil, "which", return_value=None), mock.patch.object(frame_extraction.subprocess, "run", return_value=mock.Mock(returncode=1, stderr="boom", stdout="")):
             with self.assertRaisesRegex(ValueError, "boom"):
                 extract_last_frame(Path("clip.mov"), Path("/nonexistent/frame.png"))
 

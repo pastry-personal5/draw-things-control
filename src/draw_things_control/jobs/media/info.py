@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from draw_things_control.core.numbers import positive_whole
-from draw_things_control.jobs.frame_extraction import find_ffprobe
+from draw_things_control.jobs.media.tools import find_ffprobe
 
 VIDEO_SUFFIXES = {".mov", ".mp4"}
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

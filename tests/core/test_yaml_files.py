@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from draw_things_control.core.global_config import load_global_config
 from draw_things_control.core.yaml_files import is_yaml_file, parse_yaml_mapping, read_yaml_file
-from draw_things_control.jobs.job_definition import load_job
+from draw_things_control.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data
 
 

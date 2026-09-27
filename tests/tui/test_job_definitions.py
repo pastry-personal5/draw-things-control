@@ -13,7 +13,7 @@ from unittest import mock
 from rich.text import Text
 
 from draw_things_control.core.run_lock import RunLockError
-from draw_things_control.jobs.job_definition import load_job
+from draw_things_control.jobs.parsing import load_job
 from draw_things_control.tui import job_files
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.job_files import JobCatalog, JobRow

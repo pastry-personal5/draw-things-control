@@ -10,11 +10,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from draw_things_control.jobs.job_definition import JobDefinition, load_job
-from draw_things_control.jobs.job_service import JobService
-from draw_things_control.jobs.video_color import tag_video_colors
-from tests.fixtures import JobTestCase, job_data
-from tests.jobs.test_job_service import NOW, FakeResult, FakeRunner
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.media.video_color import tag_video_colors
+from draw_things_control.jobs.parsing import load_job
+from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
 
 
 def probe(video: Path, entries: str) -> list[str]:
@@ -123,7 +123,7 @@ class JobTaggingTests(JobTestCase):
         self.order: list[str] = []
         self.tagger = mock.Mock(side_effect=lambda video: self.order.append("tag") or True)
         numbers = itertools.count(1000)
-        self.service = JobService(
+        self.service = job_executor(
             runner_factory=lambda arguments, timeout, grace, on_message=None, on_start=None: FakeRunner(arguments, FakeResult(), write_output=True),
             find_executable=lambda executable: executable,
             frame_extractor=self.extract,
@@ -139,27 +139,27 @@ class JobTaggingTests(JobTestCase):
         return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
 
     def test_each_video_is_tagged_before_its_last_frame_is_extracted(self) -> None:
-        outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
+        outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual(outcome.exit_code, 0)
         self.assertEqual(self.order, ["tag", "extract", "tag", "extract"])
         self.assertEqual([call.args[0].suffix for call in self.tagger.call_args_list], [".mov", ".mov"])
 
     def test_an_image_job_is_not_tagged(self) -> None:
-        self.service.run(self.job(mode="i2i", run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
+        run_job_with(self.service, self.job(mode="i2i", run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
         self.tagger.assert_not_called()
 
     def test_a_video_that_cannot_be_tagged_does_not_fail_the_run(self) -> None:
         self.tagger.side_effect = ValueError("fragmented MP4")
-        with mock.patch("draw_things_control.jobs.job_service.logger") as log:
-            outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
+        with mock.patch("draw_things_control.jobs.run_finisher.logger") as log:
+            outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))
         self.assertTrue(any("Could not write color tags" in str(call.args[0]) for call in log.warning.call_args_list))
 
     def test_a_malformed_box_that_raises_struct_error_does_not_fail_the_run(self) -> None:
         self.tagger.side_effect = struct.error("unpack requires a buffer of 4 bytes")
-        outcome = self.service.run(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
+        outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))
 
     def test_a_service_without_a_tagger_behaves_as_before(self) -> None:
-        self.service._video_tagger = None
-        self.assertEqual(self.service.run(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2).exit_code, 0)
+        self.service.knobs.video_tagger = None
+        self.assertEqual(run_job_with(self.service, self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2).exit_code, 0)

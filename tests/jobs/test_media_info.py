@@ -11,8 +11,8 @@ import zlib
 from pathlib import Path
 from unittest import mock
 
-from draw_things_control.jobs.frame_extraction import find_ffprobe, require_ffprobe
-from draw_things_control.jobs.media_info import FFPROBE_TIMEOUT_SECONDS, MediaInfo, measure_output
+from draw_things_control.jobs.media.info import FFPROBE_TIMEOUT_SECONDS, MediaInfo, measure_output
+from draw_things_control.jobs.media.tools import find_ffprobe, require_ffprobe
 
 
 def png_bytes(width: int, height: int) -> bytes:
@@ -95,7 +95,7 @@ class MediaInfoTests(unittest.TestCase):
         for run in (slow, missing):
             with self.subTest(run.__name__), self.assertRaises(ValueError):
                 measure_output(self.video, ffprobe="ffprobe", run=run)
-        with mock.patch("draw_things_control.jobs.media_info.find_ffprobe", return_value=None), self.assertRaisesRegex(ValueError, "ffprobe was not found"):
+        with mock.patch("draw_things_control.jobs.media.info.find_ffprobe", return_value=None), self.assertRaisesRegex(ValueError, "ffprobe was not found"):
             measure_output(self.video)
 
     def test_a_png_is_measured_from_its_header_without_ffprobe(self) -> None:
@@ -124,12 +124,12 @@ class MediaInfoTests(unittest.TestCase):
         tools.mkdir()
         (tools / "ffmpeg").write_text("")
         (tools / "ffprobe").write_text("")
-        with mock.patch("draw_things_control.jobs.frame_extraction.shutil.which", return_value="/usr/bin/ffprobe"):
+        with mock.patch("draw_things_control.jobs.media.tools.shutil.which", return_value="/usr/bin/ffprobe"):
             self.assertEqual(find_ffprobe(str(tools / "ffmpeg")), str(tools / "ffprobe"))
             self.assertEqual(find_ffprobe(str(self.root / "elsewhere" / "ffmpeg")), "/usr/bin/ffprobe")
 
     def test_a_missing_ffprobe_is_explained(self) -> None:
-        with mock.patch("draw_things_control.jobs.frame_extraction.shutil.which", return_value=None), self.assertRaises(ValueError) as caught:
+        with mock.patch("draw_things_control.jobs.media.tools.shutil.which", return_value=None), self.assertRaises(ValueError) as caught:
             require_ffprobe()
         self.assertEqual(str(caught.exception), "Could not find 'ffprobe' beside ffmpeg or on PATH; video jobs need it to measure their outputs (it comes with ffmpeg, for example: brew install ffmpeg)")
 
