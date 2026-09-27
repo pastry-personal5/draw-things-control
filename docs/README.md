@@ -10,4 +10,4 @@
   - [Phase 2](archive/phase-2/README.md): terminal UI, state store, run lock (done)
   - [Phase 3](phase-3/README.md): API server and MCP server (planned)
   Finished phases live in [archive/](archive/).
-- [Research](research/): saved upstream help and the original example command
+- [Research](research/): saved upstream help, the original example command, and background notes such as [what draw-things-cli can resume](research/draw-things-cli-resume.md)

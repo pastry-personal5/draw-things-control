@@ -38,7 +38,7 @@ src/draw_things_control/
 ├── services/    # the use cases every front end shares, and the wiring of the real tools
 ├── cli/         # Typer app: the `dtc` command
 ├── tui/         # Textual app: screens, panes/, text/, the command controller
-├── server/      # HTTP API and queue worker                         (phase 3)
+├── server/      # HTTP API; its queue worker is in services/        (phase 3)
 └── mcp_server/  # MCP client of the HTTP API                        (phase 3)
 tests/           # mirrors the package: tests/core, tests/jobs, tests/state, tests/services, ...
 ```
@@ -163,13 +163,22 @@ Adds what every later front end needs, without changing the CLI's behavior.
 ## Phase 3: API and MCP for agents (planned)
 
 - Queue and one worker in the state store, with restart recovery and explicit
-  resume (a queue repository in `state/`, and a worker built on `JobRunSession`). The server holds the run lock while it is up.
-- `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn), bearer-token
-  auth, job control, history, event stream, limits, and an audit log.
+  resume: a queue repository in `state/`, and the worker, resume, the
+  submission rules and limits, and the event backlog in `services/`, built on
+  `JobRunSession`. Each entry keeps a snapshot of its job and base
+  configuration, and `JobExecutor` can start a chain at run *k*. The server
+  holds the run lock while it is up.
+- `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn) on loopback unless
+  `--allow-remote-bind` is given, bearer-token auth, job control, history,
+  event stream, and an audit log.
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
 - `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, exposing typed
-  tools. It never touches the core directly.
+  tools. It imports nothing else from the package and never touches the core.
+- `dtc serve` and `dtc mcp` in `cli/app.py` start them, as `dtc tui` starts
+  the TUI.
+- The queue for people: `dtc queue` (an HTTP client in `cli/`) and a
+  read-only Queue widget in the TUI, which reads the state store.
 
 ## Rules across phases
 
@@ -180,4 +189,4 @@ Adds what every later front end needs, without changing the CLI's behavior.
 - No credential (`--api-key`, `--remote-shared-secret`) reaches events, the
   state store, logs, or API responses.
 - Agents (phase 3) can express only what a job file can express, within
-  `data/jobs/` and the configured input directory.
+  `data/jobs/`, the configured input directory, and the output directory.
