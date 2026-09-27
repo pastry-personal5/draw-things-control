@@ -32,15 +32,21 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 - No source files in the project root. All code is the `draw_things_control`
   package under `src/` (uv src layout), with tests in `tests/` mirroring it.
-- Subpackages: `core/` (runner, arguments, generation, configuration), `jobs/`
-  (job definition, service, manifests, input handling), `cli/` (Typer app),
-  and, as phases land, `state/`, `tui/`, `server/`, `mcp_server/`.
-- Dependencies point one way: `cli`, `tui`, `server` -> `state` -> `jobs` ->
-  `core`. Front ends never import each other, except that the `dtc tui`
+- Subpackages: `core/` (paths, errors, arguments, configuration, the runner),
+  `jobs/` (job definition and parsing, the executor, records, inputs, media),
+  `state/` (the SQLite store), `services/` (the use cases front ends share),
+  `cli/` (Typer app), `tui/`, and, in phase 3, `server/` and `mcp_server/`.
+- Dependencies point one way: `cli`, `tui`, `server` -> `services` -> `state` ->
+  `jobs` -> `core`. `tests/test_architecture.py` fails on an import against it. Front ends never import each other, except that the `dtc tui`
   command in `cli/app.py` starts the TUI app (`tui` never imports `cli`); `mcp_server` talks to
   `server` over HTTP only.
 - Imports are absolute (`from draw_things_control.core... import ...`).
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
+- No module holds a path of its own: a directory comes from `ProjectPaths`
+  (`core/paths.py`) and is passed down, and a test passes its own.
+- Keep modules under 400 lines, classes under 250, and functions under 40,
+  except declarative tables and option lists (`GENERATE_FLAGS`, the command
+  table, SQL, a Typer command's options).
 - `data/params/*.json`, `data/params/*.yaml`, and `config/global-config.yaml`
   are user files. Never edit, delete, or deduplicate them from code, tests,
   or tools.
@@ -52,8 +58,10 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `tests/`.
 - No test starts the real `draw-things-cli`; inject a fake runner.
 - Test files live in `tests/<subpackage>/`, each directory has an `__init__.py`, and shared helpers are in `tests/fixtures.py`.
-- `make check` runs Ruff's linter, Ruff's formatter in check mode, and the tests. It must pass
-  before a change is committed.
+- `make check` runs Ruff's linter, Ruff's formatter in check mode, pyright
+  (`standard` mode, over `src/` and `tests/`), and the tests. It must pass
+  before a change is committed. An ignore comment for pyright names its rule and
+  says why.
 - `make format` applies Ruff's formatter.
 
 ## Documentation

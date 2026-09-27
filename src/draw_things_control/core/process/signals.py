@@ -49,18 +49,12 @@ def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_s
     started = time.monotonic()
     deadline = started + seconds
     read_end, write_end = os.pipe()
-    registered = False
-    previous_fd = -1
+    previous_fd: int | None = None
     try:
         os.set_blocking(read_end, False)
         os.set_blocking(write_end, False)
         if wake_on_signal:
-            try:
-                previous_fd = signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
-                registered = True
-            except ValueError:
-                # Off the main thread no handler runs, so no signal can end the wait.
-                pass
+            previous_fd = _register_wakeup(write_end)
         # Checked after registering, so a signal arriving now still leaves a byte in the pipe.
         while not stopped():
             remaining = deadline - time.monotonic()
@@ -71,11 +65,20 @@ def interruptible_wait(seconds: float, stopped: Callable[[], bool], *, wake_on_s
             for ready in readable:
                 _drain(ready)
     finally:
-        if registered:
+        if previous_fd is not None:
             signal.set_wakeup_fd(previous_fd)
         os.close(read_end)
         os.close(write_end)
     return time.monotonic() - started
+
+
+def _register_wakeup(write_end: int) -> int | None:
+    """Have Python's C-level signal handler write a byte to ``write_end``; the previous wake-up fd, or None off the main thread."""
+    try:
+        return signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
+    except ValueError:
+        # Off the main thread no handler runs, so no signal can end the wait.
+        return None
 
 
 def _drain(read_end: int) -> None:

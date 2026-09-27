@@ -73,7 +73,11 @@ milestone is built, and versions are chosen then.
 
 Inside `src/draw_things_control/`, `server/` holds the API and queue worker,
 and `mcp_server/` holds the MCP server. Shared code goes in `core/`, `jobs/`,
-or `state/` as fits (for example `jobs/job_queue.py`).
+or `state/` as fits: a queue repository in `state/`, and a worker built on
+`services/job_runs.py`. The parts a server shares with the CLI and the TUI
+(`Toolkit`, `JobRunSession`, `JobCatalog`, `HistoryReader`, `event_to_dict`,
+the error codes) are in `services/`, `jobs/`, and `core/` already, from
+[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md).
 
 ## Changelog
 

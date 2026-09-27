@@ -35,7 +35,7 @@ Out of scope:
   worker, and prints the address and the token file path. If the lock is
   busy it exits with 75, as any runner does.
 - Graceful shutdown as in Milestone 01. uvicorn installs its own signal
-  handlers, so the app runs jobs with `install_signals=False` and stops the
+  handlers, so the app runs jobs with an executor built with `handle_signals=False` and stops the
   current job from uvicorn's shutdown hook through `cancel()`.
 
 ### Authentication

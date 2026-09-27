@@ -123,6 +123,13 @@ class DrawThingsGenerateArguments:
     def __post_init__(self) -> None:
         if not self.model or not self.executable:
             raise ValueError("model and executable must not be empty")
+        self._check_prompts()
+        self._check_sizes()
+        self._check_video()
+        self._check_output()
+        self._check_connection()
+
+    def _check_prompts(self) -> None:
         if self.prompt is not None and self.prompt_file is not None:
             raise ValueError("--prompt and --prompt-file are mutually exclusive")
         if self.negative_prompt is not None and self.negative_prompt_file is not None:
@@ -131,6 +138,8 @@ class DrawThingsGenerateArguments:
             raise ValueError("Only one prompt file can read from stdin")
         if self.reference_images and self.image is None:
             raise ValueError("Reference images require a primary image")
+
+    def _check_sizes(self) -> None:
         if self.strength is not None and not 0 <= self.strength <= 1:
             raise ValueError("--strength must be between 0 and 1")
         for name in ("width", "height"):
@@ -141,6 +150,8 @@ class DrawThingsGenerateArguments:
             value = getattr(self, name)
             if value is not None and value <= 0:
                 raise ValueError(f"--{name} must be positive")
+
+    def _check_video(self) -> None:
         if self.avc and (self.image is None or self.reference_images or self.audio is None):
             raise ValueError("--avc requires exactly one --image and an --audio file")
         if not self.avc and (self.segment_frames is not None or self.cond_frames is not None):
@@ -152,12 +163,16 @@ class DrawThingsGenerateArguments:
                 raise ValueError("--video-format requires a .mov or .mp4 output")
             if self.video_format.startswith("prores") and self.output.suffix.lower() != ".mov":
                 raise ValueError("ProRes requires a .mov output")
+
+    def _check_output(self) -> None:
         if self.output is not None and self.output.suffix.lower() not in {".png", ".mov", ".mp4"}:
             raise ValueError("--output must end in .png, .mov, or .mp4")
         if self.terminal_image and self.output is not None and self.output.suffix.lower() != ".png":
             raise ValueError("--terminal-image requires PNG output")
         if self.terminal_image_protocol not in (None, "auto", "iterm2", "kitty"):
             raise ValueError("Unsupported --terminal-image-protocol")
+
+    def _check_connection(self) -> None:
         if self.remote and self.cloud_compute:
             raise ValueError("--remote and --cloud-compute are mutually exclusive")
         if not self.remote and any(value is not None for value in (self.remote_url, self.remote_port, self.remote_tls, self.remote_shared_secret)):

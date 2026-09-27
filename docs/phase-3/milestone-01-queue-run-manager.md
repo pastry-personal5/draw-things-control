@@ -18,7 +18,7 @@ In scope:
 - One worker that runs them, holding the run lock
 - Job states, cancellation, and the cooldown between jobs
 - Restart recovery and an explicit resume
-- Support in `JobService` for starting mid-chain (needed by resume)
+- Support in `JobExecutor` for starting mid-chain (needed by resume)
 
 Out of scope:
 
@@ -38,7 +38,7 @@ Out of scope:
 - Submitting takes a job file name, validates it, and stores the text and
   settings. The stored text, not the file, is what runs: the worker parses it
   when the job starts with a new `load_job_text(text, global_config, ...)`
-  in `jobs/job_definition.py`, which shares all validation with `load_job`
+  in `jobs/parsing.py`, which shares all validation with `load_job`
   (which becomes a thin wrapper that reads the file). Input files are
   checked when the job starts, so a file removed in the meantime fails the
   job, naming the path, before any run begins.
@@ -71,7 +71,8 @@ Out of scope:
   usable for browsing and history, and the busy message names `serve` as
   the holder.
 - It takes the oldest `queued` entry and runs it with
-  `JobService.run(observer=...)`, recording runs
+  `JobRunSession.run(observers=...)` (which holds no lock of its own when the
+  server passes the one it holds), recording runs
   through the Phase 2 recorder.
 - After a job finishes, the worker waits the finished job's resolved
   `cooldown` (from the snapshot; since Phase 2 Milestone 07 a
@@ -83,7 +84,7 @@ Out of scope:
 ### Cancel
 
 - `cancel(id)` on a `queued` entry marks it `cancelled` and it never starts.
-- On the `running` entry it calls `JobService.cancel()`; the job becomes
+- On the `running` entry it calls `JobExecutor.cancel()`; the job becomes
   `cancelled` (not `interrupted`, which is reserved for crashes). The worker
   moves on to the next entry with no cooldown wait after a cancel.
 - Cancel on a finished entry is an error that names its state.
@@ -108,7 +109,8 @@ On startup, before the worker starts:
 - It is refused, naming the missing path, when that file is gone. It is
   refused when the entry has no succeeded run (submit the job again), and
   when a resume of it is already queued.
-- `JobService.run()` gains a `start_run` argument and an input override, so
+- `JobExecutor.run()` gains a `start_run` option and an input override in
+  `JobRunOptions`, so
   a chain can begin at run *k*. The manifest and record show the resumed
   numbering and that the job is a resume.
 

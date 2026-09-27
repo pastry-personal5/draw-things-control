@@ -12,7 +12,7 @@ processes from driving the GPU at once.
 
 ## Scope
 
-- Structured job events and a `cancel()` method on `JobService`, so a
+- Structured job events and a `cancel()` method on `JobExecutor`, so a
   front end can observe and stop a job without parsing logs or raising
   signals. The CLI's behavior and log output do not change.
 - A SQLite state store (`sqlite3` from the standard library) holding job
@@ -66,7 +66,7 @@ processes from driving the GPU at once.
 | 08 | [Status widget and execution detail widget](milestone-08-tui-status-detail.md) | done |
 | 09 | [Get and describe commands](milestone-09-tui-get-describe.md) | done |
 | 10 | [Job Definition widget, job IDs, and execution IDs](milestone-10-tui-job-definitions.md) | done |
-| 11 | [Clean architecture refactor](milestone-11-clean-architecture.md) | planned |
+| 11 | [Clean architecture refactor](milestone-11-clean-architecture.md) | done |
 
 Milestones are built in order: 02 records what 01 emits, and 03 to 05 sit on
 both. 06 and 07 stand alone. 08 builds on 04 and 05, 09 on 05 and 08, and
@@ -88,7 +88,7 @@ as AGENTS.md requires.
 
 All code lives in the `src/draw_things_control/` package (see
 [architecture](../architecture.md)). The TUI lives in `tui/`. Shared new
-modules: `jobs/job_events.py` (Milestone 01), and `state/store.py`,
+modules: `jobs/events.py` (Milestone 01), and `state/store.py`,
 `state/recorder.py`, `state/history_import.py`, and `core/run_lock.py`
 (Milestone 02).
 

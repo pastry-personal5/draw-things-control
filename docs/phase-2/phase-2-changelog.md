@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Change** [M11]: Milestone 11 is done.
+  - The package has a `services/` layer, and `core/`, `jobs/`, `state/`, and `tui/` are split into smaller modules: no module is over 400 lines, no class over 250, and no function over 40, apart from the options of `generate`.
+  - `tests/test_architecture.py` enforces the import direction, pyright (`standard`) is part of `make check`, and no test patches a path.
+  - Breaking changes: `generate` and `validate-config` read YAML only; job files and the global configuration are read strictly; the old key and command hints are dropped, except for `cooldown_seconds`.
+  - Step 7's work: the architecture test, the size limits, and the documents (architecture, development rules, agents, user guide, Phase 3 plans) name the new modules.
+
 - **Design decision** [M11]: Where Step 6 differs from the plan.
   - `ConfirmScreen` moved to `tui/confirm.py`, so the command controller and the screen need not import each other.
   - The screen keeps the Textual workers that a command starts (`show_execution`, `show_part`, `reveal`, `load_details`), since a worker needs a widget; the controller reads the arguments and asks the screen. Making the controller a widget was rejected.

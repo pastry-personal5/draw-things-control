@@ -3,6 +3,10 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-09-27
+
+- **Change**: [Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md) renamed and moved the code these plans name: `JobService` is `JobExecutor` (with `JobRunOptions`), `jobs/job_definition.py` is `jobs/parsing.py`, and `install_signals` is `handle_signals`. The queue is a repository in `state/` with a worker on `JobRunSession`, not `jobs/job_queue.py`. The milestone documents were updated to match; no decision changed.
+
 ## 2026-09-25
 
 - **Change**: Phase 3 is planned. The phase document and five milestone

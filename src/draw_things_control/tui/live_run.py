@@ -169,33 +169,11 @@ class LiveRun:
             self.started = event
             self.job_started_at = self._clock()
         elif isinstance(event, RunStarted):
-            run = self._run(event.number)
-            run.status = RunStatus.RUNNING
-            self.active_run = event.number
-            self.run_started_at = self._clock()
-            self.active_output = event.output
-            self.command = event.command
-            self.progress = self.percent = None
-            self.first_step = self.last_step = None
+            self._run_started(event)
         elif isinstance(event, RunOutput):
-            # The progress bar prints a new line per step; it updates the progress instead of filling the pane.
-            if event.progress is not None or event.percent is not None:
-                self.progress = event.progress or self.progress
-                self.percent = event.percent if event.percent is not None else self.percent
-                if event.progress is not None:
-                    self._read_step(*event.progress)
-            else:
-                self.output.append(OutputLine(event.stream, event.text))
-                self.output_count += 1
+            self._run_output(event)
         elif isinstance(event, RunFinished):
-            run = self._run(event.number)
-            run.status, run.seconds, run.output = event.status, event.seconds, event.output
-            now = self._clock()
-            full = now - self.run_started_at if self.run_started_at is not None else event.seconds or 0.0
-            tail = now - self.last_step.at if self.last_step is not None else None
-            steps = self.last_step.total if self.last_step is not None else None
-            self.finished_runs.append(FinishedRun(event.number, event.status, event.seconds, max(0.0, full), tail, steps))
-            self.active_run = self.run_started_at = None
+            self._run_finished(event)
         elif isinstance(event, CooldownStarted):
             self.cooldown = event
             self.cooldown_ends_at = self._clock() + event.seconds
@@ -206,6 +184,37 @@ class LiveRun:
             self.finished = event
             self.active_run = self.run_started_at = None
             self.cooldown = self.cooldown_ends_at = None
+
+    def _run_started(self, event: RunStarted) -> None:
+        run = self._run(event.number)
+        run.status = RunStatus.RUNNING
+        self.active_run = event.number
+        self.run_started_at = self._clock()
+        self.active_output = event.output
+        self.command = event.command
+        self.progress = self.percent = None
+        self.first_step = self.last_step = None
+
+    def _run_output(self, event: RunOutput) -> None:
+        # The progress bar prints a new line per step; it updates the progress instead of filling the pane.
+        if event.progress is None and event.percent is None:
+            self.output.append(OutputLine(event.stream, event.text))
+            self.output_count += 1
+            return
+        self.progress = event.progress or self.progress
+        self.percent = event.percent if event.percent is not None else self.percent
+        if event.progress is not None:
+            self._read_step(*event.progress)
+
+    def _run_finished(self, event: RunFinished) -> None:
+        run = self._run(event.number)
+        run.status, run.seconds, run.output = event.status, event.seconds, event.output
+        now = self._clock()
+        full = now - self.run_started_at if self.run_started_at is not None else event.seconds or 0.0
+        tail = now - self.last_step.at if self.last_step is not None else None
+        steps = self.last_step.total if self.last_step is not None else None
+        self.finished_runs.append(FinishedRun(event.number, event.status, event.seconds, max(0.0, full), tail, steps))
+        self.active_run = self.run_started_at = None
 
     def reference_run(self) -> PastRun | None:
         """The run a run estimates from before its own rate: this job's last successful run, or else the store's latest."""

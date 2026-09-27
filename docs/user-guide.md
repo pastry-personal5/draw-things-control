@@ -475,8 +475,9 @@ terminal does.
   that replaced a `--config-json` value, on both rows: `--width 832` says
   `replaces --config-json 1000`, and `width 1000` says
   `replaced by --width 832`.
-- `/jobs`, `/job`, `/history`, and `/execution` were renamed; typing one
-  says what to type instead.
+- `/jobs`, `/job`, `/history`, `/execution`, and `/run` are not commands; typing one
+  says it is unknown (`/get jobs`, `/describe job`, `/get history`,
+  `/describe execution`, and `/apply` are the commands).
 - `/describe execution <Execution ID>` prints the execution as it ran, from the stored record
   rather than the current job file: its settings (with the refiner, CFG,
   and shift from the saved command), and each run's prompts, steps,

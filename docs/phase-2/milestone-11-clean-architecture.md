@@ -1,7 +1,7 @@
 # Milestone 11: Clean Architecture Refactor
 
 **Phase:** [Phase 2: Terminal UI for Humans](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Milestone 10: Job Definition widget, job IDs, and execution IDs](milestone-10-tui-job-definitions.md)
 
 ## Goal
@@ -532,7 +532,8 @@ Design decisions from the review of this plan:
 
 - Each duplicate D1 to D18 exists in one place, as listed.
 - No module is over 400 lines, no class over 250, and no function over 40,
-  except declarative tables (`GENERATE_FLAGS`, the command table, SQL).
+  except declarative tables and option lists (`GENERATE_FLAGS`, the command
+  table, SQL, the options of the `generate` command).
 - `tests/test_architecture.py` passes, and its own tests show it refusing
   each kind of bad import: a front end importing another, `jobs` importing
   `state`, and `core` importing the rest of the package.

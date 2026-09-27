@@ -118,7 +118,6 @@ class DrawThingsProcessRunner:
     def run(self) -> ProcessResult:
         """Run the command, relaying output until completion or bounded shutdown."""
         started_at = time.monotonic()
-        timeout_at = started_at + self._timeout_seconds if self._timeout_seconds is not None else None
         output_queue: queue.Queue[tuple[OutputStream, str]] = queue.Queue()
         # Install handlers before the child exists, so a signal in between cannot orphan it.
         previous_handlers = install_signal_handlers(self.request_shutdown) if self._handle_signals else None
@@ -129,54 +128,13 @@ class DrawThingsProcessRunner:
             process = self._start_process()
             logger.info("Started subprocess (PID {})", process.pid)
             self._report_start(process.pid)
-            process_group_id = process.pid
             if self._capture_output:
                 readers = self._start_readers(process, output_queue)
-            shutdown_started_at: float | None = None
-            leader_exited_at: float | None = None
-            while True:
-                now = time.monotonic()
-                self._drain_output(output_queue, started_at)
-                if timeout_at is not None and now >= timeout_at and not self._shutdown_requested.is_set():
-                    self._timed_out = True
-                    logger.warning("Generation exceeded the {} second timeout", self._timeout_seconds)
-                    self.request_shutdown(signal.SIGTERM)
-                if self._shutdown_requested.is_set():
-                    shutdown_started_at = self._shutdown_process_group(process_group_id, shutdown_started_at, now)
-                    # Reap the leader: an unreaped zombie keeps its group visible on Linux.
-                    process.poll()
-                    if not process_group_alive(process_group_id, denied_means_alive=False):
-                        break
-                    if self._kill_sent_at is not None and now - self._kill_sent_at >= self._kill_wait_seconds:
-                        logger.warning("Process group {} is still present {} seconds after SIGKILL; giving up", process_group_id, self._kill_wait_seconds)
-                        break
-                elif process.poll() is not None:
-                    if leader_exited_at is None:
-                        leader_exited_at = now
-                    if not any(reader.is_alive() for reader in readers) and output_queue.empty():
-                        break
-                    # Descendants may retain inherited pipes after the leader exits.
-                    # Do not block indefinitely waiting for them to close the pipes.
-                    if now - leader_exited_at >= self._output_drain_seconds:
-                        break
-                time.sleep(0.02)
-
+            self._supervise(process, readers, output_queue, started_at)
             # Let the readers queue the child's last lines before the final drain.
             self._join_readers(readers)
             self._drain_output(output_queue, started_at)
-            return_code = process.poll()
-            logger.info("Subprocess finished with exit code {}", return_code if return_code is not None else 125)
-            result = ProcessResult(
-                command=self._command,
-                # Do not block on a leader that cannot be reaped because its
-                # process group became unavailable.  This preserves the
-                # runner's bounded-shutdown contract.
-                return_code=return_code if return_code is not None else 125,
-                elapsed_seconds=time.monotonic() - started_at,
-                termination_signal=self._requested_signal,
-                timed_out=self._timed_out,
-                messages=self._output_processor.messages,
-            )
+            result = self._result(process, started_at)
             completed = True
             return result
         finally:
@@ -187,6 +145,54 @@ class DrawThingsProcessRunner:
                 if not completed:
                     self._join_readers(readers)
             restore_signal_handlers(previous_handlers)
+
+    def _supervise(self, process: subprocess.Popen[str], readers: tuple[threading.Thread, ...], output_queue: queue.Queue[tuple[OutputStream, str]], started_at: float) -> None:
+        """Relay output until the child is done, or its group is gone, or a shutdown has run its bounded course."""
+        process_group_id = process.pid
+        timeout_at = started_at + self._timeout_seconds if self._timeout_seconds is not None else None
+        shutdown_started_at: float | None = None
+        leader_exited_at: float | None = None
+        while True:
+            now = time.monotonic()
+            self._drain_output(output_queue, started_at)
+            if timeout_at is not None and now >= timeout_at and not self._shutdown_requested.is_set():
+                self._timed_out = True
+                logger.warning("Generation exceeded the {} second timeout", self._timeout_seconds)
+                self.request_shutdown(signal.SIGTERM)
+            if self._shutdown_requested.is_set():
+                shutdown_started_at = self._shutdown_process_group(process_group_id, shutdown_started_at, now)
+                # Reap the leader: an unreaped zombie keeps its group visible on Linux.
+                process.poll()
+                if not process_group_alive(process_group_id, denied_means_alive=False):
+                    return
+                if self._kill_sent_at is not None and now - self._kill_sent_at >= self._kill_wait_seconds:
+                    logger.warning("Process group {} is still present {} seconds after SIGKILL; giving up", process_group_id, self._kill_wait_seconds)
+                    return
+            elif process.poll() is not None:
+                if leader_exited_at is None:
+                    leader_exited_at = now
+                if not any(reader.is_alive() for reader in readers) and output_queue.empty():
+                    return
+                # Descendants may retain inherited pipes after the leader exits.
+                # Do not block indefinitely waiting for them to close the pipes.
+                if now - leader_exited_at >= self._output_drain_seconds:
+                    return
+            time.sleep(0.02)
+
+    def _result(self, process: subprocess.Popen[str], started_at: float) -> ProcessResult:
+        return_code = process.poll()
+        logger.info("Subprocess finished with exit code {}", return_code if return_code is not None else 125)
+        return ProcessResult(
+            command=self._command,
+            # Do not block on a leader that cannot be reaped because its
+            # process group became unavailable.  This preserves the
+            # runner's bounded-shutdown contract.
+            return_code=return_code if return_code is not None else 125,
+            elapsed_seconds=time.monotonic() - started_at,
+            termination_signal=self._requested_signal,
+            timed_out=self._timed_out,
+            messages=self._output_processor.messages,
+        )
 
     def _report_start(self, pid: int) -> None:
         if self._on_start is None:
