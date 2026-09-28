@@ -111,7 +111,7 @@ All under `/v1`:
 | `GET /queue/{id}` | One entry: state, execution ID, current run and its elapsed time, the last run's time, `cooldown_until`, error, and whether it can be resumed, from which run, or why not |
 | `POST /queue/{id}/cancel` | Cancel ([Milestone 01](milestone-01-queue-run-manager.md#cancel) rules) |
 | `POST /queue/{id}/resume` | Resume ([Milestone 01](milestone-01-queue-run-manager.md#resume) rules); returns the new entry |
-| `GET /executions` | Executions, newest first, filterable by job name and status |
+| `GET /executions` | Executions, newest first, filterable by job reference (resolved like `{job}`) and status |
 | `GET /executions/{id}` | One execution (`E0012`) with its runs |
 | `GET /executions/{id}/outputs` | Each run's output and last frame: path, whether it exists, whether it is complete, bytes, measured width, height, and frames; never the content |
 | `GET /audit` | The audit log (below) |
@@ -132,7 +132,18 @@ Watching for change is not HTTP: it is the gRPC monitoring service
   since Phase 1) but marked incomplete
   ([research](../research/draw-things-cli-resume.md)); a resume never
   starts from one.
-- Lists are paged with `limit` (at most 200) and an opaque `cursor`.
+- `GET /health` always answers 200 while the HTTP process itself is up; a
+  dead worker thread ([Milestone
+  01](milestone-01-queue-run-manager.md#worker)) is reported only in the
+  body (`worker_alive: false`), not as a different status code, so a caller
+  must read the field, not just the status.
+- `GET /jobs`, `GET /executions`, `GET /inputs`, and `GET /audit` are paged
+  with `limit` (default and maximum 200, matching `services/history.py`'s
+  existing `PAGE_SIZE`) and a `cursor`: an opaque, server-chosen token a
+  client passes back unmodified to get the next page and never constructs
+  itself, so the scheme behind it can change later without breaking a
+  client. `GET /queue` and `GET /capabilities` are not paged: the queue is
+  bounded by `max_queued_jobs`.
 
 ### Errors
 
@@ -148,8 +159,18 @@ in one table, as `EXIT_CODES_BY_ERROR_CODE` does to exit codes:
 | `invalid_state` (cancel a finished entry; a refused resume), `busy` | 409 |
 | `tool_missing`, `state_unavailable` | 503 |
 
-A missing or wrong token is 401. The new codes are `DtcError` subclasses in
-`core/errors.py`.
+A missing or wrong token is 401. The new codes (`timeout_required`,
+`outside_directory`, `limit_exceeded`, `invalid_state`) are `DtcError`
+subclasses in `core/errors.py`. `invalid_state` needs a code of its own:
+`CancelRefusedError` and `ResumeRefusedError`
+([Milestone 01](milestone-01-queue-run-manager.md)) are plain `InputError`
+subclasses today, with no `code` of their own, so without a change here they
+would read `invalid_input` (422) instead of the `invalid_state` (409) this
+table already calls for; this milestone gives both `code = "invalid_state"`.
+`EXIT_CODES_BY_ERROR_CODE` (`core/exit_codes.py`) gains a row for each of the
+four new codes, all exiting 2 (`EXIT_INVALID_INPUT`), since
+[Milestone 03](milestone-03-queue-for-people.md)'s `dtc queue` already maps
+an API error to an exit code through that same table.
 
 ### Rules for jobs the API runs
 
@@ -254,10 +275,13 @@ goes unrecorded.
   (`submit`, `cancel`, `resume`, and, from
   [Milestone 07](milestone-07-job-file-management.md), `create_job`,
   `replace_job`, `delete_job`), the target (a job reference or an entry ID),
-  the outcome (`ok` or the error code), and the caller (`api`, or `mcp`,
-  `cli`, or `tui` from a header the MCP server, `dtc queue`, and the TUI's
-  Queue widget set; the caller names itself, so the column informs rather
-  than proves).
+  the outcome (`ok` or the error code), and the caller. `X-Dtc-Caller`, set
+  by the MCP server, `dtc queue`, and the TUI's Queue widget (`mcp`, `cli`,
+  `tui`), is checked on every endpoint the audit log covers, after
+  authentication: absent, it defaults to `api`; any other value is refused
+  with `invalid_input` naming the field, before the request reaches its
+  endpoint. The caller still only names itself, so the column informs
+  rather than proves, but the check keeps it to a known, closed set.
 - One entry for every such request, refused ones included. An
   unauthenticated request is rejected before it is recorded.
 - No prompt text, YAML, command, or credential is stored in it.
