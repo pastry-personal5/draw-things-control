@@ -22,8 +22,7 @@ from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.files import read_job as load_job_and_settings
-from draw_things_control.jobs.files import read_settings
+from draw_things_control.jobs.files import read_job, read_settings
 from draw_things_control.jobs.text import job_summary, plan_lines, report_ignored_config
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.toolkit import Toolkit
@@ -77,7 +76,7 @@ def open_state(paths: ProjectPaths, settings: GlobalConfig) -> Iterator[Store]:
         store.close()
 
 
-def load_settings(global_config: Path | None, paths: ProjectPaths) -> GlobalConfig:
+def read_settings_or_exit(global_config: Path | None, paths: ProjectPaths) -> GlobalConfig:
     """Load the global configuration (the project's own without a path), exiting with code 2 if it is invalid."""
     with errors_exit():
         return read_settings(global_config or paths.global_config, paths)
@@ -171,16 +170,16 @@ def validate_config(config: Annotated[Path, typer.Argument(help="YAML configurat
     typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
 
 
-def read_job(job_file: Path, global_config: Path | None, paths: ProjectPaths, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
+def read_job_or_exit(job_file: Path, global_config: Path | None, paths: ProjectPaths, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
     """Load the global configuration and the job, exiting with code 2 if either is invalid."""
     with errors_exit():
-        return load_job_and_settings(job_file, global_config or paths.global_config, paths, decode_input=decode_input)
+        return read_job(job_file, global_config or paths.global_config, paths, decode_input=decode_input)
 
 
 @app.command("validate-job")
 def validate_job(ctx: typer.Context, job_file: JobFileArgument, global_config: GlobalConfigOption = None) -> None:
     """Validate a job file without running anything."""
-    job, _settings = read_job(job_file, global_config, services_of(ctx).paths)
+    job, _settings = read_job_or_exit(job_file, global_config, services_of(ctx).paths)
     report_ignored_config(job)
     typer.echo(f"Valid job: {job.path}")
     for label, value in job_summary(job):
@@ -199,7 +198,7 @@ def run_job(
     """Run every generation in a job, chaining each output into the next run."""
     services = services_of(ctx)
     # A real run decodes the input when it writes run 1's copy, so it skips the validation decode.
-    job, settings = read_job(job_file, global_config, services.paths, decode_input=dry_run)
+    job, settings = read_job_or_exit(job_file, global_config, services.paths, decode_input=dry_run)
     executor = services.toolkit.job_executor()
     with errors_exit():
         if dry_run:
@@ -225,7 +224,7 @@ def import_history_command(
 ) -> None:
     """Import phase 1 job manifests into the execution history; safe to repeat."""
     paths = services_of(ctx).paths
-    settings = load_settings(global_config, paths)
+    settings = read_settings_or_exit(global_config, paths)
     search = (directory or settings.output_directory).expanduser()
     if not search.is_dir():
         logger.error("Not a directory: {}", search)
@@ -250,7 +249,7 @@ def tui_command(
         logger.error("--shutdown-grace must not be negative")
         raise typer.Exit(code=EXIT_INVALID_INPUT)
     services = services_of(ctx)
-    settings = load_settings(global_config, services.paths)
+    settings = read_settings_or_exit(global_config, services.paths)
     # Imported here, so the other commands do not load Textual.
     from draw_things_control.tui.app import DrawThingsApp
 
