@@ -34,9 +34,15 @@ class SubmitBody:
 def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), caller: str = Depends(get_caller)) -> dict[str, object]:
     with audited(context.store, action="submit", target=body.job, caller=caller):
         path = resolve_job_reference(context.catalog, body.job)
-        job = load_job(path, context.global_config, context.paths.params)
-        check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
-        entry = submit_job(path, context.global_config, context.paths.params, context.store)
+        # decode_input=False: only the structural rules and limits are checked here, none of which need the
+        # input actually decoded; submit_job does its own (decode_input=True) read to validate pixel data, so
+        # decoding it again here would just be the same image decoded twice for one submission.
+        job = load_job(path, context.global_config, context.paths.params, decode_input=False)
+        # Held across the check and the insert: two concurrent submissions could otherwise both read the queued
+        # count before either inserts, both pass check_api_rules, and together push the queue past max_queued_jobs.
+        with context.submission_lock:
+            check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
+            entry = submit_job(path, context.global_config, context.paths.params, context.store)
         context.worker.wake()
     return queue_entry(entry)
 
@@ -88,7 +94,10 @@ def post_resume(queue_id: str, context: ServerContext = Depends(get_context), ca
 
     with audited(context.store, action="resume", target=queue_id, caller=caller):
         entry = _find_entry(context, queue_id)
-        resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit)
+        # Held across before_submit's check_api_rules call and resume_entry's own insert, for the same reason
+        # post_queue holds it: closes the same race on max_queued_jobs for a resume.
+        with context.submission_lock:
+            resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit)
         context.worker.wake()
     return queue_entry(resumed)
 

@@ -87,12 +87,14 @@ def _cooldown_of(data: dict[str, object]) -> CooldownPolicy:
     return parse_cooldown(data, "cooldown")
 
 
-def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path) -> Callable[[], JobDefinition]:
+def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> Callable[[], JobDefinition]:
     """A thunk that parses the entry's snapshot into a ``JobDefinition``, exactly as it was validated at submission.
-    ``params_directory`` only names the base configuration in messages: its text comes from the snapshot, never disk."""
+    ``params_directory`` only names the base configuration in messages: its text comes from the snapshot, never disk.
+    ``decode_input=False`` for a caller that only reads the parsed job's fields (not running it), to skip decoding
+    the input image a second time when it was already fully decoded moments earlier for the same request."""
 
     def parse() -> JobDefinition:
         global_config = global_config_of(entry, live)
-        return load_job_text(entry.job_text, Path(entry.job_path), global_config, params_directory, decode_input=True, base_config_text=entry.config_text)
+        return load_job_text(entry.job_text, Path(entry.job_path), global_config, params_directory, decode_input=decode_input, base_config_text=entry.config_text)
 
     return parse

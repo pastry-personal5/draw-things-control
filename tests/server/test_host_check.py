@@ -42,6 +42,15 @@ class HostHeaderIsAllowedTests(unittest.TestCase):
     def test_a_malformed_header_is_refused_not_raised(self) -> None:
         self.assertFalse(host_header_is_allowed("::not-a-valid-host::", bound_host="127.0.0.1", bound_port=8765))
 
+    def test_a_wildcard_bind_accepts_any_hostname_at_the_bound_port(self) -> None:
+        for bound_host in ("0.0.0.0", "::"):
+            for header in ("192.168.1.5:8765", "example.com:8765", "10.0.0.9:8765"):
+                with self.subTest(bound_host=bound_host, header=header):
+                    self.assertTrue(host_header_is_allowed(header, bound_host=bound_host, bound_port=8765))
+
+    def test_a_wildcard_bind_still_refuses_the_wrong_port(self) -> None:
+        self.assertFalse(host_header_is_allowed("192.168.1.5:9999", bound_host="0.0.0.0", bound_port=8765))
+
 
 if __name__ == "__main__":
     unittest.main()

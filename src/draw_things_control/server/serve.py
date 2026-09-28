@@ -32,6 +32,13 @@ DEFAULT_GRPC_PORT = 8766
 DEFAULT_SHUTDOWN_GRACE = 10.0
 
 
+def _grpc_target(host: str, port: int) -> str:
+    """``host:port`` for ``grpc.aio.Server.add_insecure_port``, IPv6 literals bracketed: ``::1:8766`` reads as
+    three colon-separated fields, not one host and one port, so an unbracketed ``--host ::1`` would either fail to
+    parse or bind the wrong address; ``[::1]:8766`` is unambiguous."""
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 @dataclass(frozen=True)
 class ServeOptions:
     host: str = DEFAULT_HOST
@@ -88,7 +95,7 @@ async def _serve_async(context: ServerContext, options: ServeOptions, host: Queu
     with uvicorn_server.capture_signals():
         grpc_server = grpc.aio.server(interceptors=[TokenAuthInterceptor(context.token)])
         monitor_pb2_grpc.add_MonitorServicer_to_server(MonitorServicer(context), grpc_server)
-        grpc_server.add_insecure_port(f"{options.host}:{options.grpc_port}")
+        grpc_server.add_insecure_port(_grpc_target(options.host, options.grpc_port))
         await grpc_server.start()
         try:
             await uvicorn_server._serve()

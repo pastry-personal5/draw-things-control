@@ -60,7 +60,10 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
     _check_own_input(entry, global_config, params_directory)
     chain = _resolve_chain(store, entry)
     if before_submit is not None:
-        job = parse_snapshot(entry, global_config, params_directory)()
+        # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is
+        # still valid; before_submit only reads the parsed job's fields (run count, timeout, cooldown), so
+        # decoding the image a second time here would be wasted work.
+        job = parse_snapshot(entry, global_config, params_directory, decode_input=False)()
         before_submit(job, job.run_count - chain.first_run + 1)
     new = NewQueueEntry(
         job_path=entry.job_path,

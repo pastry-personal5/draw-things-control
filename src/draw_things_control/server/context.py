@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 
@@ -46,7 +47,10 @@ class ServerContext:
     file-signature cache instead of re-reading every job file. ``event_backlog`` is shared between the HTTP routes
     (which append the queue's own events: a submit, cancel, or resume changing an entry) and the gRPC ``Monitor``
     service's ``WatchEvents``; the worker appends the job events and its own claim/finish/wait transitions into the
-    same backlog, given it at construction (``QueueWorker(..., on_event=context.event_backlog.append)``)."""
+    same backlog, given it at construction (``QueueWorker(..., on_event=context.event_backlog.append)``).
+    ``submission_lock`` serializes a submission's or resume's check against ``api_limits.max_queued_jobs`` with its
+    insert: two concurrent requests each reading the queued count before either inserts could otherwise both pass a
+    check the second insert alone would have failed, over-filling the queue past the limit."""
 
     paths: ProjectPaths
     global_config: GlobalConfig
@@ -59,6 +63,7 @@ class ServerContext:
     bound_port: int
     allow_write: bool = False
     event_backlog: EventBacklog = field(default_factory=EventBacklog)
+    submission_lock: threading.Lock = field(default_factory=threading.Lock)
     catalog: JobCatalog = field(init=False)
 
     def __post_init__(self) -> None:

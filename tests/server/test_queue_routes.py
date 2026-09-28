@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -58,8 +59,8 @@ class QueueRoutesTestCase(JobTestCase):
 
     def build_client(self, *, api_limits: Any = None) -> TestClient:
         global_config = replace(self.global_config, api_limits=api_limits) if api_limits is not None else self.global_config
-        context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the queue routes call)
-        return TestClient(create_app(context), base_url="http://127.0.0.1:8765")
+        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the queue routes call)
+        return TestClient(create_app(self.context), base_url="http://127.0.0.1:8765")
 
     def request(self, method: str, path: str, **kwargs: Any):
         headers = {"Authorization": f"Bearer {TOKEN}", **kwargs.pop("headers", {})}
@@ -126,6 +127,28 @@ class SubmitTests(QueueRoutesTestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["code"], "limit_exceeded")
 
+    def test_the_submission_lock_serializes_a_submissions_check_and_insert(self) -> None:
+        """Another submission already mid check-then-insert, simulated by holding the lock externally: a concurrent
+        submission must wait for it rather than reading the queued count while it is still stale (the race that let
+        two concurrent submissions both pass ``max_queued_jobs`` before either had inserted)."""
+        self.client = self.build_client(api_limits=ApiLimits(max_queued_jobs=1))
+        self.write_job_in_catalog("first.yaml")
+        self.context.submission_lock.acquire()
+        result: dict[str, Any] = {}
+
+        def submit() -> None:
+            result["response"] = self.request("post", "/v1/queue", json={"job": "first.yaml"})
+
+        thread = threading.Thread(target=submit)
+        thread.start()
+        thread.join(timeout=0.3)
+        self.assertTrue(thread.is_alive(), "the submission completed without waiting for the submission lock")
+
+        self.context.submission_lock.release()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "the submission never resumed once the lock was released")
+        self.assertEqual(result["response"].status_code, 200, result["response"].text)
+
     def test_an_unknown_job_reference_is_not_found_and_stores_nothing(self) -> None:
         response = self.request("post", "/v1/queue", json={"job": "nope.yaml"})
         self.assertEqual(response.status_code, 404)
@@ -187,6 +210,27 @@ class ResumeTests(QueueRoutesTestCase):
         body = response.json()
         self.assertEqual((body["queue_id"], body["state"], body["resumes"]), ("Q0002", "queued", "Q0001"))
         self.assertEqual(self.worker.woken, 2)  # once for the submit, once for the resume
+
+    def test_the_submission_lock_serializes_a_resumes_check_and_insert(self) -> None:
+        """Same guarantee as ``SubmitTests``' equivalent test, for ``POST /queue/{id}/resume``: it shares one
+        ``submission_lock`` with ``POST /queue`` so the two kinds of insert cannot race each other's
+        ``max_queued_jobs`` check either."""
+        original = self.seed_resumable_entry()
+        self.context.submission_lock.acquire()
+        result: dict[str, Any] = {}
+
+        def resume() -> None:
+            result["response"] = self.request("post", f"/v1/queue/{original}/resume")
+
+        thread = threading.Thread(target=resume)
+        thread.start()
+        thread.join(timeout=0.3)
+        self.assertTrue(thread.is_alive(), "the resume completed without waiting for the submission lock")
+
+        self.context.submission_lock.release()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "the resume never resumed once the lock was released")
+        self.assertEqual(result["response"].status_code, 200, result["response"].text)
 
     def test_the_queue_entry_detail_reports_resumability(self) -> None:
         original = self.seed_resumable_entry()

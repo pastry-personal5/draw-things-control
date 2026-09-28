@@ -9,6 +9,9 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
+# --host values that bind every interface at once, not one address of their own: no client's Host header can ever
+# equal one of these literally, so a literal match against bound_host would refuse every real remote request.
+WILDCARD_HOSTNAMES = frozenset({"0.0.0.0", "::"})
 
 
 def is_loopback_host(host: str) -> bool:
@@ -18,7 +21,9 @@ def is_loopback_host(host: str) -> bool:
 
 def host_header_is_allowed(host_header: str | None, *, bound_host: str, bound_port: int) -> bool:
     """Whether ``host_header`` (an HTTP request's ``Host`` header) names loopback or the address the server is
-    actually bound to, port included when the header gives one."""
+    actually bound to, port included when the header gives one. When ``bound_host`` is a wildcard bind
+    (``0.0.0.0`` or ``::``, only reachable with ``--allow-remote-bind``), any hostname is accepted: the owner
+    already chose to expose every interface, and no Host header can name the wildcard address itself."""
     if not host_header:
         return False
     try:
@@ -30,4 +35,6 @@ def host_header_is_allowed(host_header: str | None, *, bound_host: str, bound_po
         return False
     if hostname in LOOPBACK_HOSTNAMES:
         return True
+    if bound_host.lower() in WILDCARD_HOSTNAMES:
+        return port is None or port == bound_port
     return hostname == bound_host.lower() and (port is None or port == bound_port)
