@@ -59,10 +59,13 @@ def get_queue_entry(queue_id: str, context: ServerContext = Depends(get_context)
     preview = preview_resume(context.store, entry, context.global_config, context.paths.params)
     is_current = context.worker.current_entry_id() == entry.id
     current_run = context.worker.current_run() if is_current else None
+    current_step = context.worker.current_step() if is_current else None
     return {
         **queue_entry(entry),
         "current_run": current_run[0] if current_run is not None else None,
         "current_run_elapsed_seconds": current_run[1] if current_run is not None else None,
+        "current_step": current_step[0] if current_step is not None else None,
+        "current_step_total": current_step[1] if current_step is not None else None,
         "last_run_seconds": _last_run_seconds(context, entry),
         "cooldown_until": context.worker.cooldown_until(),
         "resumable": preview.resumable,

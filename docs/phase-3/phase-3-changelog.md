@@ -5,6 +5,13 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-28
 
+- **Change** [M02]: `GET /queue/{id}` and `WatchQueueEntry` gain `current_step`/`current_step_total`: the active
+  run's latest reading from `draw-things-cli`'s own progress bar (`RunOutput.progress`, already carried on the raw
+  event stream, but not previously surfaced on the at-a-glance queue-status surfaces a client polls or watches
+  instead of subscribing to every event). `WorkerStatus.observe_run` (`services/queue_worker_status.py`) now also
+  watches `RunOutput`, resetting the reading to `None` on every `RunStarted` (so a new run never briefly shows the
+  previous run's last step) and clearing it on `RunFinished` and `entry_released()` alike, so nothing claimed next
+  can read a stale one. `monitor.proto`'s `QueueEntrySnapshot` gains the two fields (both set together, or neither).
 - **Change** [M02]: Milestone 02 is implemented and done: `server/` (the FastAPI app and its routes, serializers,
   auth, host check, pagination, the caller header, error-code-to-status mapping, the audit context manager, and the
   event backlog), the gRPC monitoring service (`server/grpc_service.py`, `server/grpc_auth.py`, generated from

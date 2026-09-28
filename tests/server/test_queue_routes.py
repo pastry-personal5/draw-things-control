@@ -26,6 +26,9 @@ class FakeWorker:
     def __init__(self) -> None:
         self.woken = 0
         self.cancelled: list[int] = []
+        self._current_id: int | None = None
+        self._current_run: tuple[int, float] | None = None
+        self._current_step: tuple[int, int] | None = None
 
     def is_alive(self) -> bool:
         return True
@@ -37,7 +40,13 @@ class FakeWorker:
         return None
 
     def current_entry_id(self) -> int | None:
-        return None
+        return self._current_id
+
+    def current_run(self) -> tuple[int, float] | None:
+        return self._current_run
+
+    def current_step(self) -> tuple[int, int] | None:
+        return self._current_step
 
     def wake(self) -> None:
         self.woken += 1
@@ -242,6 +251,26 @@ class ResumeTests(QueueRoutesTestCase):
         detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
         self.assertFalse(detail["resumable"])
         self.assertIn("queued", detail["resume_refused_reason"])
+
+    def test_the_entry_the_worker_is_currently_running_reports_its_run_and_step(self) -> None:
+        entry = self.submit(run_count=1)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker._current_id = claimed.id
+        self.worker._current_run = (1, 12.5)
+        self.worker._current_step = (7, 20)
+        detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
+        self.assertEqual((detail["current_run"], detail["current_run_elapsed_seconds"]), (1, 12.5))
+        self.assertEqual((detail["current_step"], detail["current_step_total"]), (7, 20))
+
+    def test_a_different_entrys_current_run_and_step_are_not_reported(self) -> None:
+        entry = self.submit(run_count=1)
+        self.worker._current_id = 999999
+        self.worker._current_run = (1, 12.5)
+        self.worker._current_step = (7, 20)
+        detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
+        self.assertEqual((detail["current_run"], detail["current_run_elapsed_seconds"]), (None, None))
+        self.assertEqual((detail["current_step"], detail["current_step_total"]), (None, None))
 
     def test_resuming_a_job_that_would_now_exceed_a_limit_is_refused_and_stores_nothing(self) -> None:
         original = self.seed_resumable_entry()

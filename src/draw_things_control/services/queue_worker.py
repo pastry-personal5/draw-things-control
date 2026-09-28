@@ -114,9 +114,8 @@ class QueueWorker:
             return self._current.id if self._current is not None else None
 
     def is_alive(self) -> bool:
-        """Whether the worker thread is still running, for ``GET /health`` (Milestone 02): if it ever stops (an
-        error escaping ``run_forever`` itself, not a single job's failure, which ``claim_and_run_one`` never lets
-        through), this reads False and the queue processes nothing more until the server restarts."""
+        """False once the thread has stopped (an error escaping ``run_forever`` itself, not a single job's
+        failure), for ``GET /health``: the queue processes nothing more until the server restarts."""
         return self._thread is not None and self._thread.is_alive()
 
     def state(self) -> str:
@@ -128,9 +127,12 @@ class QueueWorker:
         return self._status.cooldown_until()
 
     def current_run(self) -> tuple[int, float] | None:
-        """The claimed entry's current run number and its elapsed seconds, or None between runs or when nothing is
-        claimed (``GET /queue/{id}``, ``WatchQueueEntry``: Milestone 02)."""
+        """The claimed entry's current run number and its elapsed seconds (``GET /queue/{id}``, ``WatchQueueEntry``)."""
         return self._status.current_run()
+
+    def current_step(self) -> tuple[int, int] | None:
+        """The active run's latest (step, total) progress-bar reading (``GET /queue/{id}``, ``WatchQueueEntry``)."""
+        return self._status.current_step()
 
     def run_forever(self) -> None:
         while not self._stop_event.is_set():
@@ -215,9 +217,8 @@ class QueueWorker:
         return on_reserved
 
     def _cancel_guard(self, event: JobEvent) -> None:
-        """A cancel that landed between the claim and the executor's ``begin()`` is kept and applied here, at
-        ``JobStarted``, as the TUI does for a stop requested during start-up. Covers both a targeted cancel and a
-        shutdown that arrived in that same window."""
+        """A cancel (or shutdown) that landed between the claim and the executor's ``begin()`` is kept and applied
+        here, at ``JobStarted``, as the TUI does for a stop requested during start-up."""
         if isinstance(event, JobStarted):
             with self._state_lock:
                 pending = self._pending_cancel

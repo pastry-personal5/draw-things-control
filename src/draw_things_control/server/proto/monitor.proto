@@ -14,8 +14,8 @@ service Monitor {
   // in-memory backlog, gets a Reset event and should read the state again over HTTP before resubscribing.
   rpc WatchEvents(WatchEventsRequest) returns (stream Event);
 
-  // Replaces GET /queue/{id}?wait=: one message whenever the entry's state, execution ID, current run,
-  // cooldown_until, or error changes, until the client cancels the call.
+  // Replaces GET /queue/{id}?wait=: one message whenever the entry's state, execution ID, current run, current
+  // step, cooldown_until, or error changes, until the client cancels the call.
   rpc WatchQueueEntry(WatchQueueEntryRequest) returns (stream QueueEntrySnapshot);
 }
 
@@ -51,4 +51,9 @@ message QueueEntrySnapshot {
   optional double current_run_elapsed_seconds = 5;
   optional double cooldown_until = 6;
   optional string error = 7;
+  // The current run's latest diffusion-step reading from draw-things-cli's own progress bar (distinct from
+  // current_run above, which is the run's position in the job's chain): current_step of current_step_total. Both
+  // set together, or neither before the first reading arrives.
+  optional int32 current_step = 8;
+  optional int32 current_step_total = 9;
 }

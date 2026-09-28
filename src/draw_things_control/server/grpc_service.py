@@ -81,6 +81,9 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
             current_run = self._context.worker.current_run()
             if current_run is not None:
                 snapshot.current_run, snapshot.current_run_elapsed_seconds = current_run
+            current_step = self._context.worker.current_step()
+            if current_step is not None:
+                snapshot.current_step, snapshot.current_step_total = current_step
         cooldown_until = self._context.worker.cooldown_until()
         if cooldown_until is not None:
             snapshot.cooldown_until = cooldown_until
