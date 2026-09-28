@@ -50,3 +50,13 @@ cooldown:
 # pruned when a command opens it. Only database rows are removed, never output
 # files, manifests, or logs. 0 keeps history forever; 0 to 3650. Default: 14.
 history_retention_days: 14
+
+# Optional. Bounded work the HTTP API (`dtc serve`) enforces from its first
+# submission, whoever calls (an agent, dtc queue, or --allow-write): every
+# key is optional and falls back to its own default below.
+# api_limits:
+#   max_queued_jobs: 20        # entries queued at once
+#   max_job_runs: 100          # runs a submitted job may have, or a resume may have left
+#   max_job_seconds: 172800    # one entry's worst case: its runs times run_timeout_seconds,
+#                              # plus the longest cooldown wait between them (48 hours)
+#   max_job_file_bytes: 65536  # size of job text the API accepts (Milestone 07)

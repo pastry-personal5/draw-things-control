@@ -11,6 +11,7 @@ from loguru import logger
 from draw_things_control.core.clock import Clock
 from draw_things_control.core.paths import DATABASE_FILE_NAME
 from draw_things_control.core.run_lock import ensure_state_directory
+from draw_things_control.state.audit import AuditRepository
 from draw_things_control.state.database import Database, StateError
 from draw_things_control.state.executions import ExecutionRepository
 from draw_things_control.state.job_ids import JobIdRepository
@@ -56,6 +57,7 @@ class Store:
         self.job_ids = JobIdRepository(database)
         self.settings = SettingsRepository(database)
         self.queue = QueueRepository(database)
+        self.audit = AuditRepository(database)
 
     @classmethod
     def open(cls, path: Path, *, mode: StoreMode = StoreMode.RUN, retention_days: int = DEFAULT_RETENTION_DAYS, clock: Clock = datetime.now) -> Store:

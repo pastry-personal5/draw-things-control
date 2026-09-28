@@ -16,6 +16,8 @@ class CancelRefusedError(InputError):
     """The entry cannot be cancelled: it already finished before this call, naming its state. Not a
     ``NotFoundError``: the entry exists, so this is not a 404 for a front end that maps error codes to statuses."""
 
+    code = "invalid_state"
+
 
 def cancel_entry(store: Store, worker: QueueWorker, entry_id: int, *, clock: Clock = datetime.now) -> None:
     """Cancel entry ``entry_id``. A queued entry is cancelled directly; a running one is stopped through ``worker``.

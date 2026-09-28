@@ -319,6 +319,72 @@ class QueueWorkerTests(JobTestCase):
         self.assertEqual(calls, [12.5])
         self.assertEqual(self.entry(second).state, str(QueueState.QUEUED))
 
+    def test_state_and_cooldown_until_reflect_the_between_jobs_wait(self) -> None:
+        observed: list[tuple[str, bool]] = []
+
+        def spy(_seconds: float) -> None:
+            observed.append((worker.state(), worker.cooldown_until() is not None))
+
+        worker = self.build_worker(wait_between_jobs=spy)
+        self.assertEqual((worker.state(), worker.cooldown_until()), ("idle", None))
+        self.submit(run_count=1, cooldown={"mode": "manual", "seconds": 12.5})
+        self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertEqual(observed, [("cooling_down", True)])
+        self.assertEqual((worker.state(), worker.cooldown_until()), ("idle", None))
+
+    def test_current_run_tracks_the_run_number_and_its_elapsed_seconds(self) -> None:
+        observed: list[tuple[int, bool]] = []
+        real_runner = self.next_runner
+
+        def spy(arguments: DrawThingsGenerateArguments):
+            observed.append((self.worker.current_run()[0], self.worker.current_run()[1] >= 0))  # type: ignore[index]
+            return real_runner(arguments)
+
+        self.next_runner = spy
+        self.assertIsNone(self.worker.current_run())
+        self.submit(run_count=2)
+        self.assertTrue(self.worker.claim_and_run_one())
+        self.assertEqual(observed, [(1, True), (2, True)])
+        self.assertIsNone(self.worker.current_run())
+
+    def test_events_are_emitted_for_the_claim_job_events_and_finish(self) -> None:
+        events: list[tuple[str, dict]] = []
+        worker = self.build_worker(on_event=lambda kind, data: events.append((kind, data)))
+        label = self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        kinds = [kind for kind, _data in events]
+        self.assertEqual(kinds[0], "queue_entry_changed")
+        self.assertEqual(events[0][1], {"queue_id": label, "state": "running"})
+        self.assertIn("job_started", kinds)
+        self.assertIn("run_started", kinds)
+        self.assertIn("run_finished", kinds)
+        self.assertIn("job_finished", kinds)
+        self.assertEqual(kinds[-1], "queue_entry_changed")
+        self.assertEqual(events[-1][1], {"queue_id": label, "state": "succeeded"})
+
+    def test_wait_events_name_the_entry_and_the_cooldown_deadline(self) -> None:
+        events: list[tuple[str, dict]] = []
+        worker = self.build_worker(on_event=lambda kind, data: events.append((kind, data)), wait_between_jobs=lambda seconds: None)
+        first = self.submit(run_count=1, cooldown={"mode": "manual", "seconds": 12.5})
+        self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        wait_events = [(kind, data) for kind, data in events if kind.startswith("queue_wait_")]
+        self.assertEqual([kind for kind, _data in wait_events], ["queue_wait_started", "queue_wait_ended"])
+        self.assertEqual(wait_events[0][1]["queue_id"], first)
+        self.assertIn("cooldown_until", wait_events[0][1])
+        self.assertEqual(wait_events[1][1], {"queue_id": first})
+
+    def test_state_is_running_while_a_job_is_claimed(self) -> None:
+        label = self.submit(run_count=1)
+        self.next_runner = lambda arguments: BlockingRunner(arguments)
+        thread = threading.Thread(target=self.worker.claim_and_run_one)
+        thread.start()
+        self.wait_until(lambda: self.worker.current_entry_id() is not None)
+        self.assertEqual(self.worker.state(), "running")
+        self.assertTrue(self.worker.cancel_running(self.entry(label).id))
+        thread.join(timeout=5)
+
     def test_the_wait_is_the_autocooldowns_share_of_the_last_runs_actual_seconds(self) -> None:
         calls: list[float] = []
         worker = self.build_worker(wait_between_jobs=calls.append)

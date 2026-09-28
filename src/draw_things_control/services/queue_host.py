@@ -12,6 +12,7 @@ from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.run_lock import SERVER_HOLDER_NAME, RunLock, is_draw_things_process
 from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.services.job_runs import JobRunSession
+from draw_things_control.services.queue_events import EventSink
 from draw_things_control.services.queue_recovery import recover_queue
 from draw_things_control.services.queue_worker import QueueWorker
 from draw_things_control.state.store import Store, StoreMode
@@ -27,7 +28,7 @@ class QueueHost:
     entry's own update to ``interrupted``.
     """
 
-    def __init__(self, paths: ProjectPaths, executor: JobExecutor, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, child_check: Callable[[int, str], bool] = is_draw_things_process) -> None:
+    def __init__(self, paths: ProjectPaths, executor: JobExecutor, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, child_check: Callable[[int, str], bool] = is_draw_things_process, on_event: EventSink | None = None) -> None:
         self._paths = paths
         self._executor = executor
         self._global_config = global_config
@@ -35,9 +36,16 @@ class QueueHost:
         self._shutdown_grace = shutdown_grace
         self._clock = clock
         self._child_check = child_check
+        self._on_event = on_event
         self._lock: RunLock | None = None
         self._store: Store | None = None
         self.worker: QueueWorker | None = None
+
+    @property
+    def store(self) -> Store | None:
+        """The open store, from ``start()`` until ``stop()``; None otherwise. Milestone 02's ``dtc serve`` reads
+        this to build the ``ServerContext`` every route and the gRPC service share."""
+        return self._store
 
     def start(self) -> None:
         """Take the lock, recover, and start the worker. Raises ``BusyError`` (refusing while an earlier server's
@@ -53,7 +61,7 @@ class QueueHost:
         try:
             recover_queue(store, clock=self._clock)
             session = JobRunSession(self._paths, self._executor, self._global_config)
-            worker = QueueWorker(store, session, self._executor, lock, self._paths, self._global_config, executable=self._executable, shutdown_grace=self._shutdown_grace, clock=self._clock)
+            worker = QueueWorker(store, session, self._executor, lock, self._paths, self._global_config, executable=self._executable, shutdown_grace=self._shutdown_grace, clock=self._clock, on_event=self._on_event)
             worker.start()
         except BaseException:
             store.close()

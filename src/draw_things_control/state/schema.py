@@ -114,7 +114,23 @@ CREATE INDEX queue_submitted ON queue (submitted_epoch);
 INSERT INTO counters (name, value) VALUES ('queue', 0)
 """
 
+# Phase 3 Milestone 2: the audit log. Built with the first endpoints that accept input, so no submission or write
+# through the HTTP API goes unrecorded; unlike the rest of the history, it is never pruned by history_retention_days
+# (owner decision, phase-3-changelog.md), so its own row id (never shown to a caller) is stable enough to page by.
+SCHEMA_V5 = """
+CREATE TABLE audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    at_epoch REAL NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    outcome TEXT NOT NULL,
+    caller TEXT NOT NULL
+);
+CREATE INDEX audit_log_at ON audit_log (at_epoch DESC)
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5)
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -19,7 +19,9 @@ from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus
 from draw_things_control.jobs.executor import JobExecutor, ResumePoint
 from draw_things_control.services.job_runs import JobRunSession
+from draw_things_control.services.queue_events import EventSink, QueueEventPublisher
 from draw_things_control.services.queue_submit import parse_snapshot
+from draw_things_control.services.queue_worker_status import WorkerStatus
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store
@@ -30,6 +32,15 @@ _CANCEL, _SHUTDOWN = "cancel", "shutdown"
 
 _FINAL_QUEUE_STATE = {JobStatus.SUCCEEDED: QueueState.SUCCEEDED, JobStatus.FAILED: QueueState.FAILED}
 
+
+def _resume_point_of(entry: QueueRow) -> ResumePoint | None:
+    if entry.resume_first_run is None:
+        return None
+    assert entry.resume_input is not None and entry.resume_seed is not None
+    resumes_execution = execution_id_text(entry.resumes_execution) if entry.resumes_execution is not None else None
+    return ResumePoint(first_run=entry.resume_first_run, input=Path(entry.resume_input), seed=entry.resume_seed, resumes_execution=resumes_execution)
+
+
 # Waits ``seconds`` between queued jobs; the default is the worker's own interruptible poll (``_poll_wait``), and a
 # test injects a spy in its place, as ``JobExecutor``'s own ``Cooldown`` is faked in its tests.
 WaitBetweenJobs = Callable[[float], None]
@@ -39,7 +50,7 @@ class QueueWorker:
     """Runs queued jobs one after another off its own thread, while ``lock`` and ``store`` are held for the host's
     whole lifetime."""
 
-    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None) -> None:
+    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None) -> None:
         self._store = store
         self._session = session
         self._executor = executor
@@ -51,6 +62,7 @@ class QueueWorker:
         self._clock = clock
         self._poll_interval = poll_interval
         self._wait_between_jobs = wait_between_jobs or self._poll_wait
+        self._events = QueueEventPublisher(on_event)
         self._state_lock = threading.Lock()
         self._current: QueueRow | None = None
         self._stop_reason: str | None = None
@@ -58,6 +70,7 @@ class QueueWorker:
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._status = WorkerStatus(clock=clock)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self.run_forever, name="queue-worker", daemon=True)
@@ -100,6 +113,25 @@ class QueueWorker:
         with self._state_lock:
             return self._current.id if self._current is not None else None
 
+    def is_alive(self) -> bool:
+        """Whether the worker thread is still running, for ``GET /health`` (Milestone 02): if it ever stops (an
+        error escaping ``run_forever`` itself, not a single job's failure, which ``claim_and_run_one`` never lets
+        through), this reads False and the queue processes nothing more until the server restarts."""
+        return self._thread is not None and self._thread.is_alive()
+
+    def state(self) -> str:
+        """``running``, ``cooling_down``, or ``idle`` (``GET /queue``, Milestone 02)."""
+        return self._status.state()
+
+    def cooldown_until(self) -> float | None:
+        """When the between-jobs wait ends (an epoch), or None outside it."""
+        return self._status.cooldown_until()
+
+    def current_run(self) -> tuple[int, float] | None:
+        """The claimed entry's current run number and its elapsed seconds, or None between runs or when nothing is
+        claimed (``GET /queue/{id}``, ``WatchQueueEntry``: Milestone 02)."""
+        return self._status.current_run()
+
     def run_forever(self) -> None:
         while not self._stop_event.is_set():
             if not self.claim_and_run_one():
@@ -128,14 +160,18 @@ class QueueWorker:
                 # Claimed right as shutdown began: nothing of it will run, so it goes back to queued, matching
                 # recovery's own rule for a crash between the claim and JobStarted.
                 self._store.queue.requeue(entry.id)
+                self._events.entry_changed(entry.label, str(QueueState.QUEUED))
                 return True
             self._current, self._stop_reason, self._pending_cancel = entry, None, False
+        self._status.entry_claimed()
+        self._events.entry_changed(entry.label, entry.state)
         job: JobDefinition | None = None
         try:
             job = self._run_claimed(entry)
         finally:
             with self._state_lock:
                 self._current = None
+            self._status.entry_released()
         if job is not None:
             self._wait_after(entry, job)
         return True
@@ -146,7 +182,7 @@ class QueueWorker:
         finished = [False]
         try:
             job = parse_snapshot(entry, self._global_config, self._paths.params)()
-            resume = self._resume_point(entry)
+            resume = _resume_point_of(entry)
         except Exception as error:
             self._fail_to_start(entry, error)
             return None
@@ -156,7 +192,7 @@ class QueueWorker:
                 holder=SERVER_HOLDER_NAME,
                 executable=self._executable,
                 shutdown_grace=self._shutdown_grace,
-                observers=(self._cancel_guard, self._make_finisher(entry, finished)),
+                observers=(self._cancel_guard, self._status.observe_run, self._events.job_event, self._make_finisher(entry, finished)),
                 lock=self._lock,
                 resume=resume,
                 on_reserved=self._linker(entry),
@@ -169,14 +205,6 @@ class QueueWorker:
             else:
                 self._fail_to_start(entry, error)
         return job
-
-    @staticmethod
-    def _resume_point(entry: QueueRow) -> ResumePoint | None:
-        if entry.resume_first_run is None:
-            return None
-        assert entry.resume_input is not None and entry.resume_seed is not None
-        resumes_execution = execution_id_text(entry.resumes_execution) if entry.resumes_execution is not None else None
-        return ResumePoint(first_run=entry.resume_first_run, input=Path(entry.resume_input), seed=entry.resume_seed, resumes_execution=resumes_execution)
 
     def _linker(self, entry: QueueRow) -> Callable[[str], None]:
         def on_reserved(label: str) -> None:
@@ -202,6 +230,7 @@ class QueueWorker:
                 finished[0] = True
                 state = self._final_state(event)
                 self._store.queue.finish(entry.id, state=state, finished_at=event.at)
+                self._events.entry_changed(entry.label, str(state))
 
         return observe
 
@@ -225,6 +254,7 @@ class QueueWorker:
         for one that ran and was pruned."""
         logger.exception("Queue entry {} failed to start", entry.label)
         self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=local_timestamp(self._clock()), error=str(error), clear_link=True)
+        self._events.entry_changed(entry.label, str(QueueState.FAILED))
 
     def _wait_after(self, entry: QueueRow, job: JobDefinition) -> None:
         """The cooldown between queued jobs: after a job that succeeded, when another entry is already queued.
@@ -237,7 +267,15 @@ class QueueWorker:
             return
         wait = job.cooldown.wait_after(self._last_run_seconds(updated))
         if wait.seconds > 0:
-            self._wait_between_jobs(wait.seconds)
+            self._status.cooldown_started(wait.seconds)
+            cooldown_until = self._status.cooldown_until()
+            assert cooldown_until is not None
+            self._events.wait_started(entry.label, cooldown_until)
+            try:
+                self._wait_between_jobs(wait.seconds)
+            finally:
+                self._status.cooldown_ended()
+                self._events.wait_ended(entry.label)
 
     def _last_run_seconds(self, entry: QueueRow) -> float:
         if entry.execution_number is None:

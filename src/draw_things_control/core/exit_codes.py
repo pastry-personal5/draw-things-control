@@ -34,10 +34,17 @@ def exit_code_for_child_signal(return_code: int) -> int:
 
 
 # The exit code of each error code (see ``DtcError.code``); a front end that is not a command line maps the same codes to its own statuses.
+# The four Milestone 02 codes (timeout_required, outside_directory, limit_exceeded, invalid_state) arise only from the
+# API today (no CLI command raises them directly), but a front end that is one, such as dtc queue, still maps an
+# API error's code to an exit code through this same table, so they are listed here too, all exiting 2.
 EXIT_CODES_BY_ERROR_CODE = {
     "invalid_input": EXIT_INVALID_INPUT,
     "tool_missing": EXIT_INVALID_INPUT,
     "not_found": EXIT_INVALID_INPUT,
+    "timeout_required": EXIT_INVALID_INPUT,
+    "outside_directory": EXIT_INVALID_INPUT,
+    "limit_exceeded": EXIT_INVALID_INPUT,
+    "invalid_state": EXIT_INVALID_INPUT,
     "busy": EXIT_BUSY,
     "state_unavailable": EXIT_STATE_UNAVAILABLE,
 }

@@ -269,6 +269,32 @@ def tui_command(
         raise typer.Exit(code=tui.return_code)
 
 
+@app.command("serve")
+def serve_command(
+    ctx: typer.Context,
+    host: Annotated[str, typer.Option(help="Address for the HTTP API and the gRPC service; refused unless loopback or --allow-remote-bind is given.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="HTTP API port.")] = 8765,
+    grpc_port: Annotated[int, typer.Option("--grpc-port", help="gRPC monitoring service port.")] = 8766,
+    executable: ExecutableOption = "draw-things-cli",
+    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
+    global_config: GlobalConfigOption = None,
+    allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
+) -> None:
+    """Run the HTTP API and the gRPC monitoring service: the only thing that ever starts draw-things-cli."""
+    if shutdown_grace < 0:
+        logger.error("--shutdown-grace must not be negative")
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    services = services_of(ctx)
+    settings = read_settings_or_exit(global_config, services.paths)
+    # Imported here, so the other commands do not load FastAPI, uvicorn, or grpc.
+    from draw_things_control.server.serve import ServeOptions
+    from draw_things_control.server.serve import run as run_server
+
+    options = ServeOptions(host=host, port=port, grpc_port=grpc_port, executable=executable, shutdown_grace=shutdown_grace, allow_remote_bind=allow_remote_bind)
+    with errors_exit():
+        run_server(services.paths, settings, services.toolkit, options)
+
+
 def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:
     """Run the Typer app and preserve its command exit status."""
     configure_logging()

@@ -81,8 +81,11 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/job_runs.py` | `JobRunSession`: takes the run lock, opens the store, sweeps, and runs a job with its execution recorded |
 | `services/job_catalog.py`, `services/job_details.py`, `services/history.py`, `services/store_provider.py` | The job files of a directory, a job's summary and plan, the execution history, and the browsing store they share |
 | `services/queue_submit.py`, `services/queue_resume.py` (phase 3) | Validate a job and snapshot it as a queue entry; resolve and accept a resume |
-| `services/queue_worker.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread; restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
-| `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`, `import-history`, `tui`) and `CliServices` in Typer's context |
+| `services/queue_worker.py`, `services/queue_worker_status.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread and its observable status (`is_alive`, `state`, `cooldown_until`, `current_run`); restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
+| `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
+| `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
+| `server/` (phase 3) | `dtc serve`'s FastAPI app and gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) |
+| `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`, `import-history`, `tui`, `serve`) and `CliServices` in Typer's context |
 
 Services receive their runner and executable lookup as dependencies, so tests
 never start a process.
@@ -239,14 +242,81 @@ Adds what every later front end needs, without changing the CLI's behavior.
   `serve` command that starts the worker, `dtc queue` and the TUI's Queue
   widget, submission rules and limits, and the event backlog for a stream.
 
-### Milestones 2 onward (planned)
+### Milestone 2: HTTP API and gRPC monitoring (done)
 
-- `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn) on loopback unless
-  `--allow-remote-bind` is given, bearer-token auth, job control, history,
-  and an audit log; and a gRPC monitoring service (`grpc.aio.server()`, its
-  own token interceptor) on its own loopback port, started and stopped
-  alongside it, streaming events and answering "watch until this changes"
-  for every client instead of an HTTP event stream.
+- **`server/`.** `dtc serve` (`server/serve.py`) runs a FastAPI app
+  (`server/app.py`, `create_app`) and a `grpc.aio.server()`
+  (`server/grpc_service.py`'s `MonitorServicer`, generated from
+  `server/proto/monitor.proto`) in one process, sharing the run lock, the
+  state store, and the queue worker (`services/queue_host.py`'s
+  `QueueHost`) for its whole lifetime. Both bind to `--host` (loopback
+  unless `--allow-remote-bind`) on their own ports (`--port`,
+  `--grpc-port`); an HTTP request whose `Host` header names neither loopback
+  nor the bound address is refused (`server/host_check.py`, ASGI middleware
+  installed by `create_app`) against DNS rebinding — gRPC has no equivalent
+  gap, since a channel dials the bound address directly.
+- **Authentication.** A 32-byte hex token in `config/server-token`
+  (`ProjectPaths.server_token`, mode 0600, created on first start;
+  `server/token_file.py`), compared with `hmac.compare_digest`
+  (`server/token_file.py`'s `token_matches`). HTTP: `require_auth`
+  (`server/dependencies.py`), every router but `health_router`. gRPC:
+  `TokenAuthInterceptor` (`server/grpc_auth.py`), ending an unauthenticated
+  call `UNAUTHENTICATED`.
+- **Routes** (`server/routes_health.py`, `routes_jobs.py`, `routes_inputs.py`,
+  `routes_executions.py`, `routes_queue.py`, `routes_audit.py`), each a
+  small `APIRouter`. Responses are plain dicts from `server/serializers.py`,
+  not Pydantic models. A `{job}` path segment resolves through
+  `server/job_reference.py`'s `resolve_job_reference` (`JobCatalog.find`,
+  never a joined path; a symbolic link reads as invalid). Pagination
+  (`server/pagination.py`) is an opaque base64-encoded offset, so the scheme
+  can change later without a contract break. `server/caller.py` resolves
+  `X-Dtc-Caller` (`cli`, `tui`, `mcp`, or the `api` default) against a known
+  set. `server/errors.py` maps `DtcError` codes to HTTP statuses in one
+  table, as `EXIT_CODES_BY_ERROR_CODE` does to exit codes, and installs a
+  FastAPI exception handler for it.
+- **Rules and limits.** `services/api_rules.py`'s `check_api_rules` (needed
+  by `POST /queue` and, from Milestone 07, every write) requires
+  `run_timeout_seconds`, checks the input and output directories, and
+  enforces `GlobalConfig.api_limits` (`core/global_config.py`'s
+  `ApiLimits`): `max_queued_jobs`, `max_job_runs`, `max_job_seconds` (worst
+  case: runs × `run_timeout_seconds`, plus the longest cooldown wait between
+  them), `max_job_file_bytes`. A resume counts only the runs it has left.
+- **Audit log.** `state/audit.py`'s `AuditRepository` (schema 5's
+  `audit_log` table) records every submit, cancel, and resume, refused ones
+  included, through `server/audit.py`'s `audited` context manager, called
+  from the queue routes after authentication (so an unauthenticated request
+  leaves no row).
+- **Events.** `server/event_backlog.py`'s `EventBacklog` is a bounded
+  (2000), thread-safe deque; IDs are seeded from wall-clock milliseconds, so
+  an ID from a previous server run naturally reads as too old (`since`
+  returns `None`, telling `WatchEvents` to send `Reset`) with no separate
+  run token needed. `services/queue_worker.py`'s `QueueWorker` takes an
+  optional `on_event` sink (`services/queue_events.py`'s
+  `QueueEventPublisher`), forwarded from `QueueHost`, publishing Phase 2 job
+  events and the queue's own (`queue_entry_changed`, `queue_wait_started`,
+  `queue_wait_ended`) into it. `MonitorServicer.WatchEvents` streams from it;
+  `WatchQueueEntry` polls the store for one entry's change.
+- **Shutdown.** uvicorn owns SIGINT/SIGTERM (`Server.capture_signals()`);
+  the queue worker's executor is built with `handle_signals=False`. The
+  gRPC server must start *inside* `capture_signals()`'s `with` block, not
+  before it — starting it first was found, empirically, to leave SIGTERM at
+  its default disposition for the rest of the process's life (grpc's C core
+  appears to reset it during its own startup), so no cleanup ever ran.
+  `QueueHost.stop()` (releasing the run lock) must run *inside* that same
+  `with` block too: `capture_signals()`'s own `finally` re-raises the
+  caught signal, at its restored default disposition, once the block exits,
+  which can kill the process before any cleanup written in an outer
+  `finally` (after `asyncio.run()` returns) gets to run. `server/serve.py`'s
+  `_serve_async` does both: enters `capture_signals()`, starts the gRPC
+  server, awaits uvicorn's private `Server._serve()` (skipping the public
+  `serve()`'s own nested `capture_signals()`), then stops the gRPC server
+  and the queue host in its own `finally`, all still inside the `with`
+  block.
+- Out of scope here, and still planned: job file management behind a write
+  flag, the MCP server, and the queue and Queue widget for people.
+
+### Milestones 3 onward (planned)
+
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
 - `mcp_server/` (`dtc mcp`): a thin client of the HTTP API and the gRPC

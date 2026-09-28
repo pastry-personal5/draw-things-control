@@ -1,7 +1,7 @@
 # Milestone 02: HTTP API: Read and Run
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Milestone 01: Queue and run manager](milestone-01-queue-run-manager.md)
 
 ## Goal

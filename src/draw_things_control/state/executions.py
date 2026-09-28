@@ -61,10 +61,13 @@ class ExecutionRepository:
         with self._database.transaction() as connection:
             connection.execute("UPDATE executions SET status = ?, exit_code = ?, signal = ?, finished_at = ?, finished_epoch = ? WHERE id = ?", (status, exit_code, signal, finished_at, epoch(finished_at), execution_id))
 
-    def page(self, *, limit: int = 50, offset: int = 0, status: str | None = None, name: str | None = None, name_contains: str | None = None, running_as_interrupted: bool = False) -> list[ExecutionRow]:
+    def page(self, *, limit: int = 50, offset: int = 0, status: str | None = None, name: str | None = None, name_contains: str | None = None, job_file: str | None = None, running_as_interrupted: bool = False) -> list[ExecutionRow]:
         """Executions, newest first, without their runs. ``name`` matches the job name exactly; ``name_contains`` matches
-        the job name or the job file's name as a substring, in any ASCII letter case. ``running_as_interrupted`` is for
-        read-only screens that know no runner is alive: it changes the display only, never the database."""
+        the job name or the job file's name as a substring, in any ASCII letter case; ``job_file`` matches the exact
+        stored job file path (Milestone 02's ``GET /executions``, filtering by a job reference resolved to one file,
+        as ``{job}`` is everywhere else, rather than the job's own ``name:``, which is not an identifier).
+        ``running_as_interrupted`` is for read-only screens that know no runner is alive: it changes the display
+        only, never the database."""
         clauses: list[str] = []
         values: list[Any] = []
         if status is not None:
@@ -78,6 +81,9 @@ class ExecutionRepository:
         if name is not None:
             clauses.append("job_name = ?")
             values.append(name)
+        if job_file is not None:
+            clauses.append("job_file = ?")
+            values.append(job_file)
         if name_contains is not None:
             pattern = "%" + name_contains.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             # The file name is what follows the last '/': rtrim strips the non-slash characters from the end.
