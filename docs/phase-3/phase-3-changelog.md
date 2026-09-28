@@ -5,6 +5,26 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-28
 
+- **Owner decision** [M02]: From an interview on the milestone plan's review below.
+  - `GET /executions`' job filter matches a job reference (an ID or file name, resolved exactly like `{job}`
+    elsewhere), not free text against `name:`. Filtering by the display name field, which could span several files
+    sharing one, was offered.
+  - `GET /health` stays 200 with `worker_alive: false` when the worker thread has died, so it remains a plain
+    liveness check whose body a caller must read. Reading 503 once the worker is dead was offered.
+  - The caller-identification header is `X-Dtc-Caller`, restricted to `cli`, `tui`, or `mcp`; absent defaults to
+    `api`, and any other value is refused with `invalid_input` naming the field. Storing whatever string a caller
+    sends, unvalidated (recommended), was offered: the owner wants the audit log's caller column kept to a known set.
+  - The pagination cursor (`GET /jobs`, `/executions`, `/inputs`, `/audit`) is a server-chosen opaque token, so the
+    scheme behind it can change later without a contract break. Treating the last row's own public ID as the cursor
+    (recommended: simpler, and no leak since the IDs are already shown) was offered. Default and maximum `limit` are
+    both 200, matching `services/history.py`'s existing `PAGE_SIZE`.
+- **Design decision** [M02]: `CancelRefusedError` and `ResumeRefusedError` ([M01](milestone-01-queue-run-manager.md))
+  gain their own `code = "invalid_state"`, so the API's error table (`invalid_state` → 409) has something to key on;
+  both were plain `InputError` subclasses with no `code` of their own, which would otherwise read `invalid_input`
+  (422). `EXIT_CODES_BY_ERROR_CODE` (`core/exit_codes.py`) also gains a row for each of Milestone 02's four new error
+  codes (`timeout_required`, `outside_directory`, `limit_exceeded`, `invalid_state`), all exiting 2
+  (`EXIT_INVALID_INPUT`), since Milestone 03's `dtc queue` already assumes that table covers them when it turns an
+  API error into an exit code.
 - **Change**: `ResumeRefused` and `CancelRefused` are now `ResumeRefusedError` and `CancelRefusedError`, like every
   other exception in the package; the M01 design decision below, that they are `InputError`s and not
   `NotFoundError`s, is unchanged.
