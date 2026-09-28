@@ -3,10 +3,15 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
+from loguru import logger
+
 from draw_things_control.jobs.events import JobStatus
-from draw_things_control.jobs.records import JobManifest, RunRecord, write_manifest
+from draw_things_control.jobs.parsing import load_job
+from draw_things_control.jobs.records import JobManifest, JobRecords, RunRecord, write_manifest
+from tests.fixtures import JobTestCase, job_data
 
 
 class JobManifestTests(unittest.TestCase):
@@ -22,3 +27,19 @@ class JobManifestTests(unittest.TestCase):
             self.assertEqual(data["status"], "succeeded")
             self.assertEqual(data["runs"][0]["pair"], "walk")
             self.assertEqual([entry.name for entry in Path(directory).iterdir()], [path.name])
+
+
+class JobLogScopeTests(JobTestCase):
+    """A job's log file holds only its own lines, never an unrelated line logged from the same process."""
+
+    def test_a_line_logged_outside_the_job_never_reaches_its_log_file(self) -> None:
+        job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
+        logger.info("a line logged before the job, such as a server starting up")
+        with JobRecords.open(job, write_records=True, seed=1, seed_source="random", execution_id=None, clock=lambda: datetime(2026, 9, 27, 10, 0, 0), random_number=lambda: 1000) as records:
+            logger.info("a line from inside the job")
+        logger.info("a line logged after the job, such as a server's own API request")
+        assert records.log_path is not None
+        log_text = records.log_path.read_text(encoding="utf-8")
+        self.assertIn("a line from inside the job", log_text)
+        self.assertNotIn("before the job", log_text)
+        self.assertNotIn("after the job", log_text)

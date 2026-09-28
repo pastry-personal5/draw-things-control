@@ -99,11 +99,15 @@ def bar_line(label: str, fraction: float | None, tail: str, width: int) -> Text:
     return text
 
 
-def status_lines(live: LiveRun | None, other_process: bool, width: int) -> list[Text]:
-    """The Status widget's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run."""
+def status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None) -> list[Text]:
+    """The Status widget's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
+
+    ``message`` is the busy message the run lock's holder would give (naming the server, when that is who holds it,
+    exactly as ``run-job`` and the TUI's own ``/apply`` would be refused); without one, a generic line is shown.
+    """
     lines = [Text() for _ in range(5)]
     if other_process and (live is None or live.worker_ended):
-        lines[0] = Text(OTHER_PROCESS_TEXT, style="bold yellow")
+        lines[0] = Text(message or OTHER_PROCESS_TEXT, style="bold yellow")
         return lines
     if live is None:
         return lines

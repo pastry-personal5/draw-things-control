@@ -280,7 +280,7 @@ class MainScreen(Screen[None]):
         self.tick()
 
     def render_status(self) -> None:
-        self.status.show(self.dtc.live, self.history.other_process_running)
+        self.status.show(self.dtc.live, self.history.other_process_running, message=self.history.other_process_message)
 
     def tick(self) -> None:
         """Update the elapsed time, the cooldown countdown, the Status widget, and the status line."""

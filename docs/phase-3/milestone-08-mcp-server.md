@@ -44,9 +44,12 @@ Out of scope:
 - Stdout carries the protocol and nothing else: every log line goes to
   stderr, unlike the other commands' logging.
 - It talks to the API with `httpx`, sending the bearer token and the caller
-  header the audit log reads (`mcp`). It reads the token when it starts, and
-  again after a 401, so a changed token needs no restart. It never prints
-  the token.
+  header the audit log reads (`mcp`). It also holds a generated gRPC client
+  ([Milestone 02](milestone-02-http-api.md#monitoring-grpc)), sending the
+  same token as `authorization` metadata, for `get_queue_entry`'s
+  `wait_seconds` only; every other tool stays plain HTTP. It reads the token
+  when it starts, and again after a failure from either client, so a changed
+  token needs no restart. It never prints the token.
 - Because it is a client, several MCP sessions can share one server, and the
   server remains the only process that owns the GPU (owner decision).
 
@@ -101,8 +104,10 @@ Write (offered only while `GET /capabilities` reports writes on):
 - Results are compact JSON with the API's `code` and `field` on errors.
   Long lists are paged.
 - No tool waits for a generation. `get_queue_entry` takes an optional
-  `wait_seconds` (at most 30), answered as soon as the entry changes, and
-  its result includes the current run, its elapsed time, the last run's
+  `wait_seconds` (at most 30): with it, the tool reads one message from
+  `WatchQueueEntry` (or times out) instead of calling `GET /queue/{id}`; the
+  agent still makes one tool call and gets one JSON result, never a stream.
+  The result includes the current run, its elapsed time, the last run's
   time, and `cooldown_until`, so an agent can choose when to look again.
 
 ### Resources
@@ -124,11 +129,12 @@ tools, and what the write flag changes.
 ## Acceptance criteria
 
 - Through the SDK's in-memory client session, with `httpx` sending requests
-  straight to the FastAPI app and a fake runner, each tool calls its
-  endpoint and returns its result, and errors keep `code` and `field`.
+  straight to the FastAPI app, a fake runner, and the gRPC client against an
+  in-process `Monitor` service, each tool calls its endpoint and returns its
+  result, and errors keep `code` and `field`.
 - An agent's whole flow works that way: list inputs, validate a draft,
-  create it, submit it, watch it with `get_queue_entry`, cancel it, resume
-  it, and list its outputs.
+  create it, submit it, watch it with `get_queue_entry` (both with and
+  without `wait_seconds`), cancel it, resume it, and list its outputs.
 - With writes off on the server, the write tools are absent from the tool
   list; with writes on, they are present; a server restarted with the other
   setting changes the list without restarting `dtc mcp`.

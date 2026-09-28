@@ -44,7 +44,7 @@ def import_history(store: Store, directory: Path, *, clock: datetime | None = No
             if store.executions.has_manifest(key):
                 report.skipped += 1
                 continue
-            execution, runs = _convert(manifest, path, key, now)
+            execution, runs, first_run = _convert(manifest, path, key, now)
             # A manifest left 'running' has no real finish time; judge it by its start, or each import would restamp it and bring back a pruned row.
             aged = execution.started_at if manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING and not manifest.get("finished_at") else execution.finished_at or execution.started_at
             if cutoff is not None and epoch(aged) < cutoff:
@@ -53,7 +53,7 @@ def import_history(store: Store, directory: Path, *, clock: datetime | None = No
         except (OSError, ValueError, TypeError, KeyError):
             report.unreadable += 1
             continue
-        _row, number = store.executions.import_execution(execution, runs)
+        _row, number = store.executions.import_execution(execution, runs, first_run=first_run)
         report.imported += 1
         # The next free number, whatever the start time; a manifest's own ID (its execution was pruned, or state/ was
         # deleted) is reported beside it, so the two can be matched, and never reused.
@@ -81,14 +81,35 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[NewExecution, list[NewRun]]:
+def _resume_fields(manifest: dict[str, Any]) -> tuple[int, int | None]:
+    """The manifest's first run number (1, unless it is a resume) and the execution it resumes, if any."""
+    first_run = positive_whole(manifest.get("first_run")) or 1
+    resumed = manifest.get("resumes_execution")
+    resumes = parse_typed_id(resumed, EXECUTION_LETTER) if isinstance(resumed, str) else None
+    return first_run, resumes
+
+
+def _settings(manifest: dict[str, Any]) -> ExecutionSettings:
+    # Manifests from before the cooldown mapping have only cooldown_seconds, which means manual.
+    cooldown = manifest["cooldown"] if isinstance(manifest.get("cooldown"), dict) else None
+    return ExecutionSettings(
+        config_file=manifest.get("config_file"),
+        config_override=manifest.get("config_override"),
+        input_resize=manifest.get("input_resize"),
+        cooldown_seconds=manifest.get("cooldown_seconds"),
+        cooldown_source=manifest.get("cooldown_source"),
+        cooldown=cooldown,
+    )
+
+
+def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[NewExecution, list[NewRun], int]:
     # A phase 1 process that crashed left its manifest 'running'; import it as the sweep would close it.
     stale = manifest.get("status", JobStatus.RUNNING) == JobStatus.RUNNING
     finished_at = manifest.get("finished_at") or (now if stale else None)
     log_file = manifest.get("log_file")
-    # Manifests from before the cooldown mapping have only cooldown_seconds, which means manual.
-    cooldown = manifest["cooldown"] if isinstance(manifest.get("cooldown"), dict) else None
-    # The manifest's per-run 'batch' field is ignored: the run number is the position in the list.
+    # The manifest's per-run 'batch' field is ignored: the run number is its position in the list, offset by first_run
+    # for a resumed manifest (whose list holds only the runs it made, from its own first run onward).
+    first_run, resumes = _resume_fields(manifest)
     runs = [_convert_run(run) for run in manifest["runs"]]
     execution = NewExecution(
         job_name=str(manifest["name"]),
@@ -99,26 +120,23 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
         seed_source=manifest.get("seed_source"),
         cooldown_seconds=manifest.get("cooldown_seconds"),
         cooldown_source=manifest.get("cooldown_source"),
-        total_runs=len(runs),
+        # The manifest's own total_runs (the whole chain, for a resumed manifest whose runs list holds only its own);
+        # a manifest written before that field existed has none, and len(runs) is then the whole chain anyway.
+        total_runs=positive_whole(manifest.get("total_runs")) or len(runs),
         started_at=str(manifest["started_at"]),
         finished_at=finished_at,
         manifest_path=key,
         log_path=str(path.parent / log_file) if log_file else None,
         config_file=manifest.get("config_file"),
         recovered_at=now if stale else None,
-        settings=ExecutionSettings(
-            config_file=manifest.get("config_file"),
-            config_override=manifest.get("config_override"),
-            input_resize=manifest.get("input_resize"),
-            cooldown_seconds=manifest.get("cooldown_seconds"),
-            cooldown_source=manifest.get("cooldown_source"),
-            cooldown=cooldown,
-        ),
+        first_run=first_run,
+        resumes=resumes,
+        settings=_settings(manifest),
     )
     epoch(execution.started_at)
     if finished_at is not None:
         epoch(finished_at)
-    return execution, runs
+    return execution, runs, first_run
 
 
 def _convert_run(run: dict[str, Any]) -> NewRun:

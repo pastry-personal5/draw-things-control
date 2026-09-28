@@ -156,3 +156,19 @@ class ImportHistoryTests(unittest.TestCase):
         self.run_import()
         execution = self.stored(self.store.executions.page()[0].id)
         self.assertEqual([run.number for run in execution.runs], [1, 2, 3])
+
+    def test_a_resumed_manifests_runs_are_numbered_from_its_first_run(self) -> None:
+        # total_runs is the whole chain's (5), never this manifest's own run count (2): its own runs list holds only
+        # runs 4 and 5, but the chain (runs 1-3, in an earlier execution, plus these) succeeded 5 of 5.
+        self.write("resumed-job.json", manifest(runs=2, first_run=4, resumes_execution="E0003", total_runs=5))
+        self.run_import()
+        row = self.store.executions.page()[0]
+        execution = self.stored(row.id)
+        self.assertEqual([run.number for run in execution.runs], [4, 5])
+        self.assertEqual((row.first_run, row.resumes, row.total_runs), (4, 3, 5))
+
+    def test_a_manifest_written_before_total_runs_existed_falls_back_to_its_own_run_count(self) -> None:
+        # Every such manifest is a plain (never-resumed) one, so its own run count is the whole chain anyway.
+        self.write("plain-job.json", manifest(runs=2))
+        self.run_import()
+        self.assertEqual(self.store.executions.page()[0].total_runs, 2)

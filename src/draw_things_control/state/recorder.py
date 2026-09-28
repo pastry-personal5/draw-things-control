@@ -74,6 +74,7 @@ class ExecutionRecorder:
     def _job_started(self, event: JobStarted) -> None:
         # The number reserved before the job started; a job run without one takes the next when it is recorded.
         number = parse_typed_id(event.execution_id, EXECUTION_LETTER) if event.execution_id is not None else None
+        resumes = parse_typed_id(event.resumes_execution, EXECUTION_LETTER) if event.resumes_execution is not None else None
         settings = ExecutionSettings(
             input=event.input,
             output_directory=event.output_directory,
@@ -103,6 +104,8 @@ class ExecutionRecorder:
                 config_file=event.config_file,
                 job_yaml=event.source_text,
                 settings=settings,
+                first_run=event.first_run,
+                resumes=resumes,
             )
         )
         if number is None:

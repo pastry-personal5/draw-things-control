@@ -8,7 +8,7 @@ from typing import TypeVar
 
 from draw_things_control.core.errors import DtcError, NotFoundError, StateUnavailableError
 from draw_things_control.core.paths import ProjectPaths
-from draw_things_control.core.run_lock import run_lock_is_free
+from draw_things_control.core.run_lock import SERVER_HOLDER_NAME, lock_holder, lock_holder_message, run_lock_is_free
 from draw_things_control.jobs.events import JobStatus
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.executions import ExecutionRow
@@ -98,6 +98,13 @@ class HistoryReader:
     def lock_is_free(self) -> bool:
         """Whether no process holds the run lock, so nothing is running."""
         return run_lock_is_free(directory=self._paths.state)
+
+    def lock_message(self) -> str | None:
+        """The server's own busy message when it is the run lock's holder, read without taking the lock; None
+        otherwise (including a free lock), so an ordinary ``run-job`` or TUI holder keeps the generic wording."""
+        if lock_holder(directory=self._paths.state) != SERVER_HOLDER_NAME:
+            return None
+        return lock_holder_message(directory=self._paths.state)
 
     def _read(self, read: Callable[[Store], T]) -> T:
         try:

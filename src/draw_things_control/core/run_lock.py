@@ -18,6 +18,9 @@ from draw_things_control.core.process.groups import process_group_alive
 BUSY_RETRY_SECONDS = 0.25
 _RETRY_INTERVAL_SECONDS = 0.025
 CHILD_EXECUTABLE_NAME = "draw-things-cli"
+# The holder name the queue worker's host locks with (phase 3): while it holds the lock, the busy message names it and
+# how to free it, instead of the generic "Another run is in progress" (owner decision, phase-3-changelog.md).
+SERVER_HOLDER_NAME = "serve"
 
 
 class RunLockBusy(BusyError):
@@ -136,10 +139,7 @@ class RunLock:
         return (pid, name) if pid > 1 and process_group_alive(pid, denied_means_alive=True) and self._child_check(pid, name) else None
 
     def _busy_message(self, descriptor: int) -> str:
-        lines = self._read(descriptor).splitlines()
-        parts = lines[0].split() if lines else []
-        holder = f" ({parts[0]}, PID {parts[1]})" if len(parts) == 2 and parts[1].isdigit() else ""
-        return f"Another run is in progress{holder}. Try again when it finishes."
+        return _busy_message_for(self._read(descriptor))
 
     @staticmethod
     def _read(descriptor: int) -> str:
@@ -151,6 +151,43 @@ class RunLock:
         data = text.encode("utf-8")
         os.pwrite(descriptor, data, 0)
         os.ftruncate(descriptor, len(data))
+
+
+def _busy_message_for(text: str) -> str:
+    """The message ``RunLock.acquire()`` raises for a lock file already holding ``text`` (line 1: command and PID)."""
+    lines = text.splitlines()
+    parts = lines[0].split() if lines else []
+    if len(parts) == 2 and parts[1].isdigit() and parts[0] == SERVER_HOLDER_NAME:
+        return f"The dtc server (PID {parts[1]}) holds the run lock while it is up; stop it to run a job by hand."
+    holder = f" ({parts[0]}, PID {parts[1]})" if len(parts) == 2 and parts[1].isdigit() else ""
+    return f"Another run is in progress{holder}. Try again when it finishes."
+
+
+def _lock_text(directory: Path) -> str | None:
+    try:
+        text = (directory / LOCK_FILE_NAME).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return text if text.strip() else None
+
+
+def lock_holder(*, directory: Path) -> str | None:
+    """The command name recorded as the lock's holder (line 1), read without taking it: None when the lock file is
+    missing or empty, and so looks free. For a read-only status display, like ``run_lock_is_free``."""
+    text = _lock_text(directory)
+    if text is None:
+        return None
+    parts = text.splitlines()[0].split()
+    return parts[0] if parts else None
+
+
+def lock_holder_message(*, directory: Path) -> str | None:
+    """The busy message ``RunLock.acquire()`` would raise if the lock were held right now, read without taking it:
+    None when the lock file is missing or empty, and so looks free. For a read-only status display, like
+    ``run_lock_is_free``: the real state can change before or after this read, so this is never a substitute for
+    actually taking the lock."""
+    text = _lock_text(directory)
+    return _busy_message_for(text) if text is not None else None
 
 
 def run_lock_is_free(*, directory: Path) -> bool:

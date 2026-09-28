@@ -27,7 +27,7 @@ from draw_things_control.jobs import launcher as launcher_module
 from draw_things_control.jobs import records
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
-from draw_things_control.jobs.executor import JobOutcome
+from draw_things_control.jobs.executor import JobOutcome, ResumePoint
 from draw_things_control.jobs.media.info import MediaInfo
 from draw_things_control.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
@@ -900,3 +900,36 @@ class JobExecutorTests(JobTestCase):
         self.assertEqual(len(refusals), 1)
         # The refused call left the running job's state alone, and the service is free again afterwards.
         self.assertEqual(self.run_job(self.job()).exit_code, 0)
+
+    # Resume: starting a chain above run 1, at the resolved resume point.
+
+    def resume_job(self, resume: ResumePoint, **changes: object) -> JobOutcome:
+        job = self.job(run_count=5, **changes)
+        return run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, resume=resume)
+
+    def test_a_resume_starts_at_the_given_run_with_its_input_and_seed(self) -> None:
+        last_frame = self.output_directory / "sunset-walk-1-last-frame.png"
+        resume = ResumePoint(first_run=3, input=last_frame, seed=4242, resumes_execution="E0007")
+        outcome = self.resume_job(resume)
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, outcome.total_runs), (0, 3, 5))
+        self.assertEqual(len(self.calls), 3)
+        first_arguments = self.calls[0][0]
+        self.assertEqual((image_of(first_arguments), first_arguments.seed), (last_frame, 4242))
+        # Run 3 of the default job_data schedule (walk: 1, 3, 5; wave: 2, 4) is "walk".
+        self.assertEqual([arguments.prompt for arguments, _timeout, _grace in self.calls], ["walk", "wave", "walk"])
+
+    def test_a_resume_records_its_first_run_and_the_execution_it_resumes(self) -> None:
+        resume = ResumePoint(first_run=4, input=self.output_directory / "last.png", seed=99, resumes_execution="E0003")
+        outcome = self.resume_job(resume)
+        manifest = self.manifest(outcome)
+        self.assertEqual((manifest["first_run"], manifest["resumes_execution"], manifest["seed"], manifest["seed_source"]), (4, "E0003", 99, "resume"))
+        # The manifest's own runs start at position 0 for the resumed chain's first run, run 4.
+        self.assertEqual([run["pair"] for run in manifest["runs"]], ["wave", "walk"])
+
+    def test_a_resume_never_creates_run_1s_resized_copy(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        job = load_job(self.write_job(job_data(run_count=5, input="photo.jpg", desired_input_width=850)), self.global_config, self.params)
+        resume = ResumePoint(first_run=2, input=self.output_directory / "last.png", seed=1, resumes_execution="E0001")
+        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, resume=resume)
+        self.assertEqual(outcome.completed_runs, 4)
+        self.assertFalse(any("resized" in str(arguments.image) for arguments, _t, _g in self.calls))

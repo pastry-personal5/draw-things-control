@@ -60,6 +60,10 @@ class JobStarted:
     input_resize: dict[str, Any] | None = None
     # The execution's ID (E0012), which the front end reserved in the state store before the job started.
     execution_id: str | None = None
+    # The first run's number: above 1 only for a resume, which starts here instead of at 1.
+    first_run: int = 1
+    # The execution (E0012) this one resumes, when it is a resume.
+    resumes_execution: str | None = None
 
 
 @dataclass(frozen=True)

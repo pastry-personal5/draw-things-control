@@ -72,6 +72,12 @@ class JobManifest:
     finished_at: str | None = None
     status: JobStatus = JobStatus.RUNNING
     runs: list[RunRecord] = field(default_factory=list)
+    # The first run's number: above 1 only for a resume, and the execution (E0012) it resumes, when it is one.
+    first_run: int = 1
+    resumes_execution: str | None = None
+    # The whole chain's run count, so import-history can tell "the whole job" from "this manifest's own runs" for a
+    # resumed manifest (whose runs list holds only its own, from first_run on); 0 in a manifest written before this.
+    total_runs: int = 0
 
 
 def write_manifest(path: Path, manifest: JobManifest) -> None:
@@ -93,9 +99,15 @@ def _format(record: Record) -> str:
     return "{time:YYYY-MM-DD HH:mm:ss.SSS} " + stream + "{message}\n{exception}"
 
 
+def _is_job_message(record: Record) -> bool:
+    """Whether ``record`` was logged from inside a job's own run (``JobRecords.open``'s ``contextualize`` block), never
+    an unrelated line from the same process, such as the server's own API requests."""
+    return bool(record["extra"].get("dtc_job"))
+
+
 def add_job_log(path: Path) -> int:
-    """Start copying every log message to ``path``; returns the sink id."""
-    return logger.add(path, format=_format, level="INFO", colorize=False, buffering=1, encoding="utf-8")
+    """Start copying this job's own log messages (child output included) to ``path``; returns the sink id."""
+    return logger.add(path, format=_format, level="INFO", colorize=False, buffering=1, encoding="utf-8", filter=_is_job_message)
 
 
 def remove_job_log(sink_id: int) -> None:
@@ -121,9 +133,31 @@ class JobRecords:
         if self.manifest_path is not None:
             write_manifest(self.manifest_path, self.manifest)
 
+    @staticmethod
+    def _manifest(job: JobDefinition, *, seed: int, seed_source: str, execution_id: str | None, clock: Clock, log_path: Path | None, first_run: int, resumes_execution: str | None) -> JobManifest:
+        return JobManifest(
+            job_file=str(job.path),
+            name=job.name,
+            mode=str(job.mode),
+            config_file=job.config_file,
+            config_override=job.config_override.as_dict(),
+            seed=seed,
+            seed_source=seed_source,
+            cooldown_seconds=job.cooldown.fixed_seconds,
+            cooldown_source=job.cooldown_source,
+            cooldown=job.cooldown.as_dict(),
+            started_at=local_timestamp(clock()),
+            log_file=log_path.name if log_path is not None else None,
+            execution_id=execution_id,
+            input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
+            first_run=first_run,
+            resumes_execution=resumes_execution,
+            total_runs=job.run_count,
+        )
+
     @classmethod
     @contextmanager
-    def open(cls, job: JobDefinition, *, write_records: bool, seed: int, seed_source: str, execution_id: str | None, clock: Clock, random_number: RandomNumber) -> Iterator[JobRecords]:
+    def open(cls, job: JobDefinition, *, write_records: bool, seed: int, seed_source: str, execution_id: str | None, clock: Clock, random_number: RandomNumber, first_run: int = 1, resumes_execution: str | None = None) -> Iterator[JobRecords]:
         job.output_directory.mkdir(parents=True, exist_ok=True)
         manifest_path: Path | None = None
         log_path: Path | None = None
@@ -135,24 +169,12 @@ class JobRecords:
                 manifest_path = job.output_directory / f"{stem}.json"
                 log_path = job.output_directory / f"{stem}.log"
                 log_sink = add_job_log(log_path)
-            manifest = JobManifest(
-                job_file=str(job.path),
-                name=job.name,
-                mode=str(job.mode),
-                config_file=job.config_file,
-                config_override=job.config_override.as_dict(),
-                seed=seed,
-                seed_source=seed_source,
-                cooldown_seconds=job.cooldown.fixed_seconds,
-                cooldown_source=job.cooldown_source,
-                cooldown=job.cooldown.as_dict(),
-                started_at=local_timestamp(clock()),
-                log_file=log_path.name if log_path is not None else None,
-                execution_id=execution_id,
-                input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
-            )
+            manifest = cls._manifest(job, seed=seed, seed_source=seed_source, execution_id=execution_id, clock=clock, log_path=log_path, first_run=first_run, resumes_execution=resumes_execution)
             records = cls(manifest, manifest_path, log_path)
-            yield records
+            # Tags every message logged while the job runs, so its own log file (add_job_log's filter) never
+            # picks up an unrelated line from the same process, such as a server's API requests.
+            with logger.contextualize(dtc_job=True):
+                yield records
         except BaseException:
             if manifest is not None and manifest.status == JobStatus.RUNNING:
                 manifest.status = JobStatus.FAILED

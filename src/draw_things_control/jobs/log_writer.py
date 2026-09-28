@@ -19,6 +19,8 @@ class JobLogWriter:
         self._output_directory = Path()
         self._records = ""
         self._next_run = 0
+        # Above 1 only for a resume: this manifest's own completed_runs then understates the chain's true progress.
+        self._first_run = 1
 
     def __call__(self, event: JobEvent) -> None:
         if isinstance(event, JobStarted):
@@ -36,6 +38,7 @@ class JobLogWriter:
 
     def _job_started(self, event: JobStarted) -> None:
         self._name, self._total, self._output_directory = event.job_name, event.total_runs, Path(event.output_directory)
+        self._first_run = event.first_run
         self._records = f"; manifest {event.manifest}; log {event.log}" if event.manifest is not None else ""
         execution = f", execution {event.execution_id}" if event.execution_id is not None else ""
         logger.info("Job {} ({}{}): {} runs, seed {} (from {}), {}{}", event.job_name, event.mode, execution, event.total_runs, event.seed, event.seed_source, cooldown_summary(event.cooldown, event.cooldown_source, "from "), self._records)
@@ -67,4 +70,7 @@ class JobLogWriter:
     def _job_finished(self, event: JobFinished) -> None:
         # A job that raised has no exit code: its exception is logged where it was raised.
         if event.exit_code is not None:
-            logger.info("Job {} {}: {}/{} runs completed{}", self._name, event.status, event.completed_runs, event.total_runs, self._records)
+            # The runs before first_run already succeeded, in whichever execution ran them: without adding them
+            # back, a completed resumed chain would log as if it had stopped short.
+            completed = self._first_run - 1 + event.completed_runs
+            logger.info("Job {} {}: {}/{} runs completed{}", self._name, event.status, completed, event.total_runs, self._records)

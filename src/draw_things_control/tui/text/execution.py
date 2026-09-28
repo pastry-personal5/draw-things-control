@@ -13,6 +13,7 @@ from draw_things_control.core.arguments import CommandSettings, command_settings
 from draw_things_control.core.cooldown import parse_cooldown
 from draw_things_control.jobs.text import policy_text, seconds_text
 from draw_things_control.state.executions import ExecutionRow, RunRow
+from draw_things_control.state.ids import execution_id_text
 from draw_things_control.tui.text.arguments import PreviousRun, argument_rows, arguments_text, execution_notes
 from draw_things_control.tui.text.common import STATUS_STYLE, VIDEO_MODES
 from draw_things_control.tui.text.prompts import prompt_block
@@ -61,6 +62,8 @@ def _execution_fields(execution: ExecutionRow) -> tuple[tuple[str, str | None], 
         ("shift", number_text(settings.shift)),
         ("seed", f"{execution.seed} ({execution.seed_source or '-'})" if execution.seed is not None else "-"),
         ("cooldown", stored_cooldown_text(execution)),
+        ("resumes", execution_id_text(execution.resumes) if execution.resumes is not None else None),
+        ("first run", str(execution.first_run) if execution.first_run > 1 else None),
         ("started", execution.started_at),
         ("finished", execution.finished_at or "-"),
         ("manifest", execution.manifest_path or "-"),
@@ -192,6 +195,8 @@ class ExecutionDetail:
     settings: CommandSettings
     size: str
     runs: tuple[DetailRun, ...]
+    # The execution it resumes (E0012), when it is a resume; None otherwise.
+    resumes: str | None = None
 
 
 def execution_detail(execution: ExecutionRow) -> ExecutionDetail:
@@ -202,7 +207,8 @@ def execution_detail(execution: ExecutionRow) -> ExecutionDetail:
     for run in runs:
         path = execution.run_file(run.output)
         listed.append(DetailRun(int(run.number), run.output_frames if video else None, run_steps(run), run.seconds, run.output or None, path is not None and path.exists()))
-    return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed))
+    resumes = execution_id_text(execution.resumes) if execution.resumes is not None else None
+    return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed), resumes)
 
 
 def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | None) -> tuple[Text, list[int]]:
@@ -218,6 +224,8 @@ def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | N
         text.append(cut_middle(value, width - len(label) - 1) if value is not None else refiner_text(settings, width - len(label) - 1))
         text.append("\n")
     text.append(cut_middle(f"{detail.size}  CFG {number_text(settings.cfg)}  shift {number_text(settings.shift)}", width) + "\n")
+    if detail.resumes is not None:
+        text.append(cut_middle(f"resumes {detail.resumes}", width) + "\n", style="dim")
     if not detail.runs:
         text.append("No run finished successfully", style="dim")
         return text, []

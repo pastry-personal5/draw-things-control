@@ -17,6 +17,9 @@ class PaneHistory:
     def lock_is_free(self) -> bool:
         return self._reader.lock_is_free()
 
+    def lock_message(self) -> str | None:
+        return self._reader.lock_message()
+
     def page(self, history_filter: HistoryFilter, offset: int, limit: int = PAGE_SIZE) -> HistoryPage:
         try:
             return self._reader.page(history_filter, offset, limit)

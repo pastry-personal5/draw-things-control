@@ -386,9 +386,10 @@ class IdTests(StoreCase):
 
 
 class MilestoneTenDatabaseTests(StoreCase):
-    """A database written before this refactor (schema 3, settings with null keys) opens, reads, and records as it is."""
+    """A database written before this refactor (schema 3, settings with null keys) opens, reads, and records as it is,
+    migrating forward to the current schema."""
 
-    def test_it_opens_reads_and_records_with_no_migration(self) -> None:
+    def test_it_opens_reads_and_records_migrating_forward(self) -> None:
         path = self.path.with_name("m10.db")
         connection = sqlite3.connect(path)
         for schema in (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3):
@@ -405,6 +406,6 @@ class MilestoneTenDatabaseTests(StoreCase):
             store = self.open(mode=mode, path=path, retention_days=0)
             [row] = store.executions.page()
             self.assertEqual((row.label, row.settings.output_directory, row.settings.cooldown, row.settings.input_resize), ("E0007", "/out", {"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 3600.0}, None))
-            self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         recorded = store.executions.start(NewExecution(job_name="next", job_file="next.yaml", mode="i2v", started_at=iso(0)))
         self.assertEqual(store.executions.number_of(recorded), 8)

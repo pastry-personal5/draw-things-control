@@ -5,6 +5,81 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-27
 
+- **Change** [M01]: Milestone 01 is implemented and done: schema 4 (the `queue` table, and `first_run`/`resumes` on
+  `executions`), `state/queue.py`'s `QueueRepository`, the worker, resume, restart recovery, and the host in
+  `services/`, `JobExecutor`'s resume support, the job log's scoping, and the busy message naming the server. No
+  front end reaches it yet (Milestone 02's API is what will call `submit_job`, `resume_entry`, and `cancel_entry`);
+  tests drive them directly, with a fake runner and real (short) waits for the between-jobs cooldown.
+- **Change** [M01]: A review against the acceptance criteria found and fixed three worker bugs before calling the
+  milestone done: `stop()` did not keep a cancel pending for a job still between the claim and `begin()` (it stopped
+  a job already running, but let one caught in that narrow window run to completion); the between-jobs wait
+  re-parsed the entry's snapshot, which re-checks the job's own input file and could raise out of `claim_and_run_one`
+  (never re-parses now: `_run_claimed` returns the already-parsed job for the wait to reuse); and `claim_and_run_one`
+  could claim an entry after a shutdown was already requested and run it anyway (it now requeues that entry
+  instead, untouched, matching the no-linked-execution recovery case). Test coverage was also completed: cancel
+  between the claim and the start, cancel during the cooldown between runs, the between-jobs wait's exact seconds
+  (an injectable `wait_between_jobs`, as the executor's own cooldown is faked), a resume run through the real worker
+  with real recorded rows (not hand-built ones), an accepted resume surviving its ancestor being pruned, and the
+  orphaned-child refusal through `QueueHost` (a `child_check` parameter, forwarded to `RunLock`, as `run-job`'s own
+  tests already use).
+- **Design decision** [M01]: An entry linked to an execution that is later pruned keeps its stored `execution_number`
+  pointing at that now-missing row, rather than being cleared. This supersedes the milestone document's "an entry
+  whose execution was pruned keeps no link to it": a cleared link cannot be told apart from an entry that never
+  started, which is exactly the distinction `resume_entry` needs ("no succeeded run" versus "was pruned"); a plain
+  number, unlike a foreign key, safely points at nothing once its row is gone (see the `queue` table's own comment in
+  `state/schema.py`).
+- **Design decision** [M01]: `ResumeRefused` and `CancelRefused` are `InputError`s, not `NotFoundError`s: the entry
+  named always exists (a missing one is a separate, plain `NotFoundError`), so refusing to resume or cancel it is
+  invalid input, not a 404, for whichever status-code table Milestone 02 builds.
+- **Design decision** [M01]: `submit_job` parses the job twice: once from disk to learn the base configuration's name
+  and validate the input, then again from the exact text about to be stored (`base_config_text`), so a base
+  configuration edited between the two reads cannot be captured half-written; what is stored is validated in the
+  form it is stored, not merely read twice.
+- **Design decision** [M01]: A resumed execution's own `JobFinished.total_runs` and `.completed_runs` (and so
+  `ExecutionRow.total_runs` and the `succeeded` count SQL already gives) stay what they were before this milestone:
+  `total_runs` is the whole chain's `run_count` (unchanged by where it starts), and `completed_runs`/`succeeded` count
+  only this leg's own runs, from `first_run` on, since that manifest holds only those. Read alone, this understates
+  the chain's true progress once `first_run > 1` (a completed 3-run chain resumed at run 2 would show "2/3", as if
+  unfinished), so every display of it adds back the runs before `first_run` (all of them succeeded, by construction,
+  in whichever execution ran them): the job's own log line (`JobLogWriter`) and the TUI's Execution History
+  (`tui/text/history.py`) both show `first_run - 1 + completed_runs` of `total_runs`, and the Execution widget's
+  detail names the execution it resumes so the rest of the chain can be found. `import-history` reads a manifest's
+  own `total_runs` (a new manifest field, since a resumed manifest's `runs` list holds only its own) rather than
+  `len(runs)`, so a re-imported resumed execution's `total_runs` is the whole chain's too, not just the leg the
+  manifest recorded; a manifest from before this field falls back to `len(runs)`, correct for the plain (never
+  resumed) case every such manifest is. `dtc queue`/the HTTP API (Milestone 02+) must add the same when they report a
+  resumed entry's progress.
+- **Design decision** [M01]: The TUI shows a resumed execution's `resumes` and `first_run` in its detail (Execution
+  History), and its Status widget's "another process" line becomes the server's own busy message, PID included, only
+  when the server itself holds the lock; an ordinary `run-job` or TUI holder elsewhere keeps the generic wording,
+  unchanged. A `lock_holder`/`lock_holder_message` pair in `core/run_lock.py` reads the lock file's holder without
+  taking it, for this and any future read-only display.
+- **Design decision** [M01]: A resumed queue entry stores the execution number its resume point's last succeeded run
+  came from (`resumes_execution`), resolved once at `resume()`, separately from `resumes` (the queue entry it
+  continues, for walking the chain). The two differ once a resume-of-a-resume's immediate ancestor never itself
+  succeeded: the execution "it resumes" (shown on `JobStarted`, the manifest, and the resumed execution's own
+  `resumes` column) is the one further back that actually has the succeeded run, not the immediate ancestor. The
+  first plan named only one link.
+- **Design decision** [M01]: `state/executions.py` was split: the row dataclasses (`ExecutionRow`, `RunRow`,
+  `NewExecution`, `NewRun`, `ExecutionSettings`) moved to `state/execution_rows.py`, re-exported from
+  `state/executions.py` so nothing that already imports them changed; adding `first_run` and `resumes` would
+  otherwise have pushed the module over the 400-line limit.
+- **Design decision** [M01]: The job log's scoping (a Loguru sink that copied every message) uses
+  `logger.contextualize(dtc_job=True)` around the executing job (`JobRecords.open`), with the sink filtering on that
+  key. This works without a per-job token because everything a job logs happens on the one thread that runs it
+  (contextvars are not inherited by the reader threads the process runner spawns, but those never call the logger
+  themselves, only queue raw lines); a server's own lines, logged outside that block, never carry the key.
+- **Design decision** [M01]: The wait between queued jobs, and the worker's idle wait for the next submission, poll a
+  `threading.Event` in small slices (20 ms) instead of the wake-pipe scheme `CancelToken.wait` uses for the wait
+  between runs, so the between-jobs wait can also end early when the queue empties (a cancel of the entry it was
+  waiting for), which a fixed-duration wait cannot observe on its own without re-checking.
+- **Owner decision** [M01]: From an interview on the milestone document's review below. A `running` entry left with no linked execution at all (the crash landed before `JobStarted`) is re-queued (recommended); marking it `interrupted` or `failed` instead were offered. A resumed entry lands at the back of the FIFO queue, as any new submission does (recommended); jumping it ahead of other queued work was offered. A `cancel(id)` that races the job's own natural end leaves the entry reading the real outcome, `succeeded` or `failed` (recommended); always forcing it to `cancelled` regardless of timing was offered.
+- **Change** [M01]: The milestone document was reviewed against the code and fixed; still no code. The decisions below record each fix; no earlier decision changed.
+- **Design decision** [M01]: Restart recovery gains two cases the first plan missed. A `running` entry whose execution already reads `interrupted` (a graceful shutdown closed the execution before the process died) takes that status, the same as an execution already `succeeded` or `failed`. A `running` entry with no linked execution at all (the crash landed between the worker's claim and `JobStarted`, before the recorder's row existed) is put back to `queued`: nothing of it ran, matching the 2026-09-25 owner decision that a job "queued and never started" is re-queued automatically. The worker links the entry to its execution as early as `reserve_execution_id` fires, not only on `JobStarted`, to keep this window short.
+- **Design decision** [M01]: Restart recovery also depends on the existing run-lock orphan-child guard: a server that starts while an earlier server's `draw-things-cli` is still alive refuses to start, naming the PID, before any of the recovery above runs. The first plan never named this dependency or tested it.
+- **Design decision** [M01]: Cancel on a `running` entry does not unconditionally read `cancelled`. There is no transitional state while it stops; the entry reads whatever `JobFinished` actually reports. A cancel that lands after the job's last run has already finished changes nothing (`JobExecutor.cancel()`'s own contract), so that race leaves the entry `succeeded` or `failed`, never `cancelled`. A second `cancel(id)` on an entry already stopping is a no-op, not an error.
+- **Design decision** [M01]: A resumed execution's manifest holds only the runs it made, starting at position 0 for its own first run, so list position is no longer the run number once a manifest can start above run 1. `import-history` must number a resumed manifest's runs from its `first_run`, or reimporting one after the database is lost (the case it exists for) misnumbers every run of it. The first plan did not say `import-history` needed a change.
+- **Design decision** [M01]: `JobRunSession.run` gains the resume point alongside `JobRunOptions`, since it builds `JobRunOptions` itself and is the worker's only entry point into a run. The first plan named only `JobRunOptions`.
 - **Owner decision** [M01]: From an interview on resume, after the research on what `draw-things-cli` can resume ([draw-things-cli-resume.md](../research/draw-things-cli-resume.md)).
   - Stopping the server stops the running run at once, as planned; a resume reruns it from its start. Letting the first Ctrl-C finish the run (recommended), continuing an entry stopped that way on restart, and finishing the whole job were offered.
   - Cancelling a running entry stops it at once, as planned. An after-run cancel beside it (recommended), and after-run as the default, were offered.
@@ -86,6 +161,15 @@ Owner decisions, design decisions, and notable changes for
 - **Change**: Phase 2 is done and archived under `docs/archive/phase-2/`; links from these documents now point there. The plans were checked against the code: `load_job_text` and the `lock` parameter of `JobRunSession.run` already exist, so Milestone 01 no longer lists them as new. `start_run` and the input override in `JobRunOptions`, the `queue` table, and the `fastapi`, `uvicorn`, `httpx`, and `mcp` dependencies are still to build. No decision changed.
 
 - **Change**: [Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) renamed and moved the code these plans name: `JobService` is `JobExecutor` (with `JobRunOptions`), `jobs/job_definition.py` is `jobs/parsing.py`, and `install_signals` is `handle_signals`. The queue is a repository in `state/` with a worker on `JobRunSession`, not `jobs/job_queue.py`. The milestone documents were updated to match; no decision changed.
+
+- **Owner decision** [M01, M03]: Whether the TUI could start a run directly while the server is up was reconsidered and rejected: the server keeps the run lock for its whole lifetime, unchanged. The TUI gets a run while the server is up by submitting to the queue instead, as `dtc queue` already did.
+- **Owner decision** [M03]: The TUI's Queue widget stops being read-only. `/queue add [JOB]`, `/queue cancel Q0007`, and `/queue resume Q0007` (and a `c` shortcut for cancel on a selected row) call the API exactly as `dtc queue` does: the same rules and limits, the same error shown inline naming `dtc serve` when it cannot be reached, and caller `tui` in the audit log. This supersedes the design decision above that it "reads the queue from the state store... It never writes" and the "offers no action" acceptance criterion of the same date; reading still falls back to the state store, read-only, while the server is down.
+- **Design decision** [M02, M03, M08]: A gRPC monitoring service (`grpc.aio.server()` beside uvicorn in `dtc serve`, its own loopback port and token interceptor) replaces `GET /events` and `GET /queue/{id}?wait=` (the design decision and the Event stream section above) as the one way to watch for change, for every client: the TUI's Queue widget, `dtc mcp`'s `get_queue_entry(wait_seconds=...)`, and any future one. SSE was rejected even though it needed no new dependency and already had a full design in this file (per-run event IDs, `Last-Event-ID` resume, a bounded backlog, `reset` on a gap); WebSocket was rejected too, needing a new client-side dependency and its own hand-built version of that same resumption scheme, for no gain over SSE's. gRPC was chosen instead, for one typed, code-generated contract every client shares, at the cost of a new dependency (`grpcio`, dev-only `grpcio-tools`), a second port, and a second auth mechanism to build and test.
+- **Owner decision** [M01, M03]: Tightened further: the TUI never invokes `draw-things-cli` directly, full stop, not only while a server happens to be up. This supersedes the entry above conditioned on "while the server is up": submitting to the queue is now the TUI's only way to run a job, and it requires the server to be reachable, whether or not one happens to be running right now.
+- **Owner decision** [M03]: `run-job` is retired for the same reason: `dtc serve`'s worker becomes the only thing that ever invokes `draw-things-cli`, across every front end. `dtc queue add` gains `--wait`, submitting then watching the entry over gRPC to completion and exiting with its outcome code, as `run-job`'s replacement; anything that scripted `run-job` must move to it, and now needs a running `dtc serve` that `run-job` never did. Milestone 02's "`run-job` and the TUI... are not limited" no longer holds once this lands: nothing runs a job unlimited any more, since nothing runs one outside the queue.
+- **Design decision** [M03]: `dtc queue` gains a gRPC client after all, for `add --wait` alone; `list`, `show`, `cancel`, and `resume` stay HTTP-only. This supersedes "`dtc queue` gains no gRPC client: `dtc queue watch` stays not chosen" above: `add --wait` is not the rejected `dtc queue watch` (it follows only the one entry just submitted, in the foreground, and exits when that entry finishes, rather than following the whole queue indefinitely).
+- **Owner decision** [M01]: Whether the run lock's mechanism (a cross-process `flock`, with the holder and its child's PID recorded) should be simplified, now that only the server's worker ever takes it, was raised and rejected: kept as-is. It still stops two `dtc serve` instances on one project, and the child-PID check still backs the server's own crash recovery, an orphaned `draw-things-cli` after a killed server.
+- **Design decision** [M02, M03, M08]: The gRPC `.proto`'s generated stubs are not committed. `make proto` (`grpcio-tools`, dev-only) regenerates them into a `.gitignore`d directory, and `make check` depends on that step. Committing them, so `make check` never needs `grpcio-tools` installed, was considered and rejected: it risks the checked-in code drifting from a `.proto` edited without a regeneration, which not committing them cannot do.
 
 ## 2026-09-25
 

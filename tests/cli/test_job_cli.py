@@ -1,5 +1,6 @@
 """Tests for the run-job and validate-job commands."""
 
+import os
 import shlex
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from draw_things_control.cli.app import CliServices, app
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.run_lock import RunLock
 from draw_things_control.services.toolkit import create_job_runner, create_runner
 from tests.fixtures import FakeToolkit, JobTestCase, job_data
 
@@ -20,6 +22,9 @@ class JobCliTests(JobTestCase):
         self.global_path.write_text(f"version: 1\ninput_directory: {self.input_directory}\noutput_directory: {self.output_directory}\n", encoding="utf-8")
         self.job_path = self.write_job(job_data())
         self.services = CliServices(self.paths, FakeToolkit())
+        self.messages: list[str] = []
+        sink = logger.add(lambda message: self.messages.append(str(message).strip()), format="{message}", level="ERROR")
+        self.addCleanup(logger.remove, sink)
 
     def invoke(self, arguments: list[str]):
         return self.runner.invoke(app, arguments, obj=self.services)
@@ -41,6 +46,12 @@ class JobCliTests(JobTestCase):
         for command in (["validate-job"], ["run-job", "--dry-run"]):
             with self.subTest(command[0]):
                 self.assertEqual(self.invoke([*command, str(job), "--global-config", str(self.global_path)]).exit_code, 2)
+
+    def test_run_job_exits_75_naming_the_server_while_it_holds_the_lock(self) -> None:
+        with RunLock("serve", directory=self.paths.state):
+            result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path)])
+        self.assertEqual(result.exit_code, 75)
+        self.assertEqual(self.messages[0], f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.")
 
     def test_dry_run_prints_every_command_and_writes_nothing(self) -> None:
         executable_stub = self.root / "draw-things-cli"

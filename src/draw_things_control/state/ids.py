@@ -6,6 +6,7 @@ import re
 
 JOB_LETTER = "J"
 EXECUTION_LETTER = "E"
+QUEUE_LETTER = "Q"
 # At least this many digits are shown; a larger number simply shows more (J10000).
 DIGITS = 4
 # The largest number SQLite holds; a larger one cannot name anything.
@@ -26,6 +27,10 @@ def execution_id_text(number: int) -> str:
 
 def job_id_text(number: int) -> str:
     return format_id(JOB_LETTER, number)
+
+
+def queue_id_text(number: int) -> str:
+    return format_id(QUEUE_LETTER, number)
 
 
 def parse_typed_id(text: str, letter: str) -> int | None:

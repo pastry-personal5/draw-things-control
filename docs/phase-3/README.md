@@ -1,6 +1,6 @@
 # Phase 3: API Server and MCP Server for AI
 
-**Status:** planned
+**Status:** in-progress
 
 ## Goal
 
@@ -20,18 +20,27 @@ typed tools on top of it.
   be resumed, since `draw-things-cli` keeps nothing of a run it did not
   finish ([research](../research/draw-things-cli-resume.md)).
 - An HTTP API (`dtc serve`), on loopback unless the owner passes
-  `--allow-remote-bind`, with bearer-token auth, job control, history, and a
-  live event stream
+  `--allow-remote-bind`, with bearer-token auth, job control, and history
+- A gRPC monitoring service, alongside the HTTP API in the same `dtc serve`
+  process, streaming job and queue events and answering "watch until this
+  changes" requests for every client (the TUI, MCP agents)
 - Rules and limits for every job the API runs or writes (a run timeout, the
   input and output directories, runs, worst-case time, file size), and an
   audit log, built with the first endpoints that accept input
 - Job file management for agents: validate a draft, and create, edit, and
   delete jobs in `data/jobs/` behind an explicit write flag, with backups
   and a trash folder
-- An MCP server (`dtc mcp`) that is a thin client of the HTTP API
+- An MCP server (`dtc mcp`) that is a thin client of the HTTP API and the
+  gRPC monitoring service
 - A security review and test suite over the whole agent-facing surface
-- The queue for people: `dtc queue` commands through the API, and a
-  read-only Queue widget in the TUI
+- The queue for people: `dtc queue` commands through the API (`add` gains
+  `--wait`, replacing `run-job`), and a Queue widget in the TUI that
+  submits, cancels, and resumes through the API too, watching entries live
+  over gRPC
+- Retiring direct execution everywhere but the server: `run-job` is removed,
+  and the TUI's `/apply` submits to the queue instead of running the job
+  itself. `dtc serve`'s worker becomes the only thing that ever invokes
+  `draw-things-cli`
 
 ## Non-goals
 
@@ -47,9 +56,12 @@ typed tools on top of it.
   file can express is allowed.
 - A background daemon manager (`serve start/stop`, launchd files). The server
   runs in the foreground.
-- Changing the queue from the TUI, and resuming an execution that `run-job`
-  or the TUI started. While the server is up, the CLI and the TUI cannot
-  start runs; `dtc queue` submits to the server instead.
+- Running a job directly from the CLI or the TUI, at all, whether or not a
+  server happens to be up (owner decision): `dtc serve`'s worker is the only
+  thing that ever invokes `draw-things-cli`. `run-job` is retired; `dtc
+  queue add [--wait]` and the TUI's `/apply` submit to the queue and
+  require the server to be running. Resuming an execution recorded before
+  this change, or any execution with no snapshot of its own.
 - Resuming within a run, letting a run finish before a stop or a cancel
   takes effect, retrying a failed run on its own, and pausing the queue
   (owner decisions). A stop or a cancel loses the run in progress; stopping
@@ -61,7 +73,7 @@ typed tools on top of it.
 
 | # | Milestone | Status |
 |---|-----------|--------|
-| 01 | [Queue and run manager](milestone-01-queue-run-manager.md) | planned |
+| 01 | [Queue and run manager](milestone-01-queue-run-manager.md) | done |
 | 02 | [HTTP API: read and run](milestone-02-http-api.md) | planned |
 | 03 | [Queue for people](milestone-03-queue-for-people.md) | planned |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
@@ -100,6 +112,13 @@ to that job.
 - `fastapi` and `uvicorn` (the HTTP API)
 - `httpx` (the clients in `dtc mcp` and `dtc queue`, and API tests)
 - `mcp`, the official Python MCP SDK (the MCP server)
+- `grpcio` (the monitoring service and its clients in the TUI, `dtc mcp`, and
+  `dtc queue add --wait`); `grpcio-tools` and `protobuf`, dev-only, to
+  generate the typed stubs from the checked-in `.proto` file. Nothing
+  generated is committed: `make check` regenerates the stubs first (a
+  `make proto` step it depends on), into a `.gitignore`d directory, so the
+  `.proto` file stays the single source of truth with no generated code to
+  drift from it
 
 All are installed with a plain `uv sync` (owner decision in the Phase 2
 changelog). Their documentation is fetched through Context7 when each
@@ -115,15 +134,22 @@ Inside `src/draw_things_control/`:
   stream reads.
 - `state/` gains a queue repository and an audit repository beside the
   others.
-- `server/` holds the FastAPI app: authentication, routes, typed responses,
-  the event stream, and the error-code-to-status table.
+- `server/` holds the FastAPI app (authentication, routes, typed responses,
+  the error-code-to-status table) and the gRPC monitoring service
+  (`grpc.aio.server()`, its own token interceptor, on its own loopback port),
+  started and stopped together by `dtc serve`.
 - `mcp_server/` holds the MCP server, which imports nothing else from the
-  package and reaches the rest over HTTP only.
+  package and reaches the rest over HTTP and gRPC only.
 - `cli/app.py` starts both (`dtc serve`, `dtc mcp`), the two new allowed
   imports between front ends beside `dtc tui`. `cli/` also holds the
-  `dtc queue` commands' own HTTP client.
-- `tui/` gains the Queue widget, which reads the queue from the state store
-  through a reader in `services/`.
+  `dtc queue` commands' own HTTP client, and a gRPC client `add --wait`
+  uses to watch the entry it just submitted to completion. `run-job` and
+  its module are removed.
+- `tui/` gains the Queue widget: an HTTP client for submit, cancel, and
+  resume, and a gRPC client for live updates while the server is up; while
+  it is down, the widget falls back to reading the queue from the state
+  store through a reader in `services/`, read-only, as before. `/apply` no
+  longer runs a job itself; it submits to the queue.
 - `ProjectPaths` names the token file, `.trash/`, and `.backups/`.
 
 The parts a server shares with the CLI and the TUI (`Toolkit`,
@@ -141,9 +167,13 @@ Decisions and notable changes are recorded in
 - An agent connected over MCP can list jobs and inputs, validate a draft,
   create the job, queue it, watch its status, cancel it, resume it, and read
   its output paths.
-- A person can queue, list, cancel, and resume jobs with `dtc queue`, and
-  see the queue in the TUI.
-- The server holds the run lock while it is up, so nothing else starts a run.
+- A person can queue, list, cancel, and resume jobs with `dtc queue` (`add
+  --wait` blocks until the entry finishes and exits with its outcome code,
+  replacing `run-job`) or the TUI's Queue widget, and watch either update
+  live while the server runs them.
+- `dtc serve`'s worker is the only thing that ever starts `draw-things-cli`;
+  `run-job` is retired, and the TUI never runs a job itself. Both require
+  the server to be up.
 - The server restarts without losing the queue: queued jobs run,
   interrupted jobs are marked, and an explicit resume continues one from its
   last succeeded run with the original seed, never from a run's leftover
@@ -156,10 +186,10 @@ Decisions and notable changes are recorded in
 - Write endpoints and tools do not exist unless the server was started with
   the write flag.
 - Delete and overwrite are always recoverable from `.trash/` and `.backups/`.
-- Only one `draw-things-cli` runs at a time across the CLI, the TUI, and the
-  server.
+- Only one `draw-things-cli` runs at a time, machine-wide: only the
+  server's worker ever starts one.
 - No credential value (the API token, `--api-key`, `--remote-shared-secret`)
-  appears in any response, event, log, or database row.
+  appears in any response, event, gRPC stream, log, or database row.
 - The user guide documents `serve`, `mcp`, `dtc queue`, the Queue widget,
   the write flag, and the limits.
 - `make check` passes.

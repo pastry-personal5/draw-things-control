@@ -37,20 +37,26 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
     return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> JobDefinition:
-    """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read."""
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None) -> JobDefinition:
+    """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
+
+    With ``base_config_text``, the base configuration is parsed from this text instead of read from
+    ``params_directory``: a queued job's snapshot, so editing or deleting the base configuration after
+    submission changes nothing about what runs.
+    """
     data = parse_yaml_mapping(text, path, "Job file", show_source=True)
-    return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
+    return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text).parse(data, text)
 
 
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
         self._decode_input = decode_input
+        self._base_config_text = base_config_text
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
         self._check_top_level(data)
@@ -154,7 +160,10 @@ class JobParser:
 
     def _base_config(self, config_file: str) -> dict[str, Any]:
         try:
-            base_config = draw_things_config.load_base_config(config_file, self._params_directory)
+            if self._base_config_text is not None:
+                base_config = parse_yaml_mapping(self._base_config_text, self._params_directory / config_file, "Configuration", require_json=True)
+            else:
+                base_config = draw_things_config.load_base_config(config_file, self._params_directory)
         except ValueError as error:
             raise self._wrap(error) from error
         base_seed = base_config.get("seed")

@@ -14,7 +14,7 @@ from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.run_lock import RunLock, run_lock_is_free
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobEvent, JobStarted
-from draw_things_control.jobs.executor import JobOutcome
+from draw_things_control.jobs.executor import JobOutcome, ResumePoint
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.state.database import StateError
@@ -135,3 +135,18 @@ class JobRunSessionTests(JobTestCase):
         self.run_job(before_run=before_run, observers=(observer,))
         self.assertEqual(seen, [(self.paths.database, True, 0)])
         self.assertEqual(rows_at_start, [1])
+
+    def test_on_reserved_is_called_with_the_execution_id_before_the_job_starts(self) -> None:
+        seen: list[tuple[str, bool]] = []
+
+        def on_reserved(label: str) -> None:
+            seen.append((label, self.started == 0))
+
+        self.run_job(on_reserved=on_reserved)
+        self.assertEqual(seen, [("E0001", True)])
+
+    def test_a_resume_reaches_the_executor(self) -> None:
+        resume = ResumePoint(first_run=2, input=self.job.input, seed=123, resumes_execution="E0001")
+        self.job = load_job(self.write_job(job_data(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
+        self.run_job(resume=resume)
+        self.assertEqual(self.started, 1)

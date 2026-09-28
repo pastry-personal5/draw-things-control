@@ -1,7 +1,7 @@
 # Milestone 01: Queue and Run Manager
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Phase 2](../archive/phase-2/README.md): [Milestone 01](../archive/phase-2/milestone-01-job-events-cancel.md) (events and `cancel()`), [Milestone 02](../archive/phase-2/milestone-02-state-store-run-lock.md) (state store and run lock), and [Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) (`services/`, `JobRunSession`)
 
 ## Goal
@@ -22,7 +22,7 @@ In scope:
 
 Out of scope:
 
-- The HTTP and MCP interfaces (Milestones 02 and 04), and the `serve`
+- The HTTP and MCP interfaces (Milestones 02 and 08), and the `serve`
   command that starts the worker (Milestone 02)
 - Writing job files (Milestone 07)
 - Priorities, reordering, scheduling for a time, or parallel workers
@@ -106,13 +106,18 @@ without an execution.
   web framework and is tested without one. The server takes the run lock at
   startup and keeps it for its whole lifetime, so the CLI and the TUI refuse
   to start runs while the server is up, even when the queue is idle (owner
-  decision). To run a job by hand, stop the server, or queue it with
-  `dtc queue` ([Milestone 03](milestone-03-queue-for-people.md)). Both
-  remain usable for browsing and history.
+  decision). To run a job by hand, stop the server; both remain usable for
+  browsing and history. (Only until [Milestone
+  03](milestone-03-queue-for-people.md): once it retires `run-job` and the
+  TUI's direct run, queueing through `dtc queue` or the TUI's Queue widget
+  becomes the only way to run a job at all, server up or down, and "stop
+  the server to run a job by hand" stops being true.)
 - The busy message says the server holds the lock and how to free it, not
   that a run is in progress: `The dtc server (PID 4123) holds the run lock
   while it is up; stop it to run a job by hand.` The TUI's Status widget
-  says the same instead of `A job is running in another process`.
+  says the same instead of `A job is running in another process`. (This
+  message is itself replaced in Milestone 03, once there is no other way
+  to run a job by hand to point to.)
 - It claims the oldest `queued` entry (a state change that a concurrent
   cancel cannot interleave with) and runs it with
   `JobRunSession.run(observers=..., lock=...)`, which uses and leaves held
@@ -150,9 +155,17 @@ without an execution.
 
 - `cancel(id)` on a `queued` entry makes it `cancelled`; it never starts.
 - On the `running` entry it calls `JobExecutor.cancel()`: the current run
-  and any cooldown between runs end at once, and the entry becomes
-  `cancelled` (owner decision). The run in progress is lost; a
-  [resume](#resume) reruns it from its start.
+  and any cooldown between runs end at once. There is no transitional
+  state: the entry stays `running` until `JobFinished` arrives, and then
+  reads whatever that call actually caused (owner decision). Usually that
+  is `cancelled`, and a [resume](#resume) reruns the lost run from its
+  start; but a cancel that lands after the job's last run has already
+  finished changes nothing (`JobExecutor.cancel()`'s own contract), so a
+  race between a cancel and the job's natural end leaves the entry
+  `succeeded` or `failed`, never `cancelled`, matching the execution's own
+  final status. A second `cancel(id)` on an entry already stopping is a
+  no-op, not an error: `JobExecutor.cancel()` is idempotent while a job is
+  running.
 - Cancel on a finished entry is an error that names its state.
 
 ### Restart recovery
@@ -170,9 +183,28 @@ On startup, while holding the lock and before the worker starts:
   updated) takes that status instead: forcing it to `interrupted` would make
   a finished chain look resumable at a run number past its end (owner
   decision).
+- A `running` entry whose execution already reads `interrupted` (a graceful
+  shutdown closed the execution, as ["Shutdown"](#shutdown) describes, but
+  the process died before the entry's own row caught up) takes that status
+  too, the same as the `succeeded`/`failed` case above.
+- A `running` entry with no linked execution at all (the crash landed
+  between the worker's claim and `JobStarted`, so the recorder's row was
+  never written) is put back to `queued`, not `interrupted`: nothing of it
+  ever ran, so nothing needs a resume, matching the 2026-09-25 owner
+  decision that a job "queued and never started" is re-queued
+  automatically. The worker therefore links the entry to its execution as
+  early as `reserve_execution_id` fires, not only on `JobStarted`, so this
+  window is as short as `JobRunSession` allows, not the whole run.
 - `queued` entries stay queued and run in order.
 - Nothing that was interrupted runs again until someone resumes it (owner
   decision).
+- A server that starts while an earlier server's `draw-things-cli` is still
+  alive (an orphaned child of a `SIGKILL`ed server) does not reach any of
+  the above: `RunLock.acquire()` already refuses it, naming the PID, as it
+  does for `run-job` and the TUI today ([Phase 2 Milestone
+  02](../archive/phase-2/milestone-02-state-store-run-lock.md#run-lock-corerun_lockpy)).
+  The server's own crash recovery depends on this guard staying in place
+  (owner decision, phase-3-changelog.md).
 
 ### Resume
 
@@ -212,6 +244,11 @@ The rules:
   entry's own, or, when it has none, that of the entry it resumed, and so
   on. It keeps the original's seed and run numbering, so run *k* of a resume
   is run *k* of the chain.
+- The new entry gets the next queue ID, like any submission, and so lands
+  at the back of the FIFO queue, behind whatever is already waiting: the
+  general rule that nothing reorders the queue applies to a resume too
+  (owner decision). It does not jump ahead of other queued work, even
+  though it continues something already in progress.
 - It is refused, naming the reason, when:
   - no run of the chain succeeded (submit the job again) — distinct from an
     entry that did have one, but whose execution was later pruned;
@@ -225,11 +262,22 @@ The rules:
     above could read it (owner decision: finished entries are pruned with
     the history).
 - `JobRunOptions` gains a resume point: the first run number, its input,
-  and the seed. The executor starts the chain there, skips run 1's resized
-  copy (run 1 is not run again), and numbers runs from *k*. `JobStarted`,
-  the manifest, and the execution (a schema 4 column) record the first run
-  and the execution it resumes (`E0012`); the history and the TUI's
-  execution detail show both.
+  and the seed. `JobRunSession.run` gains the same, since it builds
+  `JobRunOptions` itself: the worker's only entry point into a run, so it
+  is where the resume point actually reaches the executor. The executor
+  starts the chain there, skips run 1's resized copy (run 1 is not run
+  again), and numbers runs from *k*. `JobStarted`, the manifest, and the
+  execution (a schema 4 column) record the first run and the execution it
+  resumes (`E0012`); the history and the TUI's execution detail show both.
+- A resumed execution's manifest holds only the runs it actually made (run
+  *k* onward), at positions 0, 1, 2, ... of its `runs` list, so the list
+  position is no longer the run number once a manifest can start above run
+  1. `import-history` ([Phase 2 Milestone
+  02](../archive/phase-2/milestone-02-state-store-run-lock.md#history-import))
+  takes a manifest's per-run `batch` field the same way it already ignores
+  it for the plain case: it must number a resumed manifest's runs from its
+  `first_run`, not from 1, or re-importing one after the database is lost
+  (the case `import-history` exists for) would misnumber every run of it.
 
 ### Shutdown
 
@@ -239,7 +287,11 @@ finish, so no `draw-things-cli` outlives the server. This build of
 `draw-things-cli` dies on `SIGTERM` without cleanup, so the runner's shutdown
 grace has nothing to wait for; it is kept for a build that handles the
 signal. The job's entry becomes `interrupted`, and a resume reruns the run
-it was in; queued entries stay queued. The lock is released last.
+it was in; queued entries stay queued. Only after the worker thread has
+ended, its entry updated and its execution closed, does shutdown release
+the run lock, so a second `dtc serve` (or `run-job`, or the TUI) started
+right after never races the first one's own recovery of that entry. The
+lock is released last.
 
 ## Acceptance criteria
 
@@ -256,20 +308,39 @@ All with a fake runner and a fake clock or wait:
   started, so it has none).
 - An entry left `running` by a killed server is `interrupted` after a
   restart, with its execution closed, and its queued successors run. An
-  entry left `running` whose execution had already finished `succeeded` or
-  `failed` before the crash takes that status instead, never `interrupted`.
+  entry left `running` whose execution had already finished `succeeded`,
+  `failed`, or `interrupted` before the crash takes that status instead,
+  never a second, forced `interrupted`. An entry left `running` with no
+  linked execution at all (the crash landed before `JobStarted`) is
+  `queued` again after a restart, not `interrupted`, and runs normally.
 - A resume of an entry with three succeeded runs of seven starts at run 4
   with run 3's last frame and the original seed, and finishes the chain; a
   resume of that resume, after it failed at run 5, starts at run 5 again,
   from run 4's last frame, never from run 5's leftover file. Each refusal
   above names its reason or path. A resume already accepted keeps its
   resolved starting input, run number, and seed, and still runs, even if the
-  ancestor entry it depended on is pruned afterward.
+  ancestor entry it depended on is pruned afterward. If a resumed
+  execution's manifest is later imported by `import-history` (the database
+  having been lost), its runs are numbered from its own first run, never
+  from 1.
 - Editing or deleting the job file, its base configuration, or
   `config/global-config.yaml`, after submission does not change what the
-  entry runs.
+  entry runs. Submitting an invalid job file (a bad name, a missing key, a
+  input file that does not exist) is refused, naming the reason, and stores
+  no queue entry.
 - While the worker holds the lock, `run-job` exits with 75 and names the
   server, and the TUI refuses `/apply` with the same message.
+- Starting the server while an earlier server's `draw-things-cli` is still
+  alive (its `dtc serve` was `SIGKILL`ed) refuses to start, naming the
+  orphaned child's PID, and starts no worker.
 - A job's log file holds none of the server's own lines.
+- Stopping the server while an entry is running cancels it at once,
+  ends any between-jobs wait immediately, leaves queued entries queued,
+  and does not release the run lock until the worker thread has actually
+  ended, so no `draw-things-cli` outlives the process and no second `dtc
+  serve` can race the entry's own update to `interrupted`.
+- An error that escapes one job (raised by a collaborator, not a normal job
+  failure) fails only that entry, with the message, and the worker goes on
+  to run the next queued entry rather than stopping.
 - `make check` passes, and `docs/architecture.md` describes the queue and
   the worker. (The user guide describes them with `serve`, in Milestone 02.)

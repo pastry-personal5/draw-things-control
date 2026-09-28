@@ -14,6 +14,7 @@ from draw_things_control.core.run_lock import ensure_state_directory
 from draw_things_control.state.database import Database, StateError
 from draw_things_control.state.executions import ExecutionRepository
 from draw_things_control.state.job_ids import JobIdRepository
+from draw_things_control.state.queue import QueueRepository
 from draw_things_control.state.schema import SCHEMA_VERSION
 from draw_things_control.state.settings import SettingsRepository
 
@@ -54,6 +55,7 @@ class Store:
         self.executions = ExecutionRepository(database)
         self.job_ids = JobIdRepository(database)
         self.settings = SettingsRepository(database)
+        self.queue = QueueRepository(database)
 
     @classmethod
     def open(cls, path: Path, *, mode: StoreMode = StoreMode.RUN, retention_days: int = DEFAULT_RETENTION_DAYS, clock: Clock = datetime.now) -> Store:
@@ -84,14 +86,16 @@ class Store:
         return self.executions.sweep_interrupted(self._clock())
 
     def prune(self) -> int:
-        """Delete executions (and their runs) finished before the retention cutoff; never a ``running`` one. Their ``.log`` files are deleted too, never their manifests or outputs."""
+        """Delete executions (and their runs), and finished queue entries, before the retention cutoff; never a
+        ``running`` execution or a ``queued`` or ``running`` queue entry. An execution's ``.log`` file is deleted too,
+        never its manifest or outputs."""
         cutoff = self.retention_cutoff()
         if cutoff is None:
             return 0
         deleted, log_paths = self.executions.prune(cutoff)
         for log_path in log_paths:
             _delete_log(Path(log_path))
-        return deleted
+        return deleted + self.queue.prune(cutoff)
 
     def retention_cutoff(self) -> float | None:
         """The UTC epoch before which history is pruned, or None when it is kept forever."""

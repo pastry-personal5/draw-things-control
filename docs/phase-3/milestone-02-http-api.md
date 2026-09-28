@@ -7,16 +7,18 @@
 ## Goal
 
 Expose job discovery, queueing, monitoring, cancellation, and resume over a
-local HTTP API with authentication, without yet allowing any file to be
-written.
+local HTTP API and a gRPC monitoring service, both authenticated, without
+yet allowing any file to be written.
 
 ## Scope
 
 In scope:
 
-- `dtc serve`, running the API and the queue worker in one process
-- Bearer-token authentication, on loopback unless the owner allows otherwise
-- Read, run, and monitor endpoints, and a live event stream
+- `dtc serve`, running the API, the gRPC monitoring service, and the queue
+  worker in one process
+- Bearer-token authentication on both, on loopback unless the owner allows
+  otherwise
+- Read and run endpoints over HTTP; watching for change over gRPC
 - The rules and limits every job the API runs must meet, and the audit log,
   from the first endpoint that accepts input
 
@@ -31,9 +33,11 @@ Out of scope:
 
 ### The `serve` command
 
-- `dtc serve [--host 127.0.0.1] [--port 8765] [--executable draw-things-cli] [--shutdown-grace 10] [--global-config PATH] [--allow-remote-bind]`
-  runs in the foreground: uvicorn with the FastAPI app from `server/`.
-  `--executable` and `--shutdown-grace` mean what they mean for `run-job`.
+- `dtc serve [--host 127.0.0.1] [--port 8765] [--grpc-port 8766] [--executable draw-things-cli] [--shutdown-grace 10] [--global-config PATH] [--allow-remote-bind]`
+  runs in the foreground: uvicorn with the FastAPI app from `server/`, and a
+  `grpc.aio.server()` for monitoring ([below](#monitoring-grpc)), started
+  and stopped together. `--executable` and `--shutdown-grace` mean what they
+  mean for `run-job`.
 - `cli/app.py` starts the app, importing FastAPI only inside the command, as
   `dtc tui` does with Textual. That makes `dtc serve` a second allowed import
   between front ends: `FRONT_END_EXCEPTIONS` in `tests/test_architecture.py`,
@@ -44,7 +48,8 @@ Out of scope:
   `serve` warns that the token crosses the network in plain HTTP.
 - A request whose `Host` header names neither loopback nor the bound
   address is refused, so a web page cannot reach the server by DNS
-  rebinding.
+  rebinding. This check is HTTP-only ([below](#monitoring-grpc): gRPC has no
+  equivalent gap).
 - There is no `--data-dir`: the server serves the project's `data/jobs/`,
   the one directory whose files have job IDs and the one Milestone 07
   writes.
@@ -55,7 +60,8 @@ Out of scope:
 - uvicorn installs its own signal handlers, so the worker's executor is
   built with `handle_signals=False` and uvicorn's shutdown hook stops the
   worker as in [Milestone 01](milestone-01-queue-run-manager.md#shutdown).
-  Open event streams are ended first, so they cannot hold shutdown up.
+  The gRPC server is stopped, and open watch streams cancelled, first, so
+  neither can hold shutdown up.
 - Log lines go to stderr through Loguru. None holds a request header.
 
 ### Authentication
@@ -102,14 +108,16 @@ All under `/v1`:
 | `GET /inputs` | The images in the input directory: path relative to it, bytes, width and height, modified time |
 | `POST /queue` | Submit a job by reference; returns the entry |
 | `GET /queue` | Entries, oldest first, filterable by state; the worker's state (`idle`, `running`, `cooling_down`) and `cooldown_until` |
-| `GET /queue/{id}` | One entry: state, execution ID, current run and its elapsed time, the last run's time, `cooldown_until`, error, and whether it can be resumed, from which run, or why not; `?wait=N` (at most 30 seconds) answers as soon as any of these changes |
+| `GET /queue/{id}` | One entry: state, execution ID, current run and its elapsed time, the last run's time, `cooldown_until`, error, and whether it can be resumed, from which run, or why not |
 | `POST /queue/{id}/cancel` | Cancel ([Milestone 01](milestone-01-queue-run-manager.md#cancel) rules) |
 | `POST /queue/{id}/resume` | Resume ([Milestone 01](milestone-01-queue-run-manager.md#resume) rules); returns the new entry |
 | `GET /executions` | Executions, newest first, filterable by job name and status |
 | `GET /executions/{id}` | One execution (`E0012`) with its runs |
 | `GET /executions/{id}/outputs` | Each run's output and last frame: path, whether it exists, whether it is complete, bytes, measured width, height, and frames; never the content |
-| `GET /events` | Server-sent events (below) |
 | `GET /audit` | The audit log (below) |
+
+Watching for change is not HTTP: it is the gRPC monitoring service
+(below). There is no `GET /events` and no `?wait=` parameter.
 
 - A queue entry is named by its ID (`Q0007`) and an execution by its
   execution ID (`E0012`), typed as in the TUI: any letter case, leading
@@ -189,19 +197,53 @@ the rest of the file and documented in `config/global-config.example.yaml`
   job's value. A job exactly at a limit is accepted. `GET /capabilities`
   reports the limits so an agent can plan.
 
-### Event stream
+### Monitoring (gRPC)
 
-- `GET /events` streams the Phase 2 job events (`event_to_dict`) and the
-  queue's own: an entry's state change, and the start and end of a
-  between-jobs wait, each naming the entry.
-- Each event has an ID that increases within one run of the server and names
-  that run, so a client can resume with `Last-Event-ID`. The server keeps a
-  bounded backlog in memory; a client that falls behind it, or that sends an
-  ID from an earlier run of the server, gets a `reset` event and should read
-  the state again.
-- Child output lines (`run_output`) are sent only when the request asks for
-  them (`?output=1`), since they are many. An idle stream gets a comment
-  line every 15 seconds.
+Watching for change (the whole event firehose, and waiting on one queue
+entry) is a `grpc.aio.server()` beside uvicorn in the same `dtc serve`
+process, not an HTTP endpoint (design decision, superseding the SSE plan of
+2026-09-25: see the phase-3 changelog). `--grpc-port` (default 8766) shares
+`--host` and `--allow-remote-bind` with the HTTP port: one loopback-or-not
+decision for the whole process, not two to remember.
+
+- The `.proto` file lives at `server/proto/monitor.proto` (only `server/`
+  imports the generated server code from it); `mcp_server/`, `tui/`, and
+  `cli/` (`dtc queue add --wait`) each import their own generated client
+  stubs from the same file. Nothing generated is committed: `make proto`
+  (`grpcio-tools`, dev-only) regenerates every one of them into a
+  `.gitignore`d directory, and `make check` depends on that step, so it
+  always runs against the `.proto` file's current shape.
+- `Monitor` has two server-streaming RPCs, unary request, streamed response,
+  since nothing here needs a reply channel back (writes stay HTTP `POST`):
+  - `WatchEvents(last_event_id, include_output) returns (stream Event)`
+    replaces `GET /events`: the Phase 2 job events (`event_to_dict`) and the
+    queue's own (an entry's state change, and the start and end of a
+    between-jobs wait, each naming the entry). `Event.id` increases within
+    one run of the server; a client reconnecting with an earlier run's ID,
+    or one older than the server's bounded in-memory backlog, gets a
+    `Reset` event and should read the state again over HTTP before
+    resubscribing. `include_output` asks for child output lines
+    (`run_output`) too, since they are many.
+  - `WatchQueueEntry(id) returns (stream QueueEntrySnapshot)` replaces
+    `GET /queue/{id}?wait=`: one message whenever the entry's state,
+    execution ID, current run, `cooldown_until`, or error changes, until the
+    client cancels the call. `dtc mcp`'s `get_queue_entry` tool (with
+    `wait_seconds`) and the TUI's Queue widget both read this instead of
+    polling.
+- Authentication is a server interceptor reading the `authorization`
+  metadata key (`Bearer <token>`, `hmac.compare_digest`, the same token file
+  as the HTTP API); missing or wrong, the call ends `UNAUTHENTICATED`, never
+  logged. A caller identifies itself the same way the HTTP API's header does
+  (`mcp`, `tui`), for the busy message and error text only, never audited:
+  neither RPC writes, so nothing here reaches the audit log.
+  DNS-rebinding-style spoofing does not apply the way it does to a browser
+  hitting `GET /events`: a gRPC channel dials the bound host and port
+  directly, with no virtual-hosting `Host` header to fake, so there is no
+  second check to add.
+- No TLS (unchanged non-goal): `grpc.aio.server()` binds an insecure port, as
+  `--allow-remote-bind` already warns the HTTP token does in plain text.
+- Shutdown stops accepting new calls and cancels open streams before the
+  worker itself stops, as the SSE plan already ended open streams first.
 
 ### Audit log
 
@@ -212,9 +254,10 @@ goes unrecorded.
   (`submit`, `cancel`, `resume`, and, from
   [Milestone 07](milestone-07-job-file-management.md), `create_job`,
   `replace_job`, `delete_job`), the target (a job reference or an entry ID),
-  the outcome (`ok` or the error code), and the caller (`api`, or `mcp` or
-  `cli` from a header the MCP server and `dtc queue` set; the caller names
-  itself, so the column informs rather than proves).
+  the outcome (`ok` or the error code), and the caller (`api`, or `mcp`,
+  `cli`, or `tui` from a header the MCP server, `dtc queue`, and the TUI's
+  Queue widget set; the caller names itself, so the column informs rather
+  than proves).
 - One entry for every such request, refused ones included. An
   unauthenticated request is rejected before it is recorded.
 - No prompt text, YAML, command, or credential is stored in it.
@@ -233,11 +276,12 @@ can already read.
 
 ### Documentation
 
-The user guide gains a "Server" section: starting `serve`, the token, what
-`--allow-remote-bind` exposes, the endpoints, the rules and limits, that a
-stop or a cancel loses the run in progress and a resume reruns it, and that
-the CLI and the TUI cannot start runs while the server is up. `docs/architecture.md` lists the `server/`
-modules and the worker.
+The user guide gains a "Server" section: starting `serve`, the token, the
+gRPC port, what `--allow-remote-bind` exposes, the endpoints, the rules and
+limits, that a stop or a cancel loses the run in progress and a resume
+reruns it, and that the CLI and the TUI cannot start runs while the server
+is up. `docs/architecture.md` lists the `server/` modules, the worker, and
+the gRPC service.
 
 ## Acceptance criteria
 
@@ -248,15 +292,18 @@ modules and the worker.
   (exit code 2), and accepts it with the flag and a warning. The API refuses
   a `Host` header that names neither loopback nor the bound address.
 - A job is listed, previewed, submitted, watched to the end through
-  `/events` and `/queue/{id}?wait=`, and its outputs read, all over HTTP
-  with a fake runner (`TestClient`). A run the fake runner stops mid-way
-  leaves a file that `/executions/{id}/outputs` lists as incomplete, and the entry says it
+  `WatchEvents` and `WatchQueueEntry` (a fake gRPC channel against the
+  service, no network socket), and its outputs read over HTTP with a fake
+  runner (`TestClient`). A run the fake runner stops mid-way leaves a file
+  that `/executions/{id}/outputs` lists as incomplete, and the entry says it
   can be resumed from that run.
 - A reference like `../x`, `a/b`, or `/etc/passwd`, or one naming a symbolic
   link, returns 4xx and reads no file.
 - Cancel and resume behave as in Milestone 01, with the status codes above.
-- `GET /events` delivers events in order, honors `Last-Event-ID`, and sends
-  `reset` when the backlog is exceeded or the ID is from another run.
+- `WatchEvents` delivers events in order, honors `last_event_id`, and sends
+  `Reset` when the backlog is exceeded or the ID is from another run. A
+  gRPC call without the token, or with it wrong, ends `UNAUTHENTICATED`;
+  `--grpc-port` follows the same loopback rule as `--port`.
 - Each submit, cancel, and resume leaves one audit entry, refused ones
   included; an unauthenticated request leaves none.
 - Each limit refuses an entry over it with the `code`, key, limit, and

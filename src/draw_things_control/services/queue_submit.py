@@ -1,0 +1,92 @@
+"""Submit a job to the persistent queue: validate it and snapshot exactly what was validated, so editing or deleting
+the job file, its base configuration, or the global configuration afterwards changes nothing about what runs."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
+
+from draw_things_control.core.clock import Clock, local_timestamp
+from draw_things_control.core.cooldown import CooldownPolicy, parse_cooldown
+from draw_things_control.core.draw_things_config import find_config_file
+from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.yaml_files import read_yaml_file
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.parsing import load_job_text
+from draw_things_control.state.executions import ExecutionSettings
+from draw_things_control.state.queue import NewQueueEntry, QueueRow
+from draw_things_control.state.store import Store
+
+
+def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Path, store: Store, *, clock: Clock = datetime.now) -> QueueRow:
+    """Validate ``job_path`` exactly as running it would, then store its snapshot as a new ``queued`` entry.
+
+    Refuses (raises whatever ``load_job_text`` raises, an ``InputError``) before anything is stored: an invalid job,
+    a missing input file, or a missing base configuration.
+    """
+    path = job_path.expanduser().resolve()
+    _data, job_text = read_yaml_file(path, "Job file", show_source=True)
+    # First parsed from disk, to learn the base configuration's name and validate everything, the input included.
+    job = load_job_text(job_text, path, global_config, params_directory, decode_input=True)
+    config_text = find_config_file(job.config_file, params_directory).read_text(encoding="utf-8")
+    # Re-parsed from the exact text about to be stored, so a base configuration edited between the two reads above
+    # cannot be captured half-written: what is stored is validated in the form it is stored, not merely read twice.
+    job = load_job_text(job_text, path, global_config, params_directory, decode_input=False, base_config_text=config_text)
+    new = NewQueueEntry(
+        job_path=str(path),
+        job_text=job_text,
+        config_file=job.config_file,
+        config_text=config_text,
+        input_directory=str(global_config.input_directory),
+        output_directory=str(global_config.output_directory),
+        cooldown_default=global_config.cooldown.as_dict() if global_config.cooldown is not None else None,
+        settings=_execution_settings(job),
+        submitted_at=local_timestamp(clock()),
+    )
+    return store.queue.submit(new)
+
+
+def _execution_settings(job: JobDefinition) -> ExecutionSettings:
+    """The settings a submitted job resolved to, shown to clients: the same shape ``ExecutionRecorder`` keeps."""
+    return ExecutionSettings(
+        input=str(job.input) if job.input is not None else None,
+        output_directory=str(job.output_directory),
+        cooldown_seconds=job.cooldown.fixed_seconds,
+        cooldown_source=job.cooldown_source,
+        cooldown=job.cooldown.as_dict(),
+        config_file=job.config_file,
+        config_override=job.config_override.as_dict(),
+        input_resize=job.input_resize.as_manifest() if job.input_resize is not None else None,
+    )
+
+
+def global_config_of(entry: QueueRow, live: GlobalConfig) -> GlobalConfig:
+    """The global configuration a queued entry's job parses against: its own snapshot for ``input_directory``,
+    ``output_directory``, and the cooldown default, and the live configuration for everything else (``write_job_records``,
+    ``history_retention_days``), which are session settings, not part of what a job resolves to."""
+    cooldown = _cooldown_of(entry.cooldown_default) if entry.cooldown_default is not None else None
+    return GlobalConfig(
+        input_directory=Path(entry.input_directory),
+        output_directory=Path(entry.output_directory),
+        write_job_records=live.write_job_records,
+        cooldown=cooldown,
+        history_retention_days=live.history_retention_days,
+    )
+
+
+def _cooldown_of(data: dict[str, object]) -> CooldownPolicy:
+    # ``data`` is CooldownPolicy.as_dict()'s own output, captured at submission, so it is always valid; parse_cooldown
+    # is reused rather than unpacking the mapping by hand, which needs no type-ignore for a "mode" already popped.
+    return parse_cooldown(data, "cooldown")
+
+
+def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path) -> Callable[[], JobDefinition]:
+    """A thunk that parses the entry's snapshot into a ``JobDefinition``, exactly as it was validated at submission.
+    ``params_directory`` only names the base configuration in messages: its text comes from the snapshot, never disk."""
+
+    def parse() -> JobDefinition:
+        global_config = global_config_of(entry, live)
+        return load_job_text(entry.job_text, Path(entry.job_path), global_config, params_directory, decode_input=True, base_config_text=entry.config_text)
+
+    return parse

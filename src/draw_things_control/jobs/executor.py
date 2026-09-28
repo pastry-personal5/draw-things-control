@@ -39,6 +39,18 @@ Cooldown = Callable[[float], float]
 
 
 @dataclass(frozen=True)
+class ResumePoint:
+    """Where a resumed chain starts: the first unfinished run, its input (the last succeeded run's last frame or
+    output), and the seed to keep. ``resumes_execution`` names the execution (E0012) this one continues, for the
+    manifest and JobStarted; the executor itself does not read it."""
+
+    first_run: int
+    input: Path | None
+    seed: int
+    resumes_execution: str | None = None
+
+
+@dataclass(frozen=True)
 class JobRunOptions:
     """How one run of a job is done, besides the job itself."""
 
@@ -54,6 +66,8 @@ class JobRunOptions:
     # checks that can refuse the job and before the output directory, the manifest, or the log exist; when it raises,
     # the job does not start and the error propagates. The ID goes into JobStarted, the manifest, and the log.
     reserve_execution_id: Callable[[], str] | None = None
+    # Set to continue an interrupted, failed, or cancelled chain from its last succeeded run instead of from run 1.
+    resume: ResumePoint | None = None
 
 
 @dataclass(frozen=True)
@@ -148,9 +162,13 @@ class JobExecutor:
         if options.shutdown_grace < 0:
             raise InputError("--shutdown-grace must not be negative")
         self._planner.check_tools(job, options.executable)
-        seed, seed_source = self._planner.seed(job, None)
-        # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
-        temporary_input = self._temporary_input(job)
+        if options.resume is not None:
+            # The chain keeps its original seed; run 1 is not run again, so it needs no resized copy of the input.
+            seed, seed_source, temporary_input = options.resume.seed, "resume", None
+        else:
+            seed, seed_source = self._planner.seed(job, None)
+            # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
+            temporary_input = self._temporary_input(job)
         try:
             # Taken last of the checks, so a job refused above never uses up a number; a job that cannot get one does not start.
             execution_id = options.reserve_execution_id() if options.reserve_execution_id is not None else None
@@ -170,7 +188,10 @@ class JobExecutor:
         return TemporaryInput(job.input, plan)
 
     def _run_with_records(self, job: JobDefinition, options: JobRunOptions, seed: int, seed_source: str, temporary_input: TemporaryInput | None, execution_id: str | None) -> JobOutcome:
-        with JobRecords.open(job, write_records=options.write_records, seed=seed, seed_source=seed_source, execution_id=execution_id, clock=self._clock, random_number=self._random_number) as records:
+        resume = options.resume
+        first_run = resume.first_run if resume is not None else 1
+        resumes_execution = resume.resumes_execution if resume is not None else None
+        with JobRecords.open(job, write_records=options.write_records, seed=seed, seed_source=seed_source, execution_id=execution_id, clock=self._clock, random_number=self._random_number, first_run=first_run, resumes_execution=resumes_execution) as records:
             previous_handlers = install_signal_handlers(self._token.receive) if self._handle_signals else None
             try:
                 return self._run_chain(_Chain(job, records, options, temporary_input, job.schedule()))
@@ -192,13 +213,15 @@ class JobExecutor:
         job, manifest, total = chain.job, chain.records.manifest, chain.total
         report_ignored_config(job)
         chain.records.save()
-        current_input = job.input
+        resume = chain.options.resume
+        start = resume.first_run if resume is not None else 1
+        current_input = resume.input if resume is not None else job.input
         if chain.temporary_input is not None:
             logger.info("Run 1 input: temporary copy {} (removed after run 1)", chain.temporary_input.path)
             current_input = chain.temporary_input.path
         completed = 0
         exit_code = 0
-        for number, pair in enumerate(chain.schedule, start=1):
+        for number, pair in enumerate(chain.schedule[start - 1 :], start=start):
             if self._token.requested is not None:
                 exit_code = self._stop(manifest, self._token.requested, f"before run {number}/{total}")
                 break
@@ -335,6 +358,8 @@ def job_started_event(chain: _Chain) -> JobStarted:
         config_override=manifest.config_override,
         input_resize=manifest.input_resize,
         execution_id=manifest.execution_id,
+        first_run=manifest.first_run,
+        resumes_execution=manifest.resumes_execution,
     )
 
 

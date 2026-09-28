@@ -15,9 +15,9 @@ class StatusPane(Static):
     def on_mount(self) -> None:
         self.border_title = "Status"
 
-    def show(self, live: LiveRun | None, other_process: bool) -> None:
+    def show(self, live: LiveRun | None, other_process: bool, *, message: str | None = None) -> None:
         width = self.content_size.width or 40
-        text = Text("\n").join(status_lines(live, other_process, width))
+        text = Text("\n").join(status_lines(live, other_process, width, message=message))
         text.no_wrap = True
         text.overflow = "ellipsis"
         self.update(text)

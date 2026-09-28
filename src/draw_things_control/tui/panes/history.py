@@ -77,6 +77,8 @@ class HistoryPane(SidewaysTable):
         self.column_keys: list[ColumnKey] = []
         # Whether the last poll found another process holding the run lock; one more check follows its release.
         self.other_process_running = False
+        # The busy message that other process would get, read without taking the lock; None while it is not held.
+        self.other_process_message: str | None = None
 
     def on_mount(self) -> None:
         self.border_title = "Execution History"
@@ -93,6 +95,7 @@ class HistoryPane(SidewaysTable):
     def check_lock(self) -> bool:
         """Whether another process holds the run lock now; posts LockChanged when that changes."""
         held = not self.busy() and not self.reader.lock_is_free()
+        self.other_process_message = self.reader.lock_message() if held else None
         if held != self.other_process_running:
             self.other_process_running = held
             self.post_message(self.LockChanged())

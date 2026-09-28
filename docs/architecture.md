@@ -74,11 +74,14 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `jobs/files.py`, `jobs/text.py` | Reading jobs, and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI |
 | `jobs/inputs/`, `jobs/media/`, `jobs/output_naming.py` | Input image check and resize; `ffmpeg` and `ffprobe`, last frames, measuring, color tags; output names |
 | `state/database.py`, `state/schema.py` | The SQLite file, its connections, transactions, and migrations |
-| `state/executions.py`, `state/job_ids.py`, `state/settings.py` | The repositories; `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings` |
+| `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them |
 | `state/store.py`, `state/recorder.py`, `state/history_import.py`, `state/ids.py` | `Store` (opened as `run`, `write`, or `browse`), the event recorder, the phase 1 import, and `E0012` and `J0001` |
+| `state/queue.py` (phase 3) | `QueueRepository`, `QueueRow`, and `QueueState`: the `queue` table, ordered first in, first out by its public ID (`Q0007`) |
 | `services/toolkit.py` | `Toolkit`: the real tools; builds the generation service and executors |
 | `services/job_runs.py` | `JobRunSession`: takes the run lock, opens the store, sweeps, and runs a job with its execution recorded |
 | `services/job_catalog.py`, `services/job_details.py`, `services/history.py`, `services/store_provider.py` | The job files of a directory, a job's summary and plan, the execution history, and the browsing store they share |
+| `services/queue_submit.py`, `services/queue_resume.py` (phase 3) | Validate a job and snapshot it as a queue entry; resolve and accept a resume |
+| `services/queue_worker.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread; restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
 | `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`, `import-history`, `tui`) and `CliServices` in Typer's context |
 
 Services receive their runner and executable lookup as dependencies, so tests
@@ -160,25 +163,105 @@ Adds what every later front end needs, without changing the CLI's behavior.
   `draw-things-cli` outlives it. Browsing writes nothing but a schema upgrade,
   the job IDs, and the kept sort.
 
-## Phase 3: API and MCP for agents (planned)
+## Phase 3: API and MCP for agents (in progress)
 
-- Queue and one worker in the state store, with restart recovery and explicit
-  resume: a queue repository in `state/`, and the worker, resume, the
-  submission rules and limits, and the event backlog in `services/`, built on
-  `JobRunSession`. Each entry keeps a snapshot of its job and base
-  configuration, and `JobExecutor` can start a chain at run *k*. The server
-  holds the run lock while it is up.
+### Milestone 1: queue and run manager (done)
+
+- **Queue.** `state/queue.py`'s `QueueRepository` keeps the `queue` table
+  (schema 4): one row per submission, with a public ID (`Q0007`, from a
+  `queue` counter beside `execution` and `job`) and no position column, since
+  nothing reorders it — order is by ID. `services/queue_submit.py`'s
+  `submit_job` validates a job file exactly as running it would
+  (`load_job_text`), then stores its snapshot: the job's exact text, its base
+  configuration's exact text (`jobs/parsing.py`'s `load_job_text` gained
+  `base_config_text` to parse it from the snapshot instead of `data/params/`),
+  and the global configuration's `input_directory`, `output_directory`, and
+  cooldown default. Editing or deleting any of those afterwards changes
+  nothing about what runs. A queue entry links to its execution, and to the
+  entry it resumes, by their public numbers, never a row id: a plain number
+  (unlike a foreign key) survives the row it names being pruned, which is how
+  a resume tells "its ancestor was pruned" apart from "never ran".
+- **Worker.** `services/queue_worker.py`'s `QueueWorker` runs one entry at a
+  time on its own thread, through `JobRunSession`: it claims the oldest
+  `queued` entry in one transaction (so a concurrent cancel cannot interleave
+  with the claim), parses its snapshot, and runs it. A cancel that lands
+  between the claim and the executor's `begin()` is kept and applied at
+  `JobStarted` (a shutdown too, so it also stops a job caught in that same
+  window). `JobFinished`'s status maps to the entry's: `succeeded` and
+  `failed` as reported; `interrupted` reads `cancelled` when the
+  worker itself asked for the stop, `interrupted` when the host's shutdown
+  did, and `failed` otherwise, since nothing the worker did caused it (in
+  practice a run killed from outside never reaches `JobExecutor` as
+  `interrupted` in the first place: with no signal of ours requested, it
+  looks like an ordinary failed exit code, so it is already `failed` before
+  the entry is even considered; this branch exists for the milestone's own
+  stated case regardless). The execution in the history keeps its own
+  `interrupted` for any stopped run, Ctrl-C included, unaffected by which of
+  these applies to the entry. After a job that
+  succeeded, when another entry is already queued, the worker waits its
+  resolved cooldown (applied to the last run's seconds) before starting the
+  next one; the wait ends at once on a stop or once nothing is queued any
+  more. An error that escapes a job (a collaborator's bug, not a normal run
+  failure) fails only that entry, with the message, and the worker goes on.
+- **Resume.** `services/queue_resume.py`'s `resume_entry` walks an entry's own
+  chain of resumes back to the last succeeded run, refusing (naming the
+  reason or path) when none ever succeeded, the file it would start from is
+  gone, the job's own first input is gone, or an ancestor's execution was
+  pruned; a resume can only be accepted once. It resolves the resume point
+  (the first run, its input, and the original seed) once, and stores it on
+  the new entry, so pruning an ancestor afterward cannot invalidate an
+  already-accepted resume. `JobExecutor` starts a chain at run *k*
+  (`JobRunOptions.resume`, a `ResumePoint`): it skips run 1's resized copy of
+  the input and keeps the given seed instead of drawing one. A resumed
+  execution's manifest holds only the runs it made, from position 0, so
+  `import-history` numbers them from the manifest's own `first_run`, not from
+  1.
+- **Restart recovery and shutdown.** `services/queue_recovery.py`'s
+  `recover_queue` runs before the worker starts, while
+  `services/queue_host.py`'s `QueueHost` holds the run lock and the state
+  store (opened `WRITE`, so nothing is pruned before recovery can read it):
+  `sweep_interrupted()` first, then a `running` entry takes its linked
+  execution's real status (`interrupted` after the sweep, or whatever it
+  already was), and a `running` entry with no linked execution at all (the
+  crash landed before `JobStarted`) goes back to `queued`. `queued` entries
+  are untouched. `QueueHost.stop()` cancels the running job at once, ends any
+  between-jobs wait, joins the worker thread, and only then releases the
+  lock, so a second starter never races this shutdown's own recovery.
+- **Busy message.** While the queue host holds the run lock, `RunLock`'s busy
+  message (`core/run_lock.py`) names the server and how to free it instead of
+  `Another run is in progress`, for `run-job` and the TUI alike.
+- **Job log scoping.** A job's log file (`jobs/records.py`) now holds only
+  that job's own lines: `JobRecords.open` tags every message logged while the
+  job runs (`logger.contextualize(dtc_job=True)`), and the log sink filters
+  on that tag, so a server's own lines (API requests, once Milestone 2 adds
+  them) never reach it.
+- Out of scope here, and still planned: the HTTP and MCP interfaces, the
+  `serve` command that starts the worker, `dtc queue` and the TUI's Queue
+  widget, submission rules and limits, and the event backlog for a stream.
+
+### Milestones 2 onward (planned)
+
 - `server/`: HTTP API (`dtc serve`, FastAPI and uvicorn) on loopback unless
   `--allow-remote-bind` is given, bearer-token auth, job control, history,
-  event stream, and an audit log.
+  and an audit log; and a gRPC monitoring service (`grpc.aio.server()`, its
+  own token interceptor) on its own loopback port, started and stopped
+  alongside it, streaming events and answering "watch until this changes"
+  for every client instead of an HTTP event stream.
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
-- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, exposing typed
-  tools. It imports nothing else from the package and never touches the core.
+- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API and the gRPC
+  monitoring service, exposing typed tools. It imports nothing else from the
+  package and never touches the core.
 - `dtc serve` and `dtc mcp` in `cli/app.py` start them, as `dtc tui` starts
   the TUI.
-- The queue for people: `dtc queue` (an HTTP client in `cli/`) and a
-  read-only Queue widget in the TUI, which reads the state store.
+- The queue for people: `dtc queue` (an HTTP client in `cli/`, plus a gRPC
+  client for `add --wait`) and a Queue widget in the TUI that submits,
+  cancels, and resumes through the API too, watching live over gRPC while
+  the server is up and falling back to reading the state store, read-only,
+  while it is down.
+- `run-job` is removed, and the TUI's `/apply` no longer runs a job itself:
+  `dtc serve`'s worker is the only thing that ever invokes
+  `draw-things-cli`. `dtc queue add --wait` is `run-job`'s replacement.
 
 ## Rules across phases
 

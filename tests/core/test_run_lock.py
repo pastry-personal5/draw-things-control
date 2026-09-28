@@ -12,7 +12,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core import run_lock
-from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError, ensure_state_directory, run_lock_is_free
+from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError, ensure_state_directory, lock_holder_message, run_lock_is_free
 
 HOLDER = """
 import sys, time
@@ -67,6 +67,19 @@ class RunLockTests(unittest.TestCase):
         # Released with the first holder.
         with self.lock():
             pass
+
+    def test_the_server_holding_the_lock_gets_its_own_message(self) -> None:
+        with RunLock("serve", directory=self.directory):
+            with self.assertRaisesRegex(RunLockBusy, rf"The dtc server \(PID {os.getpid()}\) holds the run lock while it is up; stop it to run a job by hand\."):
+                self.lock().acquire()
+
+    def test_lock_holder_message_reads_the_same_message_without_taking_the_lock(self) -> None:
+        self.assertIsNone(lock_holder_message(directory=self.directory))
+        with self.lock():
+            self.assertEqual(lock_holder_message(directory=self.directory), f"Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.")
+        self.assertIsNone(lock_holder_message(directory=self.directory))
+        with RunLock("serve", directory=self.directory):
+            self.assertEqual(lock_holder_message(directory=self.directory), f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.")
 
     def test_release_clears_the_description_and_is_repeatable(self) -> None:
         lock = self.lock()
