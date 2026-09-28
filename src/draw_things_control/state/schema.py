@@ -130,7 +130,16 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_at ON audit_log (at_epoch DESC)
 """
 
+# Milestone 3: the queue's own run count, so a queued entry -- or one that never reached JobStarted -- can show
+# "run 0/7" without reparsing job_text (a YAML parse and a base-configuration merge) on every list read. Backfilled
+# from a linked execution's own total_runs; a pre-migration row with no execution (a queued, or a never-started,
+# entry) has nothing SQL can recover it from, and stays NULL until it is next resubmitted or resumed.
+SCHEMA_V6 = """
+ALTER TABLE queue ADD COLUMN total_runs INTEGER;
+UPDATE queue SET total_runs = (SELECT e.total_runs FROM executions e WHERE e.execution_number = queue.execution_number) WHERE execution_number IS NOT NULL
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6)
 SCHEMA_VERSION = len(MIGRATIONS)

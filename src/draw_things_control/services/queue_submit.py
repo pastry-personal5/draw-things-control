@@ -56,7 +56,12 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     # cannot be captured half-written: what is stored is validated in the form it is stored, the input decoded
     # included, not merely read twice.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=True, base_config_text=config_text)
-    new = NewQueueEntry(
+    new = _new_submitted_entry(path, job_text, config_text, job, global_config, local_timestamp(clock()))
+    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
+
+
+def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str) -> NewQueueEntry:
+    return NewQueueEntry(
         job_path=str(path),
         job_text=job_text,
         config_file=job.config_file,
@@ -65,9 +70,9 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
         output_directory=str(global_config.output_directory),
         cooldown_default=global_config.cooldown.as_dict() if global_config.cooldown is not None else None,
         settings=_execution_settings(job),
-        submitted_at=local_timestamp(clock()),
+        submitted_at=submitted_at,
+        total_runs=job.run_count,
     )
-    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
 def _execution_settings(job: JobDefinition) -> ExecutionSettings:

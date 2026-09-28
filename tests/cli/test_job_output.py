@@ -1,4 +1,4 @@
-"""Pins the exact text of validate-job and run-job --dry-run, so moving their helpers cannot change it."""
+"""Pins the exact text of validate-job, so moving its helpers cannot change it."""
 
 import itertools
 from datetime import datetime
@@ -12,7 +12,6 @@ from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import job_summary
 from tests.fixtures import BASE_CONFIG, FakeToolkit, JobTestCase, job_data, job_executor
 
-CONFIG_JSON = '{"model":"base.ckpt","refinerModel":"base-refiner.ckpt","refinerStart":0.2,"width":832,"height":448,"seed":42,"steps":30}'
 IGNORED = [
     "INFO Ignoring batchCount (4) from config_file batch.yaml: not used in i2v jobs; the job's run_count sets the number of runs",
     "INFO Ignoring width (640) from config_file batch.yaml: desired_input_width/desired_input_height set the size (832x448)",
@@ -55,34 +54,13 @@ class JobOutputTests(JobTestCase):
         self.assertEqual(output.splitlines()[-6:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  config file: noseed.yaml", "  model: m.ckpt", "  seed: (random, drawn when the job starts) (random)"])
         self.assertEqual(self.logged, [])
 
-    def test_dry_run_output(self) -> None:
-        output = "ROOT/output/sunset-walk/sunset-walk-20260924-153012"
-        expected = f"# Job sunset-walk (i2v): 3 runs, seed 42 (config_file), cooldown 90 s (global_config)\n# Output names are examples; a real run generates new ones.\n# Run 1/3 (pair walk)\ndraw-things-cli generate --model base.ckpt --prompt walk --negative-prompt blurry --steps 8 --width 832 --height 448 --seed 42 --config-json '{CONFIG_JSON}' --image '<photo.jpg resized to 832x448>' --output {output}-1000.mov\n# Cooldown 90 s\n# Run 2/3 (pair wave)\ndraw-things-cli generate --model base.ckpt --prompt wave --steps 8 --width 832 --height 448 --seed 42 --config-json '{CONFIG_JSON}' --image {output}-1000-last-frame.png --output {output}-1001.mov\n# Cooldown 90 s\n# Run 3/3 (pair walk)\ndraw-things-cli generate --model base.ckpt --prompt walk --negative-prompt blurry --steps 8 --width 832 --height 448 --seed 42 --config-json '{CONFIG_JSON}' --image {output}-1001-last-frame.png --output {output}-1002.mov\n"
-        self.assertEqual(self.invoke("run-job", str(self.job_path), "--dry-run"), expected)
-        self.assertEqual(self.logged, IGNORED)
-
     def test_auto_and_off_cooldown_lines(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8").replace("cooldown: {mode: manual, seconds: 90}", "cooldown: {mode: auto, minimum_seconds: 300, maximum_seconds: 1800}"), encoding="utf-8")
         self.assertIn("  cooldown: auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)\n", self.invoke("validate-job", str(self.job_path)))
-        lines = self.invoke("run-job", str(self.job_path), "--dry-run").splitlines()
-        self.assertEqual(lines[0], "# Job sunset-walk (i2v): 3 runs, seed 42 (config_file), cooldown auto, half of each run, 5 min to 30 min (global_config)")
-        self.assertEqual([line for line in lines if line.startswith("# Cooldown")], ["# Cooldown auto: half of run 1's time, 5 min to 30 min", "# Cooldown auto: half of run 2's time, 5 min to 30 min"])
         self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "auto", "ratio": 0.4}), name="ratio.yaml")
-        lines = self.invoke("run-job", str(self.root / "ratio.yaml"), "--dry-run").splitlines()
-        self.assertTrue(lines[0].endswith(", cooldown auto, 40% of each run, 0 s to 1 h (job)"), lines[0])
-        self.assertIn("# Cooldown auto: 40% of run 1's time, 0 s to 1 h", lines)
+        self.assertIn("  cooldown: auto: 40% of each run's time, 0 s to 1 h, from job", self.invoke("validate-job", str(self.root / "ratio.yaml")))
         self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), name="off.yaml")
         self.assertIn("  cooldown: off (job)\n", self.invoke("validate-job", str(self.root / "off.yaml")))
-        lines = self.invoke("run-job", str(self.root / "off.yaml"), "--dry-run").splitlines()
-        self.assertTrue(lines[0].endswith(", no cooldown (job)"), lines[0])
-        self.assertFalse(any(line.startswith("# Cooldown") for line in lines))
-
-    def test_dry_run_header_with_a_random_seed(self) -> None:
-        self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
-        job_path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_file="noseed.yaml", cooldown={"mode": "off"}), name="noseed.yaml")
-        lines = self.invoke("run-job", str(job_path), "--dry-run").splitlines()
-        self.assertEqual(lines[:3], ["# Job sunset-walk (i2v): 1 runs, seed 777 (random), no cooldown (job)", "# Output names are examples; a real run generates new ones.", "# Run 1/1 (pair only)"])
-        self.assertIn("--seed 777", lines[3])
 
     def test_job_summary_can_describe_a_random_seed_its_own_way(self) -> None:
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")

@@ -75,7 +75,9 @@ def get_queue(context: ServerContext = Depends(get_context), page: Page = Depend
     the queue's own history, unbounded once ``history_retention_days: 0``, so they page like ``GET /jobs`` and
     ``/executions``: newest first, and, on the first page only (``cursor`` absent), after the active entries above."""
     if state is not None and state not in _FINISHED_STATE_VALUES:
-        entries = context.store.queue.list(state=state)
+        # Joined, like list_active's own unfiltered read below and by_number: an active entry's succeeded must
+        # agree with the other two reads (queue.list(state=...) is unjoined, and would always report 0 here).
+        entries = context.store.queue.list_active(state=state)
         cursor = None
     else:
         finished = context.store.queue.list_finished(limit=page.limit, offset=page.offset, state=state)

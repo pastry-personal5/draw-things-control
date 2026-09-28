@@ -73,6 +73,7 @@ def audit_entry(row: AuditRow) -> dict[str, Any]:
 def run_summary(run: RunRow) -> dict[str, Any]:
     return {
         "number": run.number,
+        "pair": run.pair,
         "status": run.status,
         "started_at": run.started_at,
         "seconds": run.seconds,
@@ -110,7 +111,14 @@ def execution_detail(row: ExecutionRow) -> dict[str, Any]:
         "seed_source": row.seed_source,
         "cooldown_seconds": row.cooldown_seconds,
         "cooldown_source": row.cooldown_source,
+        # The resolved cooldown mapping (mode, ratio, minimum/maximum_seconds), not only its old fixed-seconds
+        # summary above: None for an execution written before it was kept (ExecutionSettings' own comment), which
+        # had only cooldown_seconds. The TUI's seeding (Milestone 03, attaching to a running entry with no live
+        # JobStarted to read a CooldownPolicy from) is the first reader of it over the API.
+        "cooldown": row.settings.cooldown,
         "config_file": row.config_file,
+        "manifest": row.manifest_path,
+        "log": row.log_path,
         "runs": [run_summary(run) for run in row.runs],
     }
 
@@ -153,4 +161,6 @@ def queue_entry(row: QueueRow) -> dict[str, Any]:
         "resumes": queue_id_text(row.resumes) if row.resumes is not None else None,
         "resumes_execution": execution_id_text(row.resumes_execution) if row.resumes_execution is not None else None,
         "error": row.error,
+        "total_runs": row.total_runs,
+        "succeeded": row.succeeded,
     }

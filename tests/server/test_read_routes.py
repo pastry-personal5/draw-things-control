@@ -36,7 +36,7 @@ class ReadRoutesTestCase(JobTestCase):
 
     def build_client(self, *, worker_alive: bool = True) -> TestClient:
         worker = FakeWorker(worker_alive)
-        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs is_alive() for these read-only routes)
+        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs is_alive() for these read-only routes)
         app = create_app(context)
         return TestClient(app, base_url="http://127.0.0.1:8765")
 
@@ -65,6 +65,7 @@ class AuthAndHostTests(ReadRoutesTestCase):
         self.assertEqual(body["status"], "ok")
         self.assertTrue(body["worker_alive"])
         self.assertIn("version", body)
+        self.assertEqual(body["grpc_port"], 8766)
 
     def test_health_reports_a_dead_worker_but_still_answers_200(self) -> None:
         client = self.build_client(worker_alive=False)
@@ -170,10 +171,21 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
         execution_id = self.get("/v1/executions").json()["executions"][0]["execution_id"]
         detail = self.get(f"/v1/executions/{execution_id}").json()
         self.assertEqual(len(detail["runs"]), 1)
+        self.assertEqual(detail["runs"][0]["pair"], "p")
+        self.assertIsNone(detail["manifest"])
+        self.assertIsNone(detail["log"])
+        self.assertIsNone(detail["cooldown"])
         self.assertNotIn("secret", " ".join(detail["runs"][0]["command"]))
         self.assertIn("[redacted]", detail["runs"][0]["command"])
         outputs = self.get(f"/v1/executions/{execution_id}/outputs").json()
         self.assertEqual(outputs["outputs"][0]["complete"], True)
+
+    def test_execution_detail_includes_the_resolved_cooldown_mapping(self) -> None:
+        execution_id = self.store.executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at="2026-09-28T09:00:00+00:00", settings=ExecutionSettings(output_directory=str(self.output_directory), cooldown={"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})))
+        self.store.executions.finish(execution_id, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-28T09:05:00+00:00")
+        number = self.store.executions.number_of(execution_id)
+        detail = self.get(f"/v1/executions/E{number:04d}").json()
+        self.assertEqual(detail["cooldown"], {"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})
 
     def test_an_unknown_execution_id_is_not_found(self) -> None:
         self.assertEqual(self.get("/v1/executions/E9999").status_code, 404)

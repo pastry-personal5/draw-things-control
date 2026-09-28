@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import types
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_args, get_origin, get_type_hints
 
 from loguru import logger
 
@@ -213,3 +214,39 @@ def _plain(value: Any) -> Any:
     if isinstance(value, tuple | list):
         return [_plain(item) for item in value]
     return value
+
+
+EVENT_TYPES_BY_KIND: dict[str, type] = {name: cls for cls, name in EVENT_KINDS.items()}
+
+
+def event_from_dict(data: dict[str, Any]) -> JobEvent:
+    """The exact inverse of ``event_to_dict``: given a mapping with a ``kind`` and that kind's own fields (as a
+    gRPC client decodes an ``Event.data_json``, Milestone 03), rebuilds the matching ``JobEvent`` dataclass."""
+    event_type = EVENT_TYPES_BY_KIND[data["kind"]]
+    hints = get_type_hints(event_type)
+    values = {event_field.name: _typed(data[event_field.name], hints[event_field.name]) for event_field in fields(event_type)}
+    return event_type(**values)
+
+
+def _typed(value: Any, hint: Any) -> Any:
+    """``value`` (already plain JSON) converted back to what ``hint`` (a field's real type, Optional unwrapped)
+    names: a ``CooldownPolicy``, a ``StrEnum`` member, or a tuple; anything else (str, int, float, dict, None)
+    round-trips as itself."""
+    hint = _unwrap_optional(hint)
+    if value is None:
+        return None
+    if hint is CooldownPolicy:
+        return CooldownPolicy(**value)
+    if isinstance(hint, type) and issubclass(hint, StrEnum):
+        return hint(value)
+    if get_origin(hint) is tuple:
+        return tuple(value)
+    return value
+
+
+def _unwrap_optional(hint: Any) -> Any:
+    if get_origin(hint) is types.UnionType:
+        args = [arg for arg in get_args(hint) if arg is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return hint

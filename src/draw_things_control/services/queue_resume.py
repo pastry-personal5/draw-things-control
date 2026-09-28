@@ -58,13 +58,20 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
     _check_own_input(entry, global_config, params_directory)
     chain = _resolve_chain(store, entry)
+    # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is still
+    # valid; nothing below reads the parsed job for more than its fields (run count, timeout, cooldown), so
+    # decoding the image a second time here would be wasted work. Parsed unconditionally, not only inside
+    # before_submit's own check, since total_runs below needs it on every resume, not only a checked one (a direct
+    # call with no before_submit, as some tests make, still gets a total_runs).
+    job = parse_snapshot(entry, global_config, params_directory, decode_input=False)()
     if before_submit is not None:
-        # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is
-        # still valid; before_submit only reads the parsed job's fields (run count, timeout, cooldown), so
-        # decoding the image a second time here would be wasted work.
-        job = parse_snapshot(entry, global_config, params_directory, decode_input=False)()
         before_submit(job, job.run_count - chain.first_run + 1)
-    new = NewQueueEntry(
+    new = _new_resumed_entry(entry, chain, job.run_count, local_timestamp(clock()))
+    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
+
+
+def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, submitted_at: str) -> NewQueueEntry:
+    return NewQueueEntry(
         job_path=entry.job_path,
         job_text=entry.job_text,
         config_file=entry.config_file,
@@ -73,14 +80,14 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         output_directory=entry.output_directory,
         cooldown_default=entry.cooldown_default,
         settings=entry.settings,
-        submitted_at=local_timestamp(clock()),
+        submitted_at=submitted_at,
+        total_runs=total_runs,
         resumes=entry.queue_number,
         resumes_execution=chain.execution_number,
         resume_first_run=chain.first_run,
         resume_input=str(chain.input),
         resume_seed=chain.seed,
     )
-    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
 @dataclass(frozen=True)

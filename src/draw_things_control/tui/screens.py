@@ -13,12 +13,14 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.run_lock import CHILD_EXECUTABLE_NAME
 from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished
-from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.services.history import HistoryReader
 from draw_things_control.services.job_catalog import JobCatalog, JobListing
 from draw_things_control.services.job_details import JobDetails, add_plan, read_details
-from draw_things_control.services.store_provider import StoreProvider
+from draw_things_control.services.queue_reader import QueueReader
+from draw_things_control.services.toolkit import Toolkit
+from draw_things_control.state.ids import EXECUTION_LETTER, parse_typed_id
 from draw_things_control.tui.commands import CommandSuggester
 from draw_things_control.tui.controller import CommandController
 from draw_things_control.tui.desktop import copy_text, reveal_run
@@ -27,6 +29,7 @@ from draw_things_control.tui.panes.cli_output import CliPane
 from draw_things_control.tui.panes.execution import ExecutionPane
 from draw_things_control.tui.panes.history import HistoryPane
 from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.panes.queue import QueuePane
 from draw_things_control.tui.panes.status import StatusPane
 from draw_things_control.tui.reader import PaneHistory
 from draw_things_control.tui.text.arguments import parameters_text, run_arguments
@@ -51,17 +54,14 @@ STATUS_LINES = 7
 
 
 class MainScreen(Screen[None]):
-    """Lays out the panes, runs the typed commands, and passes the running job's events to the panes.
-
-    The draw-things-cli pane and the status line render from the app's LiveRun; Messages keeps the command output and the job's log.
-    """
+    """Lays out the panes, runs the typed commands, and passes the running job's events to the panes. The
+    draw-things-cli pane and the status line render from the app's LiveRun; Messages keeps the command output and log."""
 
     def __init__(self) -> None:
         super().__init__()
         # The data directory's job files and their IDs; the Job Definition widget reads through it.
         self.catalog: JobCatalog | None = None
         self.reader: PaneHistory | None = None
-        self.store: StoreProvider | None = None
         self.commands = CommandController(self)
 
     @property
@@ -92,25 +92,32 @@ class MainScreen(Screen[None]):
     def status(self) -> StatusPane:
         return self.query_one(StatusPane)
 
+    @property
+    def queue(self) -> QueuePane:
+        return self.query_one(QueuePane)
+
     def compose(self) -> ComposeResult:
-        # The history pane reads through it; the detail and reveal commands too. Closed when the screen goes.
-        self.store = StoreProvider(self.dtc.paths, self.dtc.settings.history_retention_days)
-        self.reader = PaneHistory(HistoryReader(self.dtc.paths, self.store))
+        # The app's own store, shared with the Queue widget's fallback and the gRPC feed's past_run reads; closed
+        # by the app, not this screen, since it outlives any one screen.
+        store = self.dtc.store_provider
+        self.reader = PaneHistory(HistoryReader(self.dtc.paths, store))
+        queue_reader = QueueReader(self.dtc.paths, store)
         with Horizontal(id="main"):
             with Vertical(id="left"):
                 yield StatusPane(id="status")
                 yield CliPane(id="cli")
                 yield MessageLog(id="messages", max_lines=MAX_MESSAGE_LINES, wrap=True, min_width=20)
             with Vertical(id="right"):
-                # First in the right column, so Tab goes command line, Job Definition, Execution History, Execution.
-                self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings, self.dtc.paths, self.store)
-                yield JobDefinitionPane(self.catalog, SortPreference(self.store), describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
-                yield HistoryPane(self.reader, busy=lambda: self.dtc.job_running, leave=self.focus_command_line, id="history")
+                # First in the right column, so Tab goes command line, Job Definition, Queue, Execution History, Execution.
+                self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings, self.dtc.paths, store)
+                yield JobDefinitionPane(self.catalog, SortPreference(store), describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
+                yield QueuePane(queue_reader, feed_connected=lambda: self.dtc.feed_connected, leave=self.focus_command_line, id="queue")
+                yield HistoryPane(self.reader, busy=lambda: self.dtc.feed_connected, leave=self.focus_command_line, id="history")
                 yield ExecutionPane(self.reader, say=self.say, leave=self.focus_command_line, id="execution")
         yield Rule(line_style="solid", classes="command-rule")
         with Horizontal(id="command-line"):
             yield Static("> ", id="prompt")
-            yield CommandInput(id="command", compact=True, suggester=CommandSuggester(lambda: self.jobs.job_names, lambda: self.jobs.job_ids, self.execution_ids))
+            yield CommandInput(id="command", compact=True, suggester=CommandSuggester(lambda: self.jobs.job_names, lambda: self.jobs.job_ids, self.execution_ids, self.queue_ids))
         yield Rule(line_style="solid", classes="command-rule")
         yield Static(id="status-line")
 
@@ -124,10 +131,6 @@ class MainScreen(Screen[None]):
         self.set_interval(1, self.tick)
         self.render_live()
 
-    def on_unmount(self) -> None:
-        if self.store is not None:
-            self.store.close()
-
     def on_resize(self, event: events.Resize) -> None:
         # The draw-things-cli pane gives up lines, down to its least, so Messages keeps its least on a short terminal.
         left = event.size.height - BOTTOM_LINES - STATUS_LINES
@@ -140,6 +143,10 @@ class MainScreen(Screen[None]):
     def execution_ids(self) -> list[str]:
         """The loaded executions' IDs, newest first, for completion."""
         return [row.label for row in self.history.executions.values()]
+
+    def queue_ids(self) -> list[str]:
+        """The queue entries currently shown, for completion."""
+        return list(self.queue.rows_by_id)
 
     def focus_command_line(self) -> None:
         self.command_line.focus()
@@ -156,22 +163,22 @@ class MainScreen(Screen[None]):
         self.commands.submit(line)
 
     def describe_job(self, path: Path) -> None:
-        self.load_details(path, self.dtc.settings, self.dtc.job_executor, self.dtc.executable)
+        self.load_details(path, self.dtc.settings, self.dtc.toolkit)
 
     # Workers: jobs, the detail, and reveal
 
     def announce_jobs(self, listing: JobListing) -> None:
         """/get jobs: the listing the Job Definition widget just read, in Messages."""
-        running = self.dtc.live.path.name if self.dtc.job_running and self.dtc.live is not None else None
+        running = self.dtc.live.path.name if self.dtc.job_running and self.dtc.live is not None and self.dtc.live.path is not None else None
         self.say(jobs_text(listing.rows, running, listing.message))
         if listing.id_error is not None:
             self.say(listing.id_error, "yellow")
 
     @work(thread=True, group="details")
-    def load_details(self, path: Path, settings: GlobalConfig, executor: JobExecutor, executable: str) -> None:
+    def load_details(self, path: Path, settings: GlobalConfig, toolkit: Toolkit) -> None:
         details = read_details(path, settings, self.dtc.paths)
         if details.job is not None:
-            details = add_plan(details, executor, executable)
+            details = add_plan(details, toolkit, CHILD_EXECUTABLE_NAME)
         self.app.call_from_thread(self.show_details, path, details)
 
     def show_details(self, path: Path, details: JobDetails) -> None:
@@ -247,10 +254,12 @@ class MainScreen(Screen[None]):
 
     # The running job
 
-    def job_started(self) -> None:
-        """A job starts: its output replaces the last job's."""
+    def job_started(self, *, seeded: bool = False) -> None:
+        """A job starts (live), or is attached to already running (``seeded``): either way its output replaces the
+        last job's, marked "earlier output not shown" only when seeded, since only then is there earlier output
+        this session never saw."""
         if self.dtc.live is not None:
-            self.cli.new_job(self.dtc.live)
+            self.cli.new_job(self.dtc.live, seeded=seeded)
         self.tick()
 
     def job_event(self, event: JobEvent) -> None:
@@ -260,13 +269,22 @@ class MainScreen(Screen[None]):
             self.say(text)
         self.render_live(event)
         # A new execution needs its row; a finished run changes only that row. The end of the job reads the pane again.
+        number = self._live_execution_number()
         if isinstance(event, JobStarted):
             # The cursor moves to the new execution, unless the person is browsing the history or the detail.
             if self.focused not in (self.history, self.detail):
-                self.history.select_when_shown = self.dtc.execution_id
+                self.history.select_when_shown = number
             self.history.load()
-        elif isinstance(event, RunFinished) and self.dtc.execution_id is not None:
-            self.history.refresh_rows([self.dtc.execution_id])
+        elif isinstance(event, RunFinished) and number is not None:
+            row_id = self.history.row_id_for(number)
+            if row_id is not None:
+                self.history.refresh_rows([row_id])
+
+    def _live_execution_number(self) -> int | None:
+        live = self.dtc.live
+        if live is None or live.execution_id is None:
+            return None
+        return parse_typed_id(live.execution_id, EXECUTION_LETTER)
 
     def job_ended(self) -> None:
         live = self.dtc.live

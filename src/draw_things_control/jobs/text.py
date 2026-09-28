@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -173,16 +172,5 @@ def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
 
 
 def plan_steps(job: JobDefinition, preview: JobPreview) -> list[PlanStep]:
-    """Each run of the dry-run plan, in order; run-job --dry-run and the TUI both read the plan from here."""
+    """Each run of the dry-run plan, in order; the TUI reads the plan from here."""
     return [PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, f"Run {run.number}/{len(preview.runs)} (pair {run.pair.name})", run, command) for run, command in zip(preview.runs, preview.commands, strict=True)]
-
-
-def plan_lines(job: JobDefinition, preview: JobPreview) -> list[str]:
-    """The lines run-job --dry-run prints: the header and each run's heading and wait as comments, and each redacted command."""
-    lines = [f"# {line}" for line in plan_header(job, preview)]
-    for step in plan_steps(job, preview):
-        if step.cooldown is not None:
-            lines.append(f"# {step.cooldown}")
-        lines.append(f"# {step.heading}")
-        lines.append(shlex.join(step.command))
-    return lines

@@ -8,7 +8,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_to_dict, notify
+from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.planning import PlannedRun
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
@@ -76,6 +76,10 @@ class EventJsonTests(unittest.TestCase):
     def test_every_field_of_an_event_is_in_its_dict(self) -> None:
         for event in self.every_event():
             self.assertEqual(set(event_to_dict(event)), {"kind", *(field.name for field in fields(event))})
+
+    def test_event_from_dict_round_trips_every_event_kind(self) -> None:
+        for event in self.every_event():
+            self.assertEqual(event_from_dict(json.loads(json.dumps(event_to_dict(event)))), event)
 
 
 class EventsOfARealJobTests(JobTestCase):

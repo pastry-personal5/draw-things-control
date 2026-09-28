@@ -63,7 +63,7 @@ class HistoryPane(SidewaysTable):
         self.reader = reader
         self.busy = busy
         self.leave = leave
-        # An execution to move the cursor to once a read shows it: this TUI's new job.
+        # An execution's public number (E0012) to move the cursor to once a read shows it: this TUI's new job.
         self.select_when_shown: int | None = None
         # Not ``filter``, ``rows``, or ``loading``: DataTable and Widget already use those names.
         self.history_filter = HistoryFilter()
@@ -147,11 +147,20 @@ class HistoryPane(SidewaysTable):
         if page.offset == 0 and selected is not None and selected in self.executions:
             self.move_cursor(row=self.get_row_index(str(selected)))
         wanted, self.select_when_shown = self.select_when_shown, None
+        # An execution number (E0012), not a row id: the feed only ever names an execution by its public label
+        # (Milestone 03), and this page's own rows already carry both, so no extra lookup is needed to match one.
         # A filter that hides the new execution leaves the cursor where it is.
-        if page.offset == 0 and wanted is not None and wanted in self.executions:
-            self.move_cursor(row=self.get_row_index(str(wanted)))
+        if page.offset == 0 and wanted is not None:
+            match = next((row for row in page.rows if row.execution_number == wanted), None)
+            if match is not None:
+                self.move_cursor(row=self.get_row_index(str(match.id)))
         if page.offset == 0:
             self.post_message(self.PageShown(self.selected, page.message))
+
+    def row_id_for(self, execution_number: int) -> int | None:
+        """The row id (this pane's own DataTable key) of an already-shown execution, by its public number
+        (E0012); None when it is not currently shown."""
+        return next((row_id for row_id, row in self.executions.items() if row.execution_number == execution_number), None)
 
     def refresh_rows(self, execution_ids: list[int]) -> None:
         """Update rows already shown, in place, without reading the whole pane again."""

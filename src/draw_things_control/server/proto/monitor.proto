@@ -56,4 +56,7 @@ message QueueEntrySnapshot {
   // set together, or neither before the first reading arrives.
   optional int32 current_step = 8;
   optional int32 current_step_total = 9;
+  // The whole chain's run count (state/queue.py's own total_runs, Milestone 03), so `dtc queue add --wait` can
+  // print "run 3/7" the way the Queue widget does, from the entry's stored column alone.
+  optional int32 total_runs = 10;
 }

@@ -14,7 +14,8 @@ def check_job_rules(job: JobDefinition, global_config: GlobalConfig) -> None:
     """The two structural rules: ``run_timeout_seconds`` is set, since without it the worst case is unbounded, and
     the job's ``input`` (symbolic links resolved) stays inside the input directory and its ``output.directory``
     inside the global output directory, so a job cannot create directories, or be told to read a file, anywhere
-    else. A job file that breaks either still runs with ``run-job`` while no server is up."""
+    else. Since Milestone 03 retired every way to run a job but the queue, a job file that breaks either no longer
+    runs at all: every submission, from a person or an agent alike, passes through here first."""
     if job.run_timeout_seconds is None:
         raise TimeoutRequiredError("'run_timeout_seconds' is required for a job the API runs or writes", field="run_timeout_seconds")
     if job.input is not None:

@@ -54,7 +54,7 @@ class GrpcServiceTestCase(JobTestCase):
         self.addCleanup(self.store.close)
         executor: JobExecutor = job_executor(runner_factory=lambda *a: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False)
         self.worker = FakeWorker()
-        self.context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8766)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the servicer calls)
+        self.context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8766, grpc_port=8767)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the servicer calls)
         self.server: grpc.aio.Server | None = None
         self.channel: grpc.aio.Channel | None = None
 
@@ -165,7 +165,7 @@ class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase
         entry = self.submit(run_count=1)
         call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
         first = await self.read(call)
-        self.assertEqual((first.queue_id, first.state), (entry.label, "queued"))
+        self.assertEqual((first.queue_id, first.state, first.total_runs), (entry.label, "queued", 1))
         self.store.queue.claim_oldest(datetime.now())
         second = await self.read(call)
         self.assertEqual(second.state, "running")

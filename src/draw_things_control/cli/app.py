@@ -2,61 +2,34 @@
 
 from __future__ import annotations
 
-import signal
 import sqlite3
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from loguru import logger
 
+from draw_things_control.cli.context import CliServices, errors_exit, services_of
+from draw_things_control.cli.queue_app import AllowRemoteServerOption, ServerUrlOption, TokenFileOption, queue_app
+from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host
 from draw_things_control.core.draw_things_config import load_config
-from draw_things_control.core.errors import DtcError
-from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE, exit_code_for_error
+from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
 from draw_things_control.core.generation import GenerateRequest
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.files import read_job, read_settings
-from draw_things_control.jobs.text import job_summary, plan_lines, report_ignored_config
-from draw_things_control.services.job_runs import JobRunSession
+from draw_things_control.jobs.text import job_summary, report_ignored_config
 from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.state.history_import import import_history
 from draw_things_control.state.store import StateError, Store, StoreMode
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
-
-
-@dataclass(frozen=True)
-class CliServices:
-    """What every command needs from the machine: where the project's files are, and the real tools. ``main`` builds it once; a
-    test passes its own with ``CliRunner.invoke(..., obj=...)``."""
-
-    paths: ProjectPaths
-    toolkit: Toolkit
-
-
-def services_of(ctx: typer.Context) -> CliServices:
-    """The context's services, or the project's own when a command runs without ``main``."""
-    return ctx.obj if isinstance(ctx.obj, CliServices) else CliServices(DEFAULT_PATHS, Toolkit())
-
-
-@contextmanager
-def errors_exit() -> Iterator[None]:
-    """Log an error that stops a command (invalid input, a busy run lock, an unusable state store) and exit with its code."""
-    try:
-        yield
-    except DtcError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=exit_code_for_error(error)) from error
-    except ValueError as error:
-        logger.error("{}", error)
-        raise typer.Exit(code=EXIT_INVALID_INPUT) from error
+app.add_typer(queue_app, name="queue")
 
 
 @contextmanager
@@ -186,36 +159,6 @@ def validate_job(ctx: typer.Context, job_file: JobFileArgument, global_config: G
         typer.echo(f"  {label}: {value}")
 
 
-@app.command("run-job")
-def run_job(
-    ctx: typer.Context,
-    job_file: JobFileArgument,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print every command without running anything.")] = False,
-    executable: ExecutableOption = "draw-things-cli",
-    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
-    global_config: GlobalConfigOption = None,
-) -> None:
-    """Run every generation in a job, chaining each output into the next run."""
-    services = services_of(ctx)
-    # A real run decodes the input when it writes run 1's copy, so it skips the validation decode.
-    job, settings = read_job_or_exit(job_file, global_config, services.paths, decode_input=dry_run)
-    executor = services.toolkit.job_executor()
-    with errors_exit():
-        if dry_run:
-            report_ignored_config(job)
-            preview = executor.preview(job, executable=executable)
-            for line in plan_lines(job, preview):
-                typer.echo(line)
-            return
-        try:
-            outcome = JobRunSession(services.paths, executor, settings).run(job, holder="run-job", executable=executable, shutdown_grace=shutdown_grace)
-        except StateError as error:
-            logger.error("{}; the job was not started", error)
-            raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
-    if outcome.exit_code:
-        raise typer.Exit(code=outcome.exit_code)
-
-
 @app.command("import-history")
 def import_history_command(
     ctx: typer.Context,
@@ -240,29 +183,26 @@ def import_history_command(
 def tui_command(
     ctx: typer.Context,
     data_dir: Annotated[Path | None, typer.Option("--data-dir", help="Directory of job files; default: data/jobs in the project.")] = None,
-    executable: ExecutableOption = "draw-things-cli",
-    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
     global_config: GlobalConfigOption = None,
 ) -> None:
-    """Browse, run, and watch the jobs in the data directory in a terminal UI."""
-    if shutdown_grace < 0:
-        logger.error("--shutdown-grace must not be negative")
-        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    """Browse the jobs in the data directory, and dtc serve's queue and history, in a terminal UI. dtc serve is the
+    only thing that ever runs a job now; this reads and submits to it, over the same three flags dtc queue takes."""
     services = services_of(ctx)
     settings = read_settings_or_exit(global_config, services.paths)
+    with errors_exit():
+        check_server_host(server_url, allow_remote_server=allow_remote_server)
     # Imported here, so the other commands do not load Textual.
     from draw_things_control.tui.app import DrawThingsApp
 
-    # Jobs run on a worker thread, where signal handlers cannot be installed; the app handles signals itself.
-    tui_executor = services.toolkit.job_executor(handle_signals=False)
-    tui = DrawThingsApp(settings=settings, paths=services.paths, data_directory=(data_dir or services.paths.jobs).expanduser(), executable=executable, job_executor=tui_executor, shutdown_grace=shutdown_grace)
+    tui = DrawThingsApp(settings=settings, paths=services.paths, data_directory=(data_dir or services.paths.jobs).expanduser(), server_url=server_url, token_file=token_file or services.paths.server_token, allow_remote_server=allow_remote_server, toolkit=services.toolkit)
     # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
     logger.remove()
     try:
         tui.run()
     finally:
-        # A backstop: the app stops a running job when it unmounts; this does nothing when no job runs.
-        tui_executor.cancel(signal.SIGINT)
         configure_logging()
     # Textual sets a nonzero return code when the app ends on an error, after printing the traceback.
     if tui.return_code:

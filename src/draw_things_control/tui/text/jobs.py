@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.text import Text
 
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.text import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, cooldown_details, ignored_config_lines, job_summary, pair_runs
+from draw_things_control.jobs.text import PLACEHOLDER_SEED_NOTE, RANDOM_SEED_TEXT, ignored_config_lines, job_summary, pair_runs
 from draw_things_control.services.job_catalog import JobRow
 from draw_things_control.services.job_details import JobDetails
 from draw_things_control.tui.text.arguments import PreviousRun, argument_rows, arguments_text, override_notes
@@ -144,31 +144,4 @@ def details_text(job: JobDefinition, details: JobDetails, job_id: str | None = N
     text.append("\n")
     text.append_text(plan_text(job, details))
     text.rstrip()
-    return text
-
-
-def confirm_run_text(job: JobDefinition, executable: str) -> Text:
-    """The run confirmation: what will run, where it writes, and with which executable."""
-    seed, source = job.configured_seed()
-    text = Text("Run this job?\n\n", style="bold")
-    for label, value in (
-        ("Job", job.name),
-        ("Mode", str(job.mode)),
-        ("Runs", str(job.run_count)),
-        ("Cooldown", cooldown_details(job)),
-        ("Seed", f"{seed} ({source})" if seed is not None else RANDOM_SEED_TEXT),
-        ("Output directory", str(job.output_directory)),
-        ("Executable", executable),
-    ):
-        text.append(f"  {label}: ", style="bold")
-        text.append(f"{value}\n")
-    # Not Enter: the Enter that submitted /apply must not also answer this.
-    text.append("\ny: run    n or Escape: cancel", style="dim")
-    return text
-
-
-def question_text(question: str, confirm: str, cancel: str) -> Text:
-    """A yes-or-no question with its keys."""
-    text = Text(f"{question}\n\n", style="bold")
-    text.append(f"y or Enter: {confirm}    n or Escape: {cancel}", style="dim")
     return text

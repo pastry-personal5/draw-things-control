@@ -14,7 +14,7 @@ import time
 import unittest
 
 from draw_things_control.core.errors import InputError
-from draw_things_control.server.serve import ServeOptions, _bind_http_socket, _grpc_target
+from draw_things_control.server.serve import ServeOptions, _bind_http_socket
 from draw_things_control.server.serve import run as run_server
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.services.toolkit import Toolkit
@@ -208,23 +208,6 @@ class BindHttpSocketTests(unittest.TestCase):
         finally:
             for sock in sockets:
                 sock.close()
-
-
-class GrpcTargetTests(unittest.TestCase):
-    """An IPv6 host must be bracketed for ``grpc.aio.Server.add_insecure_port``: unbracketed, ``::1:8766`` reads as
-    three colon-separated fields, not one host and one port."""
-
-    def test_an_ipv4_host_is_not_bracketed(self) -> None:
-        self.assertEqual(_grpc_target("127.0.0.1", 8766), "127.0.0.1:8766")
-
-    def test_a_hostname_is_not_bracketed(self) -> None:
-        self.assertEqual(_grpc_target("localhost", 8766), "localhost:8766")
-
-    def test_an_ipv6_host_is_bracketed(self) -> None:
-        self.assertEqual(_grpc_target("::1", 8766), "[::1]:8766")
-
-    def test_an_ipv6_wildcard_host_is_bracketed(self) -> None:
-        self.assertEqual(_grpc_target("::", 8766), "[::]:8766")
 
 
 if __name__ == "__main__":

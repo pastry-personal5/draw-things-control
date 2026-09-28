@@ -76,6 +76,8 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
         if entry is None:
             return None
         snapshot = monitor_pb2.QueueEntrySnapshot(queue_id=entry.label, state=entry.state)
+        if entry.total_runs is not None:
+            snapshot.total_runs = entry.total_runs
         if entry.execution_number is not None:
             snapshot.execution_id = execution_id_text(entry.execution_number)
         if entry.error is not None:

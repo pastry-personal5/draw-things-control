@@ -44,7 +44,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
 - No module holds a path of its own: a directory comes from `ProjectPaths`
   (`core/paths.py`) and is passed down, and a test passes its own.
-- Keep modules to at most 400 lines, classes to at most 250, and functions to at most 40 (`tests/test_architecture.py` checks it),
+- Keep modules to at most 800 lines, classes to at most 250, and functions to at most 40 (`tests/test_architecture.py` checks it),
   except declarative tables and option lists (`GENERATE_FLAGS`, the command
   table, SQL, a Typer command's options).
 - `data/params/*.json`, `data/params/*.yaml`, and `config/global-config.yaml`

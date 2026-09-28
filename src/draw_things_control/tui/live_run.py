@@ -1,4 +1,5 @@
-"""The state of the job the TUI runs, built from its events on the main thread, and the messages that carry them there."""
+"""The state of the job the TUI follows, built from gRPC events (and, attaching mid-run, a seeding read) on the
+app's own asyncio loop -- never a worker thread, since Milestone 03 retired the TUI's own job-running thread."""
 
 from __future__ import annotations
 
@@ -12,30 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from textual.message import Message
-
 from draw_things_control.core.arguments import command_settings
-from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus
 from draw_things_control.state.store import Store
 
 MAX_OUTPUT_LINES = 2000
-
-
-class JobEventMessage(Message):
-    """One job event, posted from the job worker's thread to the app."""
-
-    def __init__(self, event: JobEvent) -> None:
-        super().__init__()
-        self.event = event
-
-
-class JobWorkerEnded(Message):
-    """The job worker has released the run lock; always the last message of a job. ``error`` is why it raised, if it did."""
-
-    def __init__(self, error: str | None = None) -> None:
-        super().__init__()
-        self.error = error
 
 
 @dataclass
@@ -67,14 +49,6 @@ class PastRun:
     steps: int | None = None
 
 
-class PastRunFound(Message):
-    """The latest successful run of any job, read from the state store before the job starts; None when there is none."""
-
-    def __init__(self, past_run: PastRun | None) -> None:
-        super().__init__()
-        self.past_run = past_run
-
-
 @dataclass(frozen=True)
 class FinishedRun:
     """A run of this job that has ended, timed on the TUI's clock for the estimates."""
@@ -100,58 +74,68 @@ class OutputLine:
 
 
 class LiveRun:
-    """Everything the live view shows about one job; plain data, changed only on the thread that created it."""
+    """Everything the live view shows about the queue entry the TUI follows; plain data, changed only on the thread
+    that created it (the app's own asyncio loop, driven directly by the gRPC feed worker -- no thread hop).
 
-    def __init__(self, job: JobDefinition, path: Path, *, clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], datetime] = datetime.now) -> None:
+    Starts empty: the TUI no longer holds the running entry's job file, so there is no schedule to build a run table
+    from up front. ``JobStarted`` (live, or built from a seeding read attaching mid-run) seeds it instead, and
+    pre-sizes the run table to ``total_runs`` placeholder rows, rows before ``first_run`` marked already succeeded
+    (a resumed chain's earlier runs, which this session never itself ran and so never gets a RunStarted for).
+
+    ``ended`` becomes true, however it is learned: a ``JobFinished`` arrived, its queue entry reached a final state
+    (``queue_entry_changed``), or a reseed found nothing running -- a server crash or restart, a ``JobFinished``
+    lost in a backlog gap that became a Reset, or an entry that failed before ``JobStarted``.
+    """
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], datetime] = datetime.now) -> None:
         self._thread = threading.get_ident()
         self._clock = clock
         self._wall_clock = wall_clock
-        self.job_name = job.name
-        self.path = path
-        # The execution's ID (E0012), once JobStarted has been recorded; None before, or when it is not recorded.
+        # The queue entry followed (Q0007) and the execution's ID (E0012, read straight off JobStarted itself).
+        self.queue_id: str | None = None
+        self.job_name: str | None = None
+        self.path: Path | None = None
         self.execution_id: str | None = None
-        # The last run with a command (its number and argument rows), which the next run's message is compared with.
         self.previous_arguments: tuple[int, Any] | None = None
         self.started: JobStarted | None = None
-        self.runs = [RunState(number, pair.name) for number, pair in enumerate(job.schedule(), start=1)]
+        self.runs: list[RunState] = []
         self.active_run: int | None = None
-        # Monotonic time the active run's RunStarted was applied.
-        self.run_started_at: float | None = None
+        self.run_started_at: float | None = None  # Monotonic time the active run's RunStarted was applied.
         self.active_output: str | None = None
         self.command: tuple[str, ...] = ()
         self.progress: tuple[int, int] | None = None
         self.percent: int | None = None
         self.cooldown: CooldownStarted | None = None
-        # Monotonic time the cooldown ends.
-        self.cooldown_ends_at: float | None = None
-        # The run the last cooldown followed, once it has ended; the next run starts without another wait.
-        self.cooled_after_run: int | None = None
-        # Monotonic time JobStarted was applied, and the time a stop was requested (the estimates freeze there).
-        self.job_started_at: float | None = None
-        self.stopped_at: float | None = None
-        # The active run's first counter reading, since the counter last started over, and its latest.
-        self.first_step: StepReading | None = None
+        self.cooldown_ends_at: float | None = None  # Monotonic time the cooldown ends.
+        self.cooled_after_run: int | None = None  # The run the last cooldown followed; the next starts without another wait.
+        self.job_started_at: float | None = None  # Monotonic time JobStarted was applied.
+        self.stopped_at: float | None = None  # Monotonic time a stop was requested; the estimates freeze there.
+        self.first_step: StepReading | None = None  # The active run's first counter reading since it last started over.
         self.last_step: StepReading | None = None
         self.finished_runs: list[FinishedRun] = []
-        # The latest successful run of any job when this one started, from the state store.
-        self.past_run: PastRun | None = None
+        self.past_run: PastRun | None = None  # The latest successful run of any job when this one started.
         self.output: deque[OutputLine] = deque(maxlen=MAX_OUTPUT_LINES)
-        # Every line ever added, so a view knows how many it has not written yet.
-        self.output_count = 0
+        self.output_count = 0  # Every line ever added, so a view knows how many it has not written yet.
+        # Set only once a cancel this pane issued (/stop, or the Queue widget's own) is confirmed by the API
+        # succeeding, never optimistically: moment() pins the bars here, so a failed cancel must not freeze them.
         self.stop_requested = False
         self.finished: JobFinished | None = None
-        self.worker_ended = False
+        # The followed entry is over, however that was learned (see the class docstring); replaces the old
+        # worker_ended, a local job-running thread that no longer exists.
+        self.ended = False
         self.error: str | None = None
 
     @property
     def phase(self) -> str:
-        """``starting``, ``running``, ``cooling_down``, ``stopping``, ``finished``, or ``not_started``."""
-        if self.worker_ended:
-            return "finished" if self.finished is not None else "not_started"
-        if self.stop_requested:
-            return "stopping"
+        """``starting``, ``running``, ``cooling_down``, ``stopping``, ``finished``, ``not_started``, or ``ended``
+        (the entry is over, but no JobFinished ever said how: it started, unlike ``not_started``, which never even
+        got that far -- an entry that failed before JobStarted)."""
+        if self.ended and self.finished is None:
+            return "not_started" if self.started is None else "ended"
         if self.finished is not None:
             return "finished"
+        if self.stop_requested:
+            return "stopping"
         if self.cooldown is not None:
             return "cooling_down"
         return "running" if self.started is not None else "starting"
@@ -163,11 +147,10 @@ class LiveRun:
         return self._wall_clock()
 
     def apply(self, event: JobEvent) -> None:
-        """Update the state from one event."""
+        """Update the state from one event, live or (seeding) synthetic."""
         self._check_thread()
         if isinstance(event, JobStarted):
-            self.started = event
-            self.job_started_at = self._clock()
+            self._job_started(event)
         elif isinstance(event, RunStarted):
             self._run_started(event)
         elif isinstance(event, RunOutput):
@@ -182,12 +165,22 @@ class LiveRun:
             self.cooldown = self.cooldown_ends_at = None
         elif isinstance(event, JobFinished):
             self.finished = event
+            self.ended = True
             self.active_run = self.run_started_at = None
             self.cooldown = self.cooldown_ends_at = None
+
+    def _job_started(self, event: JobStarted) -> None:
+        self.started = event
+        self.job_name = event.job_name
+        self.path = Path(event.job_file)
+        self.execution_id = event.execution_id
+        self.job_started_at = self._clock()
+        self.runs = [RunState(number, "?", status=RunStatus.SUCCEEDED if number < event.first_run else "pending") for number in range(1, event.total_runs + 1)]
 
     def _run_started(self, event: RunStarted) -> None:
         run = self._run(event.number)
         run.status = RunStatus.RUNNING
+        run.pair = event.pair
         self.active_run = event.number
         self.run_started_at = self._clock()
         self.active_output = event.output
@@ -237,11 +230,13 @@ class LiveRun:
             self.first_step = StepReading(step, total, now)
         self.last_step = StepReading(step, total, now)
 
-    def end(self, error: str | None) -> None:
-        """The worker ended; ``error`` is the exception it caught, if any."""
+    def end(self, *, error: str | None = None) -> None:
+        """The followed entry is over, with no JobFinished to explain it (a queue_entry_changed to a final state, or
+        a reseed that found nothing running); ``error`` is the entry's own, when it has one."""
         self._check_thread()
-        self.worker_ended = True
-        self.error = error
+        self.ended = True
+        if error is not None:
+            self.error = error
 
     def _run(self, number: int) -> RunState:
         while len(self.runs) < number:

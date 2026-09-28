@@ -94,9 +94,9 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/Filter status s", self.JOBS), ["/Filter status succeeded"])
 
     def test_the_get_and_describe_words_complete(self) -> None:
-        self.assertEqual(completions("/get ", self.JOBS), ["/get jobs", "/get history", "/get prompts", "/get positive", "/get negative", "/get param", "/get parameters"])
+        self.assertEqual(completions("/get ", self.JOBS), ["/get jobs", "/get queue", "/get history", "/get prompts", "/get positive", "/get negative", "/get param", "/get parameters"])
         self.assertEqual(completions("/get par", self.JOBS), ["/get param", "/get parameters"])
-        self.assertEqual(completions("/describe ", self.JOBS), ["/describe job", "/describe execution"])
+        self.assertEqual(completions("/describe ", self.JOBS), ["/describe job", "/describe queue", "/describe execution"])
         self.assertEqual(completions("/DESCRIBE Job w", self.JOBS), ["/DESCRIBE Job walk.yaml", "/DESCRIBE Job wave.yml"])
         self.assertEqual(completions("/get positive 1", self.JOBS), [])
 
@@ -107,7 +107,7 @@ class CompletionTests(unittest.TestCase):
         for name in ("jobs", "job", "history", "execution", "run"):
             self.assertNotIn(name, COMMAND_NAMES)
         self.assertEqual(usage("get", "positive"), "/get positive <Execution ID> [RUN]")
-        self.assertEqual(usage("describe"), "/describe job <Job ID> | /describe execution <Execution ID>")
+        self.assertEqual(usage("describe"), "/describe job <Job ID> | /describe queue <Queue ID> | /describe execution <Execution ID>")
         self.assertEqual(usage("describe", "execution"), "/describe execution <Execution ID>")
 
     def test_ids_and_sort_words_complete(self) -> None:
@@ -125,6 +125,16 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/sort ", self.JOBS), ["/sort jobs"])
         self.assertEqual(completions("/sort jobs c", self.JOBS), ["/sort jobs changed"])
         self.assertEqual(completions("/sort jobs name d", self.JOBS), ["/sort jobs name desc"])
+
+    def test_queue_words_jobs_and_ids_complete(self) -> None:
+        queue_ids = ["Q0007", "Q0002"]
+        self.assertEqual(completions("/queue ", self.JOBS), ["/queue add", "/queue cancel", "/queue resume"])
+        self.assertEqual(completions("/queue add wa", self.JOBS), ["/queue add walk.yaml", "/queue add wave.yml"])
+        self.assertEqual(completions("/queue cancel Q000", self.JOBS, (), (), queue_ids), ["/queue cancel Q0007", "/queue cancel Q0002"])
+        self.assertEqual(completions("/queue resume Q000", self.JOBS, (), (), queue_ids), ["/queue resume Q0007", "/queue resume Q0002"])
+        self.assertEqual(completions("/describe queue Q000", self.JOBS, (), (), queue_ids), ["/describe queue Q0007", "/describe queue Q0002"])
+        self.assertEqual(completions("/describe q000", self.JOBS, (), (), queue_ids), ["/describe q0007", "/describe q0002"])
+        self.assertEqual(completions("/apply", self.JOBS), [])
 
     def test_filter_words_and_statuses_complete(self) -> None:
         self.assertEqual(completions("/filter ", self.JOBS), ["/filter status", "/filter name", "/filter off"])

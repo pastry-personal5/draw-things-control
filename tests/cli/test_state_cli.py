@@ -1,11 +1,15 @@
-"""Tests for the run lock and execution history in the CLI."""
+"""Tests for import-history, and the runner helper it (and generate) share.
+
+The run-lock and execution-recording behaviors this file used to exercise through the now-removed ``run-job``
+command (a busy lock, a crash-left-running row, history retention, an unreachable state directory, a newer schema, a
+failed execution ID reservation) are ``JobRunSession``'s own contract, not the CLI's: they are covered directly
+against it in ``tests/services/test_job_runs.py``, the layer ``dtc serve``'s worker and the TUI now share (Milestone
+03) instead of a CLI command running a job itself.
+"""
 
 import itertools
 import json
 import os
-import sqlite3
-import subprocess
-import sys
 from pathlib import Path
 from unittest import mock
 
@@ -13,25 +17,15 @@ from loguru import logger
 from typer.testing import CliRunner
 
 from draw_things_control.cli.app import CliServices, app
-from draw_things_control.core import run_lock
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.paths import ProjectPaths
+from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.executor import JobRunOptions
+from draw_things_control.jobs.files import read_job
+from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.toolkit import create_job_runner
-from draw_things_control.state.executions import ExecutionRepository, ExecutionRow, NewExecution
 from draw_things_control.state.store import Store
 from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
-
-
-class BlockedState(ProjectPaths):
-    """The project's paths, except that the state directory would have to be made below a file."""
-
-    @property
-    def state(self) -> Path:
-        return self.root / "blocker" / "state"
 
 
 class StateCliTests(JobTestCase):
@@ -41,7 +35,6 @@ class StateCliTests(JobTestCase):
         self.state = self.root / "state"
         self.write_global_config()
         self.job_path = self.write_job(job_data(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
-        self.messages: list[str] = []
         self.results: dict[int, FakeResult] = {}
         self.runs_started = 0
         numbers = itertools.count(1000)
@@ -55,8 +48,6 @@ class StateCliTests(JobTestCase):
             cooldown=lambda seconds: seconds,
         )
         self.services = CliServices(self.paths, FakeToolkit(self.fake_service))
-        sink = logger.add(lambda message: self.messages.append(str(message).strip()), format="{message}", level="ERROR")
-        self.addCleanup(logger.remove, sink)
 
     def write_global_config(self, extra: str = "", *, name: str = "global-config.yaml") -> Path:
         path = self.root / name
@@ -71,17 +62,18 @@ class StateCliTests(JobTestCase):
     def invoke(self, *arguments: str):
         return self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)], obj=self.services)
 
-    def run_job(self, *extra: str):
-        return self.invoke("run-job", str(self.job_path), "--executable", "draw-things-cli", *extra)
+    def seed_execution(self) -> GlobalConfig:
+        """Runs ``self.job_path`` through ``JobRunSession`` directly (the same use case ``dtc serve``'s worker and
+        the TUI now share), recording a real execution -- and, with ``write_job_records: true``, a real manifest --
+        for ``import-history`` to read, without a CLI command that runs a job itself any more."""
+        job, settings = read_job(self.job_path, self.global_path, self.paths)
+        outcome = JobRunSession(self.paths, self.fake_service, settings).run(job, holder="test", executable="draw-things-cli", shutdown_grace=1)
+        assert outcome.exit_code == 0, outcome
+        return settings
 
     @staticmethod
     def extract(video: Path, png: Path) -> None:
         png.write_bytes(b"png")
-
-    def stored(self, execution_id: int) -> ExecutionRow:
-        execution = self.store().executions.get(execution_id)
-        assert execution is not None
-        return execution
 
     def store(self) -> Store:
         self.state.mkdir(exist_ok=True)
@@ -89,35 +81,8 @@ class StateCliTests(JobTestCase):
         self.addCleanup(store.close)
         return store
 
-    def test_run_job_records_the_execution_even_without_job_records(self) -> None:
-        result = self.run_job()
-        self.assertEqual(result.exit_code, 0, result.output)
-        [row] = self.store().executions.page()
-        self.assertEqual((row.job_name, row.status, row.manifest_path), ("sunset-walk", "succeeded", None))
-        self.assertEqual(len(self.stored(row.id).runs), 2)
-        self.assertEqual((self.state / "run.lock").read_text(), "")
-
-    def test_a_failed_job_keeps_its_exit_code_and_is_recorded(self) -> None:
-        self.results[1] = FakeResult(return_code=3)
-        self.assertEqual(self.run_job().exit_code, 3)
-        self.assertEqual(self.store().executions.page()[0].status, "failed")
-
-    def test_a_busy_lock_exits_75_with_the_message_and_starts_nothing(self) -> None:
-        with RunLock("run-job", directory=self.state):
-            result = self.run_job()
-            generate = self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--output", str(self.root / "x.png")], obj=self.services)
-        for outcome in (result, generate):
-            self.assertEqual(outcome.exit_code, 75)
-        self.assertEqual(self.runs_started, 0)
-        self.assertEqual(self.messages[0], f"Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.")
-        self.assertEqual(self.store().executions.page(), [])
-
     def test_commands_that_start_nothing_work_while_the_lock_is_held(self) -> None:
-        executable = self.root / "draw-things-cli"
-        executable.write_text("#!/bin/sh\n", encoding="utf-8")
-        executable.chmod(0o755)
-        with RunLock("run-job", directory=self.state):
-            self.assertEqual(self.run_job("--dry-run").exit_code, 0)
+        with RunLock("serve", directory=self.state):
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")], obj=self.services).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"], obj=self.services).exit_code, 0)
@@ -126,59 +91,16 @@ class StateCliTests(JobTestCase):
             self.output_directory.mkdir()
             self.assertEqual(self.invoke("import-history").exit_code, 0)
 
-    def test_the_lock_can_be_taken_again_after_a_holder_is_killed(self) -> None:
-        script = "import sys, time; from pathlib import Path; from draw_things_control.core.run_lock import RunLock; lock = RunLock('run-job', directory=Path(sys.argv[1])); lock.acquire(); print('held', flush=True); time.sleep(60)"
-        self.state.mkdir()
-        holder = subprocess.Popen([sys.executable, "-c", script, str(self.state)], stdout=subprocess.PIPE, text=True)
-        assert holder.stdout is not None
-        self.addCleanup(holder.stdout.close)
-        self.addCleanup(holder.wait)
-        self.assertEqual(holder.stdout.readline().strip(), "held")
-        self.assertEqual(self.run_job().exit_code, 75)
-        holder.kill()
-        holder.wait()
-        self.assertEqual(self.run_job().exit_code, 0)
-
-    def test_an_unwritable_state_directory_stops_before_anything_starts(self) -> None:
-        blocker = self.root / "blocker"
-        blocker.write_text("")
-        self.services = CliServices(BlockedState(self.root), FakeToolkit(self.fake_service))
-        result = self.run_job()
-        self.assertEqual(result.exit_code, 1)
-        self.assertEqual(self.runs_started, 0)
-        self.assertIn("Cannot create the state directory", self.messages[0])
-
-    def test_a_database_with_a_newer_schema_stops_before_anything_starts(self) -> None:
-        self.store().close()
-        import sqlite3
-
-        connection = sqlite3.connect(self.state / "dtc.db")
-        connection.execute("PRAGMA user_version = 99")
-        connection.close()
-        result = self.run_job()
-        self.assertEqual(result.exit_code, 1)
-        self.assertEqual(self.runs_started, 0)
-        self.assertIn("newer version", self.messages[0])
-        # The lock was released.
-        self.assertTrue(run_lock.run_lock_is_free(directory=self.state))
-
-    def test_a_row_left_running_by_a_crash_is_closed_by_the_next_run(self) -> None:
-        crashed = self.store().executions.start(NewExecution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2026-09-24T10:00:00+00:00"))
-        self.assertEqual(self.run_job().exit_code, 0)
-        execution = self.stored(crashed)
-        self.assertEqual(execution.status, "interrupted")
-        self.assertIsNotNone(execution.recovered_at)
-
-    def test_history_retention_days_prunes_when_a_run_opens_the_store(self) -> None:
-        store = self.store()
-        old = store.executions.start(NewExecution(job_name="old", job_file="old.yaml", mode="i2v", started_at="2020-01-01T10:00:00+00:00"))
-        store.executions.finish(old, status="succeeded", exit_code=0, signal=None, finished_at="2020-01-01T11:00:00+00:00")
-        self.write_global_config("history_retention_days: 0\n")
-        self.run_job()
-        self.assertIsNotNone(store.executions.get(old))
-        self.write_global_config("history_retention_days: 14\n")
-        self.run_job()
-        self.assertIsNone(store.executions.get(old))
+    def test_generate_exits_75_naming_the_server_while_it_holds_the_lock(self) -> None:
+        messages: list[str] = []
+        sink = logger.add(lambda message: messages.append(str(message).strip()), format="{message}", level="ERROR")
+        try:
+            with RunLock("serve", directory=self.state):
+                result = self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--output", str(self.root / "x.png")], obj=self.services)
+        finally:
+            logger.remove(sink)
+        self.assertEqual(result.exit_code, 75)
+        self.assertEqual(messages[0], f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand.")
 
     def test_the_runner_reports_its_child_with_the_executable_name(self) -> None:
         on_start = mock.Mock()
@@ -188,23 +110,9 @@ class StateCliTests(JobTestCase):
         on_start.assert_called_once_with(4242, "my-cli")
         self.assertIsNone(create_job_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._on_start)
 
-    def test_run_job_passes_the_held_lock_to_the_job(self) -> None:
-        seen: list[object] = []
-        run = self.fake_service.run
-
-        def recording_run(job: JobDefinition, options: JobRunOptions):
-            seen.append(options.on_child_start)
-            return run(job, options)
-
-        with mock.patch.object(self.fake_service, "run", recording_run):
-            self.assertEqual(self.run_job().exit_code, 0)
-        [on_child_start] = seen
-        self.assertIsInstance(getattr(on_child_start, "__self__", None), RunLock)
-        self.assertEqual(getattr(on_child_start, "__func__", None), RunLock.record_child)
-
     def test_import_history_imports_once_and_reports_counts(self) -> None:
         self.write_global_config("write_job_records: true\n")
-        self.assertEqual(self.run_job().exit_code, 0)
+        self.seed_execution()
         [manifest] = self.output_directory.rglob("*-job.json")
         (self.output_directory / "sunset-walk" / "notes.json").write_text("{}", encoding="utf-8")
         # The live-recorded manifest is already in the store.
@@ -224,7 +132,7 @@ class StateCliTests(JobTestCase):
 
     def test_an_import_names_the_id_its_manifest_records_when_it_differs(self) -> None:
         self.write_global_config("write_job_records: true\n")
-        self.assertEqual(self.run_job().exit_code, 0)
+        self.seed_execution()
         [manifest] = self.output_directory.rglob("*-job.json")
         # A fresh database whose numbering has moved on: the import takes the next free number and names the old one.
         (self.state / "dtc.db").unlink()
@@ -236,16 +144,6 @@ class StateCliTests(JobTestCase):
         self.assertIn(f"  E0005: {manifest} (its manifest says E0001)\n", imported.stdout)
         [row] = self.store().executions.page()
         self.assertEqual(row.execution_number, 5)
-
-    def test_a_job_that_cannot_get_an_execution_id_does_not_start(self) -> None:
-        self.write_global_config("write_job_records: true\n")
-        with mock.patch.object(ExecutionRepository, "reserve_number", side_effect=sqlite3.OperationalError("database is locked")):
-            result = self.run_job()
-        self.assertEqual(result.exit_code, 1)
-        self.assertEqual(self.runs_started, 0)
-        self.assertFalse(self.output_directory.exists())
-        self.assertEqual(self.store().executions.page(), [])
-        self.assertTrue(any("Cannot give the execution an ID" in message and "the job was not started" in message for message in self.messages), self.messages)
 
     def test_import_history_reads_another_directory_and_rejects_a_missing_one(self) -> None:
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root / "absent")).exit_code, 2)

@@ -11,7 +11,7 @@ from typing import Any
 
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.state.database import Database, next_number
-from draw_things_control.state.execution_rows import ExecutionSettings, epoch
+from draw_things_control.state.execution_rows import SUCCEEDED_COUNT, ExecutionSettings, epoch
 from draw_things_control.state.ids import queue_id_text
 
 
@@ -44,6 +44,10 @@ class NewQueueEntry:
     cooldown_default: dict[str, Any] | None
     settings: ExecutionSettings
     submitted_at: str
+    # The whole chain's run count (job.run_count), set once at submission or resume, so a queued entry -- or one
+    # with no linked execution yet -- can still show "run 0/N" (Milestone 03); the same value JobFinished.total_runs
+    # carries, unaffected by where a resume starts.
+    total_runs: int
     # The queue number (Q0007) this entry resumes, the execution its resume point's last succeeded run came from
     # (resolved once, at resume()), and the resume point itself; None for a plain submission.
     resumes: int | None = None
@@ -81,6 +85,11 @@ class QueueRow:
     resume_input: str | None
     resume_seed: int | None
     error: str | None
+    # The whole chain's run count (schema 6); None on a pre-migration row with no linked execution. How many of
+    # those runs have succeeded so far, 0 until the entry is linked to an execution: set only by a query that joins
+    # in the linked execution (list_active, list_finished), 0 from get()/by_number()/list(), which do not.
+    total_runs: int | None = None
+    succeeded: int = 0
 
     @property
     def label(self) -> str:
@@ -94,6 +103,12 @@ class QueueRow:
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> QueueRow:
         cooldown_default = json.loads(row["cooldown_default"]) if row["cooldown_default"] else None
+        # "succeeded" (the joined execution's SUCCEEDED_COUNT) and "exec_first_run" (its own first_run) are present
+        # only from a query that joins in the linked execution (list_active, list_finished); get(), by_number(), and
+        # list() select the queue table alone. The formula collapses to 0 on its own when there is no link: an
+        # unmatched LEFT JOIN leaves exec_first_run NULL and the correlated succeeded-count 0.
+        succeeded_count = row["succeeded"] if "succeeded" in row.keys() else 0
+        exec_first_run = row["exec_first_run"] if "exec_first_run" in row.keys() else None
         return cls(
             id=row["id"],
             queue_number=row["queue_number"],
@@ -119,10 +134,18 @@ class QueueRow:
             resume_input=row["resume_input"],
             resume_seed=row["resume_seed"],
             error=row["error"],
+            total_runs=row["total_runs"],
+            succeeded=(exec_first_run or 1) - 1 + succeeded_count,
         )
 
 
-QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed")
+QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed")
+# list_active, list_finished, and by_number all join in the linked execution to compute "succeeded"
+# (QueueRow.from_row's formula) rather than one executions.by_number() lookup per row (list_active/list_finished:
+# the same reasoning that moved _queued_count to a bare COUNT(*), since a list read can run on every relevant
+# event) or per call (by_number: one row, so the extra join costs nothing that scale concern applies to, and keeps
+# a single-entry read -- GET /queue/{id}, a cancel's own response, WatchQueueEntry -- agreeing with the list reads).
+_JOINED_QUEUE_SELECT = f"SELECT queue.*, {SUCCEEDED_COUNT}, executions.first_run AS exec_first_run FROM queue LEFT JOIN executions ON executions.execution_number = queue.execution_number"
 
 
 class QueueRepository:
@@ -151,7 +174,10 @@ class QueueRepository:
         return QueueRow.from_row(row) if row is not None else None
 
     def by_number(self, queue_number: int) -> QueueRow | None:
-        row = self._database.connection().execute("SELECT * FROM queue WHERE queue_number = ?", (queue_number,)).fetchone()
+        """By the entry's public number (Q0007): joined, like list_active/list_finished, so a single-entry read
+        (``GET /queue/{id}``, a cancel's own response, ``WatchQueueEntry``) reports the same ``succeeded`` those do;
+        one row, so the join costs nothing the scale concern above applies to."""
+        row = self._database.connection().execute(f"{_JOINED_QUEUE_SELECT} WHERE queue.queue_number = ?", (queue_number,)).fetchone()
         return QueueRow.from_row(row) if row is not None else None
 
     def list(self, *, state: str | None = None) -> list[QueueRow]:
@@ -162,13 +188,21 @@ class QueueRepository:
             rows = self._database.connection().execute("SELECT * FROM queue WHERE state = ? ORDER BY queue_number", (str(state),)).fetchall()
         return [QueueRow.from_row(row) for row in rows]
 
-    def list_active(self) -> list[QueueRow]:
-        """Every queued or running entry, oldest first: never paged (``GET /queue``, Milestone 02), since the queue
-        itself is bounded by ``max_queued_jobs`` and only one entry is ever running at once. Ordering by
-        ``queue_number`` alone already reads as 'the running entry, if any, then the queued ones in FIFO order': the
-        worker always claims the smallest queue number among these, so a running entry's own number is the smallest
-        of the set."""
-        rows = self._database.connection().execute("SELECT * FROM queue WHERE state IN ('queued', 'running') ORDER BY queue_number").fetchall()
+    def list_active(self, *, state: str | None = None) -> list[QueueRow]:
+        """Every queued or running entry (or, given ``state``, only the ones in it), oldest first: never paged
+        (``GET /queue``, Milestone 02), since the queue itself is bounded by ``max_queued_jobs`` and only one entry
+        is ever running at once. Ordering by ``queue_number`` alone already reads as 'the running entry, if any,
+        then the queued ones in FIFO order': the worker always claims the smallest queue number among these, so a
+        running entry's own number is the smallest of the set. ``state``, joined like the unfiltered read, is what
+        ``GET /queue?state=queued`` reads (Milestone 03): the plain ``list(state=...)`` below is unjoined, and
+        always reported ``succeeded`` as 0 for an active entry until this existed."""
+        clauses = ["queue.state IN ('queued', 'running')"]
+        values: list[Any] = []
+        if state is not None:
+            clauses.append("queue.state = ?")
+            values.append(str(state))
+        where = " AND ".join(clauses)
+        rows = self._database.connection().execute(f"{_JOINED_QUEUE_SELECT} WHERE {where} ORDER BY queue.queue_number", values).fetchall()
         return [QueueRow.from_row(row) for row in rows]
 
     def list_finished(self, *, limit: int, offset: int, state: str | None = None) -> list[QueueRow]:
@@ -176,13 +210,13 @@ class QueueRepository:
         history, which -- unlike the active entries above -- is not bounded by anything but
         ``history_retention_days`` (0 keeps it forever), so it is paged like ``GET /jobs``, ``/executions``, and
         ``/audit``."""
-        clauses = ["state IN ('succeeded', 'failed', 'cancelled', 'interrupted')"]
+        clauses = ["queue.state IN ('succeeded', 'failed', 'cancelled', 'interrupted')"]
         values: list[Any] = []
         if state is not None:
-            clauses.append("state = ?")
+            clauses.append("queue.state = ?")
             values.append(str(state))
         where = " AND ".join(clauses)
-        rows = self._database.connection().execute(f"SELECT * FROM queue WHERE {where} ORDER BY queue_number DESC LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
+        rows = self._database.connection().execute(f"{_JOINED_QUEUE_SELECT} WHERE {where} ORDER BY queue.queue_number DESC LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
         return [QueueRow.from_row(row) for row in rows]
 
     def count(self, *, state: str) -> int:

@@ -1,7 +1,5 @@
-"""Tests for the run-job and validate-job commands."""
+"""Tests for the validate-job command and the runner helpers it and generate share."""
 
-import os
-import shlex
 import shutil
 from pathlib import Path
 from unittest import mock
@@ -11,7 +9,6 @@ from typer.testing import CliRunner
 
 from draw_things_control.cli.app import CliServices, app
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.run_lock import RunLock
 from draw_things_control.services.toolkit import create_job_runner, create_runner
 from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 
@@ -26,9 +23,6 @@ class JobCliTests(JobTestCase):
         # A fake ffmpeg, so a dry run's tool check (jobs/planning.py's check_tools) needs no real ffmpeg on PATH.
         executor = job_executor(runner_factory=mock.Mock(), find_executable=shutil.which, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg")
         self.services = CliServices(self.paths, FakeToolkit(executor))
-        self.messages: list[str] = []
-        sink = logger.add(lambda message: self.messages.append(str(message).strip()), format="{message}", level="ERROR")
-        self.addCleanup(logger.remove, sink)
 
     def invoke(self, arguments: list[str]):
         return self.runner.invoke(app, arguments, obj=self.services)
@@ -47,27 +41,7 @@ class JobCliTests(JobTestCase):
     def test_a_job_naming_a_json_configuration_exits_with_2(self) -> None:
         (self.params / "base.json").write_text("{}", encoding="utf-8")
         job = self.write_job(job_data(config_file="base.json"), name="json.yaml")
-        for command in (["validate-job"], ["run-job", "--dry-run"]):
-            with self.subTest(command[0]):
-                self.assertEqual(self.invoke([*command, str(job), "--global-config", str(self.global_path)]).exit_code, 2)
-
-    def test_run_job_exits_75_naming_the_server_while_it_holds_the_lock(self) -> None:
-        with RunLock("serve", directory=self.paths.state):
-            result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path)])
-        self.assertEqual(result.exit_code, 75)
-        self.assertEqual(self.messages[0], f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.")
-
-    def test_dry_run_prints_every_command_and_writes_nothing(self) -> None:
-        executable_stub = self.root / "draw-things-cli"
-        executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
-        executable_stub.chmod(0o755)
-        result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
-        self.assertEqual(result.exit_code, 0, result.output)
-        commands = [shlex.split(line) for line in result.stdout.splitlines() if not line.startswith("#")]
-        self.assertEqual(len(commands), 5)
-        self.assertEqual(commands[0][commands[0].index("--image") + 1], str(self.input_directory / "first-frame.png"))
-        self.assertTrue(commands[1][commands[1].index("--image") + 1].endswith("-last-frame.png"))
-        self.assertFalse(self.output_directory.exists())
+        self.assertEqual(self.invoke(["validate-job", str(job), "--global-config", str(self.global_path)]).exit_code, 2)
 
     def test_generate_without_output_lets_the_child_use_the_terminal(self) -> None:
         self.assertFalse(create_runner(DrawThingsGenerateArguments(model="m.ckpt"), None, 1)._capture_output)
@@ -83,33 +57,11 @@ class JobCliTests(JobTestCase):
         self.assertIs(create_runner(arguments, None, 1, callback)._output_processor._callback, callback)
         self.assertIsNone(create_job_runner(arguments, None, 1)._output_processor._callback)
 
-    def test_dry_run_with_desired_size_shows_the_placeholder(self) -> None:
-        self.write_image("photo.jpg", (1920, 1080))
-        job_path = self.write_job(job_data(input="photo.jpg", desired_input_width=850), name="resize.yaml")
-        executable_stub = self.root / "draw-things-cli"
-        executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
-        executable_stub.chmod(0o755)
-        result = self.invoke(["run-job", str(job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
-        self.assertEqual(result.exit_code, 0, result.output)
-        first = next(shlex.split(line) for line in result.stdout.splitlines() if not line.startswith("#"))
-        self.assertEqual(first[first.index("--image") + 1], "<photo.jpg resized to 832x448>")
-        self.assertEqual(first[first.index("--width") + 1 : first.index("--height") + 2], ["832", "--height", "448"])
-        self.assertFalse(self.output_directory.exists())
-
-    def test_validate_job_and_dry_run_show_the_cooldown(self) -> None:
+    def test_validate_job_shows_the_cooldown(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")
         result = self.invoke(["validate-job", str(self.job_path), "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("  cooldown: 900 s between runs, from global_config (4 waits, 1 h total)", result.stdout)
-        executable_stub = self.root / "draw-things-cli"
-        executable_stub.write_text("#!/bin/sh\n", encoding="utf-8")
-        executable_stub.chmod(0o755)
-        result = self.invoke(["run-job", str(self.job_path), "--global-config", str(self.global_path), "--dry-run", "--executable", str(executable_stub)])
-        self.assertEqual(result.exit_code, 0, result.output)
-        lines = result.stdout.splitlines()
-        self.assertTrue(lines[0].endswith(", cooldown 900 s (global_config)"), lines[0])
-        comments = [line for line in lines if line.startswith("# Run ") or line.startswith("# Cooldown")]
-        self.assertEqual(comments, ["# Run 1/5 (pair walk)", "# Cooldown 900 s", "# Run 2/5 (pair wave)", "# Cooldown 900 s", "# Run 3/5 (pair walk)", "# Cooldown 900 s", "# Run 4/5 (pair wave)", "# Cooldown 900 s", "# Run 5/5 (pair walk)"])
 
     def test_job_can_turn_off_the_global_cooldown(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown: {mode: manual, seconds: 900}\n", encoding="utf-8")

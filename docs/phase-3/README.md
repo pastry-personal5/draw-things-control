@@ -36,7 +36,9 @@ typed tools on top of it.
 - The queue for people: `dtc queue` commands through the API (`add` gains
   `--wait`, replacing `run-job`), and a Queue widget in the TUI that
   submits, cancels, and resumes through the API too, watching entries live
-  over gRPC
+  over gRPC, the same subscription that streams `draw-things-cli`'s own
+  output into the TUI's `draw-things-cli` pane, live, since the TUI no
+  longer runs it to read that output directly
 - Retiring direct execution everywhere but the server: `run-job` is removed,
   and the TUI's `/apply` submits to the queue instead of running the job
   itself. `dtc serve`'s worker becomes the only thing that ever invokes
@@ -102,10 +104,10 @@ in the user guide and `docs/architecture.md` as it lands.
 store, and the run lock, in the layout that
 [Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md)
 gives them. The server is one more front end beside the CLI and the TUI.
-What changes below it: the state store gains tables by forward migration
-(schemas 4 and 5), `JobExecutor` can start a chain at run *k*, the job
-parser can take a stored base configuration, and a job's log file is scoped
-to that job.
+What changes below it: the state store gains tables and columns by forward
+migration (schemas 4, 5, and 6), `JobExecutor` can start a chain at run *k*,
+the job parser can take a stored base configuration, and a job's log file is
+scoped to that job.
 
 ## New dependencies
 
@@ -149,7 +151,10 @@ Inside `src/draw_things_control/`:
   resume, and a gRPC client for live updates while the server is up; while
   it is down, the widget falls back to reading the queue from the state
   store through a reader in `services/`, read-only, as before. `/apply` no
-  longer runs a job itself; it submits to the queue.
+  longer runs a job itself; it submits to the queue. The same gRPC
+  subscription, with `include_output` on, now also feeds the
+  `draw-things-cli` pane, replacing the `JobExecutor` the TUI used to run
+  jobs with; nothing under `tui/` starts `draw-things-cli` any more.
 - `ProjectPaths` names the token file, `.trash/`, and `.backups/`.
 
 The parts a server shares with the CLI and the TUI (`Toolkit`,

@@ -14,7 +14,7 @@ from draw_things_control.tui.estimate import Estimate, job_estimate, last_succee
 from draw_things_control.tui.live_run import LiveRun
 from draw_things_control.tui.text.common import STATUS_STYLE
 
-PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start"}
+PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
 
 
 def progress_text(live: LiveRun) -> str | None:
@@ -102,11 +102,12 @@ def bar_line(label: str, fraction: float | None, tail: str, width: int) -> Text:
 def status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None) -> list[Text]:
     """The Status widget's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
 
-    ``message`` is the busy message the run lock's holder would give (naming the server, when that is who holds it,
-    exactly as ``run-job`` and the TUI's own ``/apply`` would be refused); without one, a generic line is shown.
+    ``message`` is the busy message the run lock's holder would give (an ordinary ``generate`` holder, or the
+    server itself when the gRPC feed cannot reach it); without one, a generic line is shown. ``dtc serve`` holds
+    the run lock for its whole lifetime, so ``other_process`` is only ever true while the feed itself is down.
     """
     lines = [Text() for _ in range(5)]
-    if other_process and (live is None or live.worker_ended):
+    if other_process and (live is None or live.ended):
         lines[0] = Text(message or OTHER_PROCESS_TEXT, style="bold yellow")
         return lines
     if live is None:
@@ -115,14 +116,8 @@ def status_lines(live: LiveRun | None, other_process: bool, width: int, *, messa
     last = last_succeeded(live)
     if last is not None and last.seconds is not None:
         lines[4] = Text(f"last run took {whole_duration(last.seconds)}")
-    if live.worker_ended or live.finished is not None:
-        if live.finished is not None:
-            finished = live.finished
-            lines[1] = Text(f"{finished.completed_runs}/{finished.total_runs} runs succeeded")
-            if live.started is not None:
-                took = (datetime.fromisoformat(finished.at) - datetime.fromisoformat(live.started.at)).total_seconds()
-                lines[3] = Text(f"job took {whole_duration(took)}")
-        return lines
+    if live.ended or live.finished is not None:
+        return _finished_lines(live, lines)
     if live.started is None:
         return lines
     # Once a stop is requested, moment() stays at that time, so the bars stay where the stop found them.
@@ -138,6 +133,16 @@ def status_lines(live: LiveRun | None, other_process: bool, width: int, *, messa
         tail = "finishing" if run.finishing else None
         lines[2] = bar_line("Run", *_bar_parts(live, run, wall, tail), width)
         lines[3] = _details_line(live, now)
+    return lines
+
+
+def _finished_lines(live: LiveRun, lines: list[Text]) -> list[Text]:
+    if live.finished is not None:
+        finished = live.finished
+        lines[1] = Text(f"{finished.completed_runs}/{finished.total_runs} runs succeeded")
+        if live.started is not None:
+            took = (datetime.fromisoformat(finished.at) - datetime.fromisoformat(live.started.at)).total_seconds()
+            lines[3] = Text(f"job took {whole_duration(took)}")
     return lines
 
 
@@ -158,11 +163,12 @@ def _phase_line(live: LiveRun) -> Text:
         text.append(")", style="bold")
     else:
         phase = live.phase
-        text = Text(PHASE_TEXT[phase], style="bold yellow" if phase in ("starting", "stopping", "not_started") else "bold cyan")
+        text = Text(PHASE_TEXT[phase], style="bold yellow" if phase in ("starting", "stopping", "not_started", "ended") else "bold cyan")
     # The execution's ID once the state store has recorded it, as the history and every message write it: ``E0012: walk``.
     text.append(f"  {live.execution_id}: " if live.execution_id is not None else "  ")
-    text.append(job_display_name(live.path))
-    if live.finished is None and not live.worker_ended:
+    if live.path is not None:
+        text.append(job_display_name(live.path))
+    if live.finished is None and not live.ended:
         if live.active_run is not None:
             text.append(f"  run {live.active_run}/{len(live.runs)}")
         elif live.cooldown is not None:
@@ -194,7 +200,7 @@ def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, 
     if live is None:
         text.append("idle", style="dim")
     else:
-        text.append(live.path.name, style="bold")
+        text.append(live.path.name if live.path is not None else "?", style="bold")
         text.append(f" {PHASE_TEXT[live.phase]}", style="bold cyan" if running else "")
         if running and live.active_run is not None:
             text.append(f" run {live.active_run}/{len(live.runs)}")

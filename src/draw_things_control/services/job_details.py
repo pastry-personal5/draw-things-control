@@ -8,9 +8,9 @@ from pathlib import Path
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.files import read_job
 from draw_things_control.jobs.text import PLACEHOLDER_SEED, PlanStep, plan_header, plan_steps
+from draw_things_control.services.toolkit import Toolkit
 
 
 @dataclass(frozen=True)
@@ -39,9 +39,14 @@ def read_details(path: Path, settings: GlobalConfig, paths: ProjectPaths) -> Job
         return JobDetails(None, error_text(path, error))
 
 
-def add_plan(details: JobDetails, executor: JobExecutor, executable: str) -> JobDetails:
-    """The details with the job's dry-run plan, using the placeholder seed when the job sets none."""
+def add_plan(details: JobDetails, toolkit: Toolkit, executable: str) -> JobDetails:
+    """The details with the job's dry-run plan, using the placeholder seed when the job sets none.
+
+    Builds its own preview-only executor from ``toolkit`` (Milestone 03: since the TUI never runs a job itself any
+    more, it holds no ``JobExecutor`` of its own to pass in; a preview needs no signal handling, since nothing here
+    is ever cancelled)."""
     assert details.job is not None
+    executor = toolkit.job_executor(handle_signals=False)
     try:
         preview = executor.preview(details.job, executable=executable, seed=PLACEHOLDER_SEED)
     except (ValueError, OSError) as error:

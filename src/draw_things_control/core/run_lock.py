@@ -158,7 +158,7 @@ def _busy_message_for(text: str) -> str:
     lines = text.splitlines()
     parts = lines[0].split() if lines else []
     if len(parts) == 2 and parts[1].isdigit() and parts[0] == SERVER_HOLDER_NAME:
-        return f"The dtc server (PID {parts[1]}) holds the run lock while it is up; stop it to run a job by hand."
+        return f"The dtc server (PID {parts[1]}) holds the run lock while it is up; stop it to generate by hand."
     holder = f" ({parts[0]}, PID {parts[1]})" if len(parts) == 2 and parts[1].isdigit() else ""
     return f"Another run is in progress{holder}. Try again when it finishes."
 

@@ -14,9 +14,10 @@ capabilities_router = APIRouter(dependencies=[Depends(require_auth)])
 
 @health_router.get("/v1/health")
 def health(context: ServerContext = Depends(get_context)) -> dict[str, object]:
-    """The server is up, its version, and whether the worker is alive; always 200 while this process answers at
-    all, so a caller must read ``worker_alive``, not just the status."""
-    return {"status": "ok", "version": server_version(), "worker_alive": context.worker.is_alive()}
+    """The server is up, its version, whether the worker is alive, and the gRPC port sharing its own host (Milestone
+    03: every gRPC client derives its target from this and the HTTP host it was already given, no flag of its own).
+    Always 200 while this process answers at all, so a caller must read ``worker_alive``, not just the status."""
+    return {"status": "ok", "version": server_version(), "worker_alive": context.worker.is_alive(), "grpc_port": context.grpc_port}
 
 
 @capabilities_router.get("/v1/capabilities")

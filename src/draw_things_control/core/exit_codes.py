@@ -53,3 +53,17 @@ EXIT_CODES_BY_ERROR_CODE = {
 def exit_code_for_error(error: DtcError) -> int:
     """The exit code a command ends with when ``error`` stops it; 1 for an error with no code of its own."""
     return EXIT_CODES_BY_ERROR_CODE.get(error.code, EXIT_STATE_UNAVAILABLE)
+
+
+# The exit code of ``dtc queue add --wait``, drawn from the entry's own final queue state (Milestone 03), not
+# EXIT_CODES_BY_ERROR_CODE above, which maps only a submission refusal. ``cancelled`` and ``interrupted`` match the
+# signal that would have stopped ``run-job`` itself for the same reason: Ctrl-C (SIGINT) for a cancel, and the
+# SIGTERM the server itself sends a run it stops for an interrupted one.
+EXIT_CODES_BY_QUEUE_STATE = {
+    "succeeded": 0,
+    "cancelled": exit_code_for_signal(signal.SIGINT),
+    "interrupted": exit_code_for_signal(signal.SIGTERM),
+    # Shares exit 1 with EXIT_STATE_UNAVAILABLE above, but for a different reason: the job itself failed, not that
+    # the state store could not be reached.
+    "failed": 1,
+}

@@ -70,7 +70,7 @@ class RunLockTests(unittest.TestCase):
 
     def test_the_server_holding_the_lock_gets_its_own_message(self) -> None:
         with RunLock("serve", directory=self.directory):
-            with self.assertRaisesRegex(RunLockBusyError, rf"The dtc server \(PID {os.getpid()}\) holds the run lock while it is up; stop it to run a job by hand\."):
+            with self.assertRaisesRegex(RunLockBusyError, rf"The dtc server \(PID {os.getpid()}\) holds the run lock while it is up; stop it to generate by hand\."):
                 self.lock().acquire()
 
     def test_lock_holder_message_reads_the_same_message_without_taking_the_lock(self) -> None:
@@ -79,7 +79,7 @@ class RunLockTests(unittest.TestCase):
             self.assertEqual(lock_holder_message(directory=self.directory), f"Another run is in progress (run-job, PID {os.getpid()}). Try again when it finishes.")
         self.assertIsNone(lock_holder_message(directory=self.directory))
         with RunLock("serve", directory=self.directory):
-            self.assertEqual(lock_holder_message(directory=self.directory), f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.")
+            self.assertEqual(lock_holder_message(directory=self.directory), f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand.")
 
     def test_release_clears_the_description_and_is_repeatable(self) -> None:
         lock = self.lock()

@@ -101,7 +101,7 @@ class HistoryReader:
 
     def lock_message(self) -> str | None:
         """The server's own busy message when it is the run lock's holder, read without taking the lock; None
-        otherwise (including a free lock), so an ordinary ``run-job`` or TUI holder keeps the generic wording."""
+        otherwise (including a free lock), so an ordinary ``generate`` holder keeps the generic wording."""
         if lock_holder(directory=self._paths.state) != SERVER_HOLDER_NAME:
             return None
         return lock_holder_message(directory=self._paths.state)

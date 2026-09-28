@@ -56,9 +56,12 @@ def event_text(event: JobEvent, arguments: Arguments | None = None, previous: Pr
 def result_text(live: LiveRun) -> Text:
     """How the job ended, or why it did not start; empty while it runs."""
     if live.finished is None:
-        if not live.worker_ended:
+        if not live.ended:
             return Text()
-        return Text(f"Did not start: {live.error}", style="red")
+        # No JobFinished ever arrived to say how it ended: the entry's own error (it failed before JobStarted), or,
+        # with none, the run was simply lost track of (a server crash or restart, or a backlog gap that became a
+        # Reset before the finish was replayed).
+        return Text(f"Ended: {live.error}" if live.error else "Ended without a result (lost track of this run)", style="red")
     finished = live.finished
     text = Text("Job ", style="bold")
     text.append(finished.status, style=STATUS_STYLE.get(finished.status, "bold"))

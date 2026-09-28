@@ -18,6 +18,7 @@ from loguru import logger
 
 from draw_things_control.core.errors import InputError
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.network import grpc_target
 from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.server.app import create_app
 from draw_things_control.server.context import ServerContext
@@ -34,13 +35,6 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_GRPC_PORT = 8766
 DEFAULT_SHUTDOWN_GRACE = 10.0
-
-
-def _grpc_target(host: str, port: int) -> str:
-    """``host:port`` for ``grpc.aio.Server.add_insecure_port``, IPv6 literals bracketed: ``::1:8766`` reads as
-    three colon-separated fields, not one host and one port, so an unbracketed ``--host ::1`` would either fail to
-    parse or bind the wrong address; ``[::1]:8766`` is unambiguous."""
-    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
 def _bind_http_socket(host: str, port: int) -> list[socket.socket]:
@@ -123,13 +117,31 @@ def run(paths: ProjectPaths, global_config: GlobalConfig, toolkit: Toolkit, opti
     host.start(start_worker=False)
     try:
         assert host.store is not None and host.worker is not None
-        context = ServerContext(paths=paths, global_config=global_config, store=host.store, worker=host.worker, executor=executor, executable=options.executable, token=token, bound_host=options.host, bound_port=options.port, allow_write=options.allow_write, event_backlog=backlog)
+        context = ServerContext(paths=paths, global_config=global_config, store=host.store, worker=host.worker, executor=executor, executable=options.executable, token=token, bound_host=options.host, bound_port=options.port, grpc_port=options.grpc_port, allow_write=options.allow_write, event_backlog=backlog)
         logger.info("dtc serve listening on http://{}:{} (gRPC on {}); token file: {}", options.host, options.port, options.grpc_port, paths.server_token)
         asyncio.run(_serve_async(context, options, host))
     finally:
         # A backstop for a non-signal exit (an exception _serve_async's own cleanup did not already handle):
         # QueueHost.stop() is safe to call twice, clearing itself to no-ops the second time.
         host.stop()
+
+
+def _bind_grpc_server(context: ServerContext, options: ServeOptions) -> grpc.aio.Server:
+    """Builds the gRPC server and binds it to ``options.grpc_port`` (0 asks the OS for an ephemeral one), then sets
+    ``context.grpc_port`` to the port actually bound -- ``add_insecure_port``'s own return value, which differs from
+    the request when it was 0. ``context.grpc_port`` is what ``/v1/health`` reports, so every client that derives
+    its gRPC target from health (``tui/feed.py``, ``cli/queue_wait.py``) must see the real bound port, not the
+    request that asked for "any"."""
+    grpc_server = grpc.aio.server(interceptors=[TokenAuthInterceptor(context.token)])
+    monitor_pb2_grpc.add_MonitorServicer_to_server(MonitorServicer(context), grpc_server)
+    target = grpc_target(options.host, options.grpc_port)
+    try:
+        context.grpc_port = grpc_server.add_insecure_port(target)
+    except RuntimeError as error:
+        # grpc raises a bare RuntimeError (no reason given) when the port is taken or the address unusable;
+        # run()'s own finally stops the host, as for any other exception before a signal.
+        raise InputError(f"Cannot bind the gRPC service to {target}; is --grpc-port {options.grpc_port} already in use?", field="grpc_port") from error
+    return grpc_server
 
 
 async def _serve_async(context: ServerContext, options: ServeOptions, host: QueueHost) -> None:
@@ -154,15 +166,7 @@ async def _serve_async(context: ServerContext, options: ServeOptions, host: Queu
     """
     uvicorn_server = uvicorn.Server(uvicorn.Config(create_app(context), host=options.host, port=options.port, log_config=None))
     with uvicorn_server.capture_signals():
-        grpc_server = grpc.aio.server(interceptors=[TokenAuthInterceptor(context.token)])
-        monitor_pb2_grpc.add_MonitorServicer_to_server(MonitorServicer(context), grpc_server)
-        target = _grpc_target(options.host, options.grpc_port)
-        try:
-            grpc_server.add_insecure_port(target)
-        except RuntimeError as error:
-            # grpc raises a bare RuntimeError (no reason given) when the port is taken or the address unusable;
-            # run()'s own finally stops the host, as for any other exception before a signal.
-            raise InputError(f"Cannot bind the gRPC service to {target}; is --grpc-port {options.grpc_port} already in use?", field="grpc_port") from error
+        grpc_server = _bind_grpc_server(context, options)
         http_sockets = _bind_http_socket(options.host, options.port)
         host.start_worker()
         await grpc_server.start()

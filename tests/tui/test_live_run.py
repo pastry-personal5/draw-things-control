@@ -219,7 +219,7 @@ class LiveRunTests(TuiTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             shown = self.text(app, "status").split("\n")[0]
-        self.assertEqual(shown, f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.")
+        self.assertEqual(shown, f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand.")
 
     async def test_the_confirmation_shows_the_job_and_n_cancels(self) -> None:
         self.write_data_job(cooldown={"mode": "manual", "seconds": 30})
@@ -407,7 +407,7 @@ class LiveRunTests(TuiTestCase):
             server.release()
             await self.start(pilot)
             await self.finish(pilot)
-        self.assertIn(f"Did not start: The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to run a job by hand.", self.said)
+        self.assertIn(f"Did not start: The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand.", self.said)
         self.assertEqual(len(runs.runners), 2)
 
     async def test_a_job_that_fails_before_it_starts_records_nothing(self) -> None:

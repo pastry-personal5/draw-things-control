@@ -67,6 +67,9 @@ class ServerContext:
     token: str
     bound_host: str
     bound_port: int
+    # The gRPC port sharing bound_host (Milestone 03): served on GET /v1/health so a client configured with
+    # --server-url alone (every gRPC client this phase adds) can derive its gRPC target with no flag of its own.
+    grpc_port: int
     allow_write: bool = False
     event_backlog: EventBacklog = field(default_factory=EventBacklog)
     submission_lock: threading.Lock = field(default_factory=threading.Lock)

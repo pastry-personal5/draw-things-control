@@ -93,7 +93,7 @@ class QueueRoutesTestCase(JobTestCase):
 
     def build_client(self, *, api_limits: Any = None) -> TestClient:
         global_config = replace(self.global_config, api_limits=api_limits) if api_limits is not None else self.global_config
-        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, event_backlog=self.event_backlog)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the queue routes call)
+        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, event_backlog=self.event_backlog)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the queue routes call)
         return TestClient(create_app(self.context), base_url="http://127.0.0.1:8765")
 
     def request(self, method: str, path: str, **kwargs: Any):
@@ -135,9 +135,11 @@ class SubmitTests(QueueRoutesTestCase):
     def test_a_valid_submission_is_queued_and_wakes_the_worker(self) -> None:
         entry = self.submit(run_count=1)
         self.assertEqual((entry["queue_id"], entry["state"]), ("Q0001", "queued"))
+        self.assertEqual((entry["total_runs"], entry["succeeded"]), (1, 0))
         self.assertEqual(self.worker.woken, 1)
         listed = self.request("get", "/v1/queue").json()["queue"]
         self.assertEqual([row["queue_id"] for row in listed], ["Q0001"])
+        self.assertEqual((listed[0]["total_runs"], listed[0]["succeeded"]), (1, 0))
 
     def test_a_job_without_run_timeout_seconds_is_refused(self) -> None:
         self.write_job_in_catalog("no-timeout.yaml", run_timeout_seconds=None)
@@ -431,6 +433,27 @@ class QueueListingTests(QueueRoutesTestCase):
         body = self.request("get", "/v1/queue", params={"state": "queued", "limit": 1}).json()
         self.assertEqual([row["queue_id"] for row in body["queue"]], ids)
         self.assertIsNone(body["cursor"])
+
+    def test_an_active_state_filter_the_plain_listing_and_the_detail_agree_on_succeeded(self) -> None:
+        """The bug an active-state filter's own read (state/queue.py's plain, unjoined ``list()``) had until it was
+        given the same join ``list_active`` and ``by_number`` already carry: it always reported ``succeeded`` as 0
+        for a linked, running entry, disagreeing with the other two reads of the very same entry."""
+        entry = self.submit("running.yaml", run_count=3)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        execution_row = self.store.executions.start(NewExecution(job_name="running", job_file="running.yaml", mode="i2v", started_at="2026-09-28T10:00:00+00:00", total_runs=3, settings=ExecutionSettings(output_directory=str(self.output_directory))))
+        self.store.executions.start_run(execution_row, 1, NewRun(pair="only", positive="text", started_at="2026-09-28T10:00:00+00:00", status="succeeded", output="run-1.mov"))
+        execution_number = self.store.executions.number_of(execution_row)
+        assert execution_number is not None
+        self.store.queue.link_execution(claimed.id, execution_number)
+        self.worker._current_id = claimed.id
+
+        by_state = self.request("get", "/v1/queue", params={"state": "running"}).json()["queue"]
+        plain = self.request("get", "/v1/queue").json()["queue"]
+        detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
+        self.assertEqual(by_state[0]["succeeded"], 1)
+        self.assertEqual(next(row["succeeded"] for row in plain if row["queue_id"] == entry["queue_id"]), 1)
+        self.assertEqual(detail["succeeded"], 1)
 
 
 if __name__ == "__main__":

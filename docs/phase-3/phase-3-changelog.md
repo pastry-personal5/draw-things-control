@@ -3,8 +3,100 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-09-29
+
+- **Owner decision**: The module size limit ([development-rules.md](../development-rules.md#project-layout),
+  `tests/test_architecture.py`'s `MAX_MODULE_LINES`) rises from 400 to 800 lines, to give modules more headroom
+  before a split is required. The class (250) and function (40) limits are unchanged.
+
 ## 2026-09-28
 
+- **Correction** [M03]: The milestone document's "Job events carry no queue ID or execution ID of their own
+  (`JobStarted` has none)" was wrong: `jobs/executor.py`'s `job_started_event` already sets
+  `execution_id=manifest.execution_id`, and `JobRecords.open` builds that ID into the manifest regardless of
+  `write_job_records` (only the manifest and log *paths* are conditional on it), so every queue-driven run's
+  `JobStarted` already names its execution. The plan built on the wrong claim: it had the pane read
+  `GET /queue/{id}` on every live `JobStarted` to recover an ID already on the event, and infer which queue entry a
+  run belonged to from `queue_entry_changed`'s ordering relative to `JobStarted`, an inference the event's own
+  `execution_id` makes unnecessary for the live-start case (the ordering guarantee is still used, for a different
+  reason, by the seeding path below, which has no live `JobStarted` to read at all). See
+  [Milestone 03](milestone-03-queue-for-people.md#the-tuis-live-output) for the corrected text.
+- **Design decision** [M03]: Server-side additions Milestone 03 needs beyond Milestone 02's API, found on a review
+  of the milestone document against the code before any of it was built.
+  - The queue table gains `total_runs` (schema 6), set once from `job.run_count` at submission and at resume, so a
+    `queued` entry (no linked execution yet) can still show "run 0/7" instead of nothing. `queue_entry()` gains
+    `total_runs` and `succeeded` (the `first_run - 1 + succeeded` convention the resumed-execution display already
+    uses, [Milestone 01](milestone-01-queue-run-manager.md)'s design decision on resumed progress), computed by a
+    join in `QueueRepository.list_active`/`list_finished` rather than one `executions.by_number()` lookup per row,
+    which does not scale the way `_last_run_seconds`'s single lookup (Milestone 02) does. Recomputing the total
+    from the stored `job_text` on every read, avoiding the new column entirely, was rejected: it repeats a YAML
+    parse and a base-configuration merge on every list read of a queue a client re-reads on every relevant event.
+  - `GET /v1/health` gains `grpc_port`, so a client configured with `--server-url` alone (every client this phase
+    and Milestone 08 add) can derive its gRPC target without a second flag; today nothing names how `dtc queue add
+    --wait`, the TUI, or `dtc mcp` are meant to find `--grpc-port` (default 8766, distinct from the HTTP port), and
+    Milestone 08's own document already assumes a gRPC client built from `--server-url` alone without saying how.
+    A new `--grpc-url`/`--grpc-port` flag on every gRPC-using client was considered and rejected: it duplicates
+    information the server already knows and must be kept in sync with `--grpc-port` by hand.
+  - `QueueEntrySnapshot` gains `total_runs`, read once from the entry's stored column, so `dtc queue add --wait`
+    can print "run 3/7" the way the Queue widget does; `--wait` infers a run's finish from the next run's start or
+    the entry's own final `state`, needing no separate "run finished" field.
+  - `dtc queue add --wait` exits with a code drawn from the entry's own final `state` (a new
+    `EXIT_CODES_BY_QUEUE_STATE` table in `core/exit_codes.py`: 0 `succeeded`, 130 `cancelled`
+    (`exit_code_for_signal(SIGINT)`, matching `run-job`'s own Ctrl-C), 143 `interrupted`
+    (`exit_code_for_signal(SIGTERM)`, since an interrupted entry is one the server stopped mid-run, not the chain's
+    own doing), 1 `failed`), not `EXIT_CODES_BY_ERROR_CODE`: that table maps a submission refusal, which is all
+    `add` without `--wait` ever exits through, and was never meant to cover a job's own outcome. Giving `failed`
+    and `interrupted` the same code, since neither retries automatically and a script cannot yet act on the
+    difference, was considered and left as a follow-up if it turns out to matter.
+  See [Milestone 03](milestone-03-queue-for-people.md#server-side-changes-state-server-the-grpc-service) for the
+  full plan.
+- **Change** [M03]: A gap outside the server, found on the same review: the milestone document never said where
+  `dtc tui` gets the server it talks to. `dtc tui` gains `--server-url`, `--token-file`, and `--allow-remote-server`,
+  the same three flags `dtc queue` and `dtc mcp` already take, in place of the `--executable`/`--shutdown-grace` it
+  drops (see [Milestone 03](milestone-03-queue-for-people.md#the-tuis-live-output)).
+- **Change** [M02]: `run_summary` (`server/serializers.py`) gains `"pair": run.pair`, and `execution_detail` gains
+  `"manifest": row.manifest_path` and `"log": row.log_path`. `state/execution_rows.py`'s `RunRow` and `ExecutionRow` already
+  carried all three; `GET /executions/{id}` simply never served them. Needed so Milestone 03's TUI can rebuild a running job's
+  full state (every run's pair name, and the manifest/log paths the finished-job summary shows) from this one already-built
+  endpoint, instead of only from events it may not have seen (see the [M03] entry below).
+- **Design decision** [M03]: Supersedes this entry's own "`estimate.py`'s `job_estimate` moves off the run table's length ...
+  onto `JobStarted.total_runs`" line, below, and the milestone doc's matching text: `len(live.runs)` is read as the job's
+  total run count in six places, not one (`estimate.py` and five in `text/status.py`), and patching every reader individually
+  was the wrong fix. `LiveRun` instead pre-sizes its run table to `total_runs` placeholder rows the moment `JobStarted` is
+  applied (`total_runs` is one of `JobStarted`'s own fields), so `len(live.runs)` already reads right everywhere, with no
+  change needed at any of those call sites; each row's pair name fills in from `RunStarted.pair` when its own run starts, in
+  place of the placeholder. Also added: a client cannot always learn of a job already running by waiting for a live
+  `JobStarted`, since the backlog is 2000 events shared by every client and kind, `run_output` lines included, so a verbose
+  job can push its own `JobStarted` out of the backlog within itself, before a newly-attaching client (the TUI on startup, or
+  after a `Reset`) ever opens the stream. The pane now subscribes to `WatchEvents` first, then reads
+  `GET /queue?state=running` and, for the entry it names, seeds `LiveRun` straight from `GET /queue/{id}` and
+  `GET /executions/{id}`, rather than a `JobStarted` it may never see; this is what surfaced the two fields the entry above
+  adds. See [Milestone 03](milestone-03-queue-for-people.md#the-tuis-live-output) for the corrected plan.
+- **Owner decision** [M03]: The `draw-things-cli` pane must keep showing every line of `draw-things-cli`'s output, live, once
+  Milestone 03 takes direct execution away from the TUI, over the same gRPC channel the Queue widget uses to watch the queue.
+  The plan's TUI section named the Queue widget's `WatchEvents` subscription but never said what would feed the pane once
+  the TUI stops running jobs itself: retiring direct execution ([Phase 2 Milestone
+  04](../archive/phase-2/milestone-04-tui-live-run.md)) silently drops the pane's only source (`LiveRun`, fed from a
+  locally-run `JobExecutor`'s events), and nothing in the plan named a replacement. See
+  [Milestone 03](milestone-03-queue-for-people.md#the-tuis-live-output) for the corrected plan.
+- **Design decision** [M03]: The Queue widget's existing `WatchEvents` call is extended with `include_output=true` rather than
+  opened a second time, so the pane reads the child's `run_output` lines from the one gRPC stream the TUI already holds open
+  (Milestone 02 built `include_output` for exactly this; nothing had used it yet), keeping queue and job events in one order
+  and the server-side event wiring untouched (`QueueWorker` already forwards every `RunOutput` to the backlog). Two
+  alternatives were rejected: a second `WatchEvents` call scoped to output alone, which would double the gRPC connections and
+  could deliver a job event and its own output out of order across the two streams; and tailing the job's log file, which
+  exists only when `write_job_records` is on and only on the machine running `dtc serve`, not a remote one reached through
+  the API. `jobs/events.py` gains `event_from_dict`, the first decoder of `Event.data_json` back into a `JobEvent`. `LiveRun`
+  drops its `JobDefinition` argument and builds its run table from `RunStarted` events as they arrive, instead of from
+  `job.schedule()` read up front, since the TUI no longer holds the running entry's job file; `estimate.py`'s `job_estimate`
+  moves off the run table's length for the job's total run count, onto `JobStarted.total_runs`, so the estimate stays correct
+  while the table is still filling in. Since job events carry no queue or execution ID, the pane relies on the worker's own
+  order (`queue_entry_changed` to `running` always precedes that entry's `JobStarted`) to know which entry a run belongs to,
+  and reads `GET /queue/{id}` once per `JobStarted` for the execution ID `/describe` already reads the same way. This also
+  retires the rest of the TUI's direct-execution plumbing (`job_executor`, `--executable`, `--shutdown-grace`, the unmount
+  cancel backstop, `SignalGuard`'s child-stopping signal handlers): `/stop` becomes an alias for `/queue cancel` on the entry
+  the pane follows, and `/quit` no longer asks to stop a job first, mirroring `/apply`'s own change to submit through the
+  queue instead of running a job directly.
 - **Change** [M02]: A second review pass, of the fixes above. Supersedes that entry's "the queue routes publish
   `queue_entry_changed`" line: publishing an entry's own 'queued' or 'cancelled' change now goes through the worker
   (`QueueWorker.enqueue` and `.cancel_queued`, new; the shared lock and the actual DB write and publish live in a new

@@ -8,15 +8,13 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
+from draw_things_control.core.network import LOOPBACK_HOSTNAMES, is_loopback_host
+
+__all__ = ["LOOPBACK_HOSTNAMES", "is_loopback_host", "host_header_is_allowed"]
+
 # --host values that bind every interface at once, not one address of their own: no client's Host header can ever
 # equal one of these literally, so a literal match against bound_host would refuse every real remote request.
 WILDCARD_HOSTNAMES = frozenset({"0.0.0.0", "::"})
-
-
-def is_loopback_host(host: str) -> bool:
-    """Whether ``--host`` (or ``--grpc-port``'s shared ``--host``) names loopback, without ``--allow-remote-bind``."""
-    return host.lower() in LOOPBACK_HOSTNAMES
 
 
 def host_header_is_allowed(host_header: str | None, *, bound_host: str, bound_port: int) -> bool:

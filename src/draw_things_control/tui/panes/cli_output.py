@@ -30,10 +30,15 @@ class CliPane(Vertical):
     def on_mount(self) -> None:
         self.border_title = "draw-things-cli"
 
-    def new_job(self, live: LiveRun) -> None:
-        """A job starts: its output replaces the last job's."""
-        self.query_one(RichLog).clear()
+    def new_job(self, live: LiveRun, *, seeded: bool = False) -> None:
+        """A job starts: its output replaces the last job's. ``seeded`` (attaching to one already running,
+        Milestone 03) marks the pane, since the state store never held draw-things-cli's own output: only what
+        arrives from here on is ever shown for it."""
+        log = self.query_one(RichLog)
+        log.clear()
         self.written = 0
+        if seeded:
+            log.write(Text("(earlier output not shown)", style="dim"))
         self.show(live)
 
     def show(self, live: LiveRun | None, event: JobEvent | None = None) -> None:

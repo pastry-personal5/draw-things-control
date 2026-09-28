@@ -8,11 +8,9 @@ from typing import TYPE_CHECKING
 
 from draw_things_control.core.errors import DtcError
 from draw_things_control.services.history import STATUSES, HistoryFilter
-from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, parse_bare_number, parse_typed_id
+from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, QUEUE_LETTER, execution_id_text, parse_bare_number, parse_typed_id, queue_id_text
 from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, help_text, parse, usage
-from draw_things_control.tui.confirm import ConfirmScreen
 from draw_things_control.tui.panes.job_definitions import natural_descending
-from draw_things_control.tui.text.jobs import question_text
 from draw_things_control.tui.widgets import MessageLog
 
 if TYPE_CHECKING:
@@ -58,10 +56,12 @@ class CommandController:
         self.screen.call_later(self.screen.dtc.action_quit)
 
     def command_get(self, what: str, *arguments: str) -> None:
-        """/get jobs, /get history, and an execution's prompts or draw-things-cli arguments."""
+        """/get jobs, /get queue, /get history, and an execution's prompts or draw-things-cli arguments."""
         word = what.lower()
         if word == "jobs" and not arguments:
             self.screen.jobs.load(fresh=True, announce=True)
+        elif word == "queue" and not arguments:
+            self.screen.dtc.show_queue()
         elif word == "history" and not arguments:
             self.screen.history.load()
         elif word in ("prompts", "positive", "negative", "param", "parameters") and 1 <= len(arguments) <= 2:
@@ -73,19 +73,24 @@ class CommandController:
 
     def command_describe(self, what: str, *arguments: str) -> None:
         """/describe job JOB: the summary, prompt pairs, and dry-run plan of a job file; /describe execution ID: one
-        execution as it ran. The noun may be left out when the ID shows it: /describe J0001, /describe e12."""
+        execution as it ran; /describe Q0007: one queue entry. The noun may be left out when the ID shows it:
+        /describe J0001, /describe e12, /describe Q7."""
         word = what.lower()
-        if not arguments and word not in ("job", "execution"):
+        if not arguments and word not in ("job", "execution", "queue"):
             if parse_typed_id(what, JOB_LETTER) is not None:
                 word, arguments = "job", (what,)
             elif parse_typed_id(what, EXECUTION_LETTER) is not None:
                 word, arguments = "execution", (what,)
+            elif parse_typed_id(what, QUEUE_LETTER) is not None:
+                word, arguments = "queue", (what,)
         if word == "job" and len(arguments) == 1:
             self.screen.describe_job(self.job_path(arguments[0]))
         elif word == "execution" and len(arguments) == 1:
             self.screen.show_execution(self.execution_number(arguments[0], "describe", "execution"))
+        elif word == "queue" and len(arguments) == 1:
+            self.screen.dtc.describe_queue_entry(self.queue_id(arguments[0]))
         else:
-            raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution') else None)}")
+            raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution', 'queue') else None)}")
 
     def command_sort(self, what: str, key: str, direction: str | None = None) -> None:
         """/sort jobs KEY [asc|desc]: the Job Definition widget's order, kept across sessions."""
@@ -96,24 +101,43 @@ class CommandController:
         self.screen.jobs.set_sort(key, descending)
         self.screen.say(f"Job Definition: by {key}, {'descending' if descending else 'ascending'}")
 
-    def command_apply(self, name: str) -> None:
+    def command_apply(self, name: str | None = None) -> None:
+        """/apply [JOB]: an alias for /queue add, the current Job Definition file when JOB is left out."""
+        self._queue_add(name)
+
+    def command_queue(self, action: str, *arguments: str) -> None:
+        """/queue add [JOB], /queue cancel <Queue ID>, /queue resume <Queue ID>: all three call the API, no
+        confirmation (a submission is undone with /queue cancel; the server, not this process, runs anything)."""
+        word = action.lower()
+        if word == "add" and len(arguments) <= 1:
+            self._queue_add(arguments[0] if arguments else None)
+        elif word == "cancel" and len(arguments) == 1:
+            self.screen.dtc.cancel_entry(self.queue_id(arguments[0]))
+        elif word == "resume" and len(arguments) == 1:
+            self.screen.dtc.resume_entry(self.queue_id(arguments[0]))
+        else:
+            raise CommandError(f"Usage: {usage('queue')}")
+
+    def _queue_add(self, name: str | None) -> None:
+        if name is None:
+            row = self.screen.jobs.selected
+            if row is None:
+                raise CommandError("No job is selected")
+            self.screen.dtc.start_flow(row.path)
+            return
         self.screen.dtc.start_flow(self.job_path(name))
 
     def command_stop(self) -> None:
+        """/stop: an alias for /queue cancel on the entry the draw-things-cli pane is following, no confirmation
+        (the same rule /queue cancel and c already give)."""
         live = self.screen.dtc.live
-        if not self.screen.dtc.job_running or live is None:
+        if live is None or live.ended or live.queue_id is None:
             self.screen.say("No job is running", "yellow")
             return
         if live.stop_requested:
             self.screen.say("Already stopping", "yellow")
             return
-        if any(isinstance(screen, ConfirmScreen) for screen in self.screen.app.screen_stack):
-            return
-        self.screen.app.push_screen(ConfirmScreen(question_text("Stop the job?", "stop it", "keep it running"), purpose="stop"), self.confirm_stop)
-
-    def confirm_stop(self, stop: bool | None) -> None:
-        if stop:
-            self.screen.dtc.request_stop()
+        self.screen.dtc.cancel_entry(live.queue_id)
 
     def command_filter(self, *arguments: str) -> None:
         current = self.screen.history.history_filter
@@ -150,6 +174,14 @@ class CommandController:
         if bare is not None:
             raise CommandError(f"Use {execution_id_text(bare)}: an execution ID begins with {EXECUTION_LETTER}")
         raise CommandError(f"Usage: {usage(command, word)}")
+
+    @staticmethod
+    def queue_id(text: str) -> str:
+        """A queue entry's ID (Q0007), normalized to that form; refuses anything else."""
+        number = parse_typed_id(text, QUEUE_LETTER)
+        if number is None:
+            raise CommandError(f"'{text}' is not a queue ID; it should look like {queue_id_text(1)}")
+        return queue_id_text(number)
 
     @staticmethod
     def number(text: str, command: str, word: str | None = None) -> int:
