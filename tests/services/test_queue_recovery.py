@@ -67,6 +67,19 @@ class QueueRecoveryTests(JobTestCase):
         assert entry is not None
         self.assertEqual(entry.state, str(QueueState.QUEUED))
 
+    def test_a_running_entry_linked_to_a_number_whose_row_was_never_created_is_requeued_with_its_link_cleared(self) -> None:
+        # The crash landed between reserving the execution's number (which the worker links right away) and the
+        # recorder inserting its row: the row never exists, so requeuing must also drop the dangling link, exactly
+        # as QueueWorker._fail_to_start does for the same window when the failure is an exception instead of a crash.
+        entry_id = self.submit()
+        self.claim(entry_id)
+        self.store.queue.link_execution(entry_id, 999)
+        recover_queue(self.store, clock=lambda: NOW)
+        entry = self.store.queue.get(entry_id)
+        assert entry is not None
+        self.assertEqual(entry.state, str(QueueState.QUEUED))
+        self.assertIsNone(entry.execution_number)
+
     def test_queued_entries_stay_queued_and_running_ones_are_untouched(self) -> None:
         queued_id = self.submit()
         recover_queue(self.store, clock=lambda: NOW)

@@ -207,9 +207,12 @@ class QueueRepository:
             return cursor.rowcount > 0
 
     def requeue(self, entry_id: int) -> None:
-        """Put a ``running`` entry back to ``queued``: nothing of it ran (a crash before ``JobStarted``)."""
+        """Put a ``running`` entry back to ``queued``: nothing of it ran (a crash before ``JobStarted``). Also clears
+        a linked execution number: a number can be reserved (and linked) before the crash that leaves this entry to
+        requeue, and its row was then never created, so the link would otherwise dangle and later be mistaken for a
+        pruned execution instead of one that never ran (mirrors ``finish``'s own ``clear_link``)."""
         with self._database.transaction() as connection:
-            connection.execute("UPDATE queue SET state = 'queued', started_at = NULL, started_epoch = NULL WHERE id = ?", (entry_id,))
+            connection.execute("UPDATE queue SET state = 'queued', started_at = NULL, started_epoch = NULL, execution_number = NULL WHERE id = ?", (entry_id,))
 
     def prune(self, cutoff: float) -> int:
         """Delete entries finished before the epoch ``cutoff``; never a ``queued`` or ``running`` one."""

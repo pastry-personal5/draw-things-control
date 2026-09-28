@@ -3,6 +3,20 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-09-28
+
+- **Change** [M01]: `_fail_to_start` now clears a queue entry's linked execution number when it fires (the job never
+  reached `JobStarted`, so no execution row was ever created for the number reserved for it), so a later resume
+  reads the entry as never having started rather than mistaking the dangling number for one that ran and was pruned.
+  `submit_job` also wraps a bad or since-removed base configuration name in `InputError`, matching every other
+  refusal `load_job_text` raises.
+- **Change** [M01]: `QueueRepository.requeue`, used by restart recovery for the identical window (a number reserved,
+  then the crash landing before the execution row was inserted), left the entry's `execution_number` in place; only
+  `finish`'s own `clear_link` cleared it, for the in-process exception path. Recovery could requeue an entry with a
+  dangling link, and a later cancel-then-resume of it would read `_linked_execution`'s "row missing" as "pruned" and
+  refuse the resume outright, instead of the "never started" outcome the design above intends. `requeue` now clears
+  `execution_number` too, matching `finish(..., clear_link=True)`.
+
 ## 2026-09-27
 
 - **Change** [M01]: Milestone 01 is implemented and done: schema 4 (the `queue` table, and `first_run`/`resumes` on
