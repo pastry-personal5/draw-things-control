@@ -1,7 +1,8 @@
 """The layers of the package, as import rules: cli, tui, server -> services -> state -> jobs -> core.
 
-Front ends never import each other (``dtc tui`` starts the TUI app, the one exception), ``mcp_server`` reaches the rest only
-over HTTP, and no layer below the front ends imports a terminal or web framework.
+Front ends never import each other (``dtc tui`` starts the TUI app and ``dtc serve`` starts the HTTP API and gRPC
+service, the two exceptions), ``mcp_server`` reaches the rest only over HTTP, and no layer below the front ends
+imports a terminal, web, or gRPC framework.
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ ALLOWED = {
     "server": {"core", "jobs", "state", "services"},
     "mcp_server": set(),
 }
-# The one import between front ends: `dtc tui` starts the TUI app.
-FRONT_END_EXCEPTIONS = {("cli", f"{PACKAGE}.tui.app")}
+# The two imports between front ends: `dtc tui` starts the TUI app, and `dtc serve` starts the HTTP API and gRPC service.
+FRONT_END_EXCEPTIONS = {("cli", f"{PACKAGE}.tui.app"), ("cli", f"{PACKAGE}.server.serve")}
 # The frameworks a front end owns; the layers below never import them.
-FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "httpx", "rich"}
+FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "httpx", "rich", "grpc"}
 FRAMEWORK_LAYERS = {"core", "jobs", "state", "services"}
 # Rich is the TUI's text type, which the TUI's own modules and nothing below them use.
 
@@ -62,9 +63,16 @@ def violations(files: dict[str, str]) -> list[str]:
     return problems
 
 
+# gRPC stubs make proto generates from server/proto/monitor.proto: not committed, not hand-written, not held to
+# this project's import rules or size limits (see the pyproject.toml ruff and pyright exclusions for the same).
+GENERATED = SOURCE / "server" / "generated"
+
+
 def package_files() -> dict[str, str]:
     files = {}
     for path in SOURCE.rglob("*.py"):
+        if GENERATED in path.parents:
+            continue
         module = ".".join((PACKAGE, *path.relative_to(SOURCE).with_suffix("").parts))
         files[module] = path.read_text(encoding="utf-8")
     return files
@@ -90,6 +98,8 @@ class SizeTests(unittest.TestCase):
     def test_modules_classes_and_functions_stay_small(self) -> None:
         problems = []
         for path in sorted(SOURCE.rglob("*.py")):
+            if GENERATED in path.parents:
+                continue
             name = path.relative_to(SOURCE).as_posix()
             source = path.read_text(encoding="utf-8")
             if len(source.splitlines()) > MAX_MODULE_LINES:

@@ -3,6 +3,7 @@ last succeeded run, with the original seed and run numbering."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.services.queue_submit import parse_snapshot
 from draw_things_control.state.execution_rows import ExecutionRow
 from draw_things_control.state.ids import execution_id_text
@@ -23,6 +25,8 @@ class ResumeRefusedError(InputError):
     """A resume was refused, naming the reason. Not a ``NotFoundError``: the entry exists, so this is not a 404 for a
     front end that maps error codes to statuses (Milestone 02); it is invalid to resume it, right now, for the
     reason given."""
+
+    code = "invalid_state"
 
 
 @dataclass(frozen=True)
@@ -38,9 +42,14 @@ class ResumeChain:
     execution_number: int
 
 
-def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now) -> QueueRow:
+def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None) -> QueueRow:
     """Resolve and accept a resume of the entry ``entry_id``; returns the new ``queued`` entry, at the back of the
-    FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed."""
+    FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed.
+
+    ``before_submit``, when given, is called with the resumed job and the runs it has left (Milestone 02's own API
+    rules and limits, which count only what a resume still has to do, not the whole chain) after the resume point is
+    resolved but before anything is stored; it raising refuses the resume and stores nothing.
+    """
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
@@ -50,6 +59,12 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
     _check_own_input(entry, global_config, params_directory)
     chain = _resolve_chain(store, entry)
+    if before_submit is not None:
+        # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is
+        # still valid; before_submit only reads the parsed job's fields (run count, timeout, cooldown), so
+        # decoding the image a second time here would be wasted work.
+        job = parse_snapshot(entry, global_config, params_directory, decode_input=False)()
+        before_submit(job, job.run_count - chain.first_run + 1)
     new = NewQueueEntry(
         job_path=entry.job_path,
         job_text=entry.job_text,
@@ -67,6 +82,31 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         resume_seed=chain.seed,
     )
     return store.queue.submit(new)
+
+
+@dataclass(frozen=True)
+class ResumePreview:
+    """Whether an entry can be resumed right now, without accepting one: from which run, or why not
+    (``GET /queue/{id}``, Milestone 02)."""
+
+    resumable: bool
+    from_run: int | None = None
+    reason: str | None = None
+
+
+def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, params_directory: Path) -> ResumePreview:
+    """The same checks ``resume_entry`` makes, without accepting a resume or storing anything, so the reason given
+    here always matches what an actual resume attempt would raise."""
+    if entry.state not in RESUMABLE_STATES:
+        return ResumePreview(False, reason=f"{entry.label} cannot be resumed: it is {entry.state}")
+    if _resumed_by_some_entry(store, entry.queue_number):
+        return ResumePreview(False, reason=f"{entry.label} already has a resume; resume the newest one instead")
+    try:
+        _check_own_input(entry, global_config, params_directory)
+        chain = _resolve_chain(store, entry)
+    except ResumeRefusedError as error:
+        return ResumePreview(False, reason=str(error))
+    return ResumePreview(True, from_run=chain.first_run)
 
 
 def _resumed_by_some_entry(store: Store, queue_number: int) -> bool:

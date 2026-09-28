@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from draw_things_control.services.queue_resume import ResumeRefusedError, resume_entry
+from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.queue import QueueState
@@ -24,6 +25,11 @@ class QueueResumeTests(JobTestCase):
     def submit(self, run_count: int = 7):
         path = self.write_job(job_data(run_count=run_count, prompt_pairs=[{"name": "only", "positive": "text"}]))
         return submit_job(path, self.global_config, self.params, self.store)
+
+    def entry(self, entry_id: int):
+        row = self.store.queue.get(entry_id)
+        assert row is not None
+        return row
 
     def succeed_three_of_seven(self, entry_id: int, *, state: QueueState = QueueState.INTERRUPTED) -> tuple[int, str]:
         """Claim ``entry_id``, give it an execution with three succeeded runs of seven, and leave it ``state``."""
@@ -102,3 +108,44 @@ class QueueResumeTests(JobTestCase):
         self.store.queue.finish(first_resume.id, state=QueueState.FAILED, finished_at="2026-09-27T10:20:00+00:00")
         second_resume = resume_entry(self.store, first_resume.id, self.global_config, self.params, clock=lambda: NOW)
         self.assertEqual((second_resume.resume_first_run, second_resume.resumes), (4, first_resume.queue_number))
+
+    def test_preview_resume_matches_what_resume_entry_would_do(self) -> None:
+        entry = self.submit(run_count=7)
+        self.succeed_three_of_seven(entry.id)
+        preview = preview_resume(self.store, self.entry(entry.id), self.global_config, self.params)
+        self.assertEqual((preview.resumable, preview.from_run, preview.reason), (True, 4, None))
+
+    def test_preview_resume_gives_the_same_reason_a_refused_resume_would_raise(self) -> None:
+        entry = self.submit(run_count=7)
+        claimed = self.store.queue.claim_oldest(NOW)
+        assert claimed is not None
+        self.store.queue.finish(entry.id, state=QueueState.FAILED, finished_at="2026-09-27T10:10:00+00:00")
+        preview = preview_resume(self.store, self.entry(entry.id), self.global_config, self.params)
+        self.assertFalse(preview.resumable)
+        assert preview.reason is not None
+        self.assertIn("no succeeded run", preview.reason)
+        with self.assertRaisesRegex(ResumeRefusedError, preview.reason):
+            resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+
+    def test_preview_resume_reports_an_entry_already_resumed(self) -> None:
+        entry = self.submit(run_count=7)
+        self.succeed_three_of_seven(entry.id)
+        resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+        preview = preview_resume(self.store, self.entry(entry.id), self.global_config, self.params)
+        self.assertFalse(preview.resumable)
+        assert preview.reason is not None
+        self.assertIn("already has a resume", preview.reason)
+
+    def test_before_submit_can_refuse_the_resume_before_anything_is_stored(self) -> None:
+        entry = self.submit(run_count=7)
+        self.succeed_three_of_seven(entry.id)
+
+        def refuse(job: JobDefinition, remaining_runs: int) -> None:
+            self.assertEqual(remaining_runs, 4)  # runs 4-7 are left, not the whole chain's 7
+            raise ValueError("over a limit")
+
+        with self.assertRaisesRegex(ValueError, "over a limit"):
+            resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW, before_submit=refuse)
+        # Nothing was stored: the entry has no resume yet, so resuming it again still works.
+        preview = preview_resume(self.store, self.entry(entry.id), self.global_config, self.params)
+        self.assertTrue(preview.resumable)

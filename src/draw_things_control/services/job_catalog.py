@@ -27,6 +27,9 @@ class JobRow:
     path: Path
     job: JobDefinition | None
     error: str | None = None
+    # The offending key, when ``error`` came from an InputError (Milestone 02's GET /jobs reports it); None for a
+    # plain read failure (an unreadable directory) or when there is no error.
+    error_field: str | None = None
     number: int | None = None
     changed: float | None = None
 
@@ -179,7 +182,7 @@ class JobCatalog:
             job = read_job(path, self.settings, self._paths, decode_input=False)[0]
         except Exception as error:
             # Not only ValueError and OSError: a job file that breaks the loader must not end the worker.
-            row, dependencies = JobRow(path, None, error_text(path, error), changed=changed), None
+            row, dependencies = JobRow(path, None, error_text(path, error), error_field=getattr(error, "field", None), changed=changed), None
         else:
             row = JobRow(path, job, changed=changed)
             inputs = ((job.input,) if job.input is not None else ()) + (self._paths.params / job.config_file,)

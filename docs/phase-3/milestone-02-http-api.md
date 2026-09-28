@@ -1,7 +1,7 @@
 # Milestone 02: HTTP API: Read and Run
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Milestone 01: Queue and run manager](milestone-01-queue-run-manager.md)
 
 ## Goal
@@ -108,7 +108,7 @@ All under `/v1`:
 | `GET /inputs` | The images in the input directory: path relative to it, bytes, width and height, modified time |
 | `POST /queue` | Submit a job by reference; returns the entry |
 | `GET /queue` | Entries, oldest first, filterable by state; the worker's state (`idle`, `running`, `cooling_down`) and `cooldown_until` |
-| `GET /queue/{id}` | One entry: state, execution ID, current run and its elapsed time, the last run's time, `cooldown_until`, error, and whether it can be resumed, from which run, or why not |
+| `GET /queue/{id}` | One entry: state, execution ID, current run and its elapsed time, the current run's diffusion step, the last run's time, `cooldown_until`, error, and whether it can be resumed, from which run, or why not |
 | `POST /queue/{id}/cancel` | Cancel ([Milestone 01](milestone-01-queue-run-manager.md#cancel) rules) |
 | `POST /queue/{id}/resume` | Resume ([Milestone 01](milestone-01-queue-run-manager.md#resume) rules); returns the new entry |
 | `GET /executions` | Executions, newest first, filterable by job reference (resolved like `{job}`) and status |
@@ -247,8 +247,8 @@ decision for the whole process, not two to remember.
     (`run_output`) too, since they are many.
   - `WatchQueueEntry(id) returns (stream QueueEntrySnapshot)` replaces
     `GET /queue/{id}?wait=`: one message whenever the entry's state,
-    execution ID, current run, `cooldown_until`, or error changes, until the
-    client cancels the call. `dtc mcp`'s `get_queue_entry` tool (with
+    execution ID, current run, current step, `cooldown_until`, or error
+    changes, until the client cancels the call. `dtc mcp`'s `get_queue_entry` tool (with
     `wait_seconds`) and the TUI's Queue widget both read this instead of
     polling.
 - Authentication is a server interceptor reading the `authorization`

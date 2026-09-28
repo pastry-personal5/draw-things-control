@@ -17,6 +17,7 @@ the project root as `uv run dtc <command>`.
 - [Where outputs go](#where-outputs-go)
 - [Browse and run jobs in the terminal UI](#browse-and-run-jobs-in-the-terminal-ui)
 - [Execution history and the run lock](#execution-history-and-the-run-lock)
+- [Server: HTTP API and gRPC monitoring](#server-http-api-and-grpc-monitoring)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
 
@@ -66,6 +67,7 @@ different file.
 | `run-job FILE` | Run every generation in a job, chained |
 | `import-history` | Import phase 1 job manifests into the execution history |
 | `tui` | Browse, run, and watch jobs in a terminal UI |
+| `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
 
 Add `--help` to any command for its full option list.
 
@@ -673,6 +675,99 @@ ends, and never stops it for you. `--dry-run`, `validate-job`,
 be used (unwritable, a filesystem without SQLite WAL support, or a database
 written by a newer version), `run-job` exits with 1 and the reason, and starts
 nothing.
+
+## Server: HTTP API and gRPC monitoring
+
+`dtc serve` runs an HTTP API and a gRPC monitoring service in one foreground
+process, for an AI agent (over MCP, later) or any local program to list jobs
+and inputs, queue and watch runs, and read history — without running
+`draw-things-cli` itself.
+
+```bash
+uv run dtc serve
+```
+
+It reads `config/global-config.yaml` (or `--global-config PATH`) once at
+start; edit and restart to pick up a change. Like `run-job`, it takes the run
+lock (`state/run.lock`) and holds it for as long as it runs, so `run-job` and
+the TUI cannot start a job while a server is up, and a second `dtc serve`
+refuses to start (exit 75) — see
+[Execution history and the run lock](#execution-history-and-the-run-lock). A
+queue submitted through the API runs on the server's own worker, one entry at
+a time, with the same cooldown between entries as between a job's own runs.
+Stopping the server (Ctrl-C, SIGTERM) stops the run in progress at once, the
+same as stopping `run-job`; a later `POST /v1/queue/{id}/resume` reruns the
+run that was cut short, never continuing it midway.
+
+Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
+`--grpc-port` (default `8766`), `--executable`, `--shutdown-grace`,
+`--global-config`, and `--allow-remote-bind`. A `--host` that is not loopback
+(`127.0.0.1`, `::1`, `localhost`) is refused (exit 2) unless
+`--allow-remote-bind` is given, since beyond loopback the bearer token below
+crosses the network in plain HTTP; an SSH tunnel is the safer way in from
+elsewhere. With the flag, `serve` starts but warns about it. Either way, an
+HTTP request whose `Host` header names neither loopback nor the bound address
+is refused, so a web page cannot reach the server through DNS rebinding.
+
+**Authentication.** Every endpoint but `GET /v1/health` requires
+`Authorization: Bearer <token>`; a gRPC call needs the same token in its
+`authorization` metadata. The token is created on first start, 32 random
+bytes as hex, in `config/server-token` (mode 0600, git-ignored); an existing
+file that others can read, or that another user owns, is refused rather than
+silently fixed. To change the token, delete the file and restart the server.
+The token is never logged, returned, or accepted from a query string. There
+is one level of access: whoever holds the token sees every job file and every
+execution in the history, whichever front end ran it.
+
+**Endpoints**, all under `/v1` and JSON:
+
+| Method and path | Purpose |
+|-----------------|---------|
+| `GET /health` | Liveness (no auth): up, its version, whether the worker is alive |
+| `GET /capabilities` | Whether writes are enabled, and the limits in force |
+| `GET /jobs`, `GET /jobs/{job}`, `GET /jobs/{job}/preview` | The job files, one file's text and resolved plan, and its dry-run preview |
+| `GET /inputs` | Images in the input directory, with their size |
+| `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries; read one entry's state |
+| `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, or cancelled one from its last succeeded run |
+| `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs, and each run's output file with whether it is complete |
+| `GET /audit` | The audit log of every submit, cancel, and resume, refused ones included |
+
+A `{job}` reference is a job ID (`J0001`) or a file name in `data/jobs/`, and
+a queue entry or execution is named by its own ID (`Q0007`, `E0012`) — never a
+raw path or a store row number. `GET /jobs`, `/executions`, `/inputs`, and
+`/audit` are paged (`limit`, default and maximum 200, and an opaque `cursor`
+from the previous page).
+
+Watching for change (the event stream, and "tell me when this entry changes")
+is gRPC, not HTTP: `WatchEvents` streams job and queue events from a
+`last_event_id` onward (an ID from before the server's current run gets a
+`Reset`, telling the client to re-read state over HTTP and resubscribe), and
+`WatchQueueEntry` streams one entry's snapshot on every change until the
+client cancels the call.
+
+**Rules and limits.** Every job the API queues must set
+`run_timeout_seconds` and keep its `input` inside `input_directory` and its
+`output.directory` inside `output_directory`, and must fit the limits below,
+configurable under `api_limits:` in `config/global-config.yaml` (see
+`config/global-config.example.yaml` for the full block and defaults):
+
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `max_queued_jobs` | Entries `queued` at once | 20 |
+| `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
+| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them | 172800 (48 h) |
+| `max_job_file_bytes` | Size of job text the API accepts (from Milestone 07) | 65536 |
+
+A refusal names the `code` (`timeout_required`, `outside_directory`,
+`limit_exceeded`), the field, and, for a limit, the limit and the job's
+value; the job still runs with `run-job` while no server is up. These limits
+apply to every caller, `dtc queue` (Milestone 03) included: the API cannot
+tell a person from an agent.
+
+**Audit log.** Every submit, cancel, and resume is recorded in the state
+store (time, action, target, outcome, caller), refused ones included, read
+back with `GET /audit`. It holds no prompt text, YAML, or credential, and is
+never pruned by `history_retention_days`.
 
 ## Stopping, failures, and exit codes
 

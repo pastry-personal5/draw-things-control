@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, parse_cooldown
-from draw_things_control.core.global_config import load_global_config
+from draw_things_control.core.global_config import DEFAULT_API_LIMITS, ApiLimits, load_global_config
 
 
 class GlobalConfigTests(unittest.TestCase):
@@ -164,4 +164,28 @@ class GlobalConfigTests(unittest.TestCase):
             with self.subTest(text):
                 self.write(base + f"history_retention_days: {text}\n")
                 with self.assertRaisesRegex(ValueError, rf"{self.path}: 'history_retention_days' must be a whole number of days from 0 to 3650"):
+                    load_global_config(self.path)
+
+    def test_api_limits_default_when_absent(self) -> None:
+        self.write(self.base())
+        self.assertEqual(load_global_config(self.path).api_limits, DEFAULT_API_LIMITS)
+
+    def test_api_limits_overridden(self) -> None:
+        self.write(self.base() + "api_limits:\n  max_queued_jobs: 5\n  max_job_runs: 10\n  max_job_seconds: 3600\n  max_job_file_bytes: 1024\n")
+        self.assertEqual(load_global_config(self.path).api_limits, ApiLimits(max_queued_jobs=5, max_job_runs=10, max_job_seconds=3600, max_job_file_bytes=1024))
+
+    def test_api_limits_rejects_unknown_key_and_bad_values(self) -> None:
+        cases = {
+            "unknown key": ("api_limits:\n  bogus: 1\n", "api_limits.bogus"),
+            "not a mapping": ("api_limits: 5\n", "api_limits"),
+            "zero queued jobs": ("api_limits:\n  max_queued_jobs: 0\n", "api_limits.max_queued_jobs"),
+            "negative job runs": ("api_limits:\n  max_job_runs: -1\n", "api_limits.max_job_runs"),
+            "fractional job runs": ("api_limits:\n  max_job_runs: 1.5\n", "api_limits.max_job_runs"),
+            "zero job seconds": ("api_limits:\n  max_job_seconds: 0\n", "api_limits.max_job_seconds"),
+            "zero file bytes": ("api_limits:\n  max_job_file_bytes: 0\n", "api_limits.max_job_file_bytes"),
+        }
+        for label, (text, field) in cases.items():
+            with self.subTest(label):
+                self.write(self.base() + text)
+                with self.assertRaisesRegex(ValueError, field):
                     load_global_config(self.path)

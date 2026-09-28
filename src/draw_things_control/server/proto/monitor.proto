@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package draw_things_control.monitor;
+
+// Watching for change (Milestone 02): a grpc.aio.server() beside uvicorn in the same `dtc serve` process, not an
+// HTTP endpoint, since nothing here writes (writes stay HTTP POST). Authentication is a server interceptor reading
+// the "authorization" metadata key ("Bearer <token>"), the same bearer token as the HTTP API; missing or wrong, the
+// call ends UNAUTHENTICATED. `mcp_server/`, `tui/`, and `cli/` (`dtc queue add --wait`) each import their own
+// generated client stubs from this same file; only `server/` imports the generated server code.
+service Monitor {
+  // Replaces GET /events: the Phase 2 job events (jobs/events.py's event_to_dict) and the queue's own (an entry's
+  // state change, and the start and end of a between-jobs wait, each naming the entry). Event.id increases within
+  // one run of the server; a client reconnecting with an earlier run's ID, or one older than the server's bounded
+  // in-memory backlog, gets a Reset event and should read the state again over HTTP before resubscribing.
+  rpc WatchEvents(WatchEventsRequest) returns (stream Event);
+
+  // Replaces GET /queue/{id}?wait=: one message whenever the entry's state, execution ID, current run, current
+  // step, cooldown_until, or error changes, until the client cancels the call.
+  rpc WatchQueueEntry(WatchQueueEntryRequest) returns (stream QueueEntrySnapshot);
+}
+
+message WatchEventsRequest {
+  // 0 means "only events from now on"; otherwise replay every event after this ID first.
+  int64 last_event_id = 1;
+  // Ask for child output lines (run_output) too, since they are many.
+  bool include_output = 2;
+}
+
+message Event {
+  int64 id = 1;
+  // One of jobs/events.py's EVENT_KINDS (job_started, run_started, run_output, run_finished, cooldown_started,
+  // cooldown_ended, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended), or
+  // "reset" (data_json empty: the client's last_event_id is unusable, and it should re-sync over HTTP).
+  string kind = 2;
+  // The event's own fields, exactly as event_to_dict (or the queue's own equivalent mapping) produces them, as
+  // JSON: one generic payload instead of one message per event kind, since every client already reads this same
+  // shape from the job event stream Phase 2 defined; a typed message per kind would just duplicate that schema.
+  string data_json = 3;
+}
+
+message WatchQueueEntryRequest {
+  // A queue entry's public ID (Q0007), any letter case, leading zeros optional, exactly as the HTTP API takes it.
+  string queue_id = 1;
+}
+
+message QueueEntrySnapshot {
+  string queue_id = 1;
+  string state = 2;
+  optional string execution_id = 3;
+  optional int32 current_run = 4;
+  optional double current_run_elapsed_seconds = 5;
+  optional double cooldown_until = 6;
+  optional string error = 7;
+  // The current run's latest diffusion-step reading from draw-things-cli's own progress bar (distinct from
+  // current_run above, which is the run's position in the job's chain): current_step of current_step_total. Both
+  // set together, or neither before the first reading arrives.
+  optional int32 current_step = 8;
+  optional int32 current_step_total = 9;
+}

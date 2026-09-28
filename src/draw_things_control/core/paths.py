@@ -7,6 +7,7 @@ from pathlib import Path
 
 DATABASE_FILE_NAME = "dtc.db"
 LOCK_FILE_NAME = "run.lock"
+SERVER_TOKEN_FILE_NAME = "server-token"
 # As a person names them in messages: relative to the project root.
 GLOBAL_CONFIG_RELATIVE = Path("config/global-config.yaml")
 EXAMPLE_GLOBAL_CONFIG_RELATIVE = Path("config/global-config.example.yaml")
@@ -40,6 +41,12 @@ class ProjectPaths:
     @property
     def database(self) -> Path:
         return self.state / DATABASE_FILE_NAME
+
+    @property
+    def server_token(self) -> Path:
+        """The API token ``dtc serve`` generates on first start (0600, gitignored): beside ``global_config``, not in
+        the state directory, so the secret stays out of a file that may be shared or committed."""
+        return self.root / "config" / SERVER_TOKEN_FILE_NAME
 
 
 # The project this package is installed in (src/draw_things_control/core/paths.py).

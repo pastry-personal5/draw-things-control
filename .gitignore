@@ -48,6 +48,13 @@ Thumbs.db
 # Machine-specific global configuration (copy from config/global-config.example.yaml)
 config/global-config.yaml
 
+# The API server's bearer token (generated on first `dtc serve`)
+config/server-token
+
+# gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
+# stays the single source of truth, with no generated code to drift from it.
+src/draw_things_control/server/generated/
+
 # Personal data: everything under data/ except the example files
 data/**
 !data/**/

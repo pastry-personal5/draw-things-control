@@ -5,6 +5,51 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-28
 
+- **Change** [M02]: `GET /queue/{id}` and `WatchQueueEntry` gain `current_step`/`current_step_total`: the active
+  run's latest reading from `draw-things-cli`'s own progress bar (`RunOutput.progress`, already carried on the raw
+  event stream, but not previously surfaced on the at-a-glance queue-status surfaces a client polls or watches
+  instead of subscribing to every event). `WorkerStatus.observe_run` (`services/queue_worker_status.py`) now also
+  watches `RunOutput`, resetting the reading to `None` on every `RunStarted` (so a new run never briefly shows the
+  previous run's last step) and clearing it on `RunFinished` and `entry_released()` alike, so nothing claimed next
+  can read a stale one. `monitor.proto`'s `QueueEntrySnapshot` gains the two fields (both set together, or neither).
+- **Change** [M02]: Milestone 02 is implemented and done: `server/` (the FastAPI app and its routes, serializers,
+  auth, host check, pagination, the caller header, error-code-to-status mapping, the audit context manager, and the
+  event backlog), the gRPC monitoring service (`server/grpc_service.py`, `server/grpc_auth.py`, generated from
+  `server/proto/monitor.proto`), `dtc serve` (`server/serve.py`, wired into `cli/app.py`), `services/api_rules.py`,
+  `services/input_listing.py`, `services/queue_events.py`, `services/queue_worker_status.py`, and schema 5's
+  `audit_log` table (`state/audit.py`). `make proto` (protoc, then a `sed` fix for its non-package-aware import) is a
+  new `make check` dependency; its output is `.gitignore`d and excluded from the architecture and size tests, as
+  planned.
+- **Design decision** [M02]: Two signal-handling bugs found while smoke-testing a real `dtc serve` process (curl,
+  a gRPC client, real SIGTERM/SIGINT) before calling the milestone done, both in `server/serve.py`'s `_serve_async`.
+  Starting `grpc.aio.server()` *before* uvicorn's `Server.capture_signals()` is entered leaves SIGTERM and SIGINT at
+  their default, immediate-kill disposition for the rest of the process's life (observed empirically: grpc's C core
+  appears to reset it during its own startup), so no cleanup ever ran, uvicorn's own included. Fixed by entering
+  `capture_signals()` first and starting the gRPC server inside it, awaiting the private `Server._serve()` instead of
+  the public `Server.serve()` (which would re-enter `capture_signals()` itself). Separately, even with that fixed, the
+  run lock still was not released: `capture_signals()`'s own `finally` re-raises the caught signal, at its restored
+  default disposition, once its `with` block exits, which happens *before* control returns to any caller code sitting
+  outside that block — so cleanup written in `run()`'s own `finally` (after `asyncio.run()` returns) raced the
+  re-raised signal and typically lost. Fixed by moving `QueueHost.stop()` into `_serve_async`'s own `try/finally`,
+  nested inside the same `capture_signals()` block, where it is guaranteed to complete first; `run()`'s outer
+  `finally` is now only a backstop for a non-signal exit. Neither bug is one a synchronous or in-process async test
+  can catch; `tests/server/test_serve.py` covers both with a real subprocess and real signals.
+- **Change** [M02]: `EventBacklog.since()` (`server/event_backlog.py`) read `last_event_id < self._events[0].id - 1`
+  to decide whether an ID is too old to explain and needs a `Reset`, which on an empty backlog short-circuited past
+  the check and returned `()` (replay nothing, stay subscribed) instead of `Reset` for a stale ID from a previous
+  server run — exactly the case the wall-clock-seeded ID scheme exists to catch without a separate run token. Fixed
+  to compare against `self._next_id` when the backlog is empty, caught by a test that reconnects with an ID from
+  before the server started.
+- **Design decision** [M02]: `QueueWorker` (`services/queue_worker.py`) gains `is_alive()`, `state()`,
+  `cooldown_until()`, and `current_run()`, for `GET /health`, `GET /queue`, `GET /queue/{id}`, and `WatchQueueEntry`
+  to read without parsing logs, as the architecture rules require; the bookkeeping is a `WorkerStatus` object
+  (`services/queue_worker_status.py`), extracted to its own module to keep `QueueWorker` under the 250-line class
+  limit. The worker also takes an optional `on_event` sink (`services/queue_events.py`'s `QueueEventPublisher`),
+  forwarded through `QueueHost` (which gained a public `store` property for the same routes), publishing Phase 2 job
+  events and the queue's own transitions (entry state changes, the between-jobs wait's start and end) for
+  `WatchEvents` to stream. None of this was named at the level of individual methods in the milestone plan, which
+  described the endpoints and RPCs but not the service-layer surface they read from.
+
 - **Owner decision** [M02]: From an interview on the milestone plan's review below.
   - `GET /executions`' job filter matches a job reference (an ID or file name, resolved exactly like `{job}`
     elsewhere), not free text against `name:`. Filtering by the display name field, which could span several files
