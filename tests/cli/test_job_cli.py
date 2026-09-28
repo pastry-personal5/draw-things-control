@@ -2,7 +2,9 @@
 
 import os
 import shlex
+import shutil
 from pathlib import Path
+from unittest import mock
 
 from loguru import logger
 from typer.testing import CliRunner
@@ -11,7 +13,7 @@ from draw_things_control.cli.app import CliServices, app
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.services.toolkit import create_job_runner, create_runner
-from tests.fixtures import FakeToolkit, JobTestCase, job_data
+from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 
 
 class JobCliTests(JobTestCase):
@@ -21,7 +23,9 @@ class JobCliTests(JobTestCase):
         self.global_path = self.root / "global-config.yaml"
         self.global_path.write_text(f"version: 1\ninput_directory: {self.input_directory}\noutput_directory: {self.output_directory}\n", encoding="utf-8")
         self.job_path = self.write_job(job_data())
-        self.services = CliServices(self.paths, FakeToolkit())
+        # A fake ffmpeg, so a dry run's tool check (jobs/planning.py's check_tools) needs no real ffmpeg on PATH.
+        executor = job_executor(runner_factory=mock.Mock(), find_executable=shutil.which, frame_extractor=mock.Mock(), require_ffmpeg=lambda: "ffmpeg")
+        self.services = CliServices(self.paths, FakeToolkit(executor))
         self.messages: list[str] = []
         sink = logger.add(lambda message: self.messages.append(str(message).strip()), format="{message}", level="ERROR")
         self.addCleanup(logger.remove, sink)
