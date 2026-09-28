@@ -194,6 +194,21 @@ class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase
         self.assertEqual((second.current_step, second.current_step_total), (7, 20))
         call.cancel()
 
+    async def test_elapsed_seconds_alone_changing_sends_no_message(self) -> None:
+        entry = self.submit(run_count=1)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker._current_id = claimed.id
+        self.worker._current_run = (1, 1.0)
+        call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
+        await self.read(call)
+        self.worker._current_run = (1, 2.0)
+        await asyncio.sleep(0.15)  # several polls with only the elapsed seconds changed
+        self.worker._current_run = (2, 0.5)
+        second = await self.read(call)
+        self.assertEqual((second.current_run, second.current_run_elapsed_seconds), (2, 0.5))
+        call.cancel()
+
 
 if __name__ == "__main__":
     unittest.main()

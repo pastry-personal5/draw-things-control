@@ -12,7 +12,7 @@ from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.services.queue_submit import parse_snapshot
+from draw_things_control.services.queue_submit import Enqueue, parse_snapshot
 from draw_things_control.state.execution_rows import ExecutionRow
 from draw_things_control.state.ids import execution_id_text
 from draw_things_control.state.queue import NewQueueEntry, QueueRow, QueueState
@@ -42,14 +42,13 @@ class ResumeChain:
     execution_number: int
 
 
-def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None) -> QueueRow:
+def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None, enqueue: Enqueue | None = None) -> QueueRow:
     """Resolve and accept a resume of the entry ``entry_id``; returns the new ``queued`` entry, at the back of the
     FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed.
-
     ``before_submit``, when given, is called with the resumed job and the runs it has left (Milestone 02's own API
     rules and limits, which count only what a resume still has to do, not the whole chain) after the resume point is
-    resolved but before anything is stored; it raising refuses the resume and stores nothing.
-    """
+    resolved but before anything is stored; it raising refuses the resume and stores nothing. ``enqueue`` is
+    ``submit_job``'s own parameter of the same name (see its type alias, ``queue_submit.Enqueue``)."""
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
@@ -81,7 +80,7 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         resume_input=str(chain.input),
         resume_seed=chain.seed,
     )
-    return store.queue.submit(new)
+    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
 @dataclass(frozen=True)
@@ -96,13 +95,15 @@ class ResumePreview:
 
 def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, params_directory: Path) -> ResumePreview:
     """The same checks ``resume_entry`` makes, without accepting a resume or storing anything, so the reason given
-    here always matches what an actual resume attempt would raise."""
+    here matches what an actual resume attempt would raise -- except for the input image itself, which this checks
+    only by its header (``decode_input=False`` below): a corrupt-but-header-readable image can preview as
+    resumable here and still be refused by the real resume, which always decodes fully."""
     if entry.state not in RESUMABLE_STATES:
         return ResumePreview(False, reason=f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
         return ResumePreview(False, reason=f"{entry.label} already has a resume; resume the newest one instead")
     try:
-        _check_own_input(entry, global_config, params_directory)
+        _check_own_input(entry, global_config, params_directory, decode_input=False)
         chain = _resolve_chain(store, entry)
     except ResumeRefusedError as error:
         return ResumePreview(False, reason=str(error))
@@ -114,11 +115,14 @@ def _resumed_by_some_entry(store: Store, queue_number: int) -> bool:
     return any(candidate.resumes == queue_number for candidate in store.queue.list())
 
 
-def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_directory: Path) -> None:
+def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> None:
     """Refuse, naming the path, when the job's own first input is gone: parsing the snapshot resolves the job's size
-    from it, exactly as the first submission did."""
+    from it, exactly as the first submission did. ``decode_input=False`` (``preview_resume``'s own choice) skips the
+    full pixel decode, checking only that the file exists and its header is readable; a real resume (this
+    function's other caller, through ``resume_entry``) always decodes fully, since it is the one that actually
+    starts a run from the image."""
     try:
-        parse_snapshot(entry, global_config, params_directory)()
+        parse_snapshot(entry, global_config, params_directory, decode_input=decode_input)()
     except InputError as error:
         raise ResumeRefusedError(f"{entry.label}'s job cannot be resolved: {error}") from error
 

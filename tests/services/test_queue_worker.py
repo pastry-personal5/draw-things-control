@@ -127,6 +127,40 @@ class QueueWorkerTests(JobTestCase):
         self.assertEqual(self.entry(label).state, str(QueueState.CANCELLED))
         self.assertEqual(self.starts, 0)
 
+    def test_enqueue_inserts_and_publishes_the_queued_change_under_the_claim_lock(self) -> None:
+        """The event-ordering fix (Milestone 02, phase-3 changelog 2026-09-28): enqueue's insert and its 'queued'
+        publish happen under the same lock ``_claim_and_run_one`` takes to claim and register an entry, so a claim
+        already blocked on it can never see the row -- and so never publish 'running' -- before this publish."""
+        events: list[str] = []
+        worker = self.build_worker(on_event=lambda kind, _data: events.append(kind))
+        path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        lock_held_during_insert = []
+
+        def insert():
+            lock_held_during_insert.append(worker._state_lock.locked())
+            return submit_job(path, self.global_config, self.params, self.store)
+
+        entry = worker.enqueue(insert)
+        self.assertEqual(lock_held_during_insert, [True])
+        self.assertEqual(entry.state, str(QueueState.QUEUED))
+        self.assertEqual(events, ["queue_entry_changed"])
+
+    def test_cancel_queued_publishes_its_change_under_the_claim_lock(self) -> None:
+        events: list[tuple[str, dict]] = []
+        worker = self.build_worker(on_event=lambda kind, data: events.append((kind, data)))
+        label = self.submit(run_count=1)
+        self.assertTrue(worker.cancel_queued(self.entry(label).id, label))
+        self.assertEqual(self.entry(label).state, str(QueueState.CANCELLED))
+        self.assertEqual(events, [("queue_entry_changed", {"queue_id": label, "state": "cancelled"})])
+
+    def test_cancel_queued_is_false_and_publishes_nothing_once_the_worker_has_claimed_it(self) -> None:
+        events: list[tuple[str, dict]] = []
+        worker = self.build_worker(on_event=lambda kind, data: events.append((kind, data)))
+        label = self.submit(run_count=1)
+        self.assertTrue(self.worker.claim_and_run_one())
+        self.assertFalse(worker.cancel_queued(self.entry(label).id, label))
+        self.assertEqual(events, [])
+
     def test_a_running_entry_is_cancelled_and_reads_cancelled_not_interrupted(self) -> None:
         label = self.submit(run_count=1)
         self.next_runner = lambda arguments: BlockingRunner(arguments)

@@ -162,6 +162,35 @@ class QueueRepository:
             rows = self._database.connection().execute("SELECT * FROM queue WHERE state = ? ORDER BY queue_number", (str(state),)).fetchall()
         return [QueueRow.from_row(row) for row in rows]
 
+    def list_active(self) -> list[QueueRow]:
+        """Every queued or running entry, oldest first: never paged (``GET /queue``, Milestone 02), since the queue
+        itself is bounded by ``max_queued_jobs`` and only one entry is ever running at once. Ordering by
+        ``queue_number`` alone already reads as 'the running entry, if any, then the queued ones in FIFO order': the
+        worker always claims the smallest queue number among these, so a running entry's own number is the smallest
+        of the set."""
+        rows = self._database.connection().execute("SELECT * FROM queue WHERE state IN ('queued', 'running') ORDER BY queue_number").fetchall()
+        return [QueueRow.from_row(row) for row in rows]
+
+    def list_finished(self, *, limit: int, offset: int, state: str | None = None) -> list[QueueRow]:
+        """A page of finished entries (succeeded, failed, cancelled, interrupted), newest first: ``GET /queue``'s own
+        history, which -- unlike the active entries above -- is not bounded by anything but
+        ``history_retention_days`` (0 keeps it forever), so it is paged like ``GET /jobs``, ``/executions``, and
+        ``/audit``."""
+        clauses = ["state IN ('succeeded', 'failed', 'cancelled', 'interrupted')"]
+        values: list[Any] = []
+        if state is not None:
+            clauses.append("state = ?")
+            values.append(str(state))
+        where = " AND ".join(clauses)
+        rows = self._database.connection().execute(f"SELECT * FROM queue WHERE {where} ORDER BY queue_number DESC LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
+        return [QueueRow.from_row(row) for row in rows]
+
+    def count(self, *, state: str) -> int:
+        """How many entries are in ``state``, without reading full rows (each carrying its job and base
+        configuration's exact text): ``check_api_rules``'s own ``max_queued_jobs`` check reads only this."""
+        row = self._database.connection().execute("SELECT COUNT(*) AS n FROM queue WHERE state = ?", (str(state),)).fetchone()
+        return int(row["n"])
+
     def has_queued(self) -> bool:
         """Whether any entry is ``queued``, without reading full rows (each carrying its job and base configuration's
         exact text): the between-jobs wait polls this rather than ``list(state=...)`` for a plain non-empty check."""

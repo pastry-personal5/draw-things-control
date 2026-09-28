@@ -3,9 +3,6 @@ naming its state (``JobExecutor.cancel()``'s own contract governs everything pas
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from draw_things_control.core.clock import Clock
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.services.queue_worker import QueueWorker
 from draw_things_control.state.queue import QueueState
@@ -19,19 +16,25 @@ class CancelRefusedError(InputError):
     code = "invalid_state"
 
 
-def cancel_entry(store: Store, worker: QueueWorker, entry_id: int, *, clock: Clock = datetime.now) -> None:
-    """Cancel entry ``entry_id``. A queued entry is cancelled directly; a running one is stopped through ``worker``.
-    Either way, a race with the job's own natural end is not an error: the entry simply reads whatever that race
-    actually produced. Only an entry already finished *before* this call is refused, naming its state."""
+def cancel_entry(store: Store, worker: QueueWorker, entry_id: int) -> bool:
+    """Cancel entry ``entry_id``. A queued entry is cancelled directly, through ``worker.cancel_queued`` (its own
+    insert-and-publish lock, so this can never interleave with a claim); a running one is stopped through
+    ``worker.cancel_running``. Either way, a race with the job's own natural end is not an error: the entry simply
+    reads whatever that race actually produced. Only an entry already finished *before* this call is refused, naming
+    its state.
+
+    Returns True when a queued entry was cancelled directly, False when the worker was told to stop a running one.
+    Either way the worker itself publishes the change; a caller need not.
+    """
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
     state = QueueState(entry.state)
     if state is QueueState.QUEUED:
-        if store.queue.cancel_queued(entry.id, now=clock()):
-            worker.wake()
-            return
+        if worker.cancel_queued(entry.id, entry.label):
+            return True
         # The worker claimed it between our read and the cancel: fall through to the running case below.
     elif state is not QueueState.RUNNING:
         raise CancelRefusedError(f"{entry.label} cannot be cancelled: it is {entry.state}")
     worker.cancel_running(entry.id)
+    return False

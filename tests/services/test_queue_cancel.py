@@ -58,7 +58,7 @@ class QueueCancelTests(JobTestCase):
 
     def test_a_queued_entry_is_cancelled_and_never_starts(self) -> None:
         entry = self.submit()
-        cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
+        cancel_entry(self.store, self.worker, entry.id)
         self.assertEqual(self.entry(entry.id).state, str(QueueState.CANCELLED))
         self.assertFalse(self.worker.claim_and_run_one())
 
@@ -68,7 +68,7 @@ class QueueCancelTests(JobTestCase):
         thread = threading.Thread(target=self.worker.claim_and_run_one)
         thread.start()
         self.wait_until(lambda: self.worker.current_entry_id() is not None)
-        cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
+        cancel_entry(self.store, self.worker, entry.id)
         thread.join(timeout=5)
         self.assertEqual(self.entry(entry.id).state, str(QueueState.CANCELLED))
 
@@ -77,7 +77,7 @@ class QueueCancelTests(JobTestCase):
         self.assertTrue(self.worker.claim_and_run_one())
         self.assertEqual(self.entry(entry.id).state, str(QueueState.SUCCEEDED))
         with self.assertRaisesRegex(CancelRefusedError, "succeeded"):
-            cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
+            cancel_entry(self.store, self.worker, entry.id)
 
     def test_a_second_cancel_on_an_entry_already_stopping_is_a_no_op(self) -> None:
         entry = self.submit()
@@ -85,11 +85,11 @@ class QueueCancelTests(JobTestCase):
         thread = threading.Thread(target=self.worker.claim_and_run_one)
         thread.start()
         self.wait_until(lambda: self.worker.current_entry_id() is not None)
-        cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
-        cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
+        cancel_entry(self.store, self.worker, entry.id)
+        cancel_entry(self.store, self.worker, entry.id)
         thread.join(timeout=5)
         self.assertEqual(self.entry(entry.id).state, str(QueueState.CANCELLED))
 
     def test_an_unknown_entry_is_not_found(self) -> None:
         with self.assertRaises(NotFoundError):
-            cancel_entry(self.store, self.worker, 999, clock=lambda: NOW)
+            cancel_entry(self.store, self.worker, 999)

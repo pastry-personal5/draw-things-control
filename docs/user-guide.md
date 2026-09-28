@@ -707,14 +707,16 @@ Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
 crosses the network in plain HTTP; an SSH tunnel is the safer way in from
 elsewhere. With the flag, `serve` starts but warns about it. Either way, an
 HTTP request whose `Host` header names neither loopback nor the bound address
-is refused, so a web page cannot reach the server through DNS rebinding.
+is refused, so a web page cannot reach the server through DNS rebinding. A
+`--port` or `--grpc-port` already in use is refused (exit 2) before the
+worker starts, so nothing it may have already queued is disturbed.
 
 **Authentication.** Every endpoint but `GET /v1/health` requires
 `Authorization: Bearer <token>`; a gRPC call needs the same token in its
 `authorization` metadata. The token is created on first start, 32 random
 bytes as hex, in `config/server-token` (mode 0600, git-ignored); an existing
-file that others can read, or that another user owns, is refused rather than
-silently fixed. To change the token, delete the file and restart the server.
+file that others can read, that another user owns, or that is empty, is
+refused rather than silently fixed. To change the token, delete the file and restart the server.
 The token is never logged, returned, or accepted from a query string. There
 is one level of access: whoever holds the token sees every job file and every
 execution in the history, whichever front end ran it.
@@ -736,7 +738,9 @@ A `{job}` reference is a job ID (`J0001`) or a file name in `data/jobs/`, and
 a queue entry or execution is named by its own ID (`Q0007`, `E0012`) — never a
 raw path or a store row number. `GET /jobs`, `/executions`, `/inputs`, and
 `/audit` are paged (`limit`, default and maximum 200, and an opaque `cursor`
-from the previous page).
+from the previous page). `GET /queue` pages the same way, but only its
+finished entries (newest first); queued and running ones always come back in
+full on the first page, since those alone are bounded by `max_queued_jobs`.
 
 Watching for change (the event stream, and "tell me when this entry changes")
 is gRPC, not HTTP: `WatchEvents` streams job and queue events from a

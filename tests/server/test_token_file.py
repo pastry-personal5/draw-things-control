@@ -43,6 +43,34 @@ class TokenFileTests(unittest.TestCase):
         self.assertFalse(token_matches("abc123", None))
         self.assertFalse(token_matches("abc123", ""))
 
+    def test_a_non_ascii_presented_token_is_a_mismatch_not_an_error(self) -> None:
+        self.assertFalse(token_matches("abc123", "abc\xff23"))
+        self.assertFalse(token_matches("abc123", "\udcff"))
+
+    def test_an_empty_token_never_matches(self) -> None:
+        self.assertFalse(token_matches("", ""))
+
+    def test_an_empty_token_file_is_refused(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text("\n", encoding="ascii")
+        self.path.chmod(0o600)
+        with self.assertRaisesRegex(TokenFileError, "empty"):
+            load_or_create_token(self.path)
+
+    def test_a_failed_write_leaves_no_token_file_behind(self) -> None:
+        real_write = os.write
+
+        def failing_write(descriptor: int, data: bytes) -> int:
+            raise OSError(28, "No space left on device")
+
+        os.write = failing_write  # type: ignore[assignment]
+        try:
+            with self.assertRaisesRegex(TokenFileError, "Cannot write"):
+                load_or_create_token(self.path)
+        finally:
+            os.write = real_write  # type: ignore[assignment]
+        self.assertFalse(self.path.exists())
+
     def test_a_directory_that_cannot_be_created_is_reported(self) -> None:
         blocked = Path(self._temporary.name) / "blocked"
         blocked.write_text("not a directory")

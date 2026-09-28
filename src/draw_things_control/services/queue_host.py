@@ -23,7 +23,8 @@ class QueueHost:
 
     ``start()`` acquires the lock (refusing, as any starter does, while an earlier server's ``draw-things-cli`` is
     still alive), opens the store in ``WRITE`` mode (never pruning, so recovery reads a crash exactly as it left it),
-    recovers, and starts the worker thread. ``stop()`` cancels the running job at once, ends any between-jobs wait,
+    recovers, and starts the worker thread (unless ``start_worker=False``, which leaves that to a later
+    ``start_worker()`` call). ``stop()`` cancels the running job at once, ends any between-jobs wait,
     joins the worker thread, and only then releases the lock, so a second starter right after never races this
     entry's own update to ``interrupted``.
     """
@@ -47,10 +48,14 @@ class QueueHost:
         this to build the ``ServerContext`` every route and the gRPC service share."""
         return self._store
 
-    def start(self) -> None:
-        """Take the lock, recover, and start the worker. Raises ``BusyError`` (refusing while an earlier server's
+    def start(self, *, start_worker: bool = True) -> None:
+        """Take the lock, recover, and build the worker. Raises ``BusyError`` (refusing while an earlier server's
         ``draw-things-cli`` is still alive, or another host already holds it) or ``StateUnavailableError`` (from
-        ``RunLock.acquire`` and ``Store.open``), leaving nothing started."""
+        ``RunLock.acquire`` and ``Store.open``), leaving nothing started.
+
+        ``start_worker=False`` builds the worker without starting its thread, for a caller (``dtc serve``) that
+        still has to bind its own ports and wants a bad one to fail cleanly, before any queued entry could be
+        claimed and then interrupted by the refusal; ``start_worker()`` starts it once that has succeeded."""
         lock = RunLock(SERVER_HOLDER_NAME, directory=self._paths.state, child_check=self._child_check)
         lock.acquire()
         try:
@@ -62,12 +67,19 @@ class QueueHost:
             recover_queue(store, clock=self._clock)
             session = JobRunSession(self._paths, self._executor, self._global_config)
             worker = QueueWorker(store, session, self._executor, lock, self._paths, self._global_config, executable=self._executable, shutdown_grace=self._shutdown_grace, clock=self._clock, on_event=self._on_event)
-            worker.start()
+            if start_worker:
+                worker.start()
         except BaseException:
             store.close()
             lock.release()
             raise
         self._lock, self._store, self.worker = lock, store, worker
+
+    def start_worker(self) -> None:
+        """Start the worker thread built by an earlier ``start(start_worker=False)``. Call once, after whatever
+        else could still refuse to start (``dtc serve`` binding its ports) has already succeeded."""
+        assert self.worker is not None
+        self.worker.start()
 
     def stop(self) -> None:
         """Stop the worker, close the store, and release the lock last, in that order; safe to call once, after a

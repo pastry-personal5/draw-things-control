@@ -55,8 +55,12 @@ Out of scope:
   writes.
 - On start it reads the global configuration (exit 2 if invalid; restart
   the server to read it again), takes the run lock (exit 75 if busy, as any
-  runner), recovers the queue (Milestone 01), starts the worker, and prints
-  the address and the token file's path, never the token.
+  runner), and recovers the queue (Milestone 01). It then binds both ports
+  (`--port` and `--grpc-port`) before starting the worker: either taken is
+  an `invalid_input` error (exit 2) naming the flag, raised before the
+  worker could claim a queued entry that the refusal would otherwise abandon
+  as `interrupted`. It then prints the address and the token file's path,
+  never the token.
 - uvicorn installs its own signal handlers, so the worker's executor is
   built with `handle_signals=False` and uvicorn's shutdown hook stops the
   worker as in [Milestone 01](milestone-01-queue-run-manager.md#shutdown).
@@ -142,8 +146,15 @@ Watching for change is not HTTP: it is the gRPC monitoring service
   existing `PAGE_SIZE`) and a `cursor`: an opaque, server-chosen token a
   client passes back unmodified to get the next page and never constructs
   itself, so the scheme behind it can change later without breaking a
-  client. `GET /queue` and `GET /capabilities` are not paged: the queue is
-  bounded by `max_queued_jobs`.
+  client. `GET /queue` pages the same way, but only its finished entries,
+  newest first: queued and running ones always come back in full, on the
+  first page only, ahead of the finished page (`?state=` naming one of them
+  is unpaged either way, as before). Queued and running entries are bounded
+  by `max_queued_jobs` (and there is at most one running), but finished ones
+  are not, once `history_retention_days: 0` keeps them forever, so unlike
+  the queue itself, its history needs the same paging the other list
+  endpoints already have. `GET /capabilities` is not paged: it has no list
+  to page.
 
 ### Errors
 
@@ -159,7 +170,10 @@ in one table, as `EXIT_CODES_BY_ERROR_CODE` does to exit codes:
 | `invalid_state` (cancel a finished entry; a refused resume), `busy` | 409 |
 | `tool_missing`, `state_unavailable` | 503 |
 
-A missing or wrong token is 401. The new codes (`timeout_required`,
+A missing or wrong token is 401. A rejected `Host` header is the table's one
+exception: `invalid_input`, but 400, not 422 — the ordinary status for a
+request naming the wrong server, which 422 is not a natural fit for (owner
+decision). The new codes (`timeout_required`,
 `outside_directory`, `limit_exceeded`, `invalid_state`) are `DtcError`
 subclasses in `core/errors.py`. `invalid_state` needs a code of its own:
 `CancelRefusedError` and `ResumeRefusedError`
@@ -279,11 +293,16 @@ goes unrecorded.
   by the MCP server, `dtc queue`, and the TUI's Queue widget (`mcp`, `cli`,
   `tui`), is checked on every endpoint the audit log covers, after
   authentication: absent, it defaults to `api`; any other value is refused
-  with `invalid_input` naming the field, before the request reaches its
-  endpoint. The caller still only names itself, so the column informs
-  rather than proves, but the check keeps it to a known, closed set.
+  with `invalid_input` naming the field. The caller still only names itself,
+  so the column informs rather than proves, but the check keeps it to a
+  known, closed set.
 - One entry for every such request, refused ones included. An
-  unauthenticated request is rejected before it is recorded.
+  unauthenticated request is rejected before it is recorded. Two refusals
+  happen before an endpoint's own body ever runs -- an unknown
+  `X-Dtc-Caller` and, for `POST /queue`, a body FastAPI's own validation
+  refuses -- and are still recorded, with the documented default caller
+  `api` (owner decision): the value that failed is not trustworthy enough to
+  store in the caller column itself.
 - No prompt text, YAML, command, or credential is stored in it.
 - It is not pruned by `history_retention_days`: its rows are small and it is
   the record of what agents did.

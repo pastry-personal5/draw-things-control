@@ -21,7 +21,9 @@ class AuditRepositoryTests(unittest.TestCase):
     def test_a_recorded_entry_round_trips(self) -> None:
         row = self.store.audit.record(action="submit", target="Q0001", outcome="ok", caller="cli", at=local_timestamp(NOW))
         self.assertEqual((row.action, row.target, row.outcome, row.caller), ("submit", "Q0001", "ok", "cli"))
-        self.assertEqual(row.at, "2026-09-28T12:00:00+00:00")
+        # local_timestamp renders in the machine's own zone, so the expected text is built the same way.
+        self.assertEqual(row.at, local_timestamp(NOW))
+        self.assertEqual(datetime.fromisoformat(row.at), NOW)
 
     def test_a_refused_request_is_recorded_with_no_target(self) -> None:
         row = self.store.audit.record(action="submit", target=None, outcome="invalid_input", caller="mcp", at=local_timestamp(NOW))

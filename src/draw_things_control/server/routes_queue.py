@@ -5,24 +5,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
-from draw_things_control.core.errors import NotFoundError
+from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.parsing import load_job
 from draw_things_control.server.audit import audited
+from draw_things_control.server.caller import DEFAULT_CALLER, resolve_caller
 from draw_things_control.server.context import ServerContext
-from draw_things_control.server.dependencies import get_caller, get_context, require_auth
+from draw_things_control.server.dependencies import Page, get_context, get_page, require_auth
 from draw_things_control.server.job_reference import resolve_job_reference
+from draw_things_control.server.pagination import next_cursor
 from draw_things_control.server.serializers import queue_entry
 from draw_things_control.services.api_rules import check_api_rules
 from draw_things_control.services.queue_cancel import cancel_entry
 from draw_things_control.services.queue_resume import preview_resume, resume_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id
-from draw_things_control.state.queue import QueueRow, QueueState
+from draw_things_control.state.queue import FINISHED_STATES, QueueRow, QueueState
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+# String values, for a plain membership check against the ?state= query parameter, which is not validated against
+# QueueState (an unknown value has always just matched nothing, in list() as in list_finished() below).
+_FINISHED_STATE_VALUES = frozenset(str(state) for state in FINISHED_STATES)
 
 
 @dataclass
@@ -30,27 +35,54 @@ class SubmitBody:
     job: str
 
 
+def _resolve_caller(x_dtc_caller: str | None) -> tuple[str, InputError | None]:
+    """The caller ``audited()`` should record: the real one when ``X-Dtc-Caller`` is valid, or the documented
+    default (``api``) when it is not -- the bad value itself is not trustworthy enough to store in the very column
+    meant to say who made the request. The error, when there is one, is raised once inside the caller's own
+    ``audited()`` block, so the refusal is recorded exactly as any other one that endpoint makes, instead of a
+    dependency that would fail before that block ever opened."""
+    try:
+        return resolve_caller(x_dtc_caller), None
+    except InputError as error:
+        return DEFAULT_CALLER, error
+
+
 @router.post("/v1/queue")
-def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), caller: str = Depends(get_caller)) -> dict[str, object]:
+def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
+    def before_submit(job: JobDefinition) -> None:
+        check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
+
+    caller, caller_error = _resolve_caller(x_dtc_caller)
     with audited(context.store, action="submit", target=body.job, caller=caller):
+        if caller_error is not None:
+            raise caller_error
         path = resolve_job_reference(context.catalog, body.job)
-        # decode_input=False: only the structural rules and limits are checked here, none of which need the
-        # input actually decoded; submit_job does its own (decode_input=True) read to validate pixel data, so
-        # decoding it again here would just be the same image decoded twice for one submission.
-        job = load_job(path, context.global_config, context.paths.params, decode_input=False)
         # Held across the check and the insert: two concurrent submissions could otherwise both read the queued
         # count before either inserts, both pass check_api_rules, and together push the queue past max_queued_jobs.
+        # The rules run inside submit_job, on the job parsed from the exact text it stores, so a file edited
+        # between an earlier read and the snapshot cannot slip past them. The insert itself, and the 'queued' event
+        # it publishes, go through the worker's own enqueue: it runs both under the same lock the worker's claim
+        # loop takes, so a client watching events can never see this entry's 'running' before its own 'queued'.
         with context.submission_lock:
-            check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
-            entry = submit_job(path, context.global_config, context.paths.params, context.store)
-        context.worker.wake()
+            entry = submit_job(path, context.global_config, context.paths.params, context.store, before_submit=before_submit, enqueue=context.worker.enqueue)
     return queue_entry(entry)
 
 
 @router.get("/v1/queue")
-def get_queue(context: ServerContext = Depends(get_context), state: str | None = None) -> dict[str, object]:
-    entries = context.store.queue.list(state=state)
-    return {"queue": [queue_entry(row) for row in entries], "worker_state": context.worker.state(), "cooldown_until": context.worker.cooldown_until()}
+def get_queue(context: ServerContext = Depends(get_context), page: Page = Depends(get_page), state: str | None = None) -> dict[str, object]:
+    """Queued and running entries always come back in full (bounded by ``max_queued_jobs``, and only one entry is
+    ever running); ``?state=`` naming one of them behaves exactly as before, an unpaged filter. Finished entries are
+    the queue's own history, unbounded once ``history_retention_days: 0``, so they page like ``GET /jobs`` and
+    ``/executions``: newest first, and, on the first page only (``cursor`` absent), after the active entries above."""
+    if state is not None and state not in _FINISHED_STATE_VALUES:
+        entries = context.store.queue.list(state=state)
+        cursor = None
+    else:
+        finished = context.store.queue.list_finished(limit=page.limit, offset=page.offset, state=state)
+        active = context.store.queue.list_active() if state is None and page.offset == 0 else []
+        entries = active + finished
+        cursor = next_cursor(page.offset, page.limit, len(finished))
+    return {"queue": [queue_entry(row) for row in entries], "worker_state": context.worker.state(), "cooldown_until": context.worker.cooldown_until(), "cursor": cursor}
 
 
 @router.get("/v1/queue/{queue_id}")
@@ -82,31 +114,39 @@ def _last_run_seconds(context: ServerContext, entry: QueueRow) -> float | None:
 
 
 @router.post("/v1/queue/{queue_id}/cancel")
-def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), caller: str = Depends(get_caller)) -> dict[str, object]:
+def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
+    caller, caller_error = _resolve_caller(x_dtc_caller)
     with audited(context.store, action="cancel", target=queue_id, caller=caller):
+        if caller_error is not None:
+            raise caller_error
         entry = _find_entry(context, queue_id)
+        # cancel_entry publishes the change itself either way: through worker.cancel_queued for a queued entry, or
+        # the worker's own finish (from cancel_running stopping it) for a running one.
         cancel_entry(context.store, context.worker, entry.id)
         updated = _find_entry(context, queue_id)
     return queue_entry(updated)
 
 
 @router.post("/v1/queue/{queue_id}/resume")
-def post_resume(queue_id: str, context: ServerContext = Depends(get_context), caller: str = Depends(get_caller)) -> dict[str, object]:
+def post_resume(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     def before_submit(job: JobDefinition, remaining_runs: int) -> None:
         check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context), remaining_runs=remaining_runs)
 
+    caller, caller_error = _resolve_caller(x_dtc_caller)
     with audited(context.store, action="resume", target=queue_id, caller=caller):
+        if caller_error is not None:
+            raise caller_error
         entry = _find_entry(context, queue_id)
         # Held across before_submit's check_api_rules call and resume_entry's own insert, for the same reason
-        # post_queue holds it: closes the same race on max_queued_jobs for a resume.
+        # post_queue holds it: closes the same race on max_queued_jobs for a resume. The insert and its 'queued'
+        # event go through the worker's own enqueue, for the same event-ordering reason post_queue uses it.
         with context.submission_lock:
-            resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit)
-        context.worker.wake()
+            resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit, enqueue=context.worker.enqueue)
     return queue_entry(resumed)
 
 
 def _queued_count(context: ServerContext) -> int:
-    return len(context.store.queue.list(state=str(QueueState.QUEUED)))
+    return context.store.queue.count(state=str(QueueState.QUEUED))
 
 
 def _find_entry(context: ServerContext, queue_id: str) -> QueueRow:

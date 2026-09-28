@@ -30,27 +30,26 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
 
     async def WatchEvents(self, request: monitor_pb2.WatchEventsRequest, context: grpc.aio.ServicerContext) -> AsyncIterator[monitor_pb2.Event]:
         backlog = self._context.event_backlog
-        replay = backlog.since(request.last_event_id)
-        if replay is None:
-            yield _reset_event()
-            last_id = backlog.latest_id()
-        else:
-            for event in replay:
-                if _wanted(event, request.include_output):
-                    yield _to_proto(event)
-            last_id = replay[-1].id if replay else backlog.latest_id()
+        # The latest ID is read before anything is replayed, and every later read asks since() for what follows
+        # the last ID handled: an event appended between two separate reads (since(), then latest_id()) would
+        # otherwise be skipped. 0 ("only events from now on") starts from the latest ID; one past it (never
+        # issued by this run) is clamped to it, so the client still receives what follows.
+        latest = backlog.latest_id()
+        last_id = min(request.last_event_id, latest) if request.last_event_id != 0 else latest
         loop = asyncio.get_running_loop()
         while True:
-            await loop.run_in_executor(None, backlog.wait_for_more, last_id, self._poll_interval)
             replay = backlog.since(last_id)
             if replay is None:
-                yield _reset_event()
+                # Read before the Reset is sent: the client reloads its state on receiving it, so anything appended
+                # after this read must still be streamed, not skipped by a read made once the client has moved on.
                 last_id = backlog.latest_id()
+                yield _reset_event()
                 continue
             for event in replay:
                 if _wanted(event, request.include_output):
                     yield _to_proto(event)
                 last_id = event.id
+            await loop.run_in_executor(None, backlog.wait_for_more, last_id, self._poll_interval)
 
     async def WatchQueueEntry(self, request: monitor_pb2.WatchQueueEntryRequest, context: grpc.aio.ServicerContext) -> AsyncIterator[monitor_pb2.QueueEntrySnapshot]:
         number = parse_typed_id(request.queue_id, QUEUE_LETTER)
@@ -63,9 +62,13 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
             if snapshot is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
                 return
-            if snapshot != last:
+            # The elapsed seconds change on every poll while a run is active; a message is sent only when something
+            # the contract names changes (state, execution ID, run, step, cooldown_until, error), carrying the
+            # elapsed seconds as of then.
+            compared = _without_elapsed(snapshot)
+            if compared != last:
                 yield snapshot
-                last = snapshot
+                last = compared
             await asyncio.sleep(self._poll_interval)
 
     def _snapshot(self, number: int) -> monitor_pb2.QueueEntrySnapshot | None:
@@ -88,6 +91,13 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
         if cooldown_until is not None:
             snapshot.cooldown_until = cooldown_until
         return snapshot
+
+
+def _without_elapsed(snapshot: monitor_pb2.QueueEntrySnapshot) -> monitor_pb2.QueueEntrySnapshot:
+    compared = monitor_pb2.QueueEntrySnapshot()
+    compared.CopyFrom(snapshot)
+    compared.ClearField("current_run_elapsed_seconds")
+    return compared
 
 
 def _reset_event() -> monitor_pb2.Event:

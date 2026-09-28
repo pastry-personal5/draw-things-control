@@ -4,10 +4,12 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
-from draw_things_control.services.input_listing import list_inputs
+from draw_things_control.jobs.inputs.size import read_image_info as real_read_image_info
+from draw_things_control.services.input_listing import Cache, InputCatalog, list_inputs
 
 
 class ListInputsTests(unittest.TestCase):
@@ -53,6 +55,58 @@ class ListInputsTests(unittest.TestCase):
         self.write_image("b.png", (1, 1))
         self.write_image("a.png", (1, 1))
         self.assertEqual([image.path for image in list_inputs(self.directory)], ["a.png", "b.png"])
+
+
+class ListInputsCacheTests(unittest.TestCase):
+    """``cache`` (Milestone 02's efficiency fix, phase-3 changelog 2026-09-28): a file already listed is read again
+    only when its modification time or size changed."""
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.directory = Path(self._temporary.name)
+
+    def write_image(self, relative: str, size: tuple[int, int]) -> Path:
+        path = self.directory / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", size, "orange").save(path)
+        return path
+
+    def test_an_unchanged_file_is_read_only_once(self) -> None:
+        self.write_image("a.png", (10, 10))
+        cache: Cache = {}
+        list_inputs(self.directory, cache=cache)
+        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+            images = list_inputs(self.directory, cache=cache)
+        spy.assert_not_called()
+        self.assertEqual([image.path for image in images], ["a.png"])
+
+    def test_a_changed_file_is_read_again(self) -> None:
+        path = self.write_image("a.png", (10, 10))
+        cache: Cache = {}
+        list_inputs(self.directory, cache=cache)
+        Image.new("RGB", (20, 20), "orange").save(path)
+        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+            images = list_inputs(self.directory, cache=cache)
+        spy.assert_called_once()
+        self.assertEqual((images[0].width, images[0].height), (20, 20))
+
+    def test_a_removed_file_is_dropped_from_the_cache(self) -> None:
+        path = self.write_image("a.png", (10, 10))
+        cache: Cache = {}
+        list_inputs(self.directory, cache=cache)
+        path.unlink()
+        self.assertEqual(list_inputs(self.directory, cache=cache), [])
+        self.assertEqual(cache, {})
+
+    def test_input_catalog_reuses_its_own_cache_across_calls(self) -> None:
+        self.write_image("a.png", (10, 10))
+        catalog = InputCatalog(self.directory)
+        catalog.list()
+        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+            images = catalog.list()
+        spy.assert_not_called()
+        self.assertEqual([image.path for image in images], ["a.png"])
 
 
 if __name__ == "__main__":

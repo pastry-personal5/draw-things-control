@@ -1,7 +1,9 @@
-"""Pagination for the list endpoints (``GET /jobs``, ``/executions``, ``/inputs``, ``/audit``): a server-chosen
-opaque cursor a client passes back unmodified to get the next page and never constructs itself, so the scheme behind
-it can change later without breaking a client (owner decision, phase-3-changelog.md). ``GET /queue`` and
-``GET /capabilities`` are not paged: the queue is bounded by ``max_queued_jobs``."""
+"""Pagination for the list endpoints (``GET /jobs``, ``/executions``, ``/inputs``, ``/audit``, and ``GET /queue``'s
+own finished entries): a server-chosen opaque cursor a client passes back unmodified to get the next page and never
+constructs itself, so the scheme behind it can change later without breaking a client (owner decision,
+phase-3-changelog.md). ``GET /queue``'s queued and running entries always come back in full instead (bounded by
+``max_queued_jobs``, and there is at most one running); ``GET /capabilities`` is not paged at all: it has no list to
+page."""
 
 from __future__ import annotations
 

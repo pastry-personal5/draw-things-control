@@ -252,9 +252,19 @@ Adds what every later front end needs, without changing the CLI's behavior.
   `QueueHost`) for its whole lifetime. Both bind to `--host` (loopback
   unless `--allow-remote-bind`) on their own ports (`--port`,
   `--grpc-port`); an HTTP request whose `Host` header names neither loopback
-  nor the bound address is refused (`server/host_check.py`, ASGI middleware
-  installed by `create_app`) against DNS rebinding — gRPC has no equivalent
-  gap, since a channel dials the bound address directly.
+  nor the bound address is refused with `invalid_input`, but status 400, an
+  explicit exception to the error table's usual 422 for that code
+  (`server/host_check.py`, ASGI middleware installed by `create_app`)
+  against DNS rebinding — gRPC has no equivalent gap, since a channel dials
+  the bound address directly. `QueueHost.start(start_worker=False)` takes
+  the lock, opens the store, and recovers, but leaves the worker thread
+  unstarted; `_serve_async` binds both ports first (for HTTP, every address
+  `getaddrinfo` resolves the host to, with `SO_REUSEADDR` and `IPV6_V6ONLY`
+  as asyncio's own `loop.create_server` sets them, handed to uvicorn's
+  private `Server._serve(sockets=...)`; `add_insecure_port` for gRPC, as
+  before; each an `InputError` naming its own flag if the port is taken) and
+  only then calls `host.start_worker()`, so a bad port never lets the worker
+  claim and then abandon a queued entry.
 - **Authentication.** A 32-byte hex token in `config/server-token`
   (`ProjectPaths.server_token`, mode 0600, created on first start;
   `server/token_file.py`), compared with `hmac.compare_digest`
@@ -269,9 +279,19 @@ Adds what every later front end needs, without changing the CLI's behavior.
   `server/job_reference.py`'s `resolve_job_reference` (`JobCatalog.find`,
   never a joined path; a symbolic link reads as invalid). Pagination
   (`server/pagination.py`) is an opaque base64-encoded offset, so the scheme
-  can change later without a contract break. `server/caller.py` resolves
-  `X-Dtc-Caller` (`cli`, `tui`, `mcp`, or the `api` default) against a known
-  set. `server/errors.py` maps `DtcError` codes to HTTP statuses in one
+  can change later without a contract break; `GET /queue` pages only its
+  finished entries this way (newest first, after the queued and running ones
+  in full on the first page), since those alone are unbounded once
+  `history_retention_days: 0`, through `QueueRepository.list_active` and
+  `.list_finished`. `server/caller.py` resolves `X-Dtc-Caller` (`cli`,
+  `tui`, `mcp`, or the `api` default) against a known set; each audited
+  route in `routes_queue.py` reads the raw header and resolves it itself,
+  inside its own `audited()` block, rather than through a shared dependency
+  that would fail ahead of that block and leave an unknown value
+  unaudited. `GET /inputs` reads through `services/input_listing.py`'s
+  `InputCatalog`, one per `ServerContext`, which re-reads a file's header
+  only when its modification time or size changed, instead of on every
+  page. `server/errors.py` maps `DtcError` codes to HTTP statuses in one
   table, as `EXIT_CODES_BY_ERROR_CODE` does to exit codes, and installs a
   FastAPI exception handler for it.
 - **Rules and limits.** `services/api_rules.py`'s `check_api_rules` (needed
@@ -285,7 +305,15 @@ Adds what every later front end needs, without changing the CLI's behavior.
   `audit_log` table) records every submit, cancel, and resume, refused ones
   included, through `server/audit.py`'s `audited` context manager, called
   from the queue routes after authentication (so an unauthenticated request
-  leaves no row).
+  leaves no row). Two refusals happen before a route's own `audited()` block
+  ever opens and are recorded outside it, with the documented default caller
+  `api` (the value that failed is not trustworthy enough to store in the
+  caller column itself): an unknown `X-Dtc-Caller`, raised by the route
+  itself right after entering `audited()` (see above), and a `POST
+  /v1/queue` body FastAPI's own validation refuses, recorded directly in
+  `errors.py`'s `RequestValidationError` handler, which re-checks the bearer
+  token itself (`dependencies.is_authenticated`) rather than assume body
+  validation always runs after `require_auth`.
 - **Events.** `server/event_backlog.py`'s `EventBacklog` is a bounded
   (2000), thread-safe deque; IDs are seeded from wall-clock milliseconds, so
   an ID from a previous server run naturally reads as too old (`since`
@@ -294,8 +322,19 @@ Adds what every later front end needs, without changing the CLI's behavior.
   optional `on_event` sink (`services/queue_events.py`'s
   `QueueEventPublisher`), forwarded from `QueueHost`, publishing Phase 2 job
   events and the queue's own (`queue_entry_changed`, `queue_wait_started`,
-  `queue_wait_ended`) into it. `MonitorServicer.WatchEvents` streams from it;
-  `WatchQueueEntry` polls the store for one entry's change.
+  `queue_wait_ended`) into it. A submission's or a resume's own 'queued'
+  change, and a queued entry's own 'cancelled', are published by the worker
+  too, through `enqueue` and `cancel_queued` (`routes_queue.py` passes
+  `context.worker.enqueue` into `submit_job`/`resume_entry`, and
+  `queue_cancel.py`'s `cancel_entry` calls `worker.cancel_queued`), never by
+  a route directly: both run the actual DB write and the publish under the
+  same lock `_claim_and_run_one` claims with (`services/queue_claim_gate.py`'s
+  `QueueClaimGate`, extracted to keep `QueueWorker` under the class size
+  limit), so a client watching events can never see a claim's 'running'
+  published before an earlier 'queued' for the same entry.
+  `MonitorServicer.WatchEvents` streams from the backlog; `WatchQueueEntry`
+  polls the store for one entry's change, sending a message only when a
+  field other than `current_run_elapsed_seconds` changes.
 - **Shutdown.** uvicorn owns SIGINT/SIGTERM (`Server.capture_signals()`);
   the queue worker's executor is built with `handle_signals=False`. The
   gRPC server must start *inside* `capture_signals()`'s `with` block, not

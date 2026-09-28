@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import errno
 import hmac
 import os
 import secrets
@@ -35,10 +36,17 @@ def load_or_create_token(path: Path) -> str:
         return _load_existing(path)
     except OSError as error:
         raise TokenFileError(f"Cannot create the server token file {path}: {error.strerror}") from error
+    data = token.encode("ascii")
     try:
-        os.write(descriptor, token.encode("ascii"))
-    finally:
-        os.close(descriptor)
+        try:
+            if os.write(descriptor, data) != len(data):
+                raise OSError(errno.EIO, "short write")
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        # Never leave an empty or partial token file behind for the next start to load.
+        path.unlink(missing_ok=True)
+        raise TokenFileError(f"Cannot write the server token file {path}: {error.strerror}") from error
     return token
 
 
@@ -52,12 +60,17 @@ def _load_existing(path: Path) -> str:
     if status.st_uid != os.getuid():
         raise TokenFileError(f"The server token file {path} is owned by another user; delete it to generate a new one")
     try:
-        return path.read_text(encoding="ascii").strip()
-    except OSError as error:
-        raise TokenFileError(f"Cannot read the server token file {path}: {error.strerror}") from error
+        token = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError) as error:
+        raise TokenFileError(f"Cannot read the server token file {path}: {getattr(error, 'strerror', None) or error}") from error
+    if not token:
+        # An empty token would match an empty bearer value: refused, never served with.
+        raise TokenFileError(f"The server token file {path} is empty; delete it to generate a new one")
+    return token
 
 
 def token_matches(token: str, presented: str | None) -> bool:
     """Whether ``presented`` (an ``Authorization`` header's value after ``Bearer ``) equals ``token``, compared in
-    constant time so a wrong guess cannot be timed."""
-    return presented is not None and hmac.compare_digest(token, presented)
+    constant time so a wrong guess cannot be timed. Compared as bytes: ``hmac.compare_digest`` refuses a ``str``
+    with non-ASCII characters (a header byte above 0x7f, decoded as Latin-1) with a TypeError, not a mismatch."""
+    return bool(token) and presented is not None and hmac.compare_digest(token.encode("utf-8"), presented.encode("utf-8", "surrogatepass"))

@@ -5,6 +5,92 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-28
 
+- **Change** [M02]: A second review pass, of the fixes above. Supersedes that entry's "the queue routes publish
+  `queue_entry_changed`" line: publishing an entry's own 'queued' or 'cancelled' change now goes through the worker
+  (`QueueWorker.enqueue` and `.cancel_queued`, new; the shared lock and the actual DB write and publish live in a new
+  `QueueClaimGate`, `services/queue_claim_gate.py`, extracted to keep `QueueWorker` under the 250-line class limit),
+  not the routes calling `store.queue.submit`/`cancel_queued` themselves and publishing after. The route-level
+  version raced the worker: a submission or resume could be claimed, and its 'running' published, before the route's
+  own 'queued' publish ran, so a client watching events could see a running entry reported as queued. `enqueue` and
+  `cancel_queued` run the insert (or the queued-cancel) and the publish under the same lock
+  `_claim_and_run_one` claims with, so the two can never interleave. `submit_job` and `resume_entry` take the actual
+  insert as a new `enqueue` parameter (`Enqueue`, a plain type alias, not `QueueWorker` itself: `queue_worker.py`
+  already imports `queue_submit.py` for `parse_snapshot`, and importing back would cycle); `routes_queue.py` passes
+  `context.worker.enqueue`, and tests that call `submit_job`/`resume_entry` directly, not caring about the event
+  stream, pass nothing and get the old direct-insert behavior unchanged.
+- **Change** [M02]: `dtc serve` bound its ports only inside `_serve_async`, after `QueueHost.start()` had already
+  started the worker thread. A taken `--grpc-port` (or, previously, an HTTP `--port` uvicorn's own bind refused with
+  a bare `sys.exit(1)`) could land after the worker had already claimed a queued entry, which the refusal then tore
+  down as `interrupted` for what was really a configuration mistake. `QueueHost.start(start_worker=False)` now builds
+  the worker without starting its thread; `serve.py` binds the gRPC port (`add_insecure_port`, as before) and now
+  also the HTTP port itself, both as `InputError` (exit 2, naming `--port` or `--grpc-port`), and only then calls
+  `host.start_worker()`. The HTTP bind (`_bind_http_socket`) mirrors what asyncio's own `loop.create_server` does
+  from a host and a port alone -- every address `getaddrinfo` resolves the host to, `SO_REUSEADDR` on POSIX (a first,
+  simpler version skipped this, and so failed a quick restart on the same port while the old socket sat in
+  `TIME_WAIT`), and `IPV6_V6ONLY` on an IPv6 one -- rather than a single plain `socket.bind`, which also only ever
+  bound one of the two addresses `--host localhost` can mean. Handed to uvicorn's private `Server._serve(sockets=...)`,
+  which `listen()`s and closes them. Either port taken now fails before anything is claimed.
+- **Change** [M02]: `GET /v1/queue` was documented as "not paged: the queue is bounded by `max_queued_jobs`", which
+  only ever bounded the *queued* entries; finished ones stay until `history_retention_days` prunes them, and
+  `history_retention_days: 0` keeps them forever. Queued and running entries (bounded, and there is at most one
+  running) still always come back in full; finished ones now page, newest first, after them on the first page only,
+  through the same `limit`/`cursor` (`server/pagination.py`) `/jobs`, `/executions`, and `/audit` use.
+  `QueueRepository` gains `list_active` and `list_finished` for the split, and a plain `count` (a `SELECT COUNT(*)`)
+  the queued-jobs limit check now uses instead of loading every queued row just to len() them.
+- **Owner decision** [M02]: The audit log's own spec line, "one entry for every such request, refused ones included",
+  did not hold for two refusals that happen before a route's own `audited()` block ever opens: an unknown
+  `X-Dtc-Caller` (a FastAPI dependency raising ahead of the route body) and a body FastAPI's own validation refuses
+  (`POST /v1/queue` with a missing or unparsable `job`). Both are now recorded. `X-Dtc-Caller` is no longer resolved
+  by a shared `get_caller` dependency; each audited route reads the raw header itself and resolves it inside its own
+  `audited()` block, raising there so a bad value is recorded, with the documented default caller `api`, like any
+  other refusal. The malformed-body case, which never reaches a route body at all, is recorded directly in
+  `errors.py`'s `RequestValidationError` handler: it still reads `X-Dtc-Caller` itself, since a header is parsed
+  independently of the body, recording the real caller when it is valid and `api` only when it is not, and it
+  re-checks the bearer token itself first (`is_authenticated`, new, shared with `require_auth`) rather than assuming
+  body validation runs after it: an unauthenticated request must never be recorded, exactly as `require_auth`'s own
+  401 never is.
+- **Owner decision** [M02]: A rejected `Host` header (the DNS-rebinding guard) keeps its 400 status, an explicit
+  exception to the error table's `invalid_input` → 422 row: 400 is the ordinary status for a request naming the
+  wrong server, and 422 is not a natural fit for it.
+- **Owner decision** [M02]: From an interview on the review findings above.
+  - Event order: the worker publishes (chosen, above); the route holding the worker's own lock around its insert,
+    and leaving the race but documenting that a client should re-read state rather than trust an event's own state,
+    were also offered.
+  - Startup order: take the lock and recover, bind both ports, then start the worker (chosen, above); starting the
+    worker only once both servers are listening but otherwise keeping uvicorn's own HTTP bind failure, and leaving
+    the existing order as is, were also offered.
+  - `GET /queue` paging: page the finished entries only, after the active ones in full (chosen, above); paging the
+    whole list like the other list endpoints, and leaving it unpaged but documenting the real bound as retention, not
+    `max_queued_jobs`, were also offered.
+  - The two pre-route audit refusals: recorded with the documented default caller `api` (chosen, above); a new fixed
+    marker (`unknown`) naming the refusal itself, and not auditing either case at all, were also offered.
+  - The `Host` header's status: kept at 400 (chosen, above); returning 422, following the error table as written
+    with no exception, and a new `invalid_host` code at 400, were also offered.
+  - Efficiency: all three offered fixes were taken (`_queued_count`'s `COUNT(*)`, `GET /inputs`'s `InputCatalog`, and
+    `preview_resume`'s header-only check, accepting that trade-off).
+  - A `CLAUDE.md` re-exporting `AGENTS.md`, so a review with no project instructions of its own would still read
+    them: declined.
+- **Change** [M02]: Three efficiency fixes from the same review. `GET /v1/inputs` re-read every image's header
+  (Pillow's lazy `Image.open`, not a full decode, but still real I/O and parsing) on every page, including images a
+  later page's own slice would discard; `InputCatalog` (`services/input_listing.py`) now caches by each file's own
+  modification time and size, the same idea `JobCatalog`'s own file cache already uses, and re-reads only a changed
+  or newly-seen file. `GET /queue/{id}`'s resumability preview (`preview_resume`) fully decoded the candidate input
+  image on every call; it now only checks that the file exists and its header is readable (`decode_input=False`),
+  since it is a preview, not the resume itself -- a real `resume_entry` still decodes fully, since it is the one that
+  actually starts a run from the image (a corrupt-but-header-readable image can therefore preview as resumable and
+  still be refused by the real resume; accepted trade-off).
+- **Change** [M02]: Fixes from a review of the Milestone 02 change. `POST /v1/queue` now checks the API rules and
+  limits inside `submit_job` (a new `before_submit` hook, as `resume_entry` already had), on the job parsed from the
+  exact text stored, instead of on an earlier read of a file that could change before the snapshot, and still before
+  the input image is decoded. The queue routes
+  publish `queue_entry_changed` for a submission, a resume, and a queued entry cancelled (`cancel_entry` now returns
+  whether it cancelled one directly), since the worker never sees those. The token is compared as bytes, so a
+  non-ASCII `Authorization` value is a 401 rather than a 500; an empty token file is refused, and a failed write no
+  longer leaves one behind. `WatchEvents` reads the latest ID before replaying, so an event appended between two
+  separate reads is no longer skipped. `WatchQueueEntry` no longer sends a message on every poll just because
+  `current_run_elapsed_seconds` moved. A request FastAPI's own validation refuses now gets the stable error shape
+  (`invalid_input`, `message`, `field`). A `--grpc-port` that cannot be bound is an `invalid_input` error, not a
+  traceback. `tests/state/test_audit.py` no longer assumes the machine runs in UTC.
 - **Change** [M02]: `GET /queue/{id}` and `WatchQueueEntry` gain `current_step`/`current_step_total`: the active
   run's latest reading from `draw-things-cli`'s own progress bar (`RunOutput.progress`, already carried on the raw
   event stream, but not previously surfaced on the at-a-glance queue-status surfaces a client polls or watches

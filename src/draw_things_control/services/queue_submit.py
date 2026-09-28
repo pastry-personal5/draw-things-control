@@ -19,17 +19,33 @@ from draw_things_control.state.executions import ExecutionSettings
 from draw_things_control.state.queue import NewQueueEntry, QueueRow
 from draw_things_control.state.store import Store
 
+# A worker's own insert-and-publish method (``QueueWorker.enqueue``), threaded through so the actual DB insert and
+# its 'queued' event happen under the worker's own claim lock, and can therefore never interleave with a claim (a
+# plain ``store.queue.submit`` call here would let the worker claim the entry and publish 'running' before this
+# publishes 'queued': Milestone 02's event-order fix, see routes_queue.py and queue_worker.py). A plain type alias,
+# not ``QueueWorker`` itself: ``queue_worker.py`` already imports this module for ``parse_snapshot``, and importing
+# back would cycle.
+Enqueue = Callable[[Callable[[], QueueRow]], QueueRow]
 
-def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Path, store: Store, *, clock: Clock = datetime.now) -> QueueRow:
+
+def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Path, store: Store, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition], None] | None = None, enqueue: Enqueue | None = None) -> QueueRow:
     """Validate ``job_path`` exactly as running it would, then store its snapshot as a new ``queued`` entry.
 
     Refuses (raises whatever ``load_job_text`` raises, an ``InputError``) before anything is stored: an invalid job,
     a missing input file, or a missing base configuration.
+
+    ``before_submit``, when given, is called with the job parsed from the exact text about to be stored (Milestone
+    02's own API rules and limits), so what it checks is what runs, not an earlier read of a file that may have
+    changed since, and before the input image is decoded; it raising refuses the submission and stores nothing.
+    ``enqueue`` does the actual insert and publish, as described above; None (most tests) inserts directly.
     """
     path = job_path.expanduser().resolve()
     _data, job_text = read_yaml_file(path, "Job file", show_source=True)
-    # First parsed from disk, to learn the base configuration's name and validate everything, the input included.
-    job = load_job_text(job_text, path, global_config, params_directory, decode_input=True)
+    # First parsed from disk, to learn the base configuration's name. The input is not decoded yet: before_submit's
+    # rules (the input inside the input directory among them) refuse a job before any image it names is decoded.
+    job = load_job_text(job_text, path, global_config, params_directory, decode_input=False)
+    if before_submit is not None:
+        before_submit(job)
     try:
         # A plain ValueError (a bad name) or OSError (removed, or unreadable, between the two reads) is wrapped:
         # every refusal here is an InputError, as load_job_text's own base-config reads already are.
@@ -37,8 +53,9 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     except (ValueError, OSError) as error:
         raise InputError(f"{path}: {error}") from error
     # Re-parsed from the exact text about to be stored, so a base configuration edited between the two reads above
-    # cannot be captured half-written: what is stored is validated in the form it is stored, not merely read twice.
-    job = load_job_text(job_text, path, global_config, params_directory, decode_input=False, base_config_text=config_text)
+    # cannot be captured half-written: what is stored is validated in the form it is stored, the input decoded
+    # included, not merely read twice.
+    job = load_job_text(job_text, path, global_config, params_directory, decode_input=True, base_config_text=config_text)
     new = NewQueueEntry(
         job_path=str(path),
         job_text=job_text,
@@ -50,7 +67,7 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
         settings=_execution_settings(job),
         submitted_at=local_timestamp(clock()),
     )
-    return store.queue.submit(new)
+    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
 def _execution_settings(job: JobDefinition) -> ExecutionSettings:

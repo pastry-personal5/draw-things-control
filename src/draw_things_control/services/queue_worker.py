@@ -19,6 +19,7 @@ from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus
 from draw_things_control.jobs.executor import JobExecutor, ResumePoint
 from draw_things_control.services.job_runs import JobRunSession
+from draw_things_control.services.queue_claim_gate import QueueClaimGate
 from draw_things_control.services.queue_events import EventSink, QueueEventPublisher
 from draw_things_control.services.queue_submit import parse_snapshot
 from draw_things_control.services.queue_worker_status import WorkerStatus
@@ -47,8 +48,7 @@ WaitBetweenJobs = Callable[[float], None]
 
 
 class QueueWorker:
-    """Runs queued jobs one after another off its own thread, while ``lock`` and ``store`` are held for the host's
-    whole lifetime."""
+    """Runs queued jobs one after another off its own thread, while ``lock`` and ``store`` are held for the host's whole lifetime."""
 
     def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None) -> None:
         self._store = store
@@ -64,6 +64,7 @@ class QueueWorker:
         self._wait_between_jobs = wait_between_jobs or self._poll_wait
         self._events = QueueEventPublisher(on_event)
         self._state_lock = threading.Lock()
+        self._claim_gate = QueueClaimGate(self._state_lock, store, self._events, clock, self.wake)
         self._current: QueueRow | None = None
         self._stop_reason: str | None = None
         self._pending_cancel = False
@@ -77,9 +78,7 @@ class QueueWorker:
         self._thread.start()
 
     def stop(self) -> None:
-        """Ask the loop to end: cancel the running job at once (or, if it is still between the claim and the
-        executor's ``begin()``, keep the cancel pending for ``_cancel_guard`` to apply at ``JobStarted``), end any
-        between-jobs wait, and wait for the thread."""
+        """Ask the loop to end: cancel the running job at once (or, if it is still between the claim and the executor's ``begin()``, keep the cancel pending for ``_cancel_guard`` to apply at ``JobStarted``), end any between-jobs wait, and wait for the thread."""
         self._stop_event.set()
         with self._state_lock:
             # Whichever stop reason lands first wins: a shutdown that lands after a cancel already asked for one
@@ -93,13 +92,19 @@ class QueueWorker:
             self._thread.join()
 
     def wake(self) -> None:
-        """Wake an idle worker, or end its between-jobs wait early: a submission, or a cancel of the queued entry it
-        is waiting for. A no-op when the worker is not waiting."""
+        """Wake an idle worker, or end its between-jobs wait early: a submission, or a cancel of the queued entry it is waiting for. A no-op when the worker is not waiting."""
         self._wake_event.set()
 
+    def enqueue(self, insert: Callable[[], QueueRow]) -> QueueRow:
+        """``QueueClaimGate.enqueue``, sharing this worker's own claim lock (``queue_claim_gate.py``): a claim already waiting on it can never see the row, and so never publish 'running', before this publishes 'queued'."""
+        return self._claim_gate.enqueue(insert)
+
+    def cancel_queued(self, entry_id: int, label: str) -> bool:
+        """``QueueClaimGate.cancel_queued``, sharing this worker's own claim lock."""
+        return self._claim_gate.cancel_queued(entry_id, label)
+
     def cancel_running(self, entry_id: int) -> bool:
-        """Cancel the entry if it is the one currently claimed; False when it is not (queued, finished, or another
-        entry entirely). Idempotent: a second call on an entry already stopping does nothing new."""
+        """Cancel the entry if it is the one currently claimed; False when it is not (queued, finished, or another entry entirely). Idempotent: a second call on an entry already stopping does nothing new."""
         with self._state_lock:
             if self._current is None or self._current.id != entry_id:
                 return False
@@ -114,8 +119,7 @@ class QueueWorker:
             return self._current.id if self._current is not None else None
 
     def is_alive(self) -> bool:
-        """False once the thread has stopped (an error escaping ``run_forever`` itself, not a single job's
-        failure), for ``GET /health``: the queue processes nothing more until the server restarts."""
+        """False once the thread has stopped (an error escaping ``run_forever`` itself, not a single job's failure), for ``GET /health``: the queue processes nothing more until the server restarts."""
         return self._thread is not None and self._thread.is_alive()
 
     def state(self) -> str:
@@ -140,9 +144,7 @@ class QueueWorker:
                 self._idle_wait()
 
     def claim_and_run_one(self) -> bool:
-        """Claim the oldest queued entry and run it to completion, then wait its cooldown if another entry is
-        already queued. False, doing nothing, when there is none. Never raises: an error that escapes the job (or
-        the store itself) fails only its entry (or is logged and skipped), and the worker goes on."""
+        """Claim the oldest queued entry and run it to completion, then wait its cooldown if another entry is already queued. False, doing nothing, when there is none. Never raises: an error that escapes the job (or the store itself) fails only its entry (or is logged and skipped), and the worker goes on."""
         try:
             return self._claim_and_run_one()
         except Exception:
@@ -151,9 +153,7 @@ class QueueWorker:
             return False
 
     def _claim_and_run_one(self) -> bool:
-        # The claim (a DB write marking the entry 'running') and registering it as self._current happen under the
-        # same lock: cancel_running also takes this lock, so it never observes the DB already reading 'running'
-        # while self._current is still the previous (or no) entry, which would make its cancel a silent no-op.
+        # The claim (a DB write marking the entry 'running') and registering it as self._current happen under the same lock: cancel_running also takes this lock, so it never observes the DB already reading 'running' while self._current is still the previous (or no) entry, which would make its cancel a silent no-op.
         with self._state_lock:
             entry = self._store.queue.claim_oldest(self._clock())
             if entry is None:
