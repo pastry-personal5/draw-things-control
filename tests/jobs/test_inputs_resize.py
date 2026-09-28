@@ -164,7 +164,7 @@ class InputResizeTests(unittest.TestCase):
 
     def edge_profile(self, source: Image.Image, plan: ResizePlan, row: int) -> tuple[float, float, float]:
         """Width of the 10-90% rise in output pixels, and overshoot above and below the edge, in percent."""
-        values = list(self.resized(self.save(source), plan).convert("L").crop((0, row, plan.target_size[0], row + 1)).getdata())
+        values = list(self.resized(self.save(source), plan).convert("L").crop((0, row, plan.target_size[0], row + 1)).get_flattened_data())
         normalized = [(value - 50) / 150 for value in values]
 
         def crossing(level: float) -> float:
@@ -189,7 +189,7 @@ class InputResizeTests(unittest.TestCase):
         # A 2 px bright line on a dark background: its light must survive (sRGB-value Lanczos keeps only 77%).
         thin = Image.new("L", (1920, 1080), 40)
         thin.paste(255, (960, 0, 962, 1080))
-        values = self.resized(self.save(thin), resize_plan("input.png", (1920, 1080), None, 850, None)).convert("L").crop((0, 224, 832, 225)).getdata()
+        values = self.resized(self.save(thin), resize_plan("input.png", (1920, 1080), None, 850, None)).convert("L").crop((0, 224, 832, 225)).get_flattened_data()
 
         def linear(value: float) -> float:
             value /= 255
