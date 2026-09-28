@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import queue
 import signal
 import subprocess
@@ -245,10 +246,8 @@ class DrawThingsProcessRunner:
         if process_group_alive(process_group_id, denied_means_alive=False):
             send_to_process_group(process_group_id, signal.SIGKILL)
         if process.poll() is None:
-            try:
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=max(0.1, self._output_drain_seconds))
-            except subprocess.TimeoutExpired:
-                pass
 
     def _start_process(self) -> subprocess.Popen[str]:
         # Without capture the child inherits the terminal, so it can preview images inline.

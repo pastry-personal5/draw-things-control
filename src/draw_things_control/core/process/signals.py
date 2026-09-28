@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import select
 import signal
@@ -144,11 +145,9 @@ class CancelToken:
                 return False
             self._signal = received_signal
             if self._wake_write is not None:
-                try:
+                # A full pipe already holds a byte, and one is enough.
+                with contextlib.suppress(OSError):
                     os.write(self._wake_write, b"\0")
-                except OSError:
-                    # A full pipe already holds a byte, and one is enough.
-                    pass
             runner = self._runner
         # The flag is set before the runner is read; attach() stores the runner before it reads the flag, so a cancel landing between the two still reaches the runner.
         if runner is not None:

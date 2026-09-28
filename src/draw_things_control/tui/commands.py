@@ -131,12 +131,10 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
         candidates = list(GET_WORDS)
     elif words == [f"{PREFIX}describe"]:
         # The noun may be left out, so a typed J or E completes to an ID too (in any case, as after the noun).
-        identifiers = [identifier for identifier in (*job_ids, *execution_ids) if last and identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]
         matching = [f"{head} {word}" for word in DESCRIBE_WORDS if word.startswith(last) and word != last]
-        return [*matching, *(f"{head} {last}{identifier[len(last) :]}" for identifier in identifiers)]
+        return [*matching, *_identifier_completions(head, last, (*job_ids, *execution_ids))] if last else matching
     elif words in ([f"{PREFIX}describe", "execution"], [f"{PREFIX}reveal"]) or (len(words) == 2 and words[0] == f"{PREFIX}get" and words[1] in ("prompts", "positive", "negative", "param", "parameters")):
-        # Typed in any case: the completion keeps what was typed and adds the rest.
-        return [f"{head} {last}{identifier[len(last) :]}" for identifier in execution_ids if identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]
+        return _identifier_completions(head, last, execution_ids)
     elif words == [f"{PREFIX}filter"]:
         candidates = list(FILTER_WORDS)
     elif words == [f"{PREFIX}filter", "status"]:
@@ -151,6 +149,11 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
         candidates = []
     prefix = f"{head} " if head or line.startswith(" ") else ""
     return [f"{prefix}{candidate}" for candidate in candidates if candidate.startswith(last) and candidate != last]
+
+
+def _identifier_completions(head: str, last: str, identifiers: Sequence[str]) -> list[str]:
+    """Whole command lines finishing an ID (J0001, E0012) that starts with ``last``, kept in the case it was typed."""
+    return [f"{head} {last}{identifier[len(last) :]}" for identifier in identifiers if identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]
 
 
 def job_completions(typed: str, job_names: Sequence[str]) -> list[str]:

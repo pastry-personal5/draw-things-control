@@ -80,7 +80,7 @@ def _to_8_bit_gray(image: Image.Image) -> Image.Image:
     if image.mode == "F":
         # Float images are taken as 0.0 to 1.0 when they fit, otherwise as 0 to 65535.
         low, high = cast(tuple[float, float], image.getextrema())
-        scale = 255 if 0 <= low and high <= 1 else 255 / 65535
+        scale = 255 if low >= 0 and high <= 1 else 255 / 65535
         return image.point(lambda value: value * scale + 0.5).convert("L")
     return image.convert("I").point(lambda value: value * (255 / 65535) + 0.5).convert("L")
 
