@@ -10,6 +10,7 @@ from pathlib import Path
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.cooldown import CooldownPolicy, parse_cooldown
 from draw_things_control.core.draw_things_config import find_config_file
+from draw_things_control.core.errors import InputError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.yaml_files import read_yaml_file
 from draw_things_control.jobs.definition import JobDefinition
@@ -29,7 +30,12 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     _data, job_text = read_yaml_file(path, "Job file", show_source=True)
     # First parsed from disk, to learn the base configuration's name and validate everything, the input included.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=True)
-    config_text = find_config_file(job.config_file, params_directory).read_text(encoding="utf-8")
+    try:
+        # A plain ValueError (a bad name) or OSError (removed, or unreadable, between the two reads) is wrapped:
+        # every refusal here is an InputError, as load_job_text's own base-config reads already are.
+        config_text = find_config_file(job.config_file, params_directory).read_text(encoding="utf-8")
+    except (ValueError, OSError) as error:
+        raise InputError(f"{path}: {error}") from error
     # Re-parsed from the exact text about to be stored, so a base configuration edited between the two reads above
     # cannot be captured half-written: what is stored is validated in the form it is stored, not merely read twice.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=False, base_config_text=config_text)

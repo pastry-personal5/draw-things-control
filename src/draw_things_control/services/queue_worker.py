@@ -117,10 +117,13 @@ class QueueWorker:
             return False
 
     def _claim_and_run_one(self) -> bool:
-        entry = self._store.queue.claim_oldest(self._clock())
-        if entry is None:
-            return False
+        # The claim (a DB write marking the entry 'running') and registering it as self._current happen under the
+        # same lock: cancel_running also takes this lock, so it never observes the DB already reading 'running'
+        # while self._current is still the previous (or no) entry, which would make its cancel a silent no-op.
         with self._state_lock:
+            entry = self._store.queue.claim_oldest(self._clock())
+            if entry is None:
+                return False
             if self._stop_event.is_set():
                 # Claimed right as shutdown began: nothing of it will run, so it goes back to queued, matching
                 # recovery's own rule for a crash between the claim and JobStarted.
@@ -217,8 +220,11 @@ class QueueWorker:
         return QueueState.FAILED
 
     def _fail_to_start(self, entry: QueueRow, error: Exception) -> None:
+        """Only reached when JobFinished never fired, so the execution row (if a number was ever reserved for it) was
+        never created: clears the link, so a later resume sees 'never ran' rather than mistaking the dangling number
+        for one that ran and was pruned."""
         logger.exception("Queue entry {} failed to start", entry.label)
-        self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=local_timestamp(self._clock()), error=str(error))
+        self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=local_timestamp(self._clock()), error=str(error), clear_link=True)
 
     def _wait_after(self, entry: QueueRow, job: JobDefinition) -> None:
         """The cooldown between queued jobs: after a job that succeeded, when another entry is already queued.
@@ -227,7 +233,7 @@ class QueueWorker:
         if self._stop_event.is_set():
             return
         updated = self._store.queue.get(entry.id)
-        if updated is None or updated.state != QueueState.SUCCEEDED or not self._store.queue.list(state=str(QueueState.QUEUED)):
+        if updated is None or updated.state != QueueState.SUCCEEDED or not self._store.queue.has_queued():
             return
         wait = job.cooldown.wait_after(self._last_run_seconds(updated))
         if wait.seconds > 0:
@@ -236,14 +242,13 @@ class QueueWorker:
     def _last_run_seconds(self, entry: QueueRow) -> float:
         if entry.execution_number is None:
             return 0.0
-        row_id = self._store.executions.row_of(entry.execution_number)
-        execution = self._store.executions.get(row_id) if row_id is not None else None
+        execution = self._store.executions.by_number(entry.execution_number)
         return (execution.runs[-1].seconds or 0.0) if execution is not None and execution.runs else 0.0
 
     def _poll_wait(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if self._stop_event.is_set() or not self._store.queue.list(state=str(QueueState.QUEUED)):
+            if self._stop_event.is_set() or not self._store.queue.has_queued():
                 return
             self._wake_event.wait(timeout=min(self._poll_interval, max(0.0, deadline - time.monotonic())))
             self._wake_event.clear()

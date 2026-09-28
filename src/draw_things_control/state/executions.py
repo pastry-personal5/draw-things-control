@@ -114,6 +114,11 @@ class ExecutionRepository:
         row = self._database.connection().execute("SELECT id FROM executions WHERE execution_number = ?", (execution_number,)).fetchone()
         return int(row[0]) if row is not None else None
 
+    def by_number(self, execution_number: int, *, running_as_interrupted: bool = False) -> ExecutionRow | None:
+        """One execution with its runs, by its public number (E0012), or None when there is none (never given, or pruned)."""
+        row_id = self.row_of(execution_number)
+        return self.get(row_id, running_as_interrupted=running_as_interrupted) if row_id is not None else None
+
     def latest_succeeded_run(self) -> RunRow | None:
         """The most recently started run that succeeded with a known time, of any job; None when there is none."""
         row = self._database.connection().execute("SELECT * FROM runs WHERE status = 'succeeded' AND seconds IS NOT NULL ORDER BY started_epoch DESC, id DESC LIMIT 1").fetchone()

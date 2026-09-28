@@ -100,6 +100,8 @@ def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
         raise ResumeRefused(f"{entry.label} has no succeeded run in its chain; submit the job again instead of resuming it")
     last = succeeded[-1]
     assert execution is not None
+    if execution.total_runs is not None and last.number >= execution.total_runs:
+        raise ResumeRefused(f"{entry.label}: the chain already finished all {execution.total_runs} runs; nothing to resume")
     input_path = execution.run_file(last.last_frame or last.output)
     if input_path is None or not input_path.is_file():
         raise ResumeRefused(f"{entry.label}: run {last.number}'s output is gone: {input_path or '(no file)'}")
@@ -107,12 +109,14 @@ def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
 
 
 def _linked_execution(store: Store, entry: QueueRow) -> ExecutionRow | None:
-    """The entry's linked execution, with its runs. None only when it never started (no runs to resume from); a
-    linked execution that was pruned is refused, naming it, rather than silently treated as never having run."""
+    """The entry's linked execution, with its runs. None when it never started (no runs to resume from): either it
+    truly has no link, or a number was reserved for it but the row was never created (the job failed before
+    ``JobStarted``, which ``QueueWorker._fail_to_start`` clears the link for) -- both read the same way here, since
+    neither has a run to resume from. A linked execution whose row once existed and was since pruned by retention is
+    refused instead, naming it, since that chain did run and is not simply resumable from further back."""
     if entry.execution_number is None:
         return None
-    row_id = store.executions.row_of(entry.execution_number)
-    execution = store.executions.get(row_id) if row_id is not None else None
+    execution = store.executions.by_number(entry.execution_number)
     if execution is None:
         raise ResumeRefused(f"{entry.label}'s execution {execution_id_text(entry.execution_number)} was pruned; it cannot be resumed")
     return execution

@@ -162,6 +162,11 @@ class QueueRepository:
             rows = self._database.connection().execute("SELECT * FROM queue WHERE state = ? ORDER BY queue_number", (str(state),)).fetchall()
         return [QueueRow.from_row(row) for row in rows]
 
+    def has_queued(self) -> bool:
+        """Whether any entry is ``queued``, without reading full rows (each carrying its job and base configuration's
+        exact text): the between-jobs wait polls this rather than ``list(state=...)`` for a plain non-empty check."""
+        return self._database.connection().execute("SELECT 1 FROM queue WHERE state = 'queued' LIMIT 1").fetchone() is not None
+
     def claim_oldest(self, now: datetime) -> QueueRow | None:
         """Claim the oldest ``queued`` entry, marking it ``running``; None when there is none. One transaction, so a
         concurrent cancel cannot land between the check and the claim."""
@@ -177,9 +182,15 @@ class QueueRepository:
         with self._database.transaction() as connection:
             connection.execute("UPDATE queue SET execution_number = ? WHERE id = ?", (execution_number, entry_id))
 
-    def finish(self, entry_id: int, *, state: QueueState, finished_at: str, error: str | None = None) -> None:
+    def finish(self, entry_id: int, *, state: QueueState, finished_at: str, error: str | None = None, clear_link: bool = False) -> None:
+        """``clear_link`` also clears a linked execution number: for a job that failed before ``JobStarted`` ever ran,
+        so the number it was given (before the row that would have used it existed) is never mistaken later for one
+        that ran and was pruned."""
         with self._database.transaction() as connection:
-            connection.execute("UPDATE queue SET state = ?, finished_at = ?, finished_epoch = ?, error = ? WHERE id = ?", (str(state), finished_at, epoch(finished_at), error, entry_id))
+            if clear_link:
+                connection.execute("UPDATE queue SET state = ?, finished_at = ?, finished_epoch = ?, error = ?, execution_number = NULL WHERE id = ?", (str(state), finished_at, epoch(finished_at), error, entry_id))
+            else:
+                connection.execute("UPDATE queue SET state = ?, finished_at = ?, finished_epoch = ?, error = ? WHERE id = ?", (str(state), finished_at, epoch(finished_at), error, entry_id))
 
     def set_error(self, entry_id: int, error: str) -> None:
         """Attach an error message to an already-finished entry, without touching its state: an exception that

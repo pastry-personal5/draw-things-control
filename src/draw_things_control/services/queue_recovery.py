@@ -27,8 +27,7 @@ def _recover_entry(store: Store, entry: QueueRow, clock: Clock) -> None:
         # The crash landed between the worker's claim and JobStarted: nothing of it ever ran.
         store.queue.requeue(entry.id)
         return
-    row_id = store.executions.row_of(entry.execution_number)
-    execution = store.executions.get(row_id) if row_id is not None else None
+    execution = store.executions.by_number(entry.execution_number)
     if execution is None:
         # The execution row itself never made it in (the crash landed between reserving the ID and the recorder's
         # insert); nothing of it ran either.
