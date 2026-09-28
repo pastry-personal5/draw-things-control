@@ -14,7 +14,7 @@ from draw_things_control.core.errors import BusyError, DtcError, InputError, Not
 from draw_things_control.core.numbers import is_int, is_number, number_text
 from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
 from draw_things_control.core.process.groups import process_group_alive
-from draw_things_control.core.run_lock import RunLockBusy, RunLockError
+from draw_things_control.core.run_lock import RunLockBusyError, RunLockError
 from draw_things_control.state.store import StateError
 
 
@@ -41,7 +41,7 @@ class ErrorTests(unittest.TestCase):
         self.assertFalse(issubclass(BusyError, ValueError))
 
     def test_the_lock_and_state_errors_carry_codes(self) -> None:
-        self.assertEqual((RunLockBusy.code, RunLockError.code, StateError.code), ("busy", "state_unavailable", "state_unavailable"))
+        self.assertEqual((RunLockBusyError.code, RunLockError.code, StateError.code), ("busy", "state_unavailable", "state_unavailable"))
 
 
 class ExitCodeTests(unittest.TestCase):

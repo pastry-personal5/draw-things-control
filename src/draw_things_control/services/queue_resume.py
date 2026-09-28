@@ -19,7 +19,7 @@ from draw_things_control.state.store import Store
 RESUMABLE_STATES = (QueueState.INTERRUPTED, QueueState.FAILED, QueueState.CANCELLED)
 
 
-class ResumeRefused(InputError):
+class ResumeRefusedError(InputError):
     """A resume was refused, naming the reason. Not a ``NotFoundError``: the entry exists, so this is not a 404 for a
     front end that maps error codes to statuses (Milestone 02); it is invalid to resume it, right now, for the
     reason given."""
@@ -40,14 +40,14 @@ class ResumeChain:
 
 def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now) -> QueueRow:
     """Resolve and accept a resume of the entry ``entry_id``; returns the new ``queued`` entry, at the back of the
-    FIFO queue like any submission. Raises ``ResumeRefused``, naming the reason, when it cannot be resumed."""
+    FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed."""
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
     if entry.state not in RESUMABLE_STATES:
-        raise ResumeRefused(f"{entry.label} cannot be resumed: it is {entry.state}")
+        raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
-        raise ResumeRefused(f"{entry.label} already has a resume; resume the newest one instead")
+        raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
     _check_own_input(entry, global_config, params_directory)
     chain = _resolve_chain(store, entry)
     new = NewQueueEntry(
@@ -80,7 +80,7 @@ def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_direct
     try:
         parse_snapshot(entry, global_config, params_directory)()
     except InputError as error:
-        raise ResumeRefused(f"{entry.label}'s job cannot be resolved: {error}") from error
+        raise ResumeRefusedError(f"{entry.label}'s job cannot be resolved: {error}") from error
 
 
 def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
@@ -92,19 +92,19 @@ def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
     while not succeeded and current.resumes is not None:
         ancestor = store.queue.by_number(current.resumes)
         if ancestor is None:
-            raise ResumeRefused(f"{current.label}'s ancestor Q{current.resumes:04d} is gone; it cannot be resumed")
+            raise ResumeRefusedError(f"{current.label}'s ancestor Q{current.resumes:04d} is gone; it cannot be resumed")
         current = ancestor
         execution = _linked_execution(store, current)
         succeeded = execution.succeeded_runs if execution is not None else ()
     if not succeeded:
-        raise ResumeRefused(f"{entry.label} has no succeeded run in its chain; submit the job again instead of resuming it")
+        raise ResumeRefusedError(f"{entry.label} has no succeeded run in its chain; submit the job again instead of resuming it")
     last = succeeded[-1]
     assert execution is not None
     if execution.total_runs is not None and last.number >= execution.total_runs:
-        raise ResumeRefused(f"{entry.label}: the chain already finished all {execution.total_runs} runs; nothing to resume")
+        raise ResumeRefusedError(f"{entry.label}: the chain already finished all {execution.total_runs} runs; nothing to resume")
     input_path = execution.run_file(last.last_frame or last.output)
     if input_path is None or not input_path.is_file():
-        raise ResumeRefused(f"{entry.label}: run {last.number}'s output is gone: {input_path or '(no file)'}")
+        raise ResumeRefusedError(f"{entry.label}: run {last.number}'s output is gone: {input_path or '(no file)'}")
     return ResumeChain(first_run=last.number + 1, input=input_path, seed=execution.seed or 0, execution_number=execution.execution_number)
 
 
@@ -118,5 +118,5 @@ def _linked_execution(store: Store, entry: QueueRow) -> ExecutionRow | None:
         return None
     execution = store.executions.by_number(entry.execution_number)
     if execution is None:
-        raise ResumeRefused(f"{entry.label}'s execution {execution_id_text(entry.execution_number)} was pruned; it cannot be resumed")
+        raise ResumeRefusedError(f"{entry.label}'s execution {execution_id_text(entry.execution_number)} was pruned; it cannot be resumed")
     return execution

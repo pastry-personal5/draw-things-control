@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from draw_things_control.services.queue_resume import ResumeRefused, resume_entry
+from draw_things_control.services.queue_resume import ResumeRefusedError, resume_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.queue import QueueState
@@ -51,14 +51,14 @@ class QueueResumeTests(JobTestCase):
 
     def test_a_resume_is_refused_when_the_entry_is_not_in_a_resumable_state(self) -> None:
         entry = self.submit(run_count=1)
-        with self.assertRaisesRegex(ResumeRefused, "queued"):
+        with self.assertRaisesRegex(ResumeRefusedError, "queued"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
     def test_a_second_resume_of_the_same_entry_is_refused(self) -> None:
         entry = self.submit(run_count=7)
         self.succeed_three_of_seven(entry.id)
         resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
-        with self.assertRaisesRegex(ResumeRefused, "already has a resume"):
+        with self.assertRaisesRegex(ResumeRefusedError, "already has a resume"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
     def test_a_resume_is_refused_with_no_succeeded_run(self) -> None:
@@ -66,28 +66,28 @@ class QueueResumeTests(JobTestCase):
         claimed = self.store.queue.claim_oldest(NOW)
         assert claimed is not None
         self.store.queue.finish(entry.id, state=QueueState.FAILED, finished_at="2026-09-27T10:10:00+00:00")
-        with self.assertRaisesRegex(ResumeRefused, "no succeeded run"):
+        with self.assertRaisesRegex(ResumeRefusedError, "no succeeded run"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
     def test_a_resume_is_refused_when_the_last_frame_is_gone(self) -> None:
         entry = self.submit(run_count=7)
         _number, last_frame = self.succeed_three_of_seven(entry.id)
         os.remove(last_frame)
-        with self.assertRaisesRegex(ResumeRefused, "is gone"):
+        with self.assertRaisesRegex(ResumeRefusedError, "is gone"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
     def test_a_resume_is_refused_when_the_jobs_own_first_input_is_gone(self) -> None:
         entry = self.submit(run_count=7)
         self.succeed_three_of_seven(entry.id)
         os.remove(self.input_directory / "first-frame.png")
-        with self.assertRaisesRegex(ResumeRefused, "first-frame.png"):
+        with self.assertRaisesRegex(ResumeRefusedError, "first-frame.png"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
     def test_a_resume_is_refused_when_the_execution_was_pruned_distinct_from_no_succeeded_run(self) -> None:
         entry = self.submit(run_count=7)
         self.succeed_three_of_seven(entry.id)
         self.store.executions.prune(float("inf"))
-        with self.assertRaisesRegex(ResumeRefused, "was pruned") as caught:
+        with self.assertRaisesRegex(ResumeRefusedError, "was pruned") as caught:
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
         # Distinct from "no succeeded run": this entry did have one, but it is gone now, not never-happened.
         self.assertNotIn("no succeeded run", str(caught.exception))

@@ -23,7 +23,7 @@ CHILD_EXECUTABLE_NAME = "draw-things-cli"
 SERVER_HOLDER_NAME = "serve"
 
 
-class RunLockBusy(BusyError):
+class RunLockBusyError(BusyError):
     """Another run holds the lock, or its draw-things-cli child is still running."""
 
 
@@ -68,17 +68,17 @@ class RunLock:
         self._descriptor: int | None = None
 
     def acquire(self) -> None:
-        """Take the lock, or raise RunLockBusy (held, or an earlier run's child is alive) or RunLockError."""
+        """Take the lock, or raise RunLockBusyError (held, or an earlier run's child is alive) or RunLockError."""
         if self._descriptor is not None:
             raise RuntimeError("This run lock is already held")
         descriptor = self._open()
         try:
             if not self._flock(descriptor):
-                raise RunLockBusy(self._busy_message(descriptor))
+                raise RunLockBusyError(self._busy_message(descriptor))
             orphan = self._orphaned_child(descriptor)
             if orphan is not None:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
-                raise RunLockBusy(f"A {orphan[1]} from an earlier run is still running (PID {orphan[0]}). Wait for it to end or stop it.")
+                raise RunLockBusyError(f"A {orphan[1]} from an earlier run is still running (PID {orphan[0]}). Wait for it to end or stop it.")
             self._write(descriptor, f"{self._command} {os.getpid()}\n")
         except BaseException:
             os.close(descriptor)

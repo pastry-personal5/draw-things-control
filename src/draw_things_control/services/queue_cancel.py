@@ -12,7 +12,7 @@ from draw_things_control.state.queue import QueueState
 from draw_things_control.state.store import Store
 
 
-class CancelRefused(InputError):
+class CancelRefusedError(InputError):
     """The entry cannot be cancelled: it already finished before this call, naming its state. Not a
     ``NotFoundError``: the entry exists, so this is not a 404 for a front end that maps error codes to statuses."""
 
@@ -31,5 +31,5 @@ def cancel_entry(store: Store, worker: QueueWorker, entry_id: int, *, clock: Clo
             return
         # The worker claimed it between our read and the cancel: fall through to the running case below.
     elif state is not QueueState.RUNNING:
-        raise CancelRefused(f"{entry.label} cannot be cancelled: it is {entry.state}")
+        raise CancelRefusedError(f"{entry.label} cannot be cancelled: it is {entry.state}")
     worker.cancel_running(entry.id)

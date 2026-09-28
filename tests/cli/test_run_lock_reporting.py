@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-from draw_things_control.core.run_lock import RunLock, RunLockBusy
+from draw_things_control.core.run_lock import RunLock, RunLockBusyError
 from tests.fixtures import JobTestCase, job_data
 
 # Holds the lock and runs a one-run job whose executable sleeps; the lock reaches the runner only through run().
@@ -61,7 +61,7 @@ class RunLockReportingTests(JobTestCase):
             holder.send_signal(signal.SIGKILL)
             holder.wait()
             # ps would name the script's interpreter, so the check trusts the recorded name.
-            with self.assertRaisesRegex(RunLockBusy, rf"fake-draw-things-cli from an earlier run is still running \(PID {child}\)"):
+            with self.assertRaisesRegex(RunLockBusyError, rf"fake-draw-things-cli from an earlier run is still running \(PID {child}\)"):
                 RunLock("run-job", directory=self.root / "state", retry_seconds=0, child_check=lambda _pid, _name: True).acquire()
         finally:
             if holder.poll() is None:

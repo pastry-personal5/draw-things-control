@@ -11,7 +11,7 @@ from typing import Any
 from draw_things_control.core.errors import NotFoundError
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.services.job_runs import JobRunSession
-from draw_things_control.services.queue_cancel import CancelRefused, cancel_entry
+from draw_things_control.services.queue_cancel import CancelRefusedError, cancel_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.services.queue_worker import QueueWorker
 from draw_things_control.state.queue import QueueState
@@ -76,7 +76,7 @@ class QueueCancelTests(JobTestCase):
         entry = self.submit()
         self.assertTrue(self.worker.claim_and_run_one())
         self.assertEqual(self.entry(entry.id).state, str(QueueState.SUCCEEDED))
-        with self.assertRaisesRegex(CancelRefused, "succeeded"):
+        with self.assertRaisesRegex(CancelRefusedError, "succeeded"):
             cancel_entry(self.store, self.worker, entry.id, clock=lambda: NOW)
 
     def test_a_second_cancel_on_an_entry_already_stopping_is_a_no_op(self) -> None:

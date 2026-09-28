@@ -5,6 +5,9 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-28
 
+- **Change**: `ResumeRefused` and `CancelRefused` are now `ResumeRefusedError` and `CancelRefusedError`, like every
+  other exception in the package; the M01 design decision below, that they are `InputError`s and not
+  `NotFoundError`s, is unchanged.
 - **Change** [M01]: `_fail_to_start` now clears a queue entry's linked execution number when it fires (the job never
   reached `JobStarted`, so no execution row was ever created for the number reserved for it), so a later resume
   reads the entry as never having started rather than mistaking the dangling number for one that ran and was pruned.

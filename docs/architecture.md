@@ -74,7 +74,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `jobs/files.py`, `jobs/text.py` | Reading jobs, and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI |
 | `jobs/inputs/`, `jobs/media/`, `jobs/output_naming.py` | Input image check and resize; `ffmpeg` and `ffprobe`, last frames, measuring, color tags; output names |
 | `state/database.py`, `state/schema.py` | The SQLite file, its connections, transactions, and migrations |
-| `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them |
+| `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them; `JobIdRepository`, the `job_definitions` table behind J0001 |
 | `state/store.py`, `state/recorder.py`, `state/history_import.py`, `state/ids.py` | `Store` (opened as `run`, `write`, or `browse`), the event recorder, the phase 1 import, and `E0012` and `J0001` |
 | `state/queue.py` (phase 3) | `QueueRepository`, `QueueRow`, and `QueueState`: the `queue` table, ordered first in, first out by its public ID (`Q0007`) |
 | `services/toolkit.py` | `Toolkit`: the real tools; builds the generation service and executors |

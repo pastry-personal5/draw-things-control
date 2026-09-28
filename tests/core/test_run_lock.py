@@ -12,7 +12,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core import run_lock
-from draw_things_control.core.run_lock import RunLock, RunLockBusy, RunLockError, ensure_state_directory, lock_holder_message, run_lock_is_free
+from draw_things_control.core.run_lock import RunLock, RunLockBusyError, RunLockError, ensure_state_directory, lock_holder_message, run_lock_is_free
 
 HOLDER = """
 import sys, time
@@ -62,7 +62,7 @@ class RunLockTests(unittest.TestCase):
 
     def test_a_second_holder_is_refused_and_told_who_holds_the_lock(self) -> None:
         with self.lock():
-            with self.assertRaisesRegex(RunLockBusy, rf"Another run is in progress \(run-job, PID {os.getpid()}\)\. Try again when it finishes\."):
+            with self.assertRaisesRegex(RunLockBusyError, rf"Another run is in progress \(run-job, PID {os.getpid()}\)\. Try again when it finishes\."):
                 self.lock().acquire()
         # Released with the first holder.
         with self.lock():
@@ -70,7 +70,7 @@ class RunLockTests(unittest.TestCase):
 
     def test_the_server_holding_the_lock_gets_its_own_message(self) -> None:
         with RunLock("serve", directory=self.directory):
-            with self.assertRaisesRegex(RunLockBusy, rf"The dtc server \(PID {os.getpid()}\) holds the run lock while it is up; stop it to run a job by hand\."):
+            with self.assertRaisesRegex(RunLockBusyError, rf"The dtc server \(PID {os.getpid()}\) holds the run lock while it is up; stop it to run a job by hand\."):
                 self.lock().acquire()
 
     def test_lock_holder_message_reads_the_same_message_without_taking_the_lock(self) -> None:
@@ -93,7 +93,7 @@ class RunLockTests(unittest.TestCase):
 
     def test_a_killed_holder_leaves_no_stale_lock(self) -> None:
         holder = self.start_holder()
-        with self.assertRaises(RunLockBusy):
+        with self.assertRaises(RunLockBusyError):
             self.lock().acquire()
         holder.send_signal(signal.SIGKILL)
         holder.wait()
@@ -104,7 +104,7 @@ class RunLockTests(unittest.TestCase):
         holder = self.lock()
         holder.acquire()
         started = time.monotonic()
-        with self.assertRaises(RunLockBusy):
+        with self.assertRaises(RunLockBusyError):
             RunLock("run-job", directory=self.directory, retry_seconds=0.2).acquire()
         self.assertGreaterEqual(time.monotonic() - started, 0.2)
         holder.release()
@@ -131,7 +131,7 @@ class RunLockTests(unittest.TestCase):
         holder = self.start_holder(child.pid)
         holder.send_signal(signal.SIGKILL)
         holder.wait()
-        with self.assertRaisesRegex(RunLockBusy, rf"draw-things-cli from an earlier run is still running \(PID {child.pid}\)"):
+        with self.assertRaisesRegex(RunLockBusyError, rf"draw-things-cli from an earlier run is still running \(PID {child.pid}\)"):
             self.lock(child_check=lambda _pid, _name: True).acquire()
         self.assertIsNone(child.poll())
         # The refusal released the flock, so the guard, not the lock, was what said no.
@@ -168,7 +168,7 @@ class RunLockTests(unittest.TestCase):
         child = self.start_child()
         (self.directory / "run.lock").write_text(f"run-job 1\n{child.pid} my-wrapper\n")
         seen: list[tuple[int, str]] = []
-        with self.assertRaisesRegex(RunLockBusy, rf"A my-wrapper from an earlier run is still running \(PID {child.pid}\)"):
+        with self.assertRaisesRegex(RunLockBusyError, rf"A my-wrapper from an earlier run is still running \(PID {child.pid}\)"):
             self.lock(child_check=lambda pid, name: seen.append((pid, name)) or True).acquire()
         self.assertEqual(seen, [(child.pid, "my-wrapper")])
 
