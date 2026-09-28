@@ -30,3 +30,19 @@ A Python 3.12 project whose mission is long-horizon video generation by autoregr
 - Architecture rules: front ends call services and observe events, never parse logs; one `draw-things-cli` at a time; no credentials in events, storage, logs, or responses.
 - Keep docs current in the same change. Phases, milestones, and changelog entries follow [the documentation rules](docs/development-rules.md#documentation); never rewrite past changelog entries.
 - Conventional commits (`feat(scope): ...`); commit only when asked.
+
+## Token efficiency
+
+This file is loaded in every session, so keep it short. Long-form material belongs in `docs/`.
+
+- **Skip generated and bulky files.**
+  - Never read the `draw-things-cli` binary at the repo root (~160MB), or anything under `.venv/`, `__pycache__/`, `.ruff_cache/`.
+  - Never read or search `src/draw_things_control/server/generated/` — gitignored gRPC stubs `make proto` regenerates from `server/proto/monitor.proto`, which stays the single source of truth.
+  - Search with `rg` or `git grep`, which skip gitignored files automatically.
+  - Don't open `uv.lock`, `LICENSE`, or `docs/archive/` (finished Phase 1/Phase 2 plans) unless the task needs them.
+- **Read docs narrowly.** Start with `docs/README.md`'s index, then read only the doc the task needs. For a long doc such as `docs/user-guide.md` or `docs/architecture.md`, list its headings first with `rg -n '^#' <file>` and read just the relevant section.
+- **Keep check output small.** While iterating, run one `make` target (`lint`, `typecheck`, or `test`) instead of `make check`, and filter long output, e.g. `uv run --extra dev pyright 2>&1 | rg -i error`.
+- **Iterate narrowly, verify once.** Run only the affected test while iterating, e.g. `uv run python -m unittest tests.cli.test_cli -v` or add `-k <pattern>` to the `discover` invocation in `make test`; run `make check` once before calling the change done.
+- **Ask before building on an undecided item.** Redoing work is the most expensive outcome.
+- **Edit, don't rewrite.** Change files with targeted edits, don't re-read a file just to confirm an edit landed, and check `git diff --stat` before reading a full diff.
+- **Reply briefly.** Summarize command output and diffs instead of pasting them; this repo is small enough to search directly rather than delegating searches to subagents.
