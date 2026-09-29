@@ -6,7 +6,7 @@ import math
 
 from rich.text import Text
 
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, JobStatus, RunFinished, RunStarted, RunStatus
 from draw_things_control.jobs.text import auto_wait_text, duration_text, seconds_text
 from draw_things_control.tui.live_run import LiveRun
 from draw_things_control.tui.text.arguments import Arguments, PreviousRun, arguments_text
@@ -68,6 +68,8 @@ def result_text(live: LiveRun) -> Text:
     text.append(f": {finished.completed_runs}/{finished.total_runs} runs completed, exit code {finished.exit_code if finished.exit_code is not None else '-'}")
     if finished.signal is not None:
         text.append(f", stopped by {finished.signal}")
+    if finished.status == JobStatus.PARKED:
+        text.append_text(_parked_text(live))
     if live.error is not None:
         text.append(f"\n{live.error}", style="red")
     if live.started is not None and live.started.manifest is not None:
@@ -77,3 +79,12 @@ def result_text(live: LiveRun) -> Text:
         text.append("\n  log: ", style="bold")
         text.append(live.started.log)
     return text
+
+
+def _parked_text(live: LiveRun) -> Text:
+    """How to go on from a parked job: the run number is the chain's, from its last succeeded run, not
+    ``JobFinished.completed_runs``, which counts only this execution's runs."""
+    last = max((run.number for run in live.runs if run.status == RunStatus.SUCCEEDED), default=0)
+    name = live.queue_id or "The job"
+    resume = f" ('/queue resume {live.queue_id}' continues at run {last + 1})" if live.queue_id is not None else ""
+    return Text(f"\n{name} parked after run {last}/{len(live.runs)}{resume}", style="blue")

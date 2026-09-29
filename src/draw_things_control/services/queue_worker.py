@@ -1,5 +1,6 @@
 """The queue worker: claims the oldest queued entry, runs it through ``JobRunSession``, and waits the cooldown between
-queued jobs. One worker thread; ``claim_and_run_one`` is the synchronous step a test drives directly without one."""
+queued jobs. One worker thread; ``claim_and_run_one`` is the synchronous step a test drives directly without one.
+It keeps a running entry's park reservation, and the queue's hold (``QueueHold``), Milestone 05."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from draw_things_control.jobs.executor import JobExecutor, ResumePoint
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.queue_claim_gate import QueueClaimGate
 from draw_things_control.services.queue_events import EventSink, QueueEventPublisher
+from draw_things_control.services.queue_hold import HoldState, QueueHold
 from draw_things_control.services.queue_submit import parse_snapshot
 from draw_things_control.services.queue_worker_status import WorkerStatus
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
@@ -29,9 +31,11 @@ from draw_things_control.state.store import Store
 
 # What the worker itself asked for, so a job that ends 'interrupted' knows whether that means cancelled or the server
 # stopping; a run stopped from outside neither of these and is not a normal failure either (see _final_state).
-_CANCEL, _SHUTDOWN = "cancel", "shutdown"
+STOP_CANCEL, STOP_SHUTDOWN = "cancel", "shutdown"
 
-_FINAL_QUEUE_STATE = {JobStatus.SUCCEEDED: QueueState.SUCCEEDED, JobStatus.FAILED: QueueState.FAILED}
+_FINAL_QUEUE_STATE = {JobStatus.SUCCEEDED: QueueState.SUCCEEDED, JobStatus.FAILED: QueueState.FAILED, JobStatus.PARKED: QueueState.PARKED}
+# The finished states after which the next queued entry waits the between-jobs cooldown: a parked job's last run succeeded.
+_COOLDOWN_AFTER = (QueueState.SUCCEEDED, QueueState.PARKED)
 
 
 def _resume_point_of(entry: QueueRow) -> ResumePoint | None:
@@ -68,6 +72,14 @@ class QueueWorker:
         self._current: QueueRow | None = None
         self._stop_reason: str | None = None
         self._pending_cancel = False
+        # The claimed entry's park reservation, kept in memory only: stopping the server stops its run anyway. Applied to
+        # the executor only once JobStarted has been seen (_job_started), so that before then an unpark withdraws it here
+        # alone. _job_finished is set, under the same lock, as the entry is marked finished: from then on it is not
+        # running, so a park that loses the race with the job's own end is refused rather than holding the queue.
+        self._park_pending = False
+        self._job_started = False
+        self._job_finished = False
+        self._hold = QueueHold(store.settings, self._events, clock=clock)
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -78,13 +90,13 @@ class QueueWorker:
         self._thread.start()
 
     def stop(self) -> None:
-        """Ask the loop to end: cancel the running job at once (or, if it is still between the claim and the executor's ``begin()``, keep the cancel pending for ``_cancel_guard`` to apply at ``JobStarted``), end any between-jobs wait, and wait for the thread."""
+        """Ask the loop to end: cancel the running job at once (or, if it is still between the claim and the executor's ``begin()``, keep the cancel pending for ``_start_guard`` to apply at ``JobStarted``), end any between-jobs wait, and wait for the thread."""
         self._stop_event.set()
         with self._state_lock:
             # Whichever stop reason lands first wins: a shutdown that lands after a cancel already asked for one
             # must not relabel it, and the reverse (a cancel of an entry already stopping) is already a no-op.
             if self._current is not None and self._stop_reason is None:
-                self._stop_reason = _SHUTDOWN
+                self._stop_reason = STOP_SHUTDOWN
                 self._pending_cancel = True
         self._executor.cancel()
         self._wake_event.set()
@@ -109,7 +121,7 @@ class QueueWorker:
             if self._current is None or self._current.id != entry_id:
                 return False
             if self._stop_reason is None:
-                self._stop_reason = _CANCEL
+                self._stop_reason = STOP_CANCEL
             self._pending_cancel = True
         self._executor.cancel()
         return True
@@ -118,13 +130,95 @@ class QueueWorker:
         with self._state_lock:
             return self._current.id if self._current is not None else None
 
+    def park_running(self, entry_id: int, label: str) -> bool:
+        """Make a park reservation on the running entry, and hold the queue by it unless the queue is already held (Milestone
+        05). False, doing nothing, when the entry is not the running one (queued, finished, or another entry), or a stop
+        (a cancel, or the server stopping) is already asked for it: ``stop_reason`` tells which. On an entry already
+        parking, it only holds the queue again, when a release has ended the hold. Made before ``JobStarted``, the
+        reservation stays pending and is applied there (``_start_guard``)."""
+        with self._state_lock:
+            if not self._is_running(entry_id) or self._stop_reason is not None:
+                return False
+            # The hold first: one that cannot be saved raises before any of the park is made, so a park never runs
+            # without the hold that keeps the next entry from starting after it.
+            if not self._hold.is_held:
+                self._hold.hold(label)
+            if not self._park_pending:
+                self._park_pending = True
+                if self._job_started:
+                    self._executor.park()
+                self._events.park_changed(label, True)
+        return True
+
+    def unpark_running(self, entry_id: int, label: str) -> bool:
+        """Withdraw the running entry's park reservation, releasing the hold only when that reservation made it; a no-op
+        when it has none. False when the entry is not the running one, or its park has already taken effect."""
+        with self._state_lock:
+            if not self._is_running(entry_id):
+                return False
+            if not self._park_pending:
+                return True
+            # The hold is released inside the executor's unpark, so no run boundary passes between the two: a hold that
+            # cannot be released raises with the reservation, and the hold it made, standing as they were.
+            if self._job_started:
+                if not self._executor.unpark(lambda: self._hold.release_if_by(label)):
+                    return False
+            else:
+                self._hold.release_if_by(label)
+            self._park_pending = False
+            self._events.park_changed(label, False)
+        return True
+
+    def parking_entry_id(self) -> int | None:
+        """The running entry's id when it has a park reservation, else None: one lock for a whole page (``GET /queue``)."""
+        with self._state_lock:
+            return self._current.id if self._current is not None and not self._job_finished and self._park_pending else None
+
+    def park_requested(self, entry_id: int) -> bool:
+        """Whether the running entry ``entry_id`` has a park reservation (``GET /queue``, ``WatchQueueEntry``)."""
+        return self.parking_entry_id() == entry_id
+
+    def stop_reason(self, entry_id: int) -> str | None:
+        """``STOP_CANCEL`` or ``STOP_SHUTDOWN`` when a stop is asked for the running entry ``entry_id``; None otherwise."""
+        with self._state_lock:
+            return self._stop_reason if self._is_running(entry_id) else None
+
+    def hold(self) -> tuple[bool, HoldState]:
+        """Hold the queue directly (``/queue hold``): a running job is not stopped, and nothing starts after it. Ends a
+        between-jobs wait at once. Returns whether the queue was not held before, and the hold, both read under the
+        same lock as the change."""
+        with self._state_lock:
+            changed = self._hold.hold(None)
+            hold = self._hold.snapshot()
+        self.wake()
+        return changed, hold
+
+    def release(self) -> tuple[bool, HoldState]:
+        """End the hold; the oldest queued entry is claimed at once, with no between-jobs cooldown. Returns whether the
+        queue was held (False, doing nothing, when it was not), and the hold, both read under the same lock as the
+        change."""
+        with self._state_lock:
+            released = self._hold.release()
+            hold = self._hold.snapshot()
+        self.wake()
+        return released, hold
+
+    def hold_state(self) -> HoldState:
+        return self._hold.snapshot()
+
+    def _is_running(self, entry_id: int) -> bool:
+        """Call with ``_state_lock`` held: ``entry_id`` is claimed and not yet marked finished."""
+        return self._current is not None and self._current.id == entry_id and not self._job_finished
+
     def is_alive(self) -> bool:
         """False once the thread has stopped (an error escaping ``run_forever`` itself, not a single job's failure), for ``GET /health``: the queue processes nothing more until the server restarts."""
         return self._thread is not None and self._thread.is_alive()
 
     def state(self) -> str:
-        """``running``, ``cooling_down``, or ``idle`` (``GET /queue``, Milestone 02)."""
-        return self._status.state()
+        """``running``, ``cooling_down``, ``idle`` (``GET /queue``, Milestone 02), or ``held``: not running a job, and the
+        queue is held (Milestone 05). A job running under a hold still reads ``running``."""
+        state = self._status.state()
+        return "held" if state != "running" and self._hold.is_held else state
 
     def cooldown_until(self) -> float | None:
         """When the between-jobs wait ends (an epoch), or None outside it."""
@@ -138,13 +232,17 @@ class QueueWorker:
         """The active run's latest (step, total) progress-bar reading (``GET /queue/{id}``, ``WatchQueueEntry``)."""
         return self._status.current_step()
 
+    def between_runs_after(self) -> int | None:
+        """The succeeded run the claimed entry is between runs after, until its next run starts (``GET /queue/{id}``)."""
+        return self._status.between_runs_after()
+
     def run_forever(self) -> None:
         while not self._stop_event.is_set():
             if not self.claim_and_run_one():
                 self._idle_wait()
 
     def claim_and_run_one(self) -> bool:
-        """Claim the oldest queued entry and run it to completion, then wait its cooldown if another entry is already queued. False, doing nothing, when there is none. Never raises: an error that escapes the job (or the store itself) fails only its entry (or is logged and skipped), and the worker goes on."""
+        """Claim the oldest queued entry and run it to completion, then wait its cooldown if another entry is already queued. False, doing nothing, when there is none or the queue is held. Never raises: an error that escapes the job (or the store itself) fails only its entry (or is logged and skipped), and the worker goes on."""
         try:
             return self._claim_and_run_one()
         except Exception:
@@ -155,6 +253,9 @@ class QueueWorker:
     def _claim_and_run_one(self) -> bool:
         # The claim (a DB write marking the entry 'running') and registering it as self._current happen under the same lock: cancel_running also takes this lock, so it never observes the DB already reading 'running' while self._current is still the previous (or no) entry, which would make its cancel a silent no-op.
         with self._state_lock:
+            # Checked under the lock, so a hold and a claim never interleave.
+            if self._hold.is_held:
+                return False
             entry = self._store.queue.claim_oldest(self._clock())
             if entry is None:
                 return False
@@ -165,6 +266,7 @@ class QueueWorker:
                 self._events.entry_changed(entry.label, str(QueueState.QUEUED))
                 return True
             self._current, self._stop_reason, self._pending_cancel = entry, None, False
+            self._park_pending = self._job_started = self._job_finished = False
         self._status.entry_claimed()
         self._events.entry_changed(entry.label, entry.state)
         job: JobDefinition | None = None
@@ -194,7 +296,7 @@ class QueueWorker:
                 holder=SERVER_HOLDER_NAME,
                 executable=self._executable,
                 shutdown_grace=self._shutdown_grace,
-                observers=(self._cancel_guard, self._status.observe_run, self._events.job_event, self._make_finisher(entry, finished)),
+                observers=(self._start_guard, self._status.observe_run, self._events.job_event, self._make_finisher(entry, finished)),
                 lock=self._lock,
                 resume=resume,
                 on_reserved=self._linker(entry),
@@ -216,12 +318,16 @@ class QueueWorker:
 
         return on_reserved
 
-    def _cancel_guard(self, event: JobEvent) -> None:
+    def _start_guard(self, event: JobEvent) -> None:
         """A cancel (or shutdown) that landed between the claim and the executor's ``begin()`` is kept and applied
-        here, at ``JobStarted``, as the TUI does for a stop requested during start-up."""
+        here, at ``JobStarted``, as the TUI does for a stop requested during start-up. So is a park reservation, under
+        the lock, since unlike a cancel it can be withdrawn: an unpark can never land between the read and the call."""
         if isinstance(event, JobStarted):
             with self._state_lock:
+                self._job_started = True
                 pending = self._pending_cancel
+                if self._park_pending:
+                    self._executor.park()
             if pending:
                 self._executor.cancel()
 
@@ -229,8 +335,11 @@ class QueueWorker:
         def observe(event: JobEvent) -> None:
             if isinstance(event, JobFinished):
                 finished[0] = True
+                # Read before the lock is taken: _final_state takes it itself.
                 state = self._final_state(event)
-                self._store.queue.finish(entry.id, state=state, finished_at=event.at)
+                with self._state_lock:
+                    self._store.queue.finish(entry.id, state=state, finished_at=event.at)
+                    self._job_finished = True
                 self._events.entry_changed(entry.label, str(state))
 
         return observe
@@ -243,9 +352,9 @@ class QueueWorker:
         # from outside instead produces a plain JobStatus.FAILED, at the executor level, never this branch).
         with self._state_lock:
             reason = self._stop_reason
-        if reason == _CANCEL:
+        if reason == STOP_CANCEL:
             return QueueState.CANCELLED
-        if reason == _SHUTDOWN:
+        if reason == STOP_SHUTDOWN:
             return QueueState.INTERRUPTED
         return QueueState.FAILED
 
@@ -254,17 +363,20 @@ class QueueWorker:
         never created: clears the link, so a later resume sees 'never ran' rather than mistaking the dangling number
         for one that ran and was pruned."""
         logger.exception("Queue entry {} failed to start", entry.label)
-        self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=local_timestamp(self._clock()), error=str(error), clear_link=True)
+        with self._state_lock:
+            self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=local_timestamp(self._clock()), error=str(error), clear_link=True)
+            self._job_finished = True
         self._events.entry_changed(entry.label, str(QueueState.FAILED))
 
     def _wait_after(self, entry: QueueRow, job: JobDefinition) -> None:
-        """The cooldown between queued jobs: after a job that succeeded, when another entry is already queued.
-        Reuses ``job`` (already parsed and validated by ``_run_claimed``) instead of parsing the snapshot again,
-        which would re-check the job's own input file and could raise if it was since removed."""
-        if self._stop_event.is_set():
+        """The cooldown between queued jobs: after a job that succeeded or parked, when another entry is already queued
+        and the queue is not held (a release then claims at once, with no cooldown to wait out). Reuses ``job``
+        (already parsed and validated by ``_run_claimed``) instead of parsing the snapshot again, which would re-check
+        the job's own input file and could raise if it was since removed."""
+        if self._stop_event.is_set() or self._hold.is_held:
             return
         updated = self._store.queue.get(entry.id)
-        if updated is None or updated.state != QueueState.SUCCEEDED or not self._store.queue.has_queued():
+        if updated is None or updated.state not in _COOLDOWN_AFTER or not self._store.queue.has_queued():
             return
         wait = job.cooldown.wait_after(self._last_run_seconds(updated))
         if wait.seconds > 0:
@@ -287,12 +399,14 @@ class QueueWorker:
     def _poll_wait(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if self._stop_event.is_set() or not self._store.queue.has_queued():
+            # A hold ends the wait at once; nothing of it is remembered, so a release claims at once.
+            if self._stop_event.is_set() or self._hold.is_held or not self._store.queue.has_queued():
                 return
             self._wake_event.wait(timeout=min(self._poll_interval, max(0.0, deadline - time.monotonic())))
             self._wake_event.clear()
 
     def _idle_wait(self) -> None:
-        # No entry queued: wait to be woken by a submission or shutdown, checking occasionally in case a wake is missed.
+        # No entry queued, or the queue is held: wait to be woken by a submission, a release, or shutdown, checking
+        # occasionally in case a wake is missed.
         self._wake_event.wait(timeout=1.0)
         self._wake_event.clear()

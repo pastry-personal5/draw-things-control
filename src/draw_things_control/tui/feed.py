@@ -121,6 +121,8 @@ class QueueFeed:
             self._app.refresh_queue()
             if event.kind == "queue_entry_changed":
                 self._apply_queue_entry_changed(data)
+            elif event.kind == "queue_park_changed":
+                self._apply_park_changed(data)
             return
         await self._apply_job_event(event_from_dict(data))
 
@@ -128,6 +130,7 @@ class QueueFeed:
         queue_id, state = data["queue_id"], data["state"]
         if state == "running":
             self._app.pending_queue_id = queue_id
+            self._app.pending_park_requested = False
             return
         if state not in _FINISHED_STATE_VALUES:
             return
@@ -135,13 +138,20 @@ class QueueFeed:
         if live is not None and live.queue_id == queue_id and not live.ended:
             self._end_followed(live)
 
+    def _apply_park_changed(self, data: dict[str, Any]) -> None:
+        """A park reservation made or withdrawn anywhere (this TUI, another, or ``dtc queue``), for the followed entry;
+        shown at once at every verbose level, as a stop is."""
+        self._app.set_parking(data["queue_id"], bool(data["park_requested"]))
+
     async def _apply_job_event(self, job_event: JobEvent) -> None:
         app = self._app
         if isinstance(job_event, JobStarted):
             live = LiveRun()
             live.apply(job_event)
             live.queue_id = app.pending_queue_id
+            live.park_requested = app.pending_park_requested
             app.pending_queue_id = None
+            app.pending_park_requested = False
             app.live = live
             if app.main is not None:
                 app.main.running.job_started()
@@ -186,6 +196,7 @@ class QueueFeed:
         live = LiveRun()
         live.apply(_synthetic_job_started(entry, detail, execution))
         live.queue_id = entry["queue_id"]
+        live.park_requested = bool(detail.get("park_requested"))
         if execution is not None:
             _seed_runs(live, execution["runs"])
         _seed_active_run(live, detail)

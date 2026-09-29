@@ -334,7 +334,7 @@ class TuiTests(TuiTestCase):
                 ("/get everything", f"Usage: {usage('get')}"),
                 ("/apply a b", "Usage: /apply [<Job ID>]"),
                 ("/stop now", "Usage: /stop"),
-                ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, running"),
+                ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, parked, running"),
                 ("/filter clear", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
                 ("/filter name ''", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
                 ("/reveal x", "Usage: /reveal <Execution ID> [RUN]"),
@@ -385,7 +385,7 @@ class TuiTests(TuiTestCase):
         async with app.run_test() as pilot:
             await self.settle(pilot)
             field = app.screen.query_one(CommandInput)
-            await pilot.press("slash", "r", "e")
+            await pilot.press("slash", "r", "e", "v")
             await self.wait_for(pilot, lambda: field._suggestion == "/reveal", "the suggestion")
             await pilot.press("tab")
             self.assertEqual(field.value, "/reveal")

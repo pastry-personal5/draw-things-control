@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -24,10 +25,18 @@ class QueueState(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
+    # Ended at a run boundary because it was parked (Milestone 05); a resume continues it at the next run.
+    PARKED = "parked"
 
 
 # Entries in one of these states never run again on their own; they are what a resume, a cancel, or history retention act on.
-FINISHED_STATES = (QueueState.SUCCEEDED, QueueState.FAILED, QueueState.CANCELLED, QueueState.INTERRUPTED)
+FINISHED_STATES = (QueueState.SUCCEEDED, QueueState.FAILED, QueueState.CANCELLED, QueueState.INTERRUPTED, QueueState.PARKED)
+_FINISHED_STATES_SQL = ", ".join(f"'{state}'" for state in FINISHED_STATES)
+# The entries retention keeps for a parked one (Milestone 05): the parked entry and every entry of the chain that
+# resumes it (a resume, a resume of that resume, and so on), until one of those has a succeeded run. Until then, a
+# resume that was cancelled, or whose first run failed, still walks back through the resumes between to the parked
+# entry; keeping them also keeps the parked entry from reading as never resumed, and so being resumed a second time.
+_KEPT_PARKED_SQL = "WITH RECURSIVE chain(root, queue_number, execution_number) AS (SELECT queue_number, queue_number, execution_number FROM queue WHERE state = 'parked' UNION ALL SELECT chain.root, queue.queue_number, queue.execution_number FROM queue JOIN chain ON queue.resumes = chain.queue_number) SELECT DISTINCT queue_number, execution_number FROM chain WHERE root NOT IN (SELECT chain.root FROM chain JOIN executions ON executions.execution_number = chain.execution_number JOIN runs ON runs.execution_id = executions.id WHERE chain.queue_number != chain.root AND runs.status = 'succeeded')"
 
 
 @dataclass(frozen=True)
@@ -206,11 +215,11 @@ class QueueRepository:
         return [QueueRow.from_row(row) for row in rows]
 
     def list_finished(self, *, limit: int, offset: int, state: str | None = None) -> list[QueueRow]:
-        """A page of finished entries (succeeded, failed, cancelled, interrupted), newest first: ``GET /queue``'s own
+        """A page of finished entries (succeeded, failed, cancelled, interrupted, parked), newest first: ``GET /queue``'s own
         history, which -- unlike the active entries above -- is not bounded by anything but
         ``history_retention_days`` (0 keeps it forever), so it is paged like ``GET /jobs``, ``/executions``, and
         ``/audit``."""
-        clauses = ["queue.state IN ('succeeded', 'failed', 'cancelled', 'interrupted')"]
+        clauses = [f"queue.state IN ({_FINISHED_STATES_SQL})"]
         values: list[Any] = []
         if state is not None:
             clauses.append("queue.state = ?")
@@ -277,10 +286,20 @@ class QueueRepository:
         with self._database.transaction() as connection:
             connection.execute("UPDATE queue SET state = 'queued', started_at = NULL, started_epoch = NULL, execution_number = NULL WHERE id = ?", (entry_id,))
 
-    def prune(self, cutoff: float) -> int:
-        """Delete entries finished before the epoch ``cutoff``; never a ``queued`` or ``running`` one."""
+    def kept_parked(self) -> list[tuple[int, int | None]]:
+        """The entries retention keeps for parked ones, as (queue number, linked execution number): each parked entry
+        and the chain of resumes below it, until one of those resumes has a succeeded run. Read once, before anything
+        is pruned (``Store.prune``): pruning the resume's execution first would otherwise hide the succeeded run that
+        lets the chain go."""
+        return [(row["queue_number"], row["execution_number"]) for row in self._database.connection().execute(_KEPT_PARKED_SQL)]
+
+    def prune(self, cutoff: float, *, keep: Sequence[int] = ()) -> int:
+        """Delete entries finished before the epoch ``cutoff``; never a ``queued`` or ``running`` one, nor one whose
+        queue number is in ``keep`` (``kept_parked``)."""
+        # ``keep`` goes in as one JSON array, not a placeholder each, so no number of kept entries reaches SQLite's
+        # limit on bound values.
         with self._database.transaction() as connection:
-            return connection.execute("DELETE FROM queue WHERE finished_epoch IS NOT NULL AND finished_epoch < ?", (cutoff,)).rowcount
+            return connection.execute("DELETE FROM queue WHERE finished_epoch IS NOT NULL AND finished_epoch < ? AND queue_number NOT IN (SELECT value FROM json_each(?))", (cutoff, json.dumps(list(keep)))).rowcount
 
     def _get(self, connection: sqlite3.Connection, entry_id: int) -> QueueRow:
         row = connection.execute("SELECT * FROM queue WHERE id = ?", (entry_id,)).fetchone()

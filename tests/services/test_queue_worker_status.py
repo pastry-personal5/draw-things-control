@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import datetime
 
-from draw_things_control.jobs.events import RunFinished, RunOutput, RunStarted, RunStatus
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, RunFinished, RunOutput, RunStarted, RunStatus
 from draw_things_control.services.queue_worker_status import WorkerStatus
 
 NOW = datetime(2026, 9, 28, 12, 0, 0)
@@ -72,3 +73,31 @@ class CurrentStepTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BetweenRunsTests(unittest.TestCase):
+    """Milestone 05: the run the entry is between runs after, which a front end words a park's outcome from."""
+
+    def test_it_lasts_from_a_succeeded_run_through_its_cooldown_until_the_next_run_starts(self) -> None:
+        status = WorkerStatus(clock=lambda: NOW)
+        self.assertIsNone(status.between_runs_after())
+        status.observe_run(run_started(2))
+        self.assertIsNone(status.between_runs_after())
+        status.observe_run(run_finished(2))
+        self.assertEqual(status.between_runs_after(), 2)
+        status.observe_run(CooldownStarted(at="2026-09-28T12:00:00+00:00", after_run=2, seconds=60.0, until="12:01:00"))
+        self.assertEqual(status.between_runs_after(), 2)
+        # A park that ends the cooldown ends it before the entry reads parked; the run is still named.
+        status.observe_run(CooldownEnded(at="2026-09-28T12:00:30+00:00", waited_seconds=30.0, cut_short=True))
+        self.assertEqual(status.between_runs_after(), 2)
+        status.observe_run(run_started(3))
+        self.assertIsNone(status.between_runs_after())
+
+    def test_a_failed_run_and_the_entrys_release_clear_it(self) -> None:
+        status = WorkerStatus(clock=lambda: NOW)
+        status.observe_run(run_finished(1))
+        status.observe_run(replace(run_finished(2), status=RunStatus.FAILED))
+        self.assertIsNone(status.between_runs_after())
+        status.observe_run(run_finished(3))
+        status.entry_released()
+        self.assertIsNone(status.between_runs_after())

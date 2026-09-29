@@ -25,9 +25,17 @@ COMMANDS = (
     ("sort", "jobs KEY [asc|desc]", "Sort the Job Definition widget by id, name, changed, mode, or runs"),
     ("apply", "[<Job ID>]", "Read the job again and submit it to the queue (the selected job, if none is given)"),
     ("queue", "add [<Job ID>]", "The same as /apply"),
-    ("queue", "cancel <Queue ID>", "Cancel a queued or running entry, losing its current run if it has one"),
-    ("queue", "resume <Queue ID>", "Resume an interrupted, failed, or cancelled entry from its last succeeded run"),
+    ("queue", "cancel <Queue ID>", "Cancel a queued or running entry, losing its current run if it has one (/queue park keeps it)"),
+    ("queue", "resume <Queue ID>", "Resume an interrupted, failed, cancelled, or parked entry from its last succeeded run"),
+    ("queue", "park <Queue ID>", "End a running entry once its current run finishes, keeping every run, and hold the queue"),
+    ("queue", "unpark <Queue ID>", "Withdraw a running entry's park reservation; it runs on"),
+    ("queue", "hold", "Hold the queue: a running job goes on, and nothing else starts until a release"),
+    ("queue", "release", "End the hold: the oldest queued entry starts at once"),
     ("stop", "", "Cancel the entry the draw-things-cli pane is following"),
+    ("park", "", "Park the entry the draw-things-cli pane is following"),
+    ("unpark", "", "Withdraw the park reservation of the entry the draw-things-cli pane is following"),
+    ("hold", "", "The same as /queue hold"),
+    ("release", "", "The same as /queue release"),
     ("get", "history", "Read the execution history again"),
     ("get", "prompts <Execution ID> [RUN]", "An execution's positive and negative prompts (every pair, or one run's)"),
     ("get", "positive <Execution ID> [RUN]", "An execution's positive prompts (every pair, or one run's)"),
@@ -47,7 +55,7 @@ COMMAND_NAMES = tuple(dict.fromkeys(name for name, _, _ in COMMANDS))
 # The words after /get, /describe, and /queue, in the order help lists them.
 GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in COMMANDS if name == "get"))
 DESCRIBE_WORDS = ("job", "queue", "execution")
-QUEUE_WORDS = ("add", "cancel", "resume")
+QUEUE_WORDS = ("add", "cancel", "resume", "park", "unpark", "hold", "release")
 # The Job Definition widget's sort keys, in the order `s` moves through them, and the directions.
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
@@ -71,6 +79,7 @@ KEYS = (
     ("Up/Down", "Recall this session's commands (command line), move (the widgets)"),
     ("a", "Ask to submit the selected job (Job Definition)"),
     ("c", "Cancel the selected entry (Queue)"),
+    ("p / u", "Park the selected entry / withdraw its park reservation (Queue)"),
     ("s / r", "Sort by the next column / reverse the order (Job Definition)"),
     ("Escape", "Clear the command line, or go back to it (the widgets)"),
     ("Ctrl-C", "Clear the command line, or press twice to quit"),
@@ -162,7 +171,7 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
         return [*matching, *_identifier_completions(head, last, (*job_ids, *execution_ids, *queue_ids))] if last else matching
     elif words in ([f"{PREFIX}describe", "execution"], [f"{PREFIX}reveal"]) or (len(words) == 2 and words[0] == f"{PREFIX}get" and words[1] in ("prompts", "positive", "negative", "param", "parameters")):
         return _identifier_completions(head, last, execution_ids)
-    elif words in ([f"{PREFIX}describe", "queue"], [f"{PREFIX}queue", "cancel"], [f"{PREFIX}queue", "resume"]):
+    elif words in ([f"{PREFIX}describe", "queue"], [f"{PREFIX}queue", "cancel"], [f"{PREFIX}queue", "resume"], [f"{PREFIX}queue", "park"], [f"{PREFIX}queue", "unpark"]):
         return _identifier_completions(head, last, queue_ids)
     else:
         candidates = _words_after(words)

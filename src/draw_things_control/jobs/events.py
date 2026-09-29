@@ -32,6 +32,9 @@ class JobStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    # Ended at a run boundary because it was parked (Milestone 05): every run it made succeeded, and a resume continues
+    # it at the next one. Runs are never parked, only jobs.
+    PARKED = "parked"
 
 
 @dataclass(frozen=True)
@@ -149,7 +152,7 @@ class CooldownEnded:
 
 @dataclass(frozen=True)
 class JobFinished:
-    """The job ended: succeeded, failed, or interrupted. Always the last event of a started job."""
+    """The job ended: succeeded, failed, interrupted, or parked. Always the last event of a started job."""
 
     at: str
     status: JobStatus

@@ -19,6 +19,7 @@ from draw_things_control.server.app import create_app
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.event_backlog import EventBacklog
 from draw_things_control.services.queue_events import QueueEventPublisher
+from draw_things_control.services.queue_hold import HoldState, QueueHold
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store, StoreMode
@@ -40,6 +41,13 @@ class FakeWorker:
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
         self._current_step: tuple[int, int] | None = None
+        # Milestone 05: a reservation per entry, the stop asked for one (refusing a park), whether its park has taken
+        # effect (refusing an unpark), and the real hold, over the real store.
+        self.parking: set[int] = set()
+        self.stop_reasons: dict[int, str] = {}
+        self.park_taken = False
+        self._between_runs_after: int | None = None
+        self._hold = QueueHold(store.settings, self._events)
 
     def is_alive(self) -> bool:
         return True
@@ -78,6 +86,42 @@ class FakeWorker:
     def cancel_running(self, entry_id: int) -> bool:
         self.cancelled.append(entry_id)
         return True
+
+    def between_runs_after(self) -> int | None:
+        return self._between_runs_after
+
+    def park_requested(self, entry_id: int) -> bool:
+        return entry_id in self.parking
+
+    def parking_entry_id(self) -> int | None:
+        return self._current_id if self._current_id in self.parking else None
+
+    def stop_reason(self, entry_id: int) -> str | None:
+        return self.stop_reasons.get(entry_id)
+
+    def park_running(self, entry_id: int, label: str) -> bool:
+        if entry_id != self._current_id or entry_id in self.stop_reasons:
+            return False
+        self.parking.add(entry_id)
+        if not self._hold.is_held:
+            self._hold.hold(label)
+        return True
+
+    def unpark_running(self, entry_id: int, label: str) -> bool:
+        if entry_id != self._current_id or self.park_taken:
+            return False
+        self.parking.discard(entry_id)
+        self._hold.release_if_by(label)
+        return True
+
+    def hold(self) -> tuple[bool, HoldState]:
+        return self._hold.hold(None), self._hold.snapshot()
+
+    def release(self) -> tuple[bool, HoldState]:
+        return self._hold.release(), self._hold.snapshot()
+
+    def hold_state(self) -> HoldState:
+        return self._hold.snapshot()
 
 
 class QueueRoutesTestCase(JobTestCase):
@@ -454,6 +498,90 @@ class QueueListingTests(QueueRoutesTestCase):
         self.assertEqual(by_state[0]["succeeded"], 1)
         self.assertEqual(next(row["succeeded"] for row in plain if row["queue_id"] == entry["queue_id"]), 1)
         self.assertEqual(detail["succeeded"], 1)
+
+
+class ParkAndHoldTests(QueueRoutesTestCase):
+    """Milestone 05: ``POST /v1/queue/{queue_id}/park`` and ``/unpark``, ``POST /v1/queue/hold`` and ``/release``."""
+
+    def running_entry(self) -> dict[str, Any]:
+        entry = self.submit(run_count=3)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker._current_id = claimed.id
+        self.worker._current_run = (2, 5.0)
+        return entry
+
+    def audit(self) -> list[tuple[str, str | None, str, str]]:
+        return [(row["action"], row["target"], row["outcome"], row["caller"]) for row in self.request("get", "/v1/audit").json()["audit"]]
+
+    def test_parking_a_running_entry_holds_the_queue_and_returns_the_entry(self) -> None:
+        queue_id = self.running_entry()["queue_id"]
+        response = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual((body["queue_id"], body["state"], body["park_requested"], body["current_run"], body["total_runs"]), (queue_id, "running", True, 2, 3))
+        self.assertEqual((body["held"], body["held_by"], body["held_since"] is not None), (True, queue_id, True))
+        self.assertIn("between_runs_after_run", body)
+        self.assertEqual(self.audit()[0], ("park", queue_id, "ok", "tui"))
+        listing = self.request("get", "/v1/queue").json()
+        self.assertEqual((listing["held"], listing["held_by"], listing["queue"][0]["park_requested"]), (True, queue_id, True))
+        self.assertTrue(self.request("get", f"/v1/queue/{queue_id}").json()["park_requested"])
+
+    def test_unparking_releases_the_hold_the_reservation_made(self) -> None:
+        queue_id = self.running_entry()["queue_id"]
+        self.request("post", f"/v1/queue/{queue_id}/park")
+        body = self.request("post", f"/v1/queue/{queue_id}/unpark").json()
+        self.assertEqual((body["park_requested"], body["held"], body["held_by"]), (False, False, None))
+        self.assertEqual(self.audit()[0], ("unpark", queue_id, "ok", "api"))
+
+    def test_an_unpark_after_the_park_took_effect_is_refused(self) -> None:
+        queue_id = self.running_entry()["queue_id"]
+        self.request("post", f"/v1/queue/{queue_id}/park")
+        self.worker.park_taken = True
+        response = self.request("post", f"/v1/queue/{queue_id}/unpark")
+        self.assertEqual((response.status_code, response.json()["code"]), (409, "invalid_state"))
+        self.assertIn(f"{queue_id} has already parked", response.json()["message"])
+
+    def test_parking_a_queued_finished_cancelling_or_unknown_entry_is_refused_and_audited(self) -> None:
+        running = self.running_entry()["queue_id"]
+        self.worker.stop_reasons[self.worker._current_id or 0] = "cancel"
+        queued = self.submit("queued.yaml", run_count=1)["queue_id"]
+        for queue_id, words in ((queued, "it is queued"), (running, "it is being cancelled")):
+            response = self.request("post", f"/v1/queue/{queue_id}/park")
+            self.assertEqual((response.status_code, response.json()["code"]), (409, "invalid_state"))
+            self.assertIn(words, response.json()["message"])
+        self.assertEqual(self.request("post", "/v1/queue/Q9999/park").status_code, 404)
+        self.assertEqual([row[2] for row in self.audit()[:3]], ["not_found", "invalid_state", "invalid_state"])
+        self.assertFalse(self.request("get", "/v1/queue").json()["held"])
+
+    def test_hold_and_release_report_the_hold_and_whether_it_changed(self) -> None:
+        body = self.request("post", "/v1/queue/hold").json()
+        self.assertEqual((body["held"], body["held_by"], body["changed"], body["held_since"] is not None), (True, None, True, True))
+        self.assertFalse(self.request("post", "/v1/queue/hold").json()["changed"])
+        listing = self.request("get", "/v1/queue").json()
+        self.assertEqual((listing["held"], listing["held_since"]), (True, body["held_since"]))
+        self.assertEqual(self.request("post", "/v1/queue/release").json(), {"held": False, "held_since": None, "held_by": None, "changed": True})
+        self.assertFalse(self.request("post", "/v1/queue/release").json()["changed"])
+        self.assertEqual([(action, target) for action, target, _outcome, _caller in self.audit()], [("release", None), ("release", None), ("hold", None), ("hold", None)])
+
+    def test_hold_and_release_refuse_an_unknown_caller_and_audit_it(self) -> None:
+        response = self.request("post", "/v1/queue/hold", headers={"X-Dtc-Caller": "nope"})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.audit()[0][:3], ("hold", None, "invalid_input"))
+        self.assertFalse(self.request("get", "/v1/queue").json()["held"])
+
+    def test_parked_entries_are_listed_and_filtered_with_the_finished_ones(self) -> None:
+        entry = self.submit(run_count=3)
+        row = self.store.queue.by_number(int(entry["queue_id"][1:]))
+        assert row is not None
+        self.store.queue.finish(row.id, state=QueueState.PARKED, finished_at="2026-09-28T10:00:00+00:00")
+        listed = self.request("get", "/v1/queue", params={"state": "parked"}).json()["queue"]
+        self.assertEqual([(item["queue_id"], item["state"], item["park_requested"]) for item in listed], [(entry["queue_id"], "parked", False)])
+
+    def test_no_response_or_audit_row_carries_the_token(self) -> None:
+        queue_id = self.running_entry()["queue_id"]
+        texts = [self.request("post", f"/v1/queue/{queue_id}/park").text, self.request("post", "/v1/queue/hold").text, self.request("post", "/v1/queue/release").text, self.request("post", f"/v1/queue/{queue_id}/unpark").text, self.request("get", "/v1/audit").text]
+        self.assertFalse(any(TOKEN in text for text in texts))
 
 
 if __name__ == "__main__":

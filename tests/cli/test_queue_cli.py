@@ -223,7 +223,7 @@ class QueueCliTests(JobTestCase):
         self.assertTrue(call.cancelled)
 
     def test_add_wait_maps_each_final_state_to_its_exit_code(self) -> None:
-        for state, code in (("succeeded", 0), ("cancelled", 130), ("interrupted", 143), ("failed", 1)):
+        for state, code in (("succeeded", 0), ("cancelled", 130), ("interrupted", 143), ("failed", 1), ("parked", 3)):
             with self.subTest(state=state):
                 self.grpc_stub = FakeMonitorStub([monitor_pb2.QueueEntrySnapshot(queue_id="Q0001", state=state, total_runs=1, current_run=1)])
 
@@ -252,3 +252,131 @@ class QueueCliTests(JobTestCase):
         result = self.invoke("add", "walk.yaml", "--wait")
         self.assertEqual(result.exit_code, 130, result.output)
         self.assertEqual(len(cancel_requests), 1)
+
+    # Milestone 05: park, unpark, hold, and release.
+
+    def entry_detail(self, **changes: Any) -> dict[str, Any]:
+        detail = {"queue_id": "Q0001", "state": "running", "job_path": "/jobs/walk.yaml", "execution_id": "E0001", "total_runs": 7, "succeeded": 2, "park_requested": True, "current_run": 3, "between_runs_after_run": None, "cooldown_until": None, "error": None, "held": True, "held_since": "2026-09-29T12:04:05+00:00", "held_by": "Q0001", "resumable": False, "resume_refused_reason": "Q0001 is running"}
+        detail.update(changes)
+        return detail
+
+    def test_park_says_after_which_run_the_entry_parks_and_that_the_queue_is_held(self) -> None:
+        for changes, words in (
+            ({}, "Q0001 parks after run 3/7; the queue is held ('dtc queue release' starts it again)"),
+            ({"current_run": 7, "succeeded": 6}, "Q0001 is on its last run and will finish; the queue is held ('dtc queue release' starts it again)"),
+            ({"current_run": None, "between_runs_after_run": 7, "succeeded": 7}, "Q0001 is on its last run and will finish;"),
+            ({"current_run": None, "between_runs_after_run": 3, "succeeded": 3}, "Q0001 parks after run 3/7;"),
+            ({"state": "parked", "current_run": None, "succeeded": 3}, "Q0001 parked after run 3/7;"),
+            ({"current_run": None, "succeeded": 0}, "Q0001 parks after its next run;"),
+        ):
+            with self.subTest(changes=changes):
+
+                def handler(request: httpx.Request, changes: dict[str, Any] = changes) -> httpx.Response:
+                    assert request.method == "POST" and request.url.path == "/v1/queue/Q0001/park"
+                    return self.json_response(200, self.entry_detail(**changes))
+
+                self.route(handler)
+                result = self.invoke("park", "Q0001")
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertIn(words, result.stdout)
+
+    def test_a_refused_park_exits_2_naming_the_reason(self) -> None:
+        self.route(lambda request: self.json_response(409, {"code": "invalid_state", "message": "Q0001 cannot be parked: it is queued"}))
+        exit_code, logged = self.logged("park", "Q0001")
+        self.assertEqual(exit_code, 2)
+        self.assertIn("it is queued", logged)
+
+    def test_unpark_says_whether_the_queue_stays_held_and_never_claims_a_release(self) -> None:
+        for held, words in ((False, "Q0001 runs on; the queue is not held\n"), (True, "Q0001 runs on; the queue stays held\n")):
+            with self.subTest(held=held):
+                self.route(lambda request, held=held: self.json_response(200, self.entry_detail(park_requested=False, held=held)))
+                result = self.invoke("unpark", "Q0001")
+                self.assertEqual((result.exit_code, result.stdout), (0, words))
+                self.assertEqual(self.requests[-1].url.path, "/v1/queue/Q0001/unpark")
+
+    def test_hold_and_release(self) -> None:
+        self.route(lambda request: self.json_response(200, {"held": True, "held_since": "2026-09-29T12:04:05+00:00", "held_by": None, "changed": True}))
+        result = self.invoke("hold")
+        self.assertEqual((result.exit_code, result.stdout), (0, "Queue held since 2026-09-29 12:04:05\n"))
+        self.assertEqual((self.requests[-1].method, self.requests[-1].url.path), ("POST", "/v1/queue/hold"))
+        for changed, words in ((True, "Queue released\n"), (False, "The queue is not held\n")):
+            self.route(lambda request, changed=changed: self.json_response(200, {"held": False, "held_since": None, "held_by": None, "changed": changed}))
+            result = self.invoke("release")
+            self.assertEqual((result.exit_code, result.stdout), (0, words))
+        self.assertEqual(self.requests[-1].url.path, "/v1/queue/release")
+
+    def test_list_shows_a_parking_entry_and_the_hold(self) -> None:
+        body = {"queue": [{"queue_id": "Q0001", "state": "running", "job_path": "/jobs/walk.yaml", "total_runs": 3, "succeeded": 1, "park_requested": True}, {"queue_id": "Q0000", "state": "parked", "job_path": "/jobs/walk.yaml", "total_runs": 3, "succeeded": 2, "park_requested": False}], "worker_state": "running", "cooldown_until": None, "held": True, "held_since": "2026-09-29T12:04:05+00:00", "held_by": "Q0001", "cursor": None}
+        self.route(lambda request: self.json_response(200, body))
+        result = self.invoke("list")
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], "Queue held since 2026-09-29 12:04:05 (by Q0001)")
+        self.assertEqual([line.split()[1] for line in lines[2:]], ["parking", "parked"])
+
+    def test_show_names_the_park_reservation_and_the_hold(self) -> None:
+        self.route(lambda request: self.json_response(200, self.entry_detail()))
+        result = self.invoke("show", "Q0001")
+        self.assertIn("Q0001: parking (walk.yaml)", result.stdout)
+        self.assertIn("  park reservation: yes", result.stdout)
+        self.assertIn("  Queue held since 2026-09-29 12:04:05 (by Q0001)", result.stdout)
+
+    def wait_handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/health":
+            return self.json_response(200, {"status": "ok", "version": "1.0.0", "worker_alive": True, "grpc_port": 8766})
+        return self.json_response(200, {"queue_id": "Q0001", "state": "parked", "job_path": "/jobs/walk.yaml", "total_runs": 7, "succeeded": 5})
+
+    def test_add_wait_on_a_resume_that_parks_prints_the_chains_run_and_exits_3(self) -> None:
+        snapshot = monitor_pb2.QueueEntrySnapshot
+        self.grpc_stub = FakeMonitorStub(
+            [
+                snapshot(queue_id="Q0001", state="queued", total_runs=7, park_requested=False, queue_held=True),
+                snapshot(queue_id="Q0001", state="queued", total_runs=7, park_requested=False, queue_held=True),
+                snapshot(queue_id="Q0001", state="running", total_runs=7, current_run=4, park_requested=False, queue_held=False),
+                snapshot(queue_id="Q0001", state="running", total_runs=7, current_run=5, park_requested=False, queue_held=False),
+                snapshot(queue_id="Q0001", state="running", total_runs=7, current_run=5, park_requested=True, queue_held=True),
+                snapshot(queue_id="Q0001", state="parked", total_runs=7, park_requested=False, queue_held=True),
+            ]
+        )
+        self.route(self.wait_handler)
+        result = self.invoke("add", "walk.yaml", "--wait")
+        self.assertEqual(result.exit_code, 3, result.output)
+        self.assertEqual(
+            result.stdout.splitlines()[1:],
+            [
+                "Q0001 waits: the queue is held ('dtc queue release' starts it)",
+                "run 4/7 started",
+                "run 4/7 succeeded",
+                "run 5/7 started",
+                "Q0001 parking: it ends after run 5/7",
+                "run 5/7 succeeded",
+                "Q0001 parked after run 5/7; 'dtc queue resume Q0001' continues at run 6",
+            ],
+        )
+
+    def test_add_wait_says_when_a_reservation_is_withdrawn(self) -> None:
+        snapshot = monitor_pb2.QueueEntrySnapshot
+        self.grpc_stub = FakeMonitorStub(
+            [
+                snapshot(queue_id="Q0001", state="running", total_runs=2, current_run=1, park_requested=True, queue_held=True),
+                snapshot(queue_id="Q0001", state="running", total_runs=2, current_run=1, park_requested=False, queue_held=False),
+                snapshot(queue_id="Q0001", state="succeeded", total_runs=2, current_run=2, park_requested=False, queue_held=False),
+            ]
+        )
+        self.route(self.wait_handler)
+        result = self.invoke("add", "walk.yaml", "--wait")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Q0001 parking: it ends after run 1/2\nQ0001 runs on\n", result.stdout)
+
+    def test_add_wait_words_a_reservation_on_the_last_run_as_finishing(self) -> None:
+        snapshot = monitor_pb2.QueueEntrySnapshot
+        self.grpc_stub = FakeMonitorStub(
+            [
+                snapshot(queue_id="Q0001", state="running", total_runs=2, current_run=2, park_requested=True, queue_held=True),
+                snapshot(queue_id="Q0001", state="succeeded", total_runs=2, current_run=2, park_requested=False, queue_held=True),
+            ]
+        )
+        self.route(self.wait_handler)
+        result = self.invoke("add", "walk.yaml", "--wait")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Q0001 parking: it is on its last run and will finish\nrun 2/2 succeeded\nQ0001 succeeded\n", result.stdout)

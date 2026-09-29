@@ -14,6 +14,7 @@ import yaml
 from loguru import logger
 from rich.text import Text
 from textual.widgets import RichLog, Static
+from watchdog.observers.polling import PollingObserver
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.executor import JobExecutor
@@ -54,6 +55,9 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         patcher = mock.patch.object(MessageLog, "say", say)
         patcher.start()
         self.addCleanup(patcher.stop)
+        observer_patcher = mock.patch("draw_things_control.tui.job_watch.Observer", PollingObserver)
+        observer_patcher.start()
+        self.addCleanup(observer_patcher.stop)
 
     def write_data_job(self, name: str, **changes: object) -> Path:
         path = self.data / name

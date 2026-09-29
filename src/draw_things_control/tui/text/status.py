@@ -10,12 +10,16 @@ from rich.text import Text
 
 from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.text import duration_text
+from draw_things_control.services.queue_hold import HoldState
+from draw_things_control.services.queue_park_text import park_point
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
 from draw_things_control.tui.live_run import LiveRun
 from draw_things_control.tui.preferences import VerboseLevel
 from draw_things_control.tui.text.common import STATUS_STYLE
 
-PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
+PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "parking": "parking", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
+# The phases the Status widget and the run line show in yellow: something is about to change.
+_NOTICE_PHASES = ("starting", "stopping", "parking", "not_started", "ended")
 
 
 def progress_text(live: LiveRun) -> str | None:
@@ -54,11 +58,13 @@ def run_line_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text:
         text.append(f"  {live.active_output}", style="dim")
         if live.stop_requested:
             text.append("  stopping", style="bold yellow")
+        elif live.park_requested:
+            text.append("  parking", style="bold yellow")
         return text
     cooldown = cooldown_text(live)
     if cooldown:
         return cooldown
-    return Text(f"{live.job_name}: {PHASE_TEXT[live.phase]}", style="bold yellow" if live.phase in ("starting", "stopping") else "dim")
+    return Text(f"{live.job_name}: {PHASE_TEXT[live.phase]}", style="bold yellow" if live.phase in ("starting", "stopping", "parking") else "dim")
 
 
 BAR_DONE = "█"
@@ -97,44 +103,66 @@ def bar_line(label: str, fraction: float | None, tail: str, width: int) -> Text:
         text.append(BAR_LEFT * (room - done), style="dim")
     for index, word in enumerate(words):
         text.append(" " if index == 0 else "  ")
-        text.append(word, style="dim" if word in ("estimating", "stopping") else "")
+        text.append(word, style="dim" if word in ("estimating", "stopping", "parking") else "")
     return text
 
 
-def status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None) -> list[Text]:
+def held_text(hold: HoldState, now: datetime) -> Text:
+    """``Queue held since 12:04 (by Q0007)``, dated when the hold began on another day; empty when not held."""
+    if not hold.held:
+        return Text()
+    text = Text("Queue held", style="bold yellow")
+    if hold.since is not None:
+        since = datetime.fromisoformat(hold.since).astimezone()
+        text.append(f" since {since.strftime('%H:%M') if since.date() == now.date() else since.strftime('%Y-%m-%d %H:%M')}")
+    if hold.by is not None:
+        text.append(f" (by {hold.by})")
+    return text
+
+
+def status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None, hold: HoldState | None = None, now: datetime | None = None) -> list[Text]:
     """The Status widget's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
 
     ``message`` is the busy message the run lock's holder would give (an ordinary ``generate`` holder, or the
     server itself when the gRPC feed cannot reach it); without one, a generic line is shown. ``dtc serve`` holds
     the run lock for its whole lifetime, so ``other_process`` is only ever true while the feed itself is down.
+
+    ``hold`` is the queue's (Milestone 05). While no job runs it is shown: as the first line with nothing run this
+    session, and otherwise as the third, which those layouts leave empty. ``now`` is the local time it is read at.
     """
     lines = [Text() for _ in range(5)]
+    held = held_text(hold, now or datetime.now()) if hold is not None else Text()
     if other_process and (live is None or live.ended):
         lines[0] = Text(message or OTHER_PROCESS_TEXT, style="bold yellow")
+        lines[2] = held
         return lines
     if live is None:
+        lines[0] = held
         return lines
     lines[0] = _phase_line(live)
     last = last_succeeded(live)
     if last is not None and last.seconds is not None:
         lines[4] = Text(f"last run took {whole_duration(last.seconds)}")
     if live.ended or live.finished is not None:
-        return _finished_lines(live, lines)
+        lines = _finished_lines(live, lines)
+        lines[2] = held
+        return lines
     if live.started is None:
         return lines
-    # Once a stop is requested, moment() stays at that time, so the bars stay where the stop found them.
-    now, wall = moment(live), live.wall_now()
-    lines[1] = bar_line("Job", *_bar_parts(live, job_estimate(live, now), wall), width)
-    waiting = wait_fraction(live, now)
+    # Once a stop is requested, moment() stays at that time, so the bars stay where the stop found them. A park
+    # reservation does not freeze them, since the run goes on; the Job bar reads "parking" in place of its end.
+    now_moment, wall = moment(live), live.wall_now()
+    lines[1] = bar_line("Job", *_bar_parts(live, job_estimate(live, now_moment), wall, "parking" if live.park_requested else None), width)
+    waiting = wait_fraction(live, now_moment)
     if waiting is not None and live.cooldown is not None:
         fraction, left = waiting
         lines[2] = bar_line("Wait", fraction, "stopping" if live.stop_requested else end_text(left, wall), width)
         lines[3] = Text(f"next: run {live.cooldown.after_run + 1}/{len(live.runs)}")
     elif live.active_run is not None:
-        run = run_estimate(live, now)
+        run = run_estimate(live, now_moment)
         tail = "finishing" if run.finishing else None
         lines[2] = bar_line("Run", *_bar_parts(live, run, wall, tail), width)
-        lines[3] = _details_line(live, now)
+        lines[3] = _details_line(live, now_moment)
     return lines
 
 
@@ -165,17 +193,27 @@ def _phase_line(live: LiveRun) -> Text:
         text.append(")", style="bold")
     else:
         phase = live.phase
-        text = Text(PHASE_TEXT[phase], style="bold yellow" if phase in ("starting", "stopping", "not_started", "ended") else "bold cyan")
+        text = Text(_parking_text(live) if phase == "parking" else PHASE_TEXT[phase], style="bold yellow" if phase in _NOTICE_PHASES else "bold cyan")
     # The execution's ID once the state store has recorded it, as the history and every message write it: ``E0012: walk``.
     text.append(f"  {live.execution_id}: " if live.execution_id is not None else "  ")
     if live.path is not None:
         text.append(job_display_name(live.path))
-    if live.finished is None and not live.ended:
+    if live.finished is None and not live.ended and live.phase != "parking":
         if live.active_run is not None:
             text.append(f"  run {live.active_run}/{len(live.runs)}")
         elif live.cooldown is not None:
             text.append(f"  after run {live.cooldown.after_run}/{len(live.runs)}")
     return text
+
+
+def _parking_text(live: LiveRun) -> str:
+    """``parking after run 3/7``: the run in progress, or the one a cooldown follows, which the park ends at once; or
+    ``parking on its last run``, which then finishes (``park_point``)."""
+    run = live.active_run
+    if run is None and live.cooldown is not None:
+        run = live.cooldown.after_run
+    point = park_point(run, len(live.runs))
+    return f"parking after {point}" if point is not None else "parking on its last run"
 
 
 def job_display_name(path: Path) -> str:

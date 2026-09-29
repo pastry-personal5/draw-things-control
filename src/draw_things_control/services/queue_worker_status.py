@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 
 from draw_things_control.core.clock import Clock
-from draw_things_control.jobs.events import JobEvent, RunFinished, RunOutput, RunStarted
+from draw_things_control.jobs.events import CooldownStarted, JobEvent, RunFinished, RunOutput, RunStarted, RunStatus
 
 
 class WorkerStatus:
@@ -21,6 +21,9 @@ class WorkerStatus:
         self._current_run: int | None = None
         self._current_run_started_epoch: float | None = None
         self._current_step: tuple[int, int] | None = None
+        # The succeeded run the claimed entry is between runs after, until its next run starts, a cooldown between the
+        # two included (Milestone 05); apart from _cooldown_until, the wait between two queued jobs, None while a job runs.
+        self._between_runs_after: int | None = None
 
     def entry_claimed(self) -> None:
         with self._lock:
@@ -29,6 +32,7 @@ class WorkerStatus:
     def entry_released(self) -> None:
         with self._lock:
             self._running, self._current_run, self._current_run_started_epoch, self._current_step = False, None, None, None
+            self._between_runs_after = None
 
     def cooldown_started(self, seconds: float) -> None:
         with self._lock:
@@ -45,6 +49,7 @@ class WorkerStatus:
         if isinstance(event, RunStarted):
             with self._lock:
                 self._current_run, self._current_run_started_epoch, self._current_step = event.number, self._clock().timestamp(), None
+                self._between_runs_after = None
         elif isinstance(event, RunOutput):
             if event.progress is not None:
                 with self._lock:
@@ -52,6 +57,12 @@ class WorkerStatus:
         elif isinstance(event, RunFinished):
             with self._lock:
                 self._current_run, self._current_run_started_epoch, self._current_step = None, None, None
+                self._between_runs_after = event.number if event.status == RunStatus.SUCCEEDED else None
+        elif isinstance(event, CooldownStarted):
+            # Kept past CooldownEnded: a park that ends the cooldown ends it before the entry is marked parked, and a
+            # front end reading the entry in between still needs the run.
+            with self._lock:
+                self._between_runs_after = event.after_run
 
     def state(self) -> str:
         """``running``, ``cooling_down``, or ``idle``."""
@@ -78,3 +89,10 @@ class WorkerStatus:
         arrives, between runs, or when nothing is claimed."""
         with self._lock:
             return self._current_step
+
+    def between_runs_after(self) -> int | None:
+        """The succeeded run the claimed entry is between runs after, a cooldown included, until its next run starts;
+        None while a run is going, before the first, or when nothing is claimed (Milestone 05: a front end words a
+        park's outcome from it, since a park between two runs takes effect after that run)."""
+        with self._lock:
+            return self._between_runs_after

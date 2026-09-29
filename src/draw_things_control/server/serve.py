@@ -28,6 +28,7 @@ from draw_things_control.server.grpc_auth import TokenAuthInterceptor
 from draw_things_control.server.grpc_service import MonitorServicer
 from draw_things_control.server.host_check import is_loopback_host
 from draw_things_control.server.token_file import load_or_create_token
+from draw_things_control.services.queue_hold import hold_text
 from draw_things_control.services.queue_host import QueueHost
 from draw_things_control.services.toolkit import Toolkit
 
@@ -119,6 +120,9 @@ def run(paths: ProjectPaths, global_config: GlobalConfig, toolkit: Toolkit, opti
         assert host.store is not None and host.worker is not None
         context = ServerContext(paths=paths, global_config=global_config, store=host.store, worker=host.worker, executor=executor, executable=options.executable, token=token, bound_host=options.host, bound_port=options.port, grpc_port=options.grpc_port, allow_write=options.allow_write, event_backlog=backlog)
         logger.info("dtc serve listening on http://{}:{} (gRPC on {}); token file: {}", options.host, options.port, options.grpc_port, paths.server_token)
+        hold = host.worker.hold_state()
+        if hold.held:
+            logger.info("{}; 'dtc queue release' starts it", hold_text(hold))
         asyncio.run(_serve_async(context, options, host))
     finally:
         # A backstop for a non-signal exit (an exception _serve_async's own cleanup did not already handle):

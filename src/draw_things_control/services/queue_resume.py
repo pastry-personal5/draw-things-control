@@ -1,5 +1,5 @@
-"""Resolve and accept a resume: a new queue entry that continues an interrupted, failed, or cancelled one from its
-last succeeded run, with the original seed and run numbering."""
+"""Resolve and accept a resume: a new queue entry that continues an interrupted, failed, cancelled, or parked one from
+its last succeeded run, with the original seed and run numbering. A resume never releases the queue's hold."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from draw_things_control.state.ids import execution_id_text
 from draw_things_control.state.queue import NewQueueEntry, QueueRow, QueueState
 from draw_things_control.state.store import Store
 
-RESUMABLE_STATES = (QueueState.INTERRUPTED, QueueState.FAILED, QueueState.CANCELLED)
+RESUMABLE_STATES = (QueueState.INTERRUPTED, QueueState.FAILED, QueueState.CANCELLED, QueueState.PARKED)
 
 
 class ResumeRefusedError(InputError):

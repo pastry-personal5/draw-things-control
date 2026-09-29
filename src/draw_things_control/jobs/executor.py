@@ -16,7 +16,7 @@ from draw_things_control.core.arguments import redact_command
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.cooldown import CooldownWait
 from draw_things_control.core.errors import InputError
-from draw_things_control.core.exit_codes import exit_code_for_signal, signal_for_exit_code
+from draw_things_control.core.exit_codes import EXIT_PARKED, exit_code_for_signal, signal_for_exit_code
 from draw_things_control.core.process.output import MessageCallback, ProcessMessage
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
@@ -34,7 +34,8 @@ from draw_things_control.jobs.text import report_ignored_config, seconds_text
 if TYPE_CHECKING:
     from draw_things_control.jobs.inputs.resize import TemporaryInput
 
-# Waits up to the given seconds between runs and returns the seconds actually waited.
+# Waits up to the given seconds between runs and returns the seconds actually waited. It may return early; the executor
+# waits again, for the rest, only when a park ended the wait and was withdrawn before it took effect.
 Cooldown = Callable[[float], float]
 
 
@@ -79,6 +80,10 @@ class JobOutcome:
     total_runs: int
     manifest: Path | None
     log: Path | None
+
+
+class _ParkedInCooldown:
+    """What ``_cool_down`` returns when a park ended the wait and took effect."""
 
 
 @dataclass
@@ -149,6 +154,20 @@ class JobExecutor:
         lands after the last run has finished changes nothing, so the job still ends as it did.
         """
         return self._token.cancel(received_signal)
+
+    def park(self) -> bool:
+        """Ask the running job to end once its current run finishes; safe from any thread (Milestone 05).
+
+        Returns False, and does nothing, when no job is running. The run in progress finishes, its last frame
+        included; after a succeeded run that is not the last, the job ends ``parked``. A cooldown between runs ends
+        at once, and the job parks. On the last run the job simply finishes. A failed run fails the job, as always.
+        """
+        return self._token.park()
+
+    def unpark(self, commit: Callable[[], object] | None = None) -> bool:
+        """Withdraw a park; safe from any thread. False only once the park has taken effect, when the job ends parked.
+        ``commit`` runs first, with no run boundary able to pass: if it raises, the park stands as it was."""
+        return self._token.unpark(commit)
 
     def _emit(self, event: JobEvent) -> None:
         self._log_writer(event)
@@ -225,6 +244,10 @@ class JobExecutor:
             if self._token.requested is not None:
                 exit_code = self._stop(manifest, self._token.requested, f"before run {number}/{total}")
                 break
+            # A park that landed after a full cooldown, just before this run: only after a run this execution made.
+            if number > start and self._token.take_park():
+                exit_code = self._park(manifest, number - 1, total)
+                break
             run, record, status, exit_code = self._run_step(chain, number, pair, current_input)
             if status != RunStatus.SUCCEEDED:
                 manifest.status = JobStatus.INTERRUPTED if status == RunStatus.INTERRUPTED else JobStatus.FAILED
@@ -233,7 +256,18 @@ class JobExecutor:
             completed += 1
             chain.records.save()
             current_input = run.last_frame or run.output
-            stop = self._wait_between_runs(chain, record, number)
+            # The park takes effect only here, after the run's finish (its last frame, measuring) and RunFinished, and
+            # never after the last run. A stop that landed first wins: until the park is taken, a cancel stops the job.
+            # The park count is read before the check, so a park that lands after it, and is then withdrawn, still
+            # reads as a park to the cooldown, which waits out the rest.
+            parks = self._token.park_count
+            if number < total and self._token.requested is None and self._token.take_park():
+                exit_code = self._park(manifest, number, total)
+                break
+            stop = self._wait_between_runs(chain, record, number, parks)
+            if isinstance(stop, _ParkedInCooldown):
+                exit_code = self._park(manifest, number, total)
+                break
             if stop is not None:
                 exit_code = self._stop(manifest, *stop)
                 break
@@ -266,12 +300,13 @@ class JobExecutor:
             chain.temporary_input.cleanup()
         return run, record, status, exit_code
 
-    def _wait_between_runs(self, chain: _Chain, record: RunRecord, number: int) -> tuple[signal.Signals, str] | None:
-        """The cooldown after run ``number``; the signal that cut it short and where, or None."""
+    def _wait_between_runs(self, chain: _Chain, record: RunRecord, number: int, parks: int) -> tuple[signal.Signals, str] | _ParkedInCooldown | None:
+        """The cooldown after run ``number``; the signal that cut it short and where, a park that ended it, or None.
+        ``parks`` is the park count read before the run boundary's park check."""
         if number >= chain.total or self._token.requested is not None:
             return None
         wait = chain.job.cooldown.wait_after(record.seconds or 0.0)
-        return self._cool_down(chain, record, number + 1, wait) if wait.seconds > 0 else None
+        return self._cool_down(chain, record, number + 1, wait, parks) if wait.seconds > 0 else None
 
     def _start_run(self, chain: _Chain, run: PlannedRun) -> RunRecord:
         """Record ``run`` in the manifest and announce it; return its record."""
@@ -293,8 +328,9 @@ class JobExecutor:
         self._emit(run_started_event(record, run, chain.total))
         return record
 
-    def _cool_down(self, chain: _Chain, record: RunRecord, next_run: int, wait: CooldownWait) -> tuple[signal.Signals, str] | None:
-        """Wait ``wait`` after ``record``'s run; return the signal that cut it short and where, or None."""
+    def _cool_down(self, chain: _Chain, record: RunRecord, next_run: int, wait: CooldownWait, parks: int) -> tuple[signal.Signals, str] | _ParkedInCooldown | None:
+        """Wait ``wait`` after ``record``'s run; return the signal that cut it short and where, a park that ended it, or None.
+        ``parks`` is the park count from before the run boundary: a park asked since then counts as one during the wait."""
         policy, seconds, run_seconds = chain.job.cooldown, wait.seconds, record.seconds or 0.0
         until = (self._clock().astimezone() + timedelta(seconds=seconds)).strftime("%H:%M:%S")
         ratio = policy.ratio if policy.mode == "auto" else None
@@ -303,11 +339,25 @@ class JobExecutor:
         record.cooldown_after_seconds = 0.0
         chain.records.save()
         waited = self._cooldown(seconds)
+        parked = False
+        # A wait ends early for a stop or a park. A park withdrawn before it was taken leaves the rest to wait out, so a
+        # job that runs on still gets its full cooldown. A wait no park was asked during is never waited again, however
+        # little of it the cooldown waited.
+        while waited < seconds and self._token.requested is None:
+            if self._token.take_park():
+                parked = True
+                break
+            if self._token.park_count == parks:
+                break
+            parks = self._token.park_count
+            waited += self._cooldown(seconds - waited)
         # Only a wait that ended early was cut short; a signal after a full wait stops the job before the next run.
-        stopped = self._token.requested if waited < seconds else None
+        stopped = self._token.requested if waited < seconds and not parked else None
         record.cooldown_after_seconds = round(waited, 1)
         chain.records.save()
-        self._emit(CooldownEnded(at=self._timestamp(), waited_seconds=record.cooldown_after_seconds, cut_short=stopped is not None))
+        self._emit(CooldownEnded(at=self._timestamp(), waited_seconds=record.cooldown_after_seconds, cut_short=stopped is not None or parked))
+        if parked:
+            return _ParkedInCooldown()
         if stopped is not None:
             return stopped, f"during the cooldown before run {next_run}/{chain.total} (waited {seconds_text(round(waited, 1))} of {seconds_text(seconds)})"
         return None
@@ -318,6 +368,13 @@ class JobExecutor:
         logger.warning("Job stopped by {} {}", received_signal.name, where)
         manifest.status = JobStatus.INTERRUPTED
         return exit_code_for_signal(received_signal)
+
+    @staticmethod
+    def _park(manifest: JobManifest, number: int, total: int) -> int:
+        """Mark the job parked after run ``number`` of the chain; return its exit code."""
+        logger.info("Job parked after run {}/{}", number, total)
+        manifest.status = JobStatus.PARKED
+        return EXIT_PARKED
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
         self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames))

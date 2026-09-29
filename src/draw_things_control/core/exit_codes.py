@@ -8,6 +8,10 @@ from draw_things_control.core.errors import DtcError
 
 EXIT_STATE_UNAVAILABLE = 1
 EXIT_INVALID_INPUT = 2
+# A job that parked (Milestone 05): it ended at a run boundary, keeping every run it finished, and can be resumed. Not a
+# failure, and not the whole job, so ``dtc queue add --wait && next-step`` does not go on. The execution's own exit
+# code can still be 3 from a failed run whose draw-things-cli exited 3; its status tells the two apart.
+EXIT_PARKED = 3
 # sysexits.h EX_TEMPFAIL: another run holds the lock, so try again later.
 EXIT_BUSY = 75
 EXIT_TIMEOUT = 124
@@ -63,6 +67,7 @@ EXIT_CODES_BY_QUEUE_STATE = {
     "succeeded": 0,
     "cancelled": exit_code_for_signal(signal.SIGINT),
     "interrupted": exit_code_for_signal(signal.SIGTERM),
+    "parked": EXIT_PARKED,
     # Shares exit 1 with EXIT_STATE_UNAVAILABLE above, but for a different reason: the job itself failed, not that
     # the state store could not be reached.
     "failed": 1,

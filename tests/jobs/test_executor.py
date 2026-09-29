@@ -933,3 +933,203 @@ class JobExecutorTests(JobTestCase):
         outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, resume=resume)
         self.assertEqual(outcome.completed_runs, 4)
         self.assertFalse(any("resized" in str(arguments.image) for arguments, _t, _g in self.calls))
+
+    # Park (Milestone 05): the job ends at a run boundary, keeping every run it finished.
+
+    def park_during_run(self, number: int, *, then: Callable[[], object] | None = None) -> None:
+        """Park the job from inside run ``number`` (as another thread would, while draw-things-cli runs), then call ``then``."""
+        create = self.create_runner
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
+            runner = create(arguments, timeout, grace, on_message, on_start)
+            if len(self.calls) == number:
+                self.assertTrue(self.service.park())
+                if then is not None:
+                    then()
+            return runner
+
+        self.service.knobs.runner_factory = factory
+
+    def test_a_park_during_a_run_ends_the_job_parked_after_that_run(self) -> None:
+        waits = self.fake_cooldown()
+        self.park_during_run(3)
+        outcome, events = self.observed(self.job(cooldown={"mode": "manual", "seconds": 60}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls)), (3, 3, 3))
+        # Run 3 had no cooldown after it: only runs 1 and 2 waited.
+        self.assertEqual(len(waits), 2)
+        manifest = self.manifest(outcome)
+        self.assertEqual((manifest["status"], [run["status"] for run in manifest["runs"]]), ("parked", ["succeeded"] * 3))
+        finished = events[-1]
+        self.assertIsInstance(finished, JobFinished)
+        self.assertEqual((finished.status, finished.exit_code, finished.signal, finished.completed_runs), ("parked", 3, None, 3))
+        self.assertIn("Job parked after run 3/5", saved_log(outcome).read_text(encoding="utf-8"))
+
+    def test_a_parked_image_to_video_run_keeps_its_last_frame(self) -> None:
+        self.park_during_run(2)
+        outcome, events = self.observed(self.job(cooldown={"mode": "off"}))
+        self.assertEqual(outcome.completed_runs, 2)
+        # Run 2's frame was extracted, and both RunFinished and the manifest name it.
+        self.assertEqual(len(self.extracted), 2)
+        video, frame = self.extracted[1]
+        self.assertTrue(video.exists() and frame.exists())
+        run_2 = [event for event in events if isinstance(event, RunFinished)][1]
+        self.assertEqual(run_2.last_frame, frame.name)
+        self.assertEqual(self.manifest(outcome)["runs"][1]["last_frame"], frame.name)
+
+    def test_a_park_requested_during_the_extraction_waits_for_it(self) -> None:
+        def extract(video: Path, png: Path) -> None:
+            if len(self.extracted) == 1:
+                self.assertTrue(self.service.park())
+            self.extract(video, png)
+
+        self.service.knobs.frame_extractor = extract
+        outcome = self.run_job(self.job(cooldown={"mode": "off"}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.extracted)), (3, 2, 2))
+        self.assertTrue(self.extracted[1][1].exists())
+        self.assertEqual(self.manifest(outcome)["status"], "parked")
+
+    def test_a_failed_extraction_with_a_park_fails_the_run_and_the_job(self) -> None:
+        def extract(video: Path, png: Path) -> None:
+            self.assertTrue(self.service.park())
+            raise ValueError("no frame")
+
+        self.service.knobs.frame_extractor = extract
+        outcome, events = self.observed(self.job(cooldown={"mode": "off"}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (1, 0))
+        run_finished = next(event for event in events if isinstance(event, RunFinished))
+        self.assertEqual((run_finished.status, events[-1].status), ("failed", "failed"))
+
+    def test_a_park_during_the_last_run_lets_the_job_succeed(self) -> None:
+        self.park_during_run(5)
+        outcome, events = self.observed(self.job(cooldown={"mode": "off"}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.extracted)), (0, 5, 5))
+        self.assertEqual(events[-1].status, "succeeded")
+
+    def test_a_parking_run_that_fails_ends_the_job_failed(self) -> None:
+        self.results[2] = FakeResult(return_code=3)
+        self.park_during_run(2)
+        outcome = self.run_job(self.job(cooldown={"mode": "off"}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (3, 1))
+        self.assertEqual(self.manifest(outcome)["status"], "failed")
+
+    def test_a_park_during_a_cooldown_ends_it_at_once(self) -> None:
+        waits: list[float] = []
+
+        def cooldown(seconds: float) -> float:
+            waits.append(seconds)
+            self.assertTrue(self.service.park())
+            return 12.0
+
+        self.cooldown = cooldown
+        outcome, events = self.observed(self.cooldown_job(cooldown={"mode": "manual", "seconds": 900}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls), waits), (3, 1, 1, [900.0]))
+        ended = next(event for event in events if isinstance(event, CooldownEnded))
+        self.assertEqual((ended.cut_short, ended.waited_seconds), (True, 12.0))
+        self.assertEqual(self.manifest(outcome)["status"], "parked")
+        log = saved_log(outcome).read_text(encoding="utf-8")
+        self.assertIn("Job parked after run 1/3", log)
+        self.assertNotIn("Cooldown finished", log)
+
+    def test_a_park_after_a_full_cooldown_takes_effect_before_the_next_run(self) -> None:
+        def cooldown(seconds: float) -> float:
+            self.service.park()
+            return seconds
+
+        self.cooldown = cooldown
+        outcome = self.run_job(self.cooldown_job(cooldown={"mode": "manual", "seconds": 90}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls)), (3, 1, 1))
+        self.assertIn("Job parked after run 1/3", saved_log(outcome).read_text(encoding="utf-8"))
+
+    def test_an_unpark_before_the_run_ends_lets_the_job_run_on(self) -> None:
+        waits = self.fake_cooldown()
+        self.park_during_run(2, then=lambda: self.assertTrue(self.service.unpark()))
+        outcome = self.run_job(self.cooldown_job(cooldown={"mode": "manual", "seconds": 900}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 3))
+        self.assertEqual([seconds for seconds, _runs, _saved in waits], [900.0, 900.0])
+
+    def test_a_withdrawn_park_leaves_the_rest_of_its_cooldown_to_wait(self) -> None:
+        waits: list[float] = []
+
+        def cooldown(seconds: float) -> float:
+            waits.append(seconds)
+            if len(waits) == 1:
+                # The park ended the wait after 300 s, and was withdrawn before the executor took it.
+                self.service.park()
+                self.service.unpark()
+                return 300.0
+            return seconds
+
+        self.cooldown = cooldown
+        outcome, events = self.observed(self.cooldown_job(run_count=2, cooldown={"mode": "manual", "seconds": 900}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))
+        self.assertEqual(waits, [900.0, 600.0])
+        ended = next(event for event in events if isinstance(event, CooldownEnded))
+        self.assertEqual((ended.cut_short, ended.waited_seconds), (False, 900.0))
+
+    def test_a_cooldown_that_ends_early_with_no_park_is_not_waited_again(self) -> None:
+        waits: list[float] = []
+
+        def cooldown(seconds: float) -> float:
+            waits.append(seconds)
+            if len(waits) > 5:
+                raise AssertionError("the executor waits the same cooldown again and again")
+            return 0.0
+
+        self.cooldown = cooldown
+        outcome = self.run_job(self.cooldown_job(run_count=2, cooldown={"mode": "manual", "seconds": 900}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))
+        self.assertEqual(waits, [900.0])
+
+    def test_an_unpark_after_the_park_took_effect_is_refused(self) -> None:
+        unparked: list[bool] = []
+
+        def observer(event: object) -> None:
+            if isinstance(event, JobFinished):
+                unparked.append(self.service.unpark())
+
+        self.park_during_run(1)
+        outcome = run_job_with(self.service, self.job(cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=observer)
+        self.assertEqual((outcome.exit_code, unparked), (3, [False]))
+        # Still refused once the job has ended, until the next one begins.
+        self.assertFalse(self.service.unpark())
+
+    def test_a_cancel_of_a_parking_job_stops_it_at_once(self) -> None:
+        runners: list[BlockingRunner] = []
+
+        def factory(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> BlockingRunner:
+            runners.append(BlockingRunner(arguments))
+            return runners[-1]
+
+        self.service.knobs.runner_factory = factory
+        thread, result = self.start_in_thread(self.job())
+        self.wait_for_event(RunStarted)
+        self.assertTrue(self.service.park())
+        self.assertTrue(self.service.cancel())
+        thread.join(10)
+        self.assertEqual((result["outcome"].exit_code, result["outcome"].completed_runs), (143, 0))
+        self.assertEqual(self.events[-1].status, "interrupted")
+
+    def test_a_cancel_between_the_run_and_the_park_commit_wins(self) -> None:
+        def observer(event: object) -> None:
+            if isinstance(event, RunFinished) and event.number == 2:
+                self.service.cancel()
+
+        self.park_during_run(2)
+        outcome = run_job_with(self.service, self.job(cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=observer)
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (143, 2))
+        self.assertEqual(self.manifest(outcome)["status"], "interrupted")
+
+    def test_a_park_before_a_resume_runs_parks_after_the_first_run_it_makes(self) -> None:
+        def observer(event: object) -> None:
+            if isinstance(event, JobStarted):
+                self.assertTrue(self.service.park())
+
+        resume = ResumePoint(first_run=3, input=self.output_directory / "last.png", seed=1, resumes_execution="E0001")
+        outcome = run_job_with(self.service, self.job(cooldown={"mode": "off"}), executable="draw-things-cli", shutdown_grace=2, write_records=True, resume=resume, observer=observer)
+        self.assertEqual((outcome.exit_code, outcome.completed_runs, len(self.calls)), (3, 1, 1))
+        self.assertIn("Job parked after run 3/5", saved_log(outcome).read_text(encoding="utf-8"))
+
+    def test_park_with_no_job_running_does_nothing(self) -> None:
+        self.assertFalse(self.service.park())
+        outcome = self.run_job(self.job(cooldown={"mode": "off"}))
+        self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 5))

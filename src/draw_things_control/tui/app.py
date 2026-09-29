@@ -15,13 +15,15 @@ from draw_things_control.core.client_config import job_argument
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
+from draw_things_control.services.queue_hold import HoldState, hold_outcome_text
+from draw_things_control.services.queue_park_text import park_outcome_text, unpark_outcome_text
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.tui.feed import QueueFeed
 from draw_things_control.tui.live_run import LiveRun, PastRun, latest_past_run
 from draw_things_control.tui.panes.cli_output import LOW_MARKER
 from draw_things_control.tui.preferences import VerboseLevel, load_verbose_level, save_verbose_level, wants_output
-from draw_things_control.tui.queue_client import ApiError, cancel, list_queue, resume, show, submit
+from draw_things_control.tui.queue_client import ApiError, cancel, hold, list_queue, park, release, resume, show, submit, unpark
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.signals import QuitPress, SignalGuard
 from draw_things_control.tui.text.queue import queue_entry_detail_text, queue_listing_text
@@ -73,7 +75,12 @@ class DrawThingsApp(App[None]):
         # The queue entry a live JobStarted, when it arrives, belongs to: set from queue_entry_changed's own
         # ordering guarantee (it always precedes that entry's JobStarted), read once and then cleared.
         self.pending_queue_id: str | None = None
+        # A park reservation made or withdrawn for pending_queue_id before its JobStarted: applied then, and cleared.
+        self.pending_park_requested = False
         self.feed_connected = False
+        # The queue's hold (Milestone 05), from every queue read: the API's while the server is up, the store's while
+        # it is down. Shown in the Queue widget's title and, while no job runs, the Status widget.
+        self.queue_hold = HoldState()
         # How much of draw-things-cli's output the TUI streams and shows (Milestone 04); read once, changed by /verbose.
         self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
         # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
@@ -204,27 +211,42 @@ class DrawThingsApp(App[None]):
         except ApiError as error:
             self.say(error.text, "red")
             return
-        self.say(f"{entry['queue_id']} queued: {Path(entry['job_path']).name}")
+        self.say(f"{entry['queue_id']} queued: {Path(entry['job_path']).name}{self._held_note()}")
         self.refresh_queue()
+
+    def _held_note(self) -> str:
+        """What a submission or a resume made while the queue is held adds to its message."""
+        return "; the queue is held ('/queue release' starts it)" if self.queue_hold.held else ""
 
     @work(exclusive=True, group="queue-refresh")
     async def refresh_queue(self) -> None:
         try:
-            entries = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
+            entries, queue_hold = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
         except ApiError:
             return
         if self.main is not None:
             self.main.queue.show_entries(entries)
+        self.set_queue_hold(queue_hold)
+
+    def set_queue_hold(self, queue_hold: HoldState) -> None:
+        """Keep the hold, from the API or the store's fallback, and show it at once. The title is set every time, since
+        a read can land before the main screen is mounted; the Status widget only when the hold changed."""
+        changed = queue_hold != self.queue_hold
+        self.queue_hold = queue_hold
+        if self.main is not None:
+            self.main.queue.show_hold(queue_hold)
+            if changed:
+                self.show_status()
 
     @work(exclusive=True, group="queue-listing")
     async def show_queue(self) -> None:
         """/get queue: the entries in Messages, not only the widget's own rows."""
         try:
-            entries = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
+            entries, queue_hold = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
         except ApiError as error:
             self.say(error.text, "red")
             return
-        self.say(queue_listing_text(entries))
+        self.say(queue_listing_text(entries, queue_hold))
 
     @work(exclusive=True, group="cancel")
     async def cancel_entry(self, queue_id: str) -> None:
@@ -247,7 +269,67 @@ class DrawThingsApp(App[None]):
         except ApiError as error:
             self.say(error.text, "red")
             return
-        self.say(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}")
+        self.say(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}{self._held_note()}")
+        self.refresh_queue()
+
+    @work(exclusive=True, group="park")
+    async def park_entry(self, queue_id: str) -> None:
+        """/queue park, /park, and ``p``: no confirmation, as /queue unpark undoes it."""
+        try:
+            entry = await park(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_parking(queue_id, entry["state"] == "running")
+        self.set_queue_hold(HoldState.from_body(entry))
+        self.say(park_outcome_text(entry, "/queue release"))
+        self.refresh_queue()
+
+    @work(exclusive=True, group="park")
+    async def unpark_entry(self, queue_id: str) -> None:
+        """/queue unpark, /unpark, and ``u``."""
+        try:
+            entry = await unpark(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_parking(queue_id, False)
+        self.set_queue_hold(HoldState.from_body(entry))
+        self.say(unpark_outcome_text(entry))
+        self.refresh_queue()
+
+    def set_parking(self, queue_id: str, parking: bool) -> None:
+        """A park reservation made or withdrawn, by this TUI (confirmed by the API) or anywhere else (the feed): shown at
+        once at every verbose level, as a stop is. For the entry claimed but not yet started, it is kept until its
+        JobStarted builds the live run."""
+        if self.live is not None and self.live.queue_id == queue_id and not self.live.ended:
+            self.live.park_requested = parking
+            self.show_status()
+        elif self.pending_queue_id == queue_id:
+            self.pending_park_requested = parking
+
+    @work(exclusive=True, group="hold")
+    async def hold_queue(self) -> None:
+        """/queue hold and /hold."""
+        try:
+            body = await hold(self.server_url, self.token_file, self.http_transport)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_queue_hold(HoldState.from_body(body))
+        self.say(hold_outcome_text(body))
+        self.refresh_queue()
+
+    @work(exclusive=True, group="hold")
+    async def release_queue(self) -> None:
+        """/queue release and /release."""
+        try:
+            body = await release(self.server_url, self.token_file, self.http_transport)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_queue_hold(HoldState.from_body(body))
+        self.say("Queue released" if body.get("changed") else "The queue is not held")
         self.refresh_queue()
 
     @work(exclusive=True, group="queue-detail")

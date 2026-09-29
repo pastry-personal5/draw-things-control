@@ -10,6 +10,7 @@ from draw_things_control.jobs.definition import JobDefinition, PromptPair
 from draw_things_control.jobs.planning import JobPreview
 from draw_things_control.services.input_listing import InputImage
 from draw_things_control.services.job_catalog import JobRow
+from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.state.audit import AuditRow
 from draw_things_control.state.execution_rows import ExecutionRow, RunRow
 from draw_things_control.state.ids import execution_id_text, queue_id_text
@@ -147,7 +148,8 @@ def _run_output(execution: ExecutionRow, run: RunRow) -> dict[str, Any]:
     }
 
 
-def queue_entry(row: QueueRow) -> dict[str, Any]:
+def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any]:
+    """``park_requested`` is the worker's (Milestone 05), since a park reservation is kept in memory, not in the row."""
     return {
         "queue_id": row.label,
         "job_path": row.job_path,
@@ -163,4 +165,11 @@ def queue_entry(row: QueueRow) -> dict[str, Any]:
         "error": row.error,
         "total_runs": row.total_runs,
         "succeeded": row.succeeded,
+        "park_requested": park_requested,
     }
+
+
+def queue_hold(hold: HoldState) -> dict[str, Any]:
+    """The queue's hold (Milestone 05), beside the entries of ``GET /queue`` and ``GET /queue/{id}``, and the response
+    of ``POST /queue/hold`` and ``/queue/release``."""
+    return {"held": hold.held, "held_since": hold.since, "held_by": hold.by}

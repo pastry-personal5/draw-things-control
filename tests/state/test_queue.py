@@ -134,3 +134,92 @@ class SchemaSixMigrationTests(unittest.TestCase):
         assert linked is not None and never_started is not None
         self.assertEqual(linked.total_runs, 4)
         self.assertIsNone(never_started.total_runs)
+
+
+OLD = "2026-09-01T09:00:00+00:00"
+
+
+class ParkedTests(QueueCase):
+    """Milestone 05: a parked entry is finished, and retention keeps it, and its execution, until a resume of it has a
+    succeeded run."""
+
+    def finished(self, state: QueueState, *, resumes: int | None = None, succeeded: int = 0, failed: bool = False, ran: bool = True) -> tuple[int, int | None]:
+        """A queue entry finished long before retention's cutoff, with its execution (unless ``ran`` is off); returns
+        the queue number and the execution number."""
+        new = NewQueueEntry(job_path="/jobs/walk.yaml", job_text="name: walk\n", config_file="base.yaml", config_text="model: m.ckpt\n", input_directory="/in", output_directory="/out", cooldown_default=None, settings=ExecutionSettings(output_directory="/out"), submitted_at=OLD, total_runs=5, resumes=resumes)
+        entry = self.store.queue.submit(new)
+        execution_number = None
+        if ran:
+            executions = self.store.executions
+            execution_id = executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at=OLD, total_runs=5, settings=ExecutionSettings(output_directory="/out")))
+            for number in range(1, succeeded + 2 if failed else succeeded + 1):
+                executions.start_run(execution_id, number, NewRun(pair="p", positive="text", started_at=OLD))
+                executions.finish_run(execution_id, number, status="failed" if number > succeeded else "succeeded", exit_code=0, seconds=1.0, output="a.mov", last_frame=None)
+            executions.finish(execution_id, status=str(state), exit_code=0, signal=None, finished_at=OLD)
+            execution_number = executions.number_of(execution_id)
+            assert execution_number is not None
+            self.store.queue.link_execution(entry.id, execution_number)
+        self.store.queue.finish(entry.id, state=state, finished_at=OLD)
+        return entry.queue_number, execution_number
+
+    def exists(self, queue_number: int, execution_number: int | None) -> tuple[bool, bool]:
+        return self.store.queue.by_number(queue_number) is not None, execution_number is not None and self.store.executions.by_number(execution_number) is not None
+
+    def test_a_parked_entry_is_finished_and_listed_with_the_finished_ones(self) -> None:
+        queue_number, _ = self.finished(QueueState.PARKED, succeeded=3)
+        [row] = self.store.queue.list_finished(limit=50, offset=0)
+        self.assertEqual((row.queue_number, row.state, row.finished, row.succeeded), (queue_number, "parked", True, 3))
+        self.assertEqual([row.queue_number for row in self.store.queue.list_finished(limit=50, offset=0, state="parked")], [queue_number])
+
+    def test_retention_keeps_a_parked_entry_and_its_execution_until_a_resume_succeeds_a_run(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        other = self.finished(QueueState.INTERRUPTED, succeeded=3)
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (True, True))
+        self.assertEqual(self.exists(*other), (False, False))
+        # A resume cancelled before it ran, and a resume of that whose first run failed: the chain still walks back to
+        # the parked entry, so the resumes between are kept with it.
+        cancelled = self.finished(QueueState.CANCELLED, resumes=parked[0], ran=False)
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (True, True))
+        self.assertTrue(self.exists(*cancelled)[0])
+        failed = self.finished(QueueState.FAILED, resumes=cancelled[0], failed=True)
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (True, True))
+        self.assertTrue(self.exists(*cancelled)[0])
+        self.assertEqual(self.exists(*failed), (True, True))
+        # A succeeded run further down the chain, not only in the parked entry's own resume, lets them all go, in the
+        # same prune as the resume itself.
+        resumed = self.finished(QueueState.SUCCEEDED, resumes=failed[0], succeeded=2)
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (False, False))
+        self.assertFalse(self.exists(*cancelled)[0])
+        self.assertEqual(self.exists(*failed), (False, False))
+        self.assertEqual(self.exists(*resumed), (False, False))
+
+    def test_a_parked_resume_keeps_its_own_chain_once_its_ancestor_is_let_go(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        # A resume that itself parked has a succeeded run, so it lets its ancestor go, and is kept in its place.
+        parked_again = self.finished(QueueState.PARKED, resumes=parked[0], succeeded=1)
+        failed = self.finished(QueueState.FAILED, resumes=parked_again[0], failed=True)
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (False, False))
+        self.assertEqual(self.exists(*parked_again), (True, True))
+        self.assertEqual(self.exists(*failed), (True, True))
+
+    def test_a_recent_resume_with_a_succeeded_run_lets_an_old_parked_entry_go(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        new = NewQueueEntry(job_path="/jobs/walk.yaml", job_text="name: walk\n", config_file="base.yaml", config_text="model: m.ckpt\n", input_directory="/in", output_directory="/out", cooldown_default=None, settings=ExecutionSettings(output_directory="/out"), submitted_at="2026-09-29T09:00:00+00:00", total_runs=5, resumes=parked[0])
+        running = self.store.queue.submit(new)
+        self.store.queue.link_execution(running.id, self.start_execution(total_runs=5, first_run=4, succeeded=1))
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (False, False))
+        self.assertIsNotNone(self.store.queue.get(running.id))
+
+
+class SettingsTests(QueueCase):
+    def test_delete_removes_a_key_and_a_missing_key_is_no_error(self) -> None:
+        self.store.settings.set("queue_hold", "{}")
+        self.store.settings.delete("queue_hold")
+        self.assertIsNone(self.store.settings.get("queue_hold"))
+        self.store.settings.delete("queue_hold")

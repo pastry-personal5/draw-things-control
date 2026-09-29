@@ -18,6 +18,7 @@ from loguru import logger
 from draw_things_control.cli.generated import monitor_pb2, monitor_pb2_grpc
 from draw_things_control.core.exit_codes import EXIT_CODES_BY_QUEUE_STATE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
 from draw_things_control.core.network import grpc_target
+from draw_things_control.services.queue_park_text import park_point
 from draw_things_control.state.queue import FINISHED_STATES
 
 # Whether a state is final is state/queue.py's own FINISHED_STATES, not EXIT_CODES_BY_QUEUE_STATE (which exists to
@@ -81,8 +82,22 @@ def wait_for_entry(client: "httpx.Client", queue_id: str, grpc_stub_factory: Cal
         return EXIT_CODES_BY_QUEUE_STATE["cancelled"]
     except grpc.aio.AioRpcError as error:
         return _exit_for_rpc_error(queue_id, target, error)
-    _print_outcome(queue_id, state, error, last_run, total_runs)
+    parked_after = _parked_after(client, queue_id, last_run) if state == "parked" else None
+    _print_outcome(queue_id, state, error, last_run, total_runs, parked_after)
     return EXIT_CODES_BY_QUEUE_STATE.get(state, 1)
+
+
+def _parked_after(client: "httpx.Client", queue_id: str, last_run: int | None) -> int | None:
+    """The run a parked entry parked after: its stored succeeded count (``GET /v1/queue/{id}``), since a run shorter
+    than a poll is never seen as a snapshot's current run. The last run seen when that read fails."""
+    import httpx
+
+    try:
+        response = client.get(f"/v1/queue/{queue_id}")
+        response.raise_for_status()
+        return int(response.json()["succeeded"])
+    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        return last_run
 
 
 def _exit_for_rpc_error(queue_id: str, target: str, error: "grpc.aio.AioRpcError") -> int:
@@ -119,6 +134,8 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
     last_printed_run: int | None = None
     last_run: int | None = None
     total_runs: int | None = None
+    parking = False
+    told_held = False
     try:
         async for snapshot in call:
             if snapshot.HasField("total_runs"):
@@ -130,12 +147,35 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
                 last_printed_run = last_run = snapshot.current_run
             if snapshot.state in _FINISHED_STATE_VALUES:
                 return snapshot.state, snapshot.error if snapshot.HasField("error") else None, last_run, total_runs
+            # Milestone 05: a park reservation made or withdrawn, from anywhere, and a hold its queued entry waits behind.
+            if snapshot.state == "running" and snapshot.park_requested != parking:
+                parking = snapshot.park_requested
+                typer.echo(_parking_text(queue_id, parking, last_run, total_runs))
+            if snapshot.state == "queued" and snapshot.queue_held and not told_held:
+                told_held = True
+                typer.echo(f"{queue_id} waits: the queue is held ('dtc queue release' starts it)")
         raise RuntimeError("WatchQueueEntry ended without a final state")
     finally:
         call.cancel()
 
 
-def _print_outcome(queue_id: str, state: str, error: str | None, last_run: int | None, total_runs: int | None) -> None:
+def _parking_text(queue_id: str, parking: bool, last_run: int | None, total_runs: int | None) -> str:
+    if not parking:
+        return f"{queue_id} runs on"
+    point = park_point(last_run, total_runs)
+    return f"{queue_id} parking: " + (f"it ends after {point}" if point is not None else "it is on its last run and will finish")
+
+
+def _print_outcome(queue_id: str, state: str, error: str | None, last_run: int | None, total_runs: int | None, parked_after: int | None = None) -> None:
+    if state == "parked":
+        # The last run seen start succeeded; the run it parked after, numbered in the chain, is the stored one.
+        if last_run is not None:
+            typer.echo(f"run {last_run}/{total_runs} succeeded")
+        if parked_after:
+            typer.echo(f"{queue_id} parked after run {parked_after}/{total_runs}; 'dtc queue resume {queue_id}' continues at run {parked_after + 1}")
+        else:
+            typer.echo(f"{queue_id} parked; 'dtc queue resume {queue_id}' continues at its next run")
+        return
     if state == "succeeded":
         if last_run is not None:
             typer.echo(f"run {last_run}/{total_runs} succeeded")

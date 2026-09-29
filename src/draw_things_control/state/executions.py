@@ -155,13 +155,16 @@ class ExecutionRepository:
             cursor = connection.execute("UPDATE executions SET status = 'interrupted', recovered_at = ?, finished_at = ?, finished_epoch = ? WHERE status = 'running'", (stamp, stamp, epoch(stamp)))
             return cursor.rowcount
 
-    def prune(self, cutoff: float) -> tuple[int, list[str]]:
-        """Delete executions (and their runs) finished before the epoch ``cutoff``, never a ``running`` one; return how many,
-        and the log files they named."""
-        condition = "status != 'running' AND finished_epoch IS NOT NULL AND finished_epoch < ?"
+    def prune(self, cutoff: float, *, keep: Sequence[int] = ()) -> tuple[int, list[str]]:
+        """Delete executions (and their runs) finished before the epoch ``cutoff``, never a ``running`` one, nor one
+        whose number is in ``keep`` (a parked queue entry's, Milestone 05); return how many, and the log files they named."""
+        # ``keep`` goes in as one JSON array, not a placeholder each, so no number of kept executions reaches SQLite's
+        # limit on bound values.
+        condition = "status != 'running' AND finished_epoch IS NOT NULL AND finished_epoch < ? AND (execution_number IS NULL OR execution_number NOT IN (SELECT value FROM json_each(?)))"
+        values = (cutoff, json.dumps(list(keep)))
         with self._database.transaction() as connection:
-            log_paths = [row[0] for row in connection.execute(f"SELECT log_path FROM executions WHERE {condition} AND log_path IS NOT NULL", (cutoff,))]
-            deleted = connection.execute(f"DELETE FROM executions WHERE {condition}", (cutoff,)).rowcount
+            log_paths = [row[0] for row in connection.execute(f"SELECT log_path FROM executions WHERE {condition} AND log_path IS NOT NULL", values)]
+            deleted = connection.execute(f"DELETE FROM executions WHERE {condition}", values).rowcount
         return deleted, log_paths
 
     @staticmethod

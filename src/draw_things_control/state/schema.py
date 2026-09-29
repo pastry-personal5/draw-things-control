@@ -61,7 +61,8 @@ ALTER TABLE runs ADD COLUMN output_frames INTEGER
 
 # Milestone 10: an execution ID of its own (E0012), numbered by start time for the rows already there; counters that only
 # go up, so a pruned execution's number or a retired job's is never given again; each job file name's ID (J0001); and the
-# TUI's remembered settings, such as the Job Definition widget's sort.
+# TUI's remembered settings, such as the Job Definition widget's sort. Phase 3 Milestone 5 keeps the queue's hold there
+# too, under ``queue_hold``, with no migration of its own.
 SCHEMA_V3 = """
 ALTER TABLE executions ADD COLUMN execution_number INTEGER;
 UPDATE executions SET execution_number = (SELECT COUNT(*) FROM executions AS earlier WHERE earlier.started_epoch < executions.started_epoch OR (earlier.started_epoch = executions.started_epoch AND earlier.id <= executions.id));

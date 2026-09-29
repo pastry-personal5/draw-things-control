@@ -85,8 +85,8 @@ class JobWatcher(FileSystemEventHandler):
             self._watches.clear()
         if observer is not None:
             try:
-                # Not joined: this runs on the event loop, which the observer's thread may be waiting for.
                 observer.stop()
+                observer.join()
             except Exception as error:
                 logger.warning("Cannot stop watching the job files: {}", error)
 

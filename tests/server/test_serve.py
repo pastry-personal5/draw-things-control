@@ -13,6 +13,8 @@ import sys
 import time
 import unittest
 
+from loguru import logger
+
 from draw_things_control.core.errors import InputError
 from draw_things_control.server.serve import ServeOptions, _bind_http_socket
 from draw_things_control.server.serve import run as run_server
@@ -165,6 +167,21 @@ class BindFailureTests(JobTestCase):
             taken_port = blocker.getsockname()[1]
             with self.assertRaisesRegex(InputError, "already in use"):
                 run_server(self.paths, self.global_config, Toolkit(), ServeOptions(host="127.0.0.1", port=taken_port, grpc_port=_free_port()))
+        self.assert_queued_entry_untouched()
+
+    def test_a_saved_hold_is_logged_at_startup_and_keeps_the_entry_queued(self) -> None:
+        store = Store.open(self.paths.database, mode=StoreMode.WRITE)
+        store.settings.set("queue_hold", '{"since": "2026-09-29T12:04:05+00:00", "by": "Q0007"}')
+        store.close()
+        messages: list[str] = []
+        sink = logger.add(lambda message: messages.append(str(message)), format="{message}")
+        self.addCleanup(logger.remove, sink)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            with self.assertRaises(InputError):
+                run_server(self.paths, self.global_config, Toolkit(), ServeOptions(host="127.0.0.1", port=blocker.getsockname()[1], grpc_port=_free_port()))
+        self.assertTrue(any(line.startswith("Queue held since ") and line.rstrip().endswith("(by Q0007); 'dtc queue release' starts it") for line in messages), messages)
         self.assert_queued_entry_untouched()
 
     def test_a_taken_grpc_port_is_refused_before_the_worker_starts(self) -> None:

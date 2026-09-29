@@ -90,7 +90,7 @@ class RunningJobView:
 
     def render_status(self) -> None:
         screen = self.screen
-        screen.status.show(screen.dtc.live, screen.history.other_process_running, message=screen.history.other_process_message)
+        screen.status.show(screen.dtc.live, screen.history.other_process_running, message=screen.history.other_process_message, hold=screen.dtc.queue_hold)
 
     def tick(self, *, force: bool = False) -> None:
         """Update the elapsed time, the cooldown countdown, the Status widget, and the status line. The one caller

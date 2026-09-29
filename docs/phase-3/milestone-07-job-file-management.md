@@ -102,7 +102,9 @@ check it as a write to that name would.
   `data/jobs/.backups/<name>/<timestamp>.yaml` (with a suffix when two land
   in one second). The server never prunes backups.
 - Delete moves the file to `data/jobs/.trash/<name>-<timestamp>.yaml`.
-  Nothing is permanently deleted by the server.
+  No job file is permanently deleted by the server. (Deleting an execution
+  from the history, [Milestone 06](milestone-06-delete-executions.md), is
+  final.)
 - Replace and delete are refused with 409 while an entry for that job file
   is `queued` or `running`. The entry runs its snapshot either way, but the
   owner should not see a file change under a job in progress. A later resume

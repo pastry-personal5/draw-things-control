@@ -5,6 +5,199 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Design decision** [M05]: From a code review of the milestone:
+  - Retention keeps a parked entry until a resume anywhere in the chain below it has a succeeded run, and keeps the
+    resumes in between with it. Counting only the entries that resume it directly kept it forever when its own
+    resume's first run failed and a resume of that resume went on, and once that resume aged out, the parked entry
+    read as never resumed and could be resumed a second time. Pruning the resumes in between as before was rejected:
+    the newest resume could no longer walk back to the parked entry.
+  - A park saves its hold before it makes the reservation, and an unpark whose hold cannot be released keeps the
+    reservation, so a failed write never leaves a park without its hold, or a hold without its park.
+  - The executor waits out the rest of a cooldown only when a park was asked for during it (`CancelToken.park_count`,
+    in place of the unused `park_requested`), so a `Cooldown` that returns early on its own is not called again and
+    again. Documenting that a `Cooldown` must never return early was rejected: a fake that does would hang.
+  - Both front ends word a park from one module, `services/queue_park_text.py`, which also says, from the run
+    number, that a park on the job's last run lets it finish. Adding the park point to the API and the gRPC snapshot
+    was rejected: it needs a proto change, and the Status widget works from events, not the API. An unpark says
+    `the queue is not held` rather than `the queue is released`, since an unpark can release nothing; adding a field
+    to the unpark response saying whether it released the hold was rejected as more API for one word.
+- **Owner decision** [M06]: From a review of the plan:
+  - One endpoint, `POST /v1/executions/delete`, deletes one execution or several, in place of
+    `DELETE /v1/executions/{execution_id}` plus that batch. Every other action endpoint is a `POST`, and one endpoint
+    has one response shape. Keeping both, and adding `POST /v1/executions/{execution_id}/delete` instead, were
+    offered.
+  - `GET /v1/executions` gains a `name` filter, matching as `/filter name` does, so `dtc history delete --name`
+    selects what the TUI would. Using `--job` (one job file) on the CLI instead was offered.
+  - Deleting the whole history takes an explicit `all`: `/delete filtered` with no filter is refused, and
+    `/delete all` and `dtc history delete --all` are added. Typing the count first, and no guard, were offered.
+  - A log or manifest that cannot be deleted leaves the row deleted anyway. The report now names each manifest that
+    stayed, and warns that `dtc import-history` would bring it back under a new number. Refusing the execution was
+    offered.
+- **Design decision** [M06]: From the same review:
+  - The deletion's check also takes `ServerContext.submission_lock`, before the worker's `_state_lock`. The plan said
+    `_state_lock` alone kept a resume from resolving an execution being deleted. It does not: `resume_entry` runs
+    `_resolve_chain` before `enqueue` takes `_state_lock`. A resume already holds the submission lock across both.
+  - The batch route writes one audit row per ID itself, since `audited(...)` writes one per request. Actions are
+    plain strings; `state/audit.py` has no list of them to extend.
+  - With the server down, `d` and `/delete` behave as the Queue widget's `c` and `p` do: nothing is deleted, and
+    Messages says the server cannot be reached.
+  - The exit criterion "Delete and overwrite are always recoverable" and Milestone 07's "Nothing is permanently deleted
+    by the server" are scoped to job files, since deleting an execution is final.
+
+- **Owner decision** [M06]: Milestone 06, "Delete executions", is added to Phase 3 and planned, built between
+  Milestones 05 and 07. From an interview on the plan:
+  - A deletion removes the execution's row, its runs, its log, and its manifest, and keeps its outputs, so
+    `dtc import-history` cannot bring it back. Keeping the manifest as retention does, moving the manifest and outputs
+    to a trash folder, and a table of deleted manifests (schema 7) were offered.
+  - A running execution, and one a queued or running entry uses, cannot be deleted. The execution a parked,
+    interrupted, failed, or cancelled entry would resume from can be, after the dialog warns that the entry can no
+    longer be resumed. The owner first chose to refuse any execution a queue entry could still resume from. On a
+    follow-up question, since that would keep a failed chain's execution until retention pruned its entry (deleting
+    queue entries is out of scope), the owner chose the warning instead. Refusing parked entries' executions only was
+    offered.
+  - The TUI asks in a modal dialog. Pressing `d` twice, and a command with `--yes`, were offered.
+  - Bulk deletion is in scope, and `dtc history delete` is added too. Gating deletion behind `--allow-write`, and an
+    MCP tool in Milestone 08, were offered and not chosen. For several executions, the dialog steps through them one
+    at a time with Delete, Skip, Delete all, and Cancel. The owner asked for Delete, Delete all, and Cancel; Skip, and
+    the step-through, were proposed on a follow-up question and chosen over the same without Skip and over one
+    summary dialog for the whole selection.
+- **Design decision** [M06]: Deletion goes through the API (`DELETE /v1/executions/{execution_id}`,
+  `POST /v1/executions/delete`), audited as `delete_execution`, rather than the TUI writing the store: the TUI only
+  browses, and every other write goes through `dtc serve`. The check and the delete run under the queue worker's
+  `_state_lock`, so a resume cannot resolve an execution that is being deleted. "A resume would accept this entry"
+  gets one definition, shared by `queue_resume` and the deletion's warning. The history's own marks (`Space`) and
+  `/delete filtered` select several; a gRPC event telling other clients of a deletion was left out, since the
+  history already reads a missing execution as gone.
+- **Change** [M05]: [Milestone 05: Park and hold](milestone-05-park-and-hold.md) is done. A running entry can be parked
+  from the TUI (`/queue park`, `/park`, `p`) and `dtc queue park`: it ends `parked` after its current run, keeping
+  every run, and a resume continues it at the next run. Parking holds the queue until a release, the queue can be held
+  on its own (`/queue hold`, `/hold`, `dtc queue hold`), and the hold survives a restart. Four audited endpoints,
+  `park_requested` and the hold in the API's queue responses and gRPC snapshots, three new event kinds, the `parked`
+  state and history filter, and `dtc queue add --wait`'s exit code 3.
+- **Design decision** [M05]: While building the milestone:
+  - Retention reads the parked entries it keeps once, before either prune (`QueueRepository.kept_parked`), and passes
+    them to both. The plan had `Store.prune` prune executions first "so both read the same queue", but the execution
+    prune would then delete the resume's runs, and the queue prune, finding no succeeded run, would keep the parked
+    entry forever. Evaluating the condition in each prune's own SQL was rejected for that reason.
+  - `GET /v1/queue/{queue_id}` (and the park and unpark responses) gain `between_runs_after_run`: the succeeded run
+    the entry is between runs after, a cooldown included, until its next run starts. The plan let a front end word a
+    park's outcome from "the current run and the cooldown", but `cooldown_until` is the wait between two queued jobs,
+    None while a job runs, so a park between two runs (which takes effect after the first of them) read like one made
+    before the job's first run. Wording both "parks after its next run" was rejected: it names the wrong run. It is
+    kept past `CooldownEnded`, since a park ends the cooldown before the entry reads `parked`.
+  - `POST /v1/queue/hold` and `/release` also return `changed`, false when the queue already was, or was not, held,
+    so a front end can say "The queue is not held" for a release that did nothing, as the plan asks. Reading
+    `GET /v1/queue` first was rejected: a hold could change between the two requests.
+  - `/park` on an entry already parking says "Already parking" only while the queue is held. When a release has ended
+    the hold, it parks again, which holds the queue again, as `/queue park` does (owner decision of this date). The
+    plan's controller said "Already parking" in either case, which would have kept `/park` from re-holding.
+  - The worker marks an entry finished, and `_fail_to_start` fails one, under `_state_lock` with a
+    `_job_finished` flag, so `park_running` sees the entry either still running or finished, never between, and a
+    park that loses the race with the job's own end is refused without holding the queue.
+- **Owner decision** [M05]: From a third interview, after a review of the plan against the code:
+  - History retention keeps a parked entry and its execution until an entry that resumes it has a succeeded run;
+    after that, they age out as usual. This supersedes, for parked entries only, the [M01] owner decision "Finished
+    entries stay pruned with the history, so an entry left past `history_retention_days` can no longer be
+    resumed". Pruning them as today, and never pruning parked ones, were offered.
+    - The owner first chose "until an entry resumes it". Every job start prunes, though, so the resume's own start
+      would delete the parked entry. A resume whose first run then failed, or one cancelled before it ran, could no
+      longer be resumed, since the chain walks back to the parked entry. On a follow-up question, the owner chose
+      "until a resume has a succeeded run". Keeping the first answer was offered.
+  - A park on an entry already parking holds the queue again when a release has ended the hold. The plan's table
+    had it as a no-op, which was offered.
+  - The plan drops its reasons based on the old class limit. `QueueHold` stays its own class, for cohesion. This
+    revisits today's size-limit entry, which left the plan as written. Leaving it, and folding `QueueHold` into
+    `QueueWorker`, were offered.
+  - While a reservation is pending, the Status widget's Job bar reads `parking` in place of its end estimate.
+    Keeping the full-job estimate was offered.
+- **Design decision** [M05]: From the same review:
+  - A park takes effect when the executor commits to it through `CancelToken.take_park()`: after a succeeded run,
+    after a cooldown the park ended, or at the top of a later run. After that, unpark is refused. A cooldown cut short
+    by a park that was withdrawn before the commit waits out the rest. Without a commit point, an unpark landing
+    after a park ended a cooldown would start the next run with no cooldown.
+  - The worker's guard applies a pending park, and unpark withdraws one, under `_state_lock`, since a reservation,
+    unlike a cancel, can be withdrawn. The cancel guard's read-then-call outside the lock would let an unpark slip
+    between the two.
+  - Reservations publish a new `queue_park_changed` event, not `queue_entry_changed` with `park_requested`. The TUI's
+    feed reads `queue_entry_changed`'s `running` as the claim before `JobStarted`, and would reset
+    `pending_queue_id` on every reservation.
+  - A park that loses the race with the job's own end is refused, naming the state it reached, since the queue was
+    not held. `cancel_entry` accepts the same race, because a cancel of a finished entry changes nothing a caller
+    relies on.
+  - A saved hold that cannot be read counts as held, with a warning. Treating it as released was rejected: a
+    damaged row would then start the queue by surprise.
+  - `QueueEntrySnapshot` also gains `queue_held`, so `dtc queue add --wait` can say its entry waits behind a hold.
+    An extra `GET /v1/queue` would miss a hold made later. The entry detail already carries the worker's
+    `cooldown_until`, as precedent.
+- **Owner decision** [M05]: From a second interview on the plan:
+  - Milestone 05 is built next, before Milestone 07. Building it after 07, or last after 09, was offered.
+  - Unpark releases the hold only when that entry's own reservation made it. A hold made by `/queue hold`, or one
+    already in place before the reservation, stays. This narrows the earlier [M05] answer, "Unpark withdraws a
+    reservation, and releases the hold that reservation made". Clearing the hold on every unpark was offered.
+  - A resume of a parked entry goes to the back of the queue, like every resume since Milestone 01. Putting it at
+    the front, or at the parked entry's original place, was offered.
+  - A reservation made during the job's last run is accepted: the job ends `succeeded`, and the queue is held.
+    Refusing it, and pointing to `/queue hold`, was offered.
+  - `/queue release` starts the next entry at once, even when the last job's between-jobs cooldown has not elapsed.
+    Waiting out the rest of that cooldown was offered and recommended.
+  - The TUI gets four top-level aliases: `/park` and `/unpark`, which act on the entry the draw-things-cli pane is
+    following, and `/hold` and `/release`. `/park` alone, and `/park` with `/unpark`, were offered.
+  - The hold is shown in the Queue widget's title and, while no job runs, in the Status widget
+    (`Queue held since 12:04 (by Q0007)`). The title alone, and the title with the bottom status line, were
+    offered.
+- **Owner decision**: The size limits ([development-rules.md](../development-rules.md#project-layout),
+  `tests/test_architecture.py`) are relaxed: modules rise from 800 to 3200 lines, classes from 250 to 1600, and
+  functions from 40 to 800. This supersedes the earlier owner decision of this date that raised modules from 400 to 800 and kept the
+  class and function limits. 1200, 500, and 80 were offered. The `generate` exemption from the function limit is
+  removed, since `generate` (65 lines) is now well under it, and the rules say "single-purpose functions" rather than
+  "small, single-purpose functions". Ruff's rules and pyright's mode are unchanged. The Milestone 05 plan, which
+  places some code by the old class limit, is left as written.
+- **Owner decision** [M05]: For image-to-video jobs, the last frame is extracted after every run, even when the job
+  parks. A park takes effect only after the run's finish (color tags, last frame, measurement) and `RunFinished`,
+  and only after a succeeded run, which for a video job means the frame was written. The park flag stays apart from
+  `CancelToken.requested`, so a failed extraction under a reservation fails the run, as it would without one, and
+  is never reported as interrupted. See [Milestone 05's "The last frame"](milestone-05-park-and-hold.md#the-last-frame).
+- **Owner decision** [M05]: A new milestone, [Milestone 05: Park and hold](milestone-05-park-and-hold.md), is
+  planned. It is numbered 05, as the owner asked. With it, a person can make a reservation to end a running job once its current
+  run finishes, keeping every run it finished. The owner asked for a term of its own, not "interrupted" or
+  "stopped", and chose "park": park (the command), parking (while the run finishes), and parked (the final state
+  of the entry and its execution). The pending request is a *park reservation*. Land, wrap, and dock were offered.
+- **Owner decision** [M05]: From an interview on the plan:
+  - This supersedes the [M01] owner decision that rejected an after-run cancel. A cancel still stops at once, and
+    park is the after-run action beside it.
+  - It also supersedes the [M01] "No pause" decision. After a reservation, the queue is held until a release, so
+    no other entry starts. Moving on to the next entry, and stopping `dtc serve` after the run, were offered.
+  - The hold begins when the reservation is made and is saved in the state store. However the entry ends, and
+    across `dtc serve` restarts, nothing starts until `/queue release`. Holding only when the entry actually parks
+    was offered, with the hold either saved or kept in memory only.
+  - The queue can also be held directly with `/queue hold` and `dtc queue hold`. Holding only through a park was
+    offered and recommended.
+  - Unpark withdraws a reservation, and releases the hold that reservation made.
+  - A reservation made during a cooldown between runs parks at once. Parking after the next run was offered.
+  - `dtc queue add --wait` exits with a new code, 3, for a parked entry. 0 and SIGTERM's 143 were offered.
+  - Reservations are made from the TUI and from `dtc queue`; MCP tools stay with Milestone 08. TUI only, and adding
+    the MCP tool to Milestone 08 now, were offered.
+  - The Phase 3 non-goals that ruled out letting a run finish first and pausing the queue are updated.
+- **Design decision** [M05]: How the plan builds it:
+  - Parking is its own request on `JobExecutor` (`CancelToken.park()`) with a new `JobStatus.PARKED`. The rejected
+    alternative was an observer that calls `cancel()` at `RunFinished`. That needs no executor change, since the
+    loop already stops "before run k+1", but the execution would read `interrupted` with exit code 143, the word
+    the owner asked not to use.
+  - No schema migration: the state columns are `TEXT` with no `CHECK`, and the hold is a `queue_hold` row in the
+    existing `settings` table.
+  - The reservation is kept in the worker's memory only, since stopping the server kills the run anyway.
+  - The hold is its own `QueueHold` class, because `QueueWorker` is at the 250-line class limit.
+  - Cases the interview left open:
+    - A reservation on a queued entry is refused.
+    - A cancel overrides a reservation, and a reservation after a cancel is refused.
+    - Stopping the server with a reservation pending ends the entry `interrupted`.
+    - A resume never releases a hold.
+  - Refinements of the interview's answers:
+    - `/queue hold` on a queue that is already held makes the hold its own, so a later unpark no longer releases
+      it.
+    - A release while the entry is still parking lets it park. The worker then moves on to the next entry after
+      the between-jobs cooldown, as after a succeeded job.
+    - A hold that lands during the cooldown between queued jobs ends that cooldown at once.
 - **Change** [M04]: The TUI draws less while a job runs. Reported as the TUI responding slowly during a run; measured
   during a live run: the TUI itself answered a key in about 2 ms and was idle (0.3% CPU, 15 feed events in 14 minutes),
   while draw-things-cli held the GPU at 100%, which the terminal (Wave, an Electron app) needs to draw every frame. That

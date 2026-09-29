@@ -81,7 +81,8 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/job_runs.py` | `JobRunSession`: takes the run lock, opens the store, sweeps, and runs a job with its execution recorded |
 | `services/job_catalog.py`, `services/job_details.py`, `services/history.py`, `services/store_provider.py` | The job files of a directory, a job's summary and plan, the execution history, and the browsing store they share |
 | `services/queue_submit.py`, `services/queue_resume.py` (phase 3) | Validate a job and snapshot it as a queue entry; resolve and accept a resume |
-| `services/queue_worker.py`, `services/queue_worker_status.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread and its observable status (`is_alive`, `state`, `cooldown_until`, `current_run`, `current_step`); restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
+| `services/queue_worker.py`, `services/queue_worker_status.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread and its observable status (`is_alive`, `state`, `cooldown_until`, `current_run`, `current_step`, `between_runs_after`); restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
+| `services/queue_hold.py`, `services/queue_park.py`, `services/queue_park_text.py` (phase 3) | The queue's hold, in memory and in the `settings` row; parking and unparking a running entry, and holding and releasing the queue; the words both front ends use for a park and its outcome |
 | `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
 | `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
 | `server/` (phase 3) | `dtc serve`'s FastAPI app and gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) |
@@ -370,8 +371,63 @@ Adds what every later front end needs, without changing the CLI's behavior.
 - `tui/panes/cli_output.py`'s `CliPane.write_output` skips lines for good at low, and at medium once a run's first
   `MEDIUM_OUTPUT_WINDOW_SECONDS` have passed (or the minute since `/verbose medium` was typed, `LiveRun.output_window_start`).
 
+### Milestone 5: park and hold (done)
+
+- **States.** `JobStatus.PARKED` (`jobs/events.py`) and `QueueState.PARKED` (`state/queue.py`, in `FINISHED_STATES`) name a
+  job that ended at a run boundary because it was parked; runs are never parked. The state columns are plain `TEXT`,
+  so no migration. `EXIT_PARKED = 3` (`core/exit_codes.py`) is the job's exit code and `dtc queue add --wait`'s.
+  `parked` is resumable (`services/queue_resume.py`), a history filter (`services/history.py`), recovered from a
+  parked execution (`services/queue_recovery.py`), and listed with the finished entries (`list_finished` builds its
+  clause from `FINISHED_STATES`).
+- **The executor's park request and its commit point.** `CancelToken` (`core/process/signals.py`) keeps a park flag
+  apart from the stop signal: `park()` sets it and writes the wake-up byte, so a cooldown between runs ends, and never
+  reaches the runner; `RunFinisher.finish` reads only `requested`, so a park never turns a failed last-frame extraction
+  into `interrupted`. `JobExecutor._run_runs` commits with `take_park()` at a run boundary after a run this execution
+  made: after a succeeded run that is not the last (after its finish and `RunFinished`, so its last frame is written),
+  after a cooldown the park ended, and at the top of a later run. A stop requested first wins. Once taken, `unpark()`
+  is refused until the next job's `begin()`; a park withdrawn before it was taken leaves the rest of the cooldown to
+  wait out. `CancelToken.park_count` tells such a wait from one the cooldown ended early on its own, which is never
+  waited again. `JobFinished` then reads `parked`, exit code 3, no signal.
+- **The worker's reservation and hold.** `QueueWorker` keeps the running entry's park reservation in memory
+  (`_park_pending`) and applies it to the executor only once `JobStarted` has been seen, under `_state_lock`, so an
+  unpark before then withdraws it in the worker alone and never lands between the guard's read and its call. The entry
+  is marked finished and `_job_finished` set under the same lock, so a park that loses the race with the job's own end
+  is refused rather than holding the queue. A park saves its hold before it makes the reservation, and an unpark whose
+  hold cannot be released keeps the reservation, so a reservation and its hold never part. `services/queue_hold.py`'s `QueueHold` keeps the hold in memory and in the
+  `settings` table's `queue_hold` row (`{"since", "by"}`; a row that cannot be read counts as held, with a warning). A
+  reservation holds the queue by its entry, and unpark releases only a hold that entry's reservation made;
+  `/queue hold` makes a hold its own. While held, the claim finds nothing (checked under `_state_lock`), the
+  between-jobs wait ends at once and is forgotten, and `state()` reads `held` while no job runs. A release wakes the
+  worker, which claims at once. `services/queue_park.py`'s `park_entry` and `unpark_entry` refuse with
+  `ParkRefusedError` (`invalid_state`), naming the reason.
+- **Retention.** `Store.prune` reads the entries to keep once, before either prune (`QueueRepository.kept_parked`: each
+  parked entry and the chain of resumes below it, walked by a recursive query, until one of those resumes has a
+  succeeded run), and both `ExecutionRepository.prune` and `QueueRepository.prune` skip them and their executions.
+  Keeping the resumes in between lets the newest one still walk back to the parked entry, and keeps the parked entry
+  from reading as never resumed. Reading it in each prune would let the execution prune delete the resume's runs first,
+  and the chain would never be let go.
+- **Events and the API.** `services/queue_events.py` publishes `queue_park_changed` (`queue_id`, `park_requested`),
+  `queue_held` (`since`, `by`), and `queue_released`; `queue_entry_changed` still means only a change of state. The
+  routes add `POST /v1/queue/{queue_id}/park` and `/unpark` (the entry as `GET /v1/queue/{queue_id}` returns it,
+  with `between_runs_after_run` from `WorkerStatus`) and `POST /v1/queue/hold` and `/release` (the hold and
+  `changed`), all audited; entries carry `park_requested`, and the queue reads carry `held`, `held_since`, and
+  `held_by`. `QueueEntrySnapshot` gains `park_requested` and `queue_held`, always set; `WatchQueueEntry` reads the reservation
+  before the row, so a job that ends between the two reads never shows `running` without its reservation. `dtc serve` logs a saved hold
+  at startup.
+- **Front ends.** `dtc queue park|unpark|hold|release`, and `list`, `show`, and `add --wait` show `parking` and the
+  hold. Both front ends word a park from `services/queue_park_text.py` (`park_point` decides where it takes effect,
+  and that on the job's last run it finishes instead), and read a response's hold with `HoldState.from_body`. The TUI's `LiveRun.park_requested` gives the `parking` phase (a stop still wins), set from its own park and
+  unpark responses, `queue_park_changed`, and the reseed's `GET /v1/queue/{id}`. The app keeps the hold from every
+  queue read (`QueueSnapshot.hold` from the store while the server is down) for the Queue widget's title and the
+  Status widget.
+
 ### Milestones 3 onward (planned)
 
+- Deleting executions (Milestone 6): the TUI and `dtc history delete` call
+  `DELETE /v1/executions/{execution_id}` or `POST /v1/executions/delete`;
+  the server checks and deletes under the queue worker's lock, refusing a
+  running execution or one a queued or running entry uses, and reporting
+  the resumable entries a deletion leaves unresumable.
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
 - `mcp_server/` (`dtc mcp`): a thin client of the HTTP API and the gRPC

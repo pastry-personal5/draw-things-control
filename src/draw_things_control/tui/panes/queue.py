@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.widgets import DataTable
 from textual.worker import get_current_worker
 
+from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.services.queue_reader import QueueReader
 from draw_things_control.tui.panes.base import SidewaysTable
 from draw_things_control.tui.text.queue import queue_cells, queue_row_to_dict
@@ -28,12 +29,15 @@ MAX_FINISHED_ROWS = 5
 
 
 class QueuePane(SidewaysTable):
-    """Submits, cancels, and resumes through the API; browsing itself writes nothing."""
+    """Submits, cancels, resumes, and parks through the API; browsing itself writes nothing. Its title reads
+    ``Queue (held)`` while the queue is held (Milestone 05)."""
 
     HEIGHT_LINES = QUEUE_LINES
     BINDINGS = [
         Binding("escape", "leave", "Command line", show=False),
         Binding("c", "cancel_selected", "Cancel", show=False),
+        Binding("p", "park_selected", "Park", show=False),
+        Binding("u", "unpark_selected", "Unpark", show=False),
     ]
 
     def __init__(self, reader: QueueReader, *, feed_connected: Callable[[], bool], leave: Callable[[], None], **options: Any) -> None:
@@ -45,7 +49,7 @@ class QueuePane(SidewaysTable):
         self.rows_by_id: dict[str, dict[str, Any]] = {}
 
     def on_mount(self) -> None:
-        self.border_title = "Queue"
+        self.show_hold(cast("DrawThingsApp", self.app).queue_hold)
         self.add_columns("ID", "Job", "State", "Runs")
         self.set_interval(QUEUE_POLL_SECONDS, self.poll)
         self.poll()
@@ -55,10 +59,29 @@ class QueuePane(SidewaysTable):
 
     def action_cancel_selected(self) -> None:
         """``c``: the same as /queue cancel on the selected row's ID, no confirmation, as that command has none."""
+        queue_id = self._selected_id()
+        if queue_id is not None:
+            cast("DrawThingsApp", self.app).cancel_entry(queue_id)
+
+    def action_park_selected(self) -> None:
+        """``p``: the same as /queue park on the selected row's ID, no confirmation (``u`` undoes it)."""
+        queue_id = self._selected_id()
+        if queue_id is not None:
+            cast("DrawThingsApp", self.app).park_entry(queue_id)
+
+    def action_unpark_selected(self) -> None:
+        """``u``: the same as /queue unpark on the selected row's ID."""
+        queue_id = self._selected_id()
+        if queue_id is not None:
+            cast("DrawThingsApp", self.app).unpark_entry(queue_id)
+
+    def _selected_id(self) -> str | None:
         if self.row_count == 0:
-            return
-        queue_id = str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value)
-        cast("DrawThingsApp", self.app).cancel_entry(queue_id)
+            return None
+        return str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value)
+
+    def show_hold(self, hold: HoldState) -> None:
+        self.border_title = "Queue (held)" if hold.held else "Queue"
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a row: the same as /describe on its ID."""
@@ -85,11 +108,19 @@ class QueuePane(SidewaysTable):
         snapshot = self.reader.snapshot()
         entries = [queue_row_to_dict(row) for row in (*snapshot.active, *snapshot.finished[:MAX_FINISHED_ROWS])]
         if not get_current_worker().is_cancelled:
-            self.app.call_from_thread(self._show_if_current, request, entries)
+            self.app.call_from_thread(self._show_if_current, request, entries, snapshot.hold)
 
-    def _show_if_current(self, request: int, entries: list[dict[str, Any]]) -> None:
+    def _show_if_current(self, request: int, entries: list[dict[str, Any]], hold: HoldState | None) -> None:
         if self.current(request):
             self._show(entries)
+            # The saved hold, while the server is down. None when the store could not be read, which keeps the last hold
+            # shown. The title is set here only before the main screen is mounted, when the app cannot set it yet: the
+            # first poll, made from this widget's own on_mount, can land then.
+            if hold is not None:
+                app = cast("DrawThingsApp", self.app)
+                if app.main is None:
+                    self.show_hold(hold)
+                app.set_queue_hold(hold)
 
     def _show(self, entries: list[dict[str, Any]]) -> None:
         selected = str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value) if self.row_count else None

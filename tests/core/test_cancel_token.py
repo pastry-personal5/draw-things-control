@@ -91,3 +91,85 @@ class CancelTokenTests(unittest.TestCase):
         token.begin()
         self.assertGreaterEqual(token.wait(0.05), 0.05)
         token.end()
+
+    # Park (Milestone 05).
+
+    def test_park_with_no_job_running_does_nothing(self) -> None:
+        token = CancelToken(handle_signals=False)
+        self.assertFalse(token.park())
+        self.assertEqual(token.park_count, 0)
+
+    def test_park_never_stops_the_runner_or_reads_as_a_stop(self) -> None:
+        token, runner = CancelToken(handle_signals=False), FakeRunner()
+        token.begin()
+        token.attach(runner)
+        self.assertTrue(token.park())
+        self.assertEqual((token.park_count, token.requested, runner.stops), (1, None, []))
+        token.end()
+
+    def test_park_from_another_thread_ends_a_wait_at_once(self) -> None:
+        token = CancelToken(handle_signals=False)
+        token.begin()
+        timer = threading.Timer(0.1, token.park)
+        timer.start()
+        started = time.monotonic()
+        waited = token.wait(5)
+        timer.join()
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertLess(waited, 1)
+        self.assertIsNone(token.requested)
+        token.end()
+
+    def test_park_writes_the_wake_up_byte(self) -> None:
+        token = CancelToken(handle_signals=False)
+        token.begin()
+        token.park()
+        assert token._wake_read is not None
+        self.assertEqual(os.read(token._wake_read, 16), b"\0")
+        token.end()
+
+    def test_unpark_withdraws_a_park_until_it_is_taken(self) -> None:
+        token = CancelToken(handle_signals=False)
+        token.begin()
+        token.park()
+        self.assertTrue(token.unpark())
+        self.assertFalse(token.take_park())
+        token.park()
+        self.assertTrue(token.take_park())
+        self.assertFalse(token.unpark())
+        self.assertTrue(token.take_park())
+        self.assertEqual(token.park_count, 2)
+        # Still refused after the job has ended: the park took effect.
+        token.end()
+        self.assertFalse(token.unpark())
+
+    def test_unpark_and_take_park_race_from_two_threads(self) -> None:
+        def race(token: CancelToken) -> dict[str, bool]:
+            results: dict[str, bool] = {}
+            threads = [threading.Thread(target=lambda: results.__setitem__("unpark", token.unpark())), threading.Thread(target=lambda: results.__setitem__("take", token.take_park()))]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results
+
+        for _ in range(50):
+            token = CancelToken(handle_signals=False)
+            token.begin()
+            token.park()
+            results = race(token)
+            # Exactly one of them wins: the park is either withdrawn or taken, never both.
+            self.assertNotEqual(results["unpark"], results["take"])
+            token.end()
+
+    def test_a_new_job_starts_with_no_park(self) -> None:
+        token = CancelToken(handle_signals=False)
+        token.begin()
+        token.park()
+        token.take_park()
+        token.end()
+        token.begin()
+        self.assertEqual(token.park_count, 0)
+        self.assertFalse(token.take_park())
+        self.assertTrue(token.unpark())
+        token.end()

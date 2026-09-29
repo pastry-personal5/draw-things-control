@@ -117,15 +117,25 @@ class CommandController:
         self._queue_add(name)
 
     def command_queue(self, action: str, *arguments: str) -> None:
-        """/queue add [JOB], /queue cancel <Queue ID>, /queue resume <Queue ID>: all three call the API, no
-        confirmation (a submission is undone with /queue cancel; the server, not this process, runs anything)."""
+        """/queue add [JOB], cancel, resume, park, and unpark <Queue ID>, hold, and release: each calls the API, no
+        confirmation (a submission is undone with /queue cancel, a park with /queue unpark, a hold with /queue release;
+        the server, not this process, runs anything)."""
         word = action.lower()
+        dtc = self.screen.dtc
         if word == "add" and len(arguments) <= 1:
             self._queue_add(arguments[0] if arguments else None)
         elif word == "cancel" and len(arguments) == 1:
-            self.screen.dtc.cancel_entry(self.queue_id(arguments[0]))
+            dtc.cancel_entry(self.queue_id(arguments[0]))
         elif word == "resume" and len(arguments) == 1:
-            self.screen.dtc.resume_entry(self.queue_id(arguments[0]))
+            dtc.resume_entry(self.queue_id(arguments[0]))
+        elif word == "park" and len(arguments) == 1:
+            dtc.park_entry(self.queue_id(arguments[0]))
+        elif word == "unpark" and len(arguments) == 1:
+            dtc.unpark_entry(self.queue_id(arguments[0]))
+        elif word == "hold" and not arguments:
+            dtc.hold_queue()
+        elif word == "release" and not arguments:
+            dtc.release_queue()
         else:
             raise CommandError(f"Usage: {usage('queue')}")
 
@@ -149,6 +159,41 @@ class CommandController:
             self.screen.say("Already stopping", "yellow")
             return
         self.screen.dtc.cancel_entry(live.queue_id)
+
+    def command_park(self) -> None:
+        """/park: /queue park on the entry the draw-things-cli pane is following. On one already parking it parks again
+        only when a release has ended the hold, which that holds again."""
+        dtc = self.screen.dtc
+        live = dtc.live
+        if live is None or live.ended or live.queue_id is None:
+            self.screen.say("No job is running", "yellow")
+            return
+        if live.stop_requested:
+            self.screen.say("Already stopping", "yellow")
+            return
+        if live.park_requested and dtc.queue_hold.held:
+            self.screen.say("Already parking", "yellow")
+            return
+        dtc.park_entry(live.queue_id)
+
+    def command_unpark(self) -> None:
+        """/unpark: /queue unpark on the entry the draw-things-cli pane is following."""
+        live = self.screen.dtc.live
+        if live is None or live.ended or live.queue_id is None:
+            self.screen.say("No job is running", "yellow")
+            return
+        if not live.park_requested:
+            self.screen.say("Not parking", "yellow")
+            return
+        self.screen.dtc.unpark_entry(live.queue_id)
+
+    def command_hold(self) -> None:
+        """/hold: the same as /queue hold."""
+        self.screen.dtc.hold_queue()
+
+    def command_release(self) -> None:
+        """/release: the same as /queue release."""
+        self.screen.dtc.release_queue()
 
     def command_filter(self, *arguments: str) -> None:
         current = self.screen.history.history_filter

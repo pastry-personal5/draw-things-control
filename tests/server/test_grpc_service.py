@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from collections.abc import Callable
 from datetime import datetime
 
 import grpc
@@ -16,7 +17,9 @@ from draw_things_control.server.context import ServerContext
 from draw_things_control.server.generated import monitor_pb2, monitor_pb2_grpc
 from draw_things_control.server.grpc_auth import TokenAuthInterceptor
 from draw_things_control.server.grpc_service import MonitorServicer
+from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.services.queue_submit import submit_job
+from draw_things_control.state.queue import QueueState
 from draw_things_control.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 
@@ -29,6 +32,18 @@ class FakeWorker:
         self._current_run: tuple[int, float] | None = None
         self._current_step: tuple[int, int] | None = None
         self._cooldown_until: float | None = None
+        self.parking: set[int] = set()
+        self.held = False
+        # Called as the reservation is read, before the answer: a test's way to land a change between two reads.
+        self.on_park_read: Callable[[int], None] | None = None
+
+    def park_requested(self, entry_id: int) -> bool:
+        if self.on_park_read is not None:
+            self.on_park_read(entry_id)
+        return entry_id in self.parking
+
+    def hold_state(self) -> HoldState:
+        return HoldState(held=self.held)
 
     def current_entry_id(self) -> int | None:
         return self._current_id
@@ -207,6 +222,41 @@ class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase
         self.worker._current_run = (2, 0.5)
         second = await self.read(call)
         self.assertEqual((second.current_run, second.current_run_elapsed_seconds), (2, 0.5))
+        call.cancel()
+
+    async def test_a_park_reservation_and_the_hold_each_send_a_snapshot(self) -> None:
+        entry = self.submit(run_count=1)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
+        first = await self.read(call)
+        # Always set, False included.
+        self.assertTrue(first.HasField("park_requested") and first.HasField("queue_held"))
+        self.assertEqual((first.park_requested, first.queue_held), (False, False))
+        self.worker.parking.add(claimed.id)
+        self.assertEqual((await self.read(call)).park_requested, True)
+        self.worker.held = True
+        self.assertEqual((await self.read(call)).queue_held, True)
+        self.worker.parking.clear()
+        self.assertEqual((await self.read(call)).park_requested, False)
+        call.cancel()
+
+    async def test_a_job_that_parks_between_the_reads_never_shows_running_without_its_reservation(self) -> None:
+        entry = self.submit(run_count=2)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker.parking.add(claimed.id)
+        call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
+        first = await self.read(call)
+        self.assertEqual((first.state, first.park_requested), ("running", True))
+
+        def park_as_it_is_read(entry_id: int) -> None:
+            # As the worker does: the entry is marked parked, then the reservation is dropped.
+            self.store.queue.finish(entry_id, state=QueueState.PARKED, finished_at="2026-09-29T12:00:00+00:00")
+            self.worker.parking.discard(entry_id)
+
+        self.worker.on_park_read = park_as_it_is_read
+        self.assertEqual((await self.read(call)).state, "parked")
         call.cancel()
 
 

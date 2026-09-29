@@ -8,4 +8,4 @@ from draw_things_control.jobs.events import RunStatus
 VIDEO_MODES = {mode.value for mode in GenerationMode if mode.is_video}
 
 
-STATUS_STYLE = {RunStatus.RUNNING: "bold cyan", RunStatus.SUCCEEDED: "green", RunStatus.FAILED: "red", RunStatus.TIMED_OUT: "red", RunStatus.INTERRUPTED: "yellow", "pending": "dim"}
+STATUS_STYLE = {RunStatus.RUNNING: "bold cyan", RunStatus.SUCCEEDED: "green", RunStatus.FAILED: "red", RunStatus.TIMED_OUT: "red", RunStatus.INTERRUPTED: "yellow", "pending": "dim", "parked": "blue", "parking": "yellow"}

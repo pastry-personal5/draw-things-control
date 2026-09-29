@@ -10,7 +10,8 @@ from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store
 
-_EXECUTION_TO_QUEUE_STATE = {"succeeded": QueueState.SUCCEEDED, "failed": QueueState.FAILED, "interrupted": QueueState.INTERRUPTED}
+# "parked" covers a crash after the job parked but before its entry was marked.
+_EXECUTION_TO_QUEUE_STATE = {"succeeded": QueueState.SUCCEEDED, "failed": QueueState.FAILED, "interrupted": QueueState.INTERRUPTED, "parked": QueueState.PARKED}
 
 
 def recover_queue(store: Store, *, clock: Clock = datetime.now) -> None:

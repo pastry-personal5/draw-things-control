@@ -1,5 +1,6 @@
 """The TUI's own async HTTP client for the queue commands (``/queue add``, ``/apply``, ``/queue cancel``,
-``/queue resume``, ``c``): submits, cancels, and resumes through the API, exactly as ``dtc queue`` does over its own
+``/queue resume``, ``c``, and, from Milestone 05, ``/queue park``, ``unpark``, ``hold``, and ``release``, ``p``, and
+``u``): submits, cancels, resumes, parks, and holds through the API, exactly as ``dtc queue`` does over its own
 synchronous client (``cli/queue_app.py``) -- a small amount of the same shape duplicated once per front end, since
 front ends never import each other (``tests/test_architecture.py``)."""
 
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from draw_things_control.core.client_config import read_client_token
 from draw_things_control.core.errors import DtcError
+from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.tui.client import CALLER, CALLER_HEADER
 
 if TYPE_CHECKING:
@@ -75,6 +77,23 @@ async def show(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTra
     return await _request(server_url, token_file, transport, "GET", f"/v1/queue/{queue_id}")
 
 
-async def list_queue(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", *, limit: int = 5) -> list[dict[str, Any]]:
+async def park(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/park")
+
+
+async def unpark(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/unpark")
+
+
+async def hold(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None") -> dict[str, Any]:
+    return await _request(server_url, token_file, transport, "POST", "/v1/queue/hold")
+
+
+async def release(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None") -> dict[str, Any]:
+    return await _request(server_url, token_file, transport, "POST", "/v1/queue/release")
+
+
+async def list_queue(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", *, limit: int = 5) -> tuple[list[dict[str, Any]], HoldState]:
+    """The entries, and the queue's hold beside them."""
     body = await _request(server_url, token_file, transport, "GET", "/v1/queue", params={"limit": limit})
-    return body["queue"]
+    return body["queue"], HoldState.from_body(body)

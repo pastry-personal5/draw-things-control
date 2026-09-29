@@ -13,6 +13,8 @@ from loguru import logger
 from draw_things_control.cli.context import errors_exit, services_of
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host, job_argument, read_client_token
 from draw_things_control.core.exit_codes import EXIT_CODES_BY_ERROR_CODE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, hold_text
+from draw_things_control.services.queue_park_text import park_outcome_text, queue_state_text, unpark_outcome_text
 
 if TYPE_CHECKING:
     import httpx
@@ -96,7 +98,7 @@ def queue_add(
 @queue_app.command("list")
 def queue_list(
     ctx: typer.Context,
-    state: Annotated[str | None, typer.Option("--state", help="Filter by state: queued, running, succeeded, failed, cancelled, or interrupted.")] = None,
+    state: Annotated[str | None, typer.Option("--state", help="Filter by state: queued, running, succeeded, failed, cancelled, interrupted, or parked.")] = None,
     server_url: ServerUrlOption = DEFAULT_SERVER_URL,
     token_file: TokenFileOption = None,
     allow_remote_server: AllowRemoteServerOption = False,
@@ -105,14 +107,18 @@ def queue_list(
     with errors_exit():
         client = _client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entries = _request(client, "GET", "/v1/queue", params={"state": state} if state is not None else None).json()["queue"]
+        body = _request(client, "GET", "/v1/queue", params={"state": state} if state is not None else None).json()
+    entries = body["queue"]
+    hold = HoldState.from_body(body)
+    if hold.held:
+        typer.echo(hold_text(hold))
     if not entries:
         typer.echo("No queue entries.")
         return
-    rows = [("ID", "STATE", "RUNS", "JOB"), *((row["queue_id"], row["state"], _runs_text(row), Path(row["job_path"]).name) for row in entries)]
+    rows = [("ID", "STATE", "RUNS", "JOB"), *((row["queue_id"], queue_state_text(row), _runs_text(row), Path(row["job_path"]).name) for row in entries)]
     widths = [max(len(row[column]) for row in rows) for column in range(4)]
     for row in rows:
-        typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)))
+        typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip())
 
 
 @queue_app.command("show")
@@ -128,15 +134,20 @@ def queue_show(
         client = _client(ctx, server_url, token_file, allow_remote_server)
     with client:
         entry = _request(client, "GET", f"/v1/queue/{queue_id}").json()
-    typer.echo(f"{entry['queue_id']}: {entry['state']} ({Path(entry['job_path']).name})")
+    typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({Path(entry['job_path']).name})")
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
     typer.echo(f"  runs: {_runs_text(entry)}" + (f", run {entry['current_run']} in progress" if entry.get("current_run") is not None else ""))
     if entry.get("cooldown_until") is not None:
         typer.echo(f"  cooldown until: {entry['cooldown_until']}")
+    if entry.get("park_requested"):
+        typer.echo("  park reservation: yes")
     if entry.get("error"):
         typer.echo(f"  error: {entry['error']}")
     typer.echo(f"  resumable: from run {entry['resume_from_run']}" if entry.get("resumable") else f"  resumable: no ({entry.get('resume_refused_reason')})")
+    hold = HoldState.from_body(entry)
+    if hold.held:
+        typer.echo(f"  {hold_text(hold)}")
 
 
 @queue_app.command("cancel")
@@ -147,7 +158,7 @@ def queue_cancel(
     token_file: TokenFileOption = None,
     allow_remote_server: AllowRemoteServerOption = False,
 ) -> None:
-    """Cancel a queued or running entry; a running one stops at once, losing its current run."""
+    """Cancel a queued or running entry; a running one stops at once, losing its current run ('dtc queue park' keeps it)."""
     with errors_exit():
         client = _client(ctx, server_url, token_file, allow_remote_server)
     with client:
@@ -163,9 +174,71 @@ def queue_resume(
     token_file: TokenFileOption = None,
     allow_remote_server: AllowRemoteServerOption = False,
 ) -> None:
-    """Resume an interrupted, failed, or cancelled entry from its last succeeded run, as a new queued entry."""
+    """Resume an interrupted, failed, cancelled, or parked entry from its last succeeded run, as a new queued entry."""
     with errors_exit():
         client = _client(ctx, server_url, token_file, allow_remote_server)
     with client:
         entry = _request(client, "POST", f"/v1/queue/{queue_id}/resume").json()
     typer.echo(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}")
+
+
+@queue_app.command("park")
+def queue_park(
+    ctx: typer.Context,
+    queue_id: QueueIdArgument,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """Park a running entry: it ends once its current run finishes, keeping every run, and the queue is held."""
+    with errors_exit():
+        client = _client(ctx, server_url, token_file, allow_remote_server)
+    with client:
+        entry = _request(client, "POST", f"/v1/queue/{queue_id}/park").json()
+    typer.echo(park_outcome_text(entry, "dtc queue release"))
+
+
+@queue_app.command("unpark")
+def queue_unpark(
+    ctx: typer.Context,
+    queue_id: QueueIdArgument,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """Withdraw a running entry's park reservation: it runs on, and the hold its reservation made is released."""
+    with errors_exit():
+        client = _client(ctx, server_url, token_file, allow_remote_server)
+    with client:
+        entry = _request(client, "POST", f"/v1/queue/{queue_id}/unpark").json()
+    typer.echo(unpark_outcome_text(entry))
+
+
+@queue_app.command("hold")
+def queue_hold(
+    ctx: typer.Context,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """Hold the queue: a running job is not stopped, and nothing else starts until 'dtc queue release'."""
+    with errors_exit():
+        client = _client(ctx, server_url, token_file, allow_remote_server)
+    with client:
+        body = _request(client, "POST", "/v1/queue/hold").json()
+    typer.echo(hold_outcome_text(body))
+
+
+@queue_app.command("release")
+def queue_release(
+    ctx: typer.Context,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """End the hold: the oldest queued entry starts at once."""
+    with errors_exit():
+        client = _client(ctx, server_url, token_file, allow_remote_server)
+    with client:
+        body = _request(client, "POST", "/v1/queue/release").json()
+    typer.echo("Queue released" if body.get("changed") else "The queue is not held")

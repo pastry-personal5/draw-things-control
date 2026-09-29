@@ -1,4 +1,4 @@
-"""Settings a front end keeps across sessions, such as the Job Definition widget's sort."""
+"""Settings kept across sessions: a front end's, such as the Job Definition widget's sort, and the queue's hold (Milestone 05)."""
 
 from __future__ import annotations
 
@@ -18,3 +18,8 @@ class SettingsRepository:
     def set(self, key: str, value: str) -> None:
         with self._database.transaction() as connection:
             connection.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+
+    def delete(self, key: str) -> None:
+        """Remove ``key``; a key that is not there is no error."""
+        with self._database.transaction() as connection:
+            connection.execute("DELETE FROM settings WHERE key = ?", (key,))

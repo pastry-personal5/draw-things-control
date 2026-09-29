@@ -146,6 +146,13 @@ class ImportHistoryTests(unittest.TestCase):
         self.assertIsNotNone(execution.recovered_at)
         self.assertIsNotNone(execution.finished_at)
 
+    def test_a_parked_manifest_imports_as_parked(self) -> None:
+        self.write("parked.json", manifest(status="parked", runs=3))
+        self.run_import()
+        execution = self.stored(self.store.executions.page()[0].id)
+        self.assertEqual((execution.status, execution.succeeded), ("parked", 3))
+        self.assertEqual([row.label for row in self.store.executions.page(status="parked")], [execution.label])
+
     def test_a_crashed_manifest_older_than_retention_is_expired_not_restamped_and_reimported(self) -> None:
         self.write("crashed.json", manifest(status="running", days_ago=15))
         report = self.run_import()

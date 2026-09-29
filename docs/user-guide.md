@@ -18,6 +18,7 @@ the project root as `uv run dtc <command>`.
 - [Browse and run jobs in the terminal UI](#browse-and-run-jobs-in-the-terminal-ui)
 - [Execution history and the run lock](#execution-history-and-the-run-lock)
 - [Server: HTTP API and gRPC monitoring](#server-http-api-and-grpc-monitoring)
+- [Park a job and hold the queue](#park-a-job-and-hold-the-queue)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
 
@@ -68,6 +69,7 @@ different file.
 | `import-history` | Import phase 1 job manifests into the execution history |
 | `tui` | Browse, run, and watch jobs in a terminal UI |
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
+| `queue` | Submit, list, cancel, resume, park, and hold queue entries through `dtc serve` |
 
 Add `--help` to any command for its full option list.
 
@@ -390,6 +392,10 @@ so the Execution widget keeps about 9 lines under the other two.
 | `/sort jobs KEY [asc\|desc]` | Sort the Job Definition widget by `id`, `name`, `changed`, `mode`, or `runs` |
 | `/apply <Job ID>` | Read the job again, confirm, and run it |
 | `/stop` | Cancel the queue entry the draw-things-cli pane is following (no confirmation) |
+| `/queue park <Queue ID>`, `/queue unpark <Queue ID>` | Park a running entry, or withdraw its park reservation (see [Park a job and hold the queue](#park-a-job-and-hold-the-queue)) |
+| `/queue hold`, `/queue release` | Hold the queue, or release it |
+| `/park`, `/unpark` | `/queue park` and `/queue unpark` on the entry the draw-things-cli pane is following |
+| `/hold`, `/release` | The same as `/queue hold` and `/queue release` |
 | `/get history` | Read the history again |
 | `/get prompts <Execution ID> [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
 | `/get positive <Execution ID> [RUN]` | Its positive prompts only |
@@ -397,7 +403,7 @@ so the Execution widget keeps about 9 lines under the other two.
 | `/get param <Execution ID> [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
 | `/describe execution <Execution ID>` | The detail of one execution |
 | `/describe J0001` or `/describe E0012` | The same, with the noun left out: a job <Execution ID> or an execution <Execution ID> says which |
-| `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, or `running` executions |
+| `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, `parked`, or `running` executions |
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
 | `/filter off` | Remove both filters |
 | `/reveal <Execution ID> [RUN]` | Show a run's output in Finder (default: the last run with an output) |
@@ -522,8 +528,8 @@ Messages says it could not be saved.
 
 | Line | What it shows |
 |------|---------------|
-| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  E0012: walk  run 2/3` |
-| 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)` |
+| 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `parking after run 3/7`, `parking on its last run`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  E0012: walk  run 2/3` |
+| 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)`, or `parking` while the entry has a park reservation |
 | 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
 | 4 | The step counter (`step 28/40`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
 | 5 | `last run took 7 min 12 s`: the job's last successful run, its `draw-things-cli` time without the cooldown |
@@ -554,6 +560,9 @@ Messages says it could not be saved.
 - While another process holds the run lock (for example, `run-job` in
   another terminal), it says `A job is running in another process`, from
   the moment the TUI opens.
+- While the queue is held and no job runs, it says `Queue held since 12:04
+  (by Q0007)` (dated when the hold began on another day): as its first line
+  with nothing run this session, and as its third under a finished job.
 
 ### Job Definition
 
@@ -670,6 +679,11 @@ execution IDs existed were numbered by start time, oldest first.
   command opens the database. The rows are removed, and so is each pruned
   execution's `.log` file; outputs and manifests are never removed. A log with
   no history row, such as one from before the database existed, is left alone.
+- A parked queue entry and its execution are kept past `history_retention_days`
+  until a resume of it, or a resume of that resume, has a succeeded run, so a
+  parked job stays resumable. The resumes in between (one cancelled, or one
+  whose first run failed) are kept with it. After that they age out like any
+  other.
 - If a run is killed, its record stays `running` until the next run starts,
   which closes it as `interrupted`.
 - To bring in manifests written before the database existed (jobs run with
@@ -721,7 +735,9 @@ queue submitted through the API runs on the server's own worker, one entry at
 a time, with the same cooldown between entries as between a job's own runs.
 Stopping the server (Ctrl-C, SIGTERM) stops the run in progress at once, the
 same as stopping `run-job`; a later `POST /v1/queue/{id}/resume` reruns the
-run that was cut short, never continuing it midway.
+run that was cut short, never continuing it midway. To keep that run, park the
+entry first and stop the server once it has parked (see
+[Park a job and hold the queue](#park-a-job-and-hold-the-queue)).
 
 Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
 `--grpc-port` (default `8766`), `--executable`, `--shutdown-grace`,
@@ -753,10 +769,12 @@ execution in the history, whichever front end ran it.
 | `GET /capabilities` | Whether writes are enabled, and the limits in force |
 | `GET /jobs`, `GET /jobs/{job}`, `GET /jobs/{job}/preview` | The job files, one file's text and resolved plan, and its dry-run preview |
 | `GET /inputs` | Images in the input directory, with their size |
-| `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries; read one entry's state |
-| `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, or cancelled one from its last succeeded run |
+| `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries, with the queue's hold (`held`, `held_since`, `held_by`); read one entry's state and the hold |
+| `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, cancelled, or parked one from its last succeeded run |
+| `POST /queue/{id}/park`, `POST /queue/{id}/unpark` | Park a running entry, or withdraw its park reservation; each returns the entry as `GET /queue/{id}` does |
+| `POST /queue/hold`, `POST /queue/release` | Hold or release the queue; each returns `held`, `held_since`, `held_by`, and `changed` (false when the queue already was, or was not, held) |
 | `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs, and each run's output file with whether it is complete |
-| `GET /audit` | The audit log of every submit, cancel, and resume, refused ones included |
+| `GET /audit` | The audit log of every submit, cancel, resume, park, unpark, hold, and release, refused ones included |
 
 A `{job}` reference is a job ID (`J0001`) or a file name in `data/jobs/`, and
 a queue entry or execution is named by its own ID (`Q0007`, `E0012`) — never a
@@ -765,13 +783,21 @@ raw path or a store row number. `GET /jobs`, `/executions`, `/inputs`, and
 from the previous page). `GET /queue` pages the same way, but only its
 finished entries (newest first); queued and running ones always come back in
 full on the first page, since those alone are bounded by `max_queued_jobs`.
+Each entry carries `park_requested`, true for a running entry with a park
+reservation. `GET /queue/{id}` also carries `between_runs_after_run`: the
+succeeded run the entry is between runs after, a cooldown included, until its
+next run starts, or null while a run is going (`cooldown_until` is the wait
+between two queued jobs, null while a job runs).
+`worker_state` reads `held` while no job runs and the queue is held.
 
 Watching for change (the event stream, and "tell me when this entry changes")
 is gRPC, not HTTP: `WatchEvents` streams job and queue events from a
 `last_event_id` onward (an ID from before the server's current run gets a
 `Reset`, telling the client to re-read state over HTTP and resubscribe), and
 `WatchQueueEntry` streams one entry's snapshot on every change until the
-client cancels the call.
+client cancels the call. Its snapshot carries `park_requested` and
+`queue_held`, and `WatchEvents` carries `queue_park_changed`, `queue_held`, and
+`queue_released`.
 
 **Rules and limits.** Every job the API queues must set
 `run_timeout_seconds` and keep its `input` inside `input_directory` and its
@@ -792,10 +818,74 @@ value; the job still runs with `run-job` while no server is up. These limits
 apply to every caller, `dtc queue` (Milestone 03) included: the API cannot
 tell a person from an agent.
 
-**Audit log.** Every submit, cancel, and resume is recorded in the state
-store (time, action, target, outcome, caller), refused ones included, read
+**Audit log.** Every submit, cancel, resume, park, unpark, hold, and release
+is recorded in the state store (time, action, target, outcome, caller; hold and
+release have no target), refused ones included, read
 back with `GET /audit`. It holds no prompt text, YAML, or credential, and is
 never pruned by `history_retention_days`.
+
+## Park a job and hold the queue
+
+Cancelling a running entry, `/stop`, and stopping the server all kill
+`draw-things-cli` at once, and the run it was making is lost. To keep it,
+*park* the entry instead: the job goes on until its current run ends, keeps
+every run it finished, and ends `parked`. A resume continues it at the next
+run, with the original seed, from that run's output (its last frame, for a
+video), and reruns nothing.
+
+```bash
+uv run dtc queue park Q0007
+uv run dtc queue resume Q0007
+```
+
+- Parking also *holds* the queue: nothing else starts until you release it
+  (`dtc queue release`, `/queue release`, or `/release`). The hold is saved
+  in the state store, so it survives a `dtc serve` restart, which logs
+  `Queue held since ... ; 'dtc queue release' starts it`. A release starts
+  the oldest queued entry at once, even when the last job's cooldown has not
+  passed.
+- While the entry's run goes on, it reads `parking`: in `dtc queue list`,
+  the Queue widget's State column, and the Status widget (`parking after
+  run 3/7`, or `parking on its last run`, with `parking` on the Job bar). A
+  reservation made from another TUI or from `dtc queue` shows too.
+- A park during the cooldown between two runs ends the cooldown at once, and
+  the job parks. A park during the job's last run lets it finish
+  `succeeded`, and the queue is still held. A parking run that fails ends
+  the job `failed`, and the queue stays held.
+- `unpark` withdraws the reservation: the job runs on as if it had never
+  been made, with its cooldowns in full, and the hold the reservation made
+  is released (a hold made by `hold`, or one already there, stays). It says
+  `Q0007 runs on; the queue is not held`, or `...; the queue stays held`.
+  Once the park has taken effect, unpark is refused (`Q0007 has already
+  parked`).
+- A cancel still stops at once, and a cancel of a parking entry loses its
+  run. Stopping the server while an entry is parking stops the run at once
+  too, and the entry ends `interrupted`; the reservation is not kept, the
+  hold is.
+- Parking a queued entry is refused: cancel it, or hold the queue. So is
+  parking a finished entry, or one being cancelled. Parking an entry that is
+  already parking does nothing, unless a release ended its hold, which it
+  then makes again.
+- `hold` holds the queue by itself: a running job is not stopped, and
+  nothing starts after it. Submissions and resumes are still accepted and
+  wait `queued`. Holding a queue a park reservation already holds makes the
+  hold its own, so a later unpark no longer releases it. A saved hold that cannot be read
+  counts as held, with a warning, until a release.
+- A parked entry and its execution are kept past `history_retention_days`
+  until a resume in its chain has a succeeded run.
+
+| Where | Park | Withdraw | Hold | Release |
+|-------|------|----------|------|---------|
+| `dtc queue` | `park <Queue ID>` | `unpark <Queue ID>` | `hold` | `release` |
+| The TUI | `/queue park <Queue ID>`, `/park`, `p` on the Queue widget | `/queue unpark <Queue ID>`, `/unpark`, `u` | `/queue hold`, `/hold` | `/queue release`, `/release` |
+
+`/park` and `/unpark` act on the entry the draw-things-cli pane is
+following. None of these asks to confirm. The Queue widget's title reads
+`Queue (held)` while the queue is held, from the state store too while the
+server is down. `dtc queue add --wait` says when its entry starts parking or
+runs on, and when it waits behind a hold; an entry that parks prints
+`Q0007 parked after run 5/7; 'dtc queue resume Q0007' continues at run 6`
+(the chain's run number) and exits 3.
 
 ## Stopping, failures, and exit codes
 
@@ -808,6 +898,7 @@ keeps any partial output, and exits with that run's exit code.
 | 0 | Success |
 | 1 | A run exited with 0 but wrote no output, last-frame extraction failed, or the `state/` database or lock cannot be used |
 | 2 | Invalid input: options, configuration, or job file |
+| 3 | `dtc queue add --wait`: the entry parked; `dtc queue resume` continues it |
 | 75 | Another run holds the run lock; try again when it finishes |
 | 124 | A run exceeded `--timeout` or `run_timeout_seconds` |
 | 130 | Stopped with Ctrl-C (`128 + signal`; 143 for `SIGTERM`, 129 for `SIGHUP`) |

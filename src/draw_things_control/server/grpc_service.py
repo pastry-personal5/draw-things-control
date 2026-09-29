@@ -56,26 +56,37 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
         if number is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
             return
+        # The entry's row id never changes, so it is looked up by number once; each poll then reads the row by id.
+        found = self._context.store.queue.by_number(number)
+        if found is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
+            return
         last: monitor_pb2.QueueEntrySnapshot | None = None
         while True:
-            snapshot = self._snapshot(number)
+            snapshot = self._snapshot(found.id)
             if snapshot is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
                 return
             # The elapsed seconds change on every poll while a run is active; a message is sent only when something
-            # the contract names changes (state, execution ID, run, step, cooldown_until, error), carrying the
-            # elapsed seconds as of then.
+            # the contract names changes (state, execution ID, run, step, cooldown_until, error, the park reservation,
+            # the hold), carrying the elapsed seconds as of then.
             compared = _without_elapsed(snapshot)
             if compared != last:
                 yield snapshot
                 last = compared
             await asyncio.sleep(self._poll_interval)
 
-    def _snapshot(self, number: int) -> monitor_pb2.QueueEntrySnapshot | None:
-        entry = self._context.store.queue.by_number(number)
+    def _snapshot(self, entry_id: int) -> monitor_pb2.QueueEntrySnapshot | None:
+        worker = self._context.worker
+        # The reservation first, then the row: the worker marks the entry finished before it drops the reservation,
+        # both under its lock, so a job that ends between the two reads shows its final state, never 'running'
+        # without its reservation. The queue table alone holds every field read below.
+        park_requested = worker.park_requested(entry_id)
+        entry = self._context.store.queue.get(entry_id)
         if entry is None:
             return None
-        snapshot = monitor_pb2.QueueEntrySnapshot(queue_id=entry.label, state=entry.state)
+        # Always set, True or False, so a change either way sends a message and a client reads it with HasField.
+        snapshot = monitor_pb2.QueueEntrySnapshot(queue_id=entry.label, state=entry.state, park_requested=park_requested, queue_held=worker.hold_state().held)
         if entry.total_runs is not None:
             snapshot.total_runs = entry.total_runs
         if entry.execution_number is not None:

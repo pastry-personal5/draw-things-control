@@ -121,6 +121,10 @@ class LiveRun:
         # Set only once a cancel this pane issued (/stop, or the Queue widget's own) is confirmed by the API
         # succeeding, never optimistically: moment() pins the bars here, so a failed cancel must not freeze them.
         self.stop_requested = False
+        # Whether the entry has a park reservation (Milestone 05): from this TUI's own park or unpark once the API
+        # confirms it, from queue_park_changed for one made elsewhere, and from GET /queue/{id} when the feed reseeds.
+        # The bars keep moving: the run goes on.
+        self.park_requested = False
         self.finished: JobFinished | None = None
         # The followed entry is over, however that was learned (see the class docstring); replaces the old
         # worker_ended, a local job-running thread that no longer exists.
@@ -129,15 +133,17 @@ class LiveRun:
 
     @property
     def phase(self) -> str:
-        """``starting``, ``running``, ``cooling_down``, ``stopping``, ``finished``, ``not_started``, or ``ended``
-        (the entry is over, but no JobFinished ever said how: it started, unlike ``not_started``, which never even
-        got that far -- an entry that failed before JobStarted)."""
+        """``starting``, ``running``, ``cooling_down``, ``stopping``, ``parking``, ``finished``, ``not_started``, or
+        ``ended`` (the entry is over, but no JobFinished ever said how: it started, unlike ``not_started``, which never
+        even got that far -- an entry that failed before JobStarted). A stop wins over a park reservation."""
         if self.ended and self.finished is None:
             return "not_started" if self.started is None else "ended"
         if self.finished is not None:
             return "finished"
         if self.stop_requested:
             return "stopping"
+        if self.park_requested:
+            return "parking"
         if self.cooldown is not None:
             return "cooling_down"
         return "running" if self.started is not None else "starting"

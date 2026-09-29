@@ -15,7 +15,7 @@ service Monitor {
   rpc WatchEvents(WatchEventsRequest) returns (stream Event);
 
   // Replaces GET /queue/{id}?wait=: one message whenever the entry's state, execution ID, current run, current
-  // step, cooldown_until, or error changes, until the client cancels the call.
+  // step, cooldown_until, error, park reservation, or the queue's hold changes, until the client cancels the call.
   rpc WatchQueueEntry(WatchQueueEntryRequest) returns (stream QueueEntrySnapshot);
 }
 
@@ -29,8 +29,9 @@ message WatchEventsRequest {
 message Event {
   int64 id = 1;
   // One of jobs/events.py's EVENT_KINDS (job_started, run_started, run_output, run_finished, cooldown_started,
-  // cooldown_ended, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended), or
-  // "reset" (data_json empty: the client's last_event_id is unusable, and it should re-sync over HTTP).
+  // cooldown_ended, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended, and,
+  // from Milestone 05, queue_park_changed, queue_held, queue_released), or "reset" (data_json empty: the client's
+  // last_event_id is unusable, and it should re-sync over HTTP).
   string kind = 2;
   // The event's own fields, exactly as event_to_dict (or the queue's own equivalent mapping) produces them, as
   // JSON: one generic payload instead of one message per event kind, since every client already reads this same
@@ -59,4 +60,8 @@ message QueueEntrySnapshot {
   // The whole chain's run count (state/queue.py's own total_runs, Milestone 03), so `dtc queue add --wait` can
   // print "run 3/7" the way the Queue widget does, from the entry's stored column alone.
   optional int32 total_runs = 10;
+  // Milestone 05: whether the entry has a park reservation (it ends once its current run finishes), and whether the
+  // queue is held, so `dtc queue add --wait` can say its queued entry waits behind a hold. Both always set.
+  optional bool park_requested = 11;
+  optional bool queue_held = 12;
 }

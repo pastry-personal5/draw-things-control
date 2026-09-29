@@ -53,7 +53,7 @@ class CompletionTests(unittest.TestCase):
     JOBS = ["walk.yaml", "wave.yml", "[b] walk.yaml"]
 
     def test_command_names_complete_after_the_slash(self) -> None:
-        self.assertEqual(completions("/h", self.JOBS), ["/help"])
+        self.assertEqual(completions("/h", self.JOBS), ["/help", "/hold"])
         self.assertEqual(completions("/", self.JOBS), [f"/{name}" for name in COMMAND_NAMES])
         self.assertEqual(completions("", self.JOBS), [f"/{name}" for name in COMMAND_NAMES])
         self.assertEqual(completions("/help", self.JOBS), [])
@@ -128,10 +128,14 @@ class CompletionTests(unittest.TestCase):
 
     def test_queue_words_jobs_and_ids_complete(self) -> None:
         queue_ids = ["Q0007", "Q0002"]
-        self.assertEqual(completions("/queue ", self.JOBS), ["/queue add", "/queue cancel", "/queue resume"])
+        self.assertEqual(completions("/queue ", self.JOBS), ["/queue add", "/queue cancel", "/queue resume", "/queue park", "/queue unpark", "/queue hold", "/queue release"])
         self.assertEqual(completions("/queue add wa", self.JOBS), ["/queue add walk.yaml", "/queue add wave.yml"])
         self.assertEqual(completions("/queue cancel Q000", self.JOBS, (), (), queue_ids), ["/queue cancel Q0007", "/queue cancel Q0002"])
         self.assertEqual(completions("/queue resume Q000", self.JOBS, (), (), queue_ids), ["/queue resume Q0007", "/queue resume Q0002"])
+        self.assertEqual(completions("/queue park Q", self.JOBS, (), (), queue_ids), ["/queue park Q0007", "/queue park Q0002"])
+        self.assertEqual(completions("/queue unpark q7", self.JOBS, (), (), ["Q7"]), [])
+        self.assertEqual(completions("/queue unpark Q000", self.JOBS, (), (), queue_ids), ["/queue unpark Q0007", "/queue unpark Q0002"])
+        self.assertEqual(completions("/queue hold Q", self.JOBS, (), (), queue_ids), [])
         self.assertEqual(completions("/describe queue Q000", self.JOBS, (), (), queue_ids), ["/describe queue Q0007", "/describe queue Q0002"])
         self.assertEqual(completions("/describe q000", self.JOBS, (), (), queue_ids), ["/describe q0007", "/describe q0002"])
         self.assertEqual(completions("/apply", self.JOBS), [])

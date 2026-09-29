@@ -89,15 +89,18 @@ class Store:
 
     def prune(self) -> int:
         """Delete executions (and their runs), and finished queue entries, before the retention cutoff; never a
-        ``running`` execution or a ``queued`` or ``running`` queue entry. An execution's ``.log`` file is deleted too,
-        never its manifest or outputs."""
+        ``running`` execution or a ``queued`` or ``running`` queue entry, nor a parked entry and the chain of resumes
+        below it, or their executions, until one of those resumes has a succeeded run (Milestone 05). An execution's
+        ``.log`` file is deleted too, never its manifest or outputs."""
         cutoff = self.retention_cutoff()
         if cutoff is None:
             return 0
-        deleted, log_paths = self.executions.prune(cutoff)
+        # Read before either prune, so both keep the same entries.
+        kept = self.queue.kept_parked()
+        deleted, log_paths = self.executions.prune(cutoff, keep=[execution for _queue, execution in kept if execution is not None])
         for log_path in log_paths:
             _delete_log(Path(log_path))
-        return deleted + self.queue.prune(cutoff)
+        return deleted + self.queue.prune(cutoff, keep=[queue for queue, _execution in kept])
 
     def retention_cutoff(self) -> float | None:
         """The UTC epoch before which history is pruned, or None when it is kept forever."""

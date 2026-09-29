@@ -43,6 +43,15 @@ typed tools on top of it.
   and the TUI's `/apply` submits to the queue instead of running the job
   itself. `dtc serve`'s worker becomes the only thing that ever invokes
   `draw-things-cli`
+- Parking a running job from the TUI and `dtc queue`: it ends once its
+  current run finishes, keeps every run it finished, reads `parked`, and can
+  be resumed at the next run. Parking holds the queue until a release, and
+  the queue can also be held on its own
+  ([Milestone 05](milestone-05-park-and-hold.md))
+- Deleting executions from the history, one, several, every one the
+  filters show, or, written out as `all`, the whole history, from the TUI (after a confirmation dialog) and `dtc history
+  delete`, through the API; never a running one, nor one a queued or
+  running entry uses ([Milestone 06](milestone-06-delete-executions.md))
 
 ## Non-goals
 
@@ -64,10 +73,11 @@ typed tools on top of it.
   queue add [--wait]` and the TUI's `/apply` submit to the queue and
   require the server to be running. Resuming an execution recorded before
   this change, or any execution with no snapshot of its own.
-- Resuming within a run, letting a run finish before a stop or a cancel
-  takes effect, retrying a failed run on its own, and pausing the queue
-  (owner decisions). A stop or a cancel loses the run in progress; stopping
-  the server stops the queue.
+- Resuming within a run, and retrying a failed run on its own (owner
+  decisions). A stop or a cancel loses the run in progress; stopping the
+  server stops the queue. Letting a run finish first is what parking is for,
+  and holding the queue is how to pause it
+  ([Milestone 05](milestone-05-park-and-hold.md)).
 - More than one level of access: whoever holds the token sees every job and
   every execution.
 
@@ -79,11 +89,13 @@ typed tools on top of it.
 | 02 | [HTTP API: read and run](milestone-02-http-api.md) | done |
 | 03 | [Queue for people](milestone-03-queue-for-people.md) | done |
 | 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | done |
+| 05 | [Park and hold](milestone-05-park-and-hold.md) | done |
+| 06 | [Delete executions](milestone-06-delete-executions.md) | planned |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
 | 08 | [MCP server](milestone-08-mcp-server.md) | planned |
 | 09 | [Safety hardening](milestone-09-safety-hardening.md) | planned |
 
-They are built in the order 01, 02, 03, 04, 07, 08, 09 (owner decision):
+They are built in the order 01, 02, 03, 04, 05, 06, 07, 08, 09 (owner decision):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -92,9 +104,12 @@ They are built in the order 01, 02, 03, 04, 07, 08, 09 (owner decision):
    agents can write jobs.
 4. Milestone 04 adds a verbose mode to the TUI's live output, extending
    what Milestone 03 just gave it, before scope moves to agent-facing work.
-5. After Milestone 07, agents can draft and write jobs.
-6. Milestone 08 adds MCP.
-7. Milestone 09 reviews the whole surface, `dtc queue` included, adds the
+5. Milestone 05 lets people park a running job at the end of its run, and
+   hold and release the queue.
+6. Milestone 06 lets people delete executions from the history.
+7. After Milestone 07, agents can draft and write jobs.
+8. Milestone 08 adds MCP.
+9. Milestone 09 reviews the whole surface, `dtc queue` included, adds the
    security suite, and closes any gaps it finds.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before
@@ -179,11 +194,21 @@ Decisions and notable changes are recorded in
   --wait` blocks until the entry finishes and exits with its outcome code,
   replacing `run-job`) or the TUI's Queue widget, and watch either update
   live while the server runs them.
+- A person can park a running entry from the TUI or `dtc queue`. It ends
+  `parked` after its current run with nothing lost, and a resume continues
+  it at the next run. The queue can be held and released, and a hold
+  survives a server restart.
+- A person can delete executions from the TUI, after a confirmation dialog,
+  or with `dtc history delete`: one, several, every one the filters show, or,
+  written out as `all`, the whole history.
+  The row, its runs, its log, and its manifest go, its outputs stay. A
+  running execution, or one a queued or running entry uses, is refused, and
+  a deletion that ends a parked or failed entry's resume says so first.
 - `dtc serve`'s worker is the only thing that ever starts `draw-things-cli`;
   `run-job` is retired, and the TUI never runs a job itself. Both require
   the server to be up.
-- The server restarts without losing the queue: queued jobs run,
-  interrupted jobs are marked, and an explicit resume continues one from its
+- The server restarts without losing the queue: queued jobs run (once
+  released, if the queue is held), interrupted jobs are marked, and an explicit resume continues one from its
   last succeeded run with the original seed, never from a run's leftover
   file.
 - A queued job runs its snapshot: editing or deleting its job file or its
@@ -193,7 +218,8 @@ Decisions and notable changes are recorded in
   an error naming the field, and touches nothing.
 - Write endpoints and tools do not exist unless the server was started with
   the write flag.
-- Delete and overwrite are always recoverable from `.trash/` and `.backups/`.
+- Deleting or overwriting a job file is always recoverable from `.trash/` and
+  `.backups/`. Deleting an execution is final, and asks first.
 - Only one `draw-things-cli` runs at a time, machine-wide: only the
   server's worker ever starts one.
 - No credential value (the API token, `--api-key`, `--remote-shared-secret`)

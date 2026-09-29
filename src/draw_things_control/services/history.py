@@ -16,7 +16,7 @@ from draw_things_control.state.ids import execution_id_text
 from draw_things_control.state.store import Store
 
 PAGE_SIZE = 200
-STATUSES = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.RUNNING)
+STATUSES = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.PARKED, JobStatus.RUNNING)
 NO_HISTORY = "No execution history yet"
 
 T = TypeVar("T")

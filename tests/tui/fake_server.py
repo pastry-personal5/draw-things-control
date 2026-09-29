@@ -102,6 +102,12 @@ class FakeServer:
         self.cancelled_ids: list[str] = []
         # What POST /v1/queue was sent, as the job argument.
         self.submitted: list[str] = []
+        # Milestone 05: the entries parked and unparked, the hold GET /v1/queue and the hold endpoints report, and a
+        # response to replace an entry's park response with (a refusal, or an entry that already parked).
+        self.parked_ids: list[str] = []
+        self.unparked_ids: list[str] = []
+        self.hold: dict[str, Any] = {"held": False, "held_since": None, "held_by": None}
+        self.park_responses: dict[str, httpx.Response] = {}
 
     # HTTP
 
@@ -114,7 +120,11 @@ class FakeServer:
         if path == "/v1/health":
             return httpx.Response(200, json={"status": "ok", "grpc_port": GRPC_PORT}) if self.health_ok else httpx.Response(503, json={})
         if path == "/v1/queue" and request.method == "GET":
-            return httpx.Response(200, json={"queue": self.running if request.url.params.get("state") == "running" else self.entries})
+            return httpx.Response(200, json={"queue": self.running if request.url.params.get("state") == "running" else self.entries, **self.hold})
+        if request.method == "POST" and path in ("/v1/queue/hold", "/v1/queue/release"):
+            return self._hold_or_release(path.endswith("/hold"))
+        if request.method == "POST" and (path.endswith("/park") or path.endswith("/unpark")):
+            return self._park_or_unpark(path.split("/")[-2], path.endswith("/park"))
         if path == "/v1/queue" and request.method == "POST":
             job = json.loads(request.content)["job"]
             self.submitted.append(job)
@@ -128,6 +138,22 @@ class FakeServer:
         if path.startswith("/v1/executions/") and path.split("/")[-1] in self.executions:
             return httpx.Response(200, json=self.executions[path.split("/")[-1]])
         return httpx.Response(404, json={"message": f"no {path}"})
+
+    def _hold_or_release(self, hold: bool) -> httpx.Response:
+        changed = self.hold["held"] != hold
+        self.hold = {"held": True, "held_since": self.hold["held_since"] or AT, "held_by": None} if hold else {"held": False, "held_since": None, "held_by": None}
+        return httpx.Response(200, json={**self.hold, "changed": changed})
+
+    def _park_or_unpark(self, queue_id: str, park: bool) -> httpx.Response:
+        (self.parked_ids if park else self.unparked_ids).append(queue_id)
+        if park and queue_id in self.park_responses:
+            return self.park_responses[queue_id]
+        if park and not self.hold["held"]:
+            self.hold = {"held": True, "held_since": AT, "held_by": queue_id}
+        if not park and self.hold["held_by"] == queue_id:
+            self.hold = {"held": False, "held_since": None, "held_by": None}
+        detail = self.details.get(queue_id, {"queue_id": queue_id, "state": "running", "total_runs": 2, "succeeded": 0, "current_run": 1})
+        return httpx.Response(200, json={"job_path": "/jobs/walk.yaml", **detail, "park_requested": park, **self.hold})
 
     # gRPC
 
@@ -169,6 +195,17 @@ class FakeServer:
 
     def send_queue_entry(self, queue_id: str, state: str) -> monitor_pb2.Event:
         return self.send_raw("queue_entry_changed", {"queue_id": queue_id, "state": state})
+
+    def send_park_changed(self, queue_id: str, park_requested: bool) -> monitor_pb2.Event:
+        return self.send_raw("queue_park_changed", {"queue_id": queue_id, "park_requested": park_requested})
+
+    def send_held(self, since: str | None = AT, by: str | None = None) -> monitor_pb2.Event:
+        self.hold = {"held": True, "held_since": since, "held_by": by}
+        return self.send_raw("queue_held", {"since": since, "by": by})
+
+    def send_released(self) -> monitor_pb2.Event:
+        self.hold = {"held": False, "held_since": None, "held_by": None}
+        return self.send_raw("queue_released", {})
 
     def send_reset(self) -> None:
         for call in self.open_calls:

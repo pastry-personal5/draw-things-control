@@ -43,7 +43,9 @@ class SlowFakeRunner(FakeRunner):
         return super().run()
 
 
-class QueueWorkerTests(JobTestCase):
+class QueueWorkerCase(JobTestCase):
+    """A worker over a real store and a fake runner, and the helpers its tests share; no tests of its own."""
+
     def setUp(self) -> None:
         super().setUp()
         self.starts = 0
@@ -108,6 +110,8 @@ class QueueWorkerTests(JobTestCase):
 
         return mock.patch("draw_things_control.services.queue_worker.parse_snapshot", side_effect=blocking), claimed, release
 
+
+class QueueWorkerTests(QueueWorkerCase):
     def test_two_queued_jobs_run_in_order(self) -> None:
         first = self.submit(run_count=1)
         second = self.submit(run_count=1)
