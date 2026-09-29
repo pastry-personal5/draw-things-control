@@ -189,10 +189,12 @@ class LiveRun:
         self.first_step = self.last_step = None
 
     def _run_output(self, event: RunOutput) -> None:
-        # The progress bar prints a new line per step; it updates the progress instead of filling the pane.
-        if event.progress is None and event.percent is None:
+        # A progress line is shown in the pane like any other; a seeded one (empty text, built from the entry's own
+        # step counter) has nothing to show.
+        if event.text or (event.progress is None and event.percent is None):
             self.output.append(OutputLine(event.stream, event.text))
             self.output_count += 1
+        if event.progress is None and event.percent is None:
             return
         self.progress = event.progress or self.progress
         self.percent = event.percent if event.percent is not None else self.percent

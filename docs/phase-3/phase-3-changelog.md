@@ -5,9 +5,61 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Owner decision** [M03]: Milestone 03 is marked done. Its code landed in `feat(queue): add queue CLI and TUI live
+  output`; the owner accepted it as complete even though `tests/tui`'s harness still uses the pre-Milestone-03 app
+  constructor and `MainScreen` is over the class size limit (both are Milestone 04's first steps), and the user
+  guide and `docs/architecture.md` do not yet describe `dtc queue` or the Queue widget.
+- **Owner decision** [M04]: The `draw-things-cli` pane shows progress lines (`Processing... [ ] 2  %`,
+  `Sampling... N / 40 [ ] N  %`), which Milestone 03 kept out of it (they only updated the run line); the owner
+  reported them as missing. Fixed first, before the verbose levels, which then treat them as ordinary output lines.
+- **Owner decision** [M04]: After a review of the milestone against the code, three earlier [M04] entries below
+  are superseded. Low mode does not poll `GET /queue/{id}` (the step counter is not shown there; run number,
+  elapsed time, and cooldown still update, rendered once a minute, and the person is told so when low is chosen).
+  Medium's window restarts when `/verbose medium` is typed, as well as at each run's start (a switch mid-run shows
+  output at once). Lines hidden by medium or low are never shown later. The review also found that
+  `tests/test_architecture.py` already fails on `main` (`MainScreen` is 252 lines, over the 250 limit) and that the
+  `tests/tui` harness still uses the constructor Milestone 03 replaced; the owner chose to fix both as Milestone
+  04's first step.
 - **Owner decision**: The module size limit ([development-rules.md](../development-rules.md#project-layout),
   `tests/test_architecture.py`'s `MAX_MODULE_LINES`) rises from 400 to 800 lines, to give modules more headroom
   before a split is required. The class (250) and function (40) limits are unchanged.
+- **Owner decision** [M04]: A new milestone, numbered 04 (an unused number, so the build order stays numeric; drafted as 10 first, then moved before anything was committed) and built next (before Milestone 07), gives the TUI a `/verbose
+  high|medium|low` command over the live output Milestone 03 just built: `high` is today's behavior; `medium`
+  streams every line but the pane only shows a run's first minute of it; `low` stops the server from sending bare
+  output at all and slows every periodic widget to a once-a-minute refresh. See
+  [Milestone 04](milestone-04-tui-verbose-mode.md).
+- **Owner decision** [M04]: The level changes the actual `WatchEvents` request, not just local rendering (the
+  alternative considered and rejected): entering or leaving `low` reconnects the shared stream with a different
+  `include_output`, with a message telling the person a reconnect is happening. `high` and `medium` both request
+  every line and differ only in what the pane does with them, so no reconnect happens between those two. The
+  reconnect resumes from the last event ID when the backlog can still explain the gap; it cannot always: the
+  backlog stores every event regardless of any subscriber's filter, and a subscriber's own last-seen ID only
+  advances on events it actually receives, so a run chatty enough to push more than 2000 filtered `run_output`
+  events through the backlog while the TUI sits in low mode can leave that ID too old to explain by the time the
+  level changes back. The server then sends `Reset`, handled by the pane's existing reseed path — the same one a
+  real disconnect already takes, not a new one.
+- **Design decision** [M04]: `server/grpc_service.py`'s `_wanted` filters the whole `"run_output"` kind on
+  `include_output`, progress/percent lines included (`jobs/events.py` gives both the same kind), so low mode loses
+  the run line's live step counter along with bare output (elapsed time is unaffected: it is timed locally from the
+  live `RunStarted`, which low mode still receives). Rather than keep `include_output=true` just for progress, low
+  mode polls `GET /queue/{id}` every 60 seconds for `current_step`/`current_step_total`. It does not reuse
+  `tui/feed.py`'s `_seed_active_run` to apply the response: that function assumes it runs before any live event, and
+  a periodic poll has no such guarantee — a response for a run that finished (or a job that ended) while the `GET`
+  was in flight would otherwise resurrect it with a synthetic `RunStarted`. A narrow `_refresh_step` re-checks the
+  poll is still current (same live run, not ended, still low) before applying anything, and drops a stale response
+  outright. Structured job/run/cooldown events are never `run_output` and keep arriving live at every level, so
+  history refresh and run-end detection are not delayed by being in low mode.
+- **Design decision** [M04]: Medium's one-minute window is measured from each run's own `RunStarted`
+  (`LiveRun.run_started_at`), not from when `/verbose medium` was typed: switching into medium mid-run shows
+  nothing until the next run starts. This is the plain reading of "the first 1 min of run," not a rule about the
+  command itself.
+- **Owner decision** [M04]: The chosen verbose level persists across `dtc tui` restarts, rather than always
+  starting at `high`.
+- **Design decision** [M04]: Persistence lives in a new `config/tui-preferences.yaml` (gitignored,
+  `ProjectPaths.tui_preferences`), read leniently (any problem falls back to `high`) and written only by the TUI.
+  Writing the level into `config/global-config.yaml` was rejected: that file is out of scope for this (phase 3's
+  own non-goals already rule out writing it from any interface), machine-wide, shared with `dtc serve`, and
+  strictly validated against a closed key set, none of which fits a single TUI session's display preference.
 
 ## 2026-09-28
 

@@ -77,21 +77,24 @@ typed tools on top of it.
 |---|-----------|--------|
 | 01 | [Queue and run manager](milestone-01-queue-run-manager.md) | done |
 | 02 | [HTTP API: read and run](milestone-02-http-api.md) | done |
-| 03 | [Queue for people](milestone-03-queue-for-people.md) | planned |
+| 03 | [Queue for people](milestone-03-queue-for-people.md) | done |
+| 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | planned |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
 | 08 | [MCP server](milestone-08-mcp-server.md) | planned |
 | 09 | [Safety hardening](milestone-09-safety-hardening.md) | planned |
 
-They are built in the order 01, 02, 03, 07, 08, 09 (owner decision):
+They are built in the order 01, 02, 03, 04, 07, 08, 09 (owner decision):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
    exist, within the rules and limits.
 3. Milestone 03 gives people the queue in the CLI and the TUI, before
    agents can write jobs.
-4. After Milestone 07, agents can draft and write jobs.
-5. Milestone 08 adds MCP.
-6. Milestone 09 reviews the whole surface, `dtc queue` included, adds the
+4. Milestone 04 adds a verbose mode to the TUI's live output, extending
+   what Milestone 03 just gave it, before scope moves to agent-facing work.
+5. After Milestone 07, agents can draft and write jobs.
+6. Milestone 08 adds MCP.
+7. Milestone 09 reviews the whole surface, `dtc queue` included, adds the
    security suite, and closes any gaps it finds.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before

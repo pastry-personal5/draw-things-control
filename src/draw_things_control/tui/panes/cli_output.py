@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import RichLog, Static
 
-from draw_things_control.jobs.events import JobEvent, RunOutput
+from draw_things_control.jobs.events import JobEvent
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, LiveRun
 from draw_things_control.tui.text.status import run_line_text
 
@@ -42,9 +42,8 @@ class CliPane(Vertical):
         self.show(live)
 
     def show(self, live: LiveRun | None, event: JobEvent | None = None) -> None:
-        """Show the LiveRun as it is now; a progress line updates only the run line."""
-        if not isinstance(event, RunOutput) or event.progress is None and event.percent is None:
-            self.write_output(live)
+        """Show the LiveRun as it is now: any new output lines (progress lines included), and the run line."""
+        self.write_output(live)
         self.tick(live)
 
     def tick(self, live: LiveRun | None) -> None:
