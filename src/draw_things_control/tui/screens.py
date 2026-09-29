@@ -35,7 +35,7 @@ from draw_things_control.tui.text.arguments import parameters_text
 from draw_things_control.tui.text.execution import execution_text
 from draw_things_control.tui.text.jobs import details_text, jobs_text
 from draw_things_control.tui.text.prompts import prompts_text
-from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
+from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog, SteadyText
 
 if TYPE_CHECKING:
     from draw_things_control.tui.app import DrawThingsApp
@@ -117,7 +117,7 @@ class MainScreen(Screen[None]):
             yield Static("> ", id="prompt")
             yield CommandInput(id="command", compact=True, suggester=CommandSuggester(lambda: self.jobs.job_names, lambda: self.jobs.job_ids, self.execution_ids, self.queue_ids))
         yield Rule(line_style="solid", classes="command-rule")
-        yield Static(id="status-line")
+        yield SteadyText(id="status-line")
 
     def on_mount(self) -> None:
         self.query_one(MessageLog).border_title = "Messages"

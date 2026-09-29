@@ -8,11 +8,12 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import RichLog, Static
+from textual.widgets import RichLog
 
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, LiveRun
 from draw_things_control.tui.preferences import MEDIUM_OUTPUT_WINDOW_SECONDS, VerboseLevel
 from draw_things_control.tui.text.status import run_line_text
+from draw_things_control.tui.widgets import SteadyText
 
 # Why the pane went quiet, written in dim text: at medium once per closed window; at low whenever the pane's content
 # is (re)established, since no line ever arrives there to be skipped.
@@ -31,7 +32,7 @@ class CliPane(Vertical):
         self._marked_window: float | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(id="run-line")
+        yield SteadyText(id="run-line")
         yield RichLog(id="cli-output", max_lines=MAX_OUTPUT_LINES, wrap=True, min_width=20)
 
     def on_mount(self) -> None:
@@ -61,7 +62,7 @@ class CliPane(Vertical):
 
     def tick(self, live: LiveRun | None, level: VerboseLevel = "high") -> None:
         """Update the elapsed time and the cooldown countdown."""
-        self.query_one("#run-line", Static).update(run_line_text(live, level))
+        self.query_one("#run-line", SteadyText).show_text(run_line_text(live, level))
 
     def write_output(self, live: LiveRun | None, level: VerboseLevel = "high") -> None:
         """Write the lines not yet written, unless the level hides them: low always, medium after its window. A hidden

@@ -1,4 +1,4 @@
-"""The TUI's small widgets: the command line and the message log."""
+"""The TUI's small widgets: the command line, the message log, and the text the one-second tick sets."""
 
 from __future__ import annotations
 
@@ -7,9 +7,35 @@ from typing import Any, Self
 
 from rich.text import Text
 from textual.binding import Binding
-from textual.widgets import Input, RichLog
+from textual.visual import VisualType
+from textual.widgets import Input, RichLog, Static
 
 MAX_MESSAGE_LINES = 5000
+
+
+class SteadyText(Static):
+    """Text of a fixed size (``styles.tcss`` sets its height) that the one-second tick sets again whether or not it
+    changed: the Status widget, the run line, and the status line. An unchanged text is not drawn again, and a changed
+    one is drawn without a layout pass, which would also redraw the scrollbars below it. While a job runs, draw-things-cli
+    keeps the GPU busy and the terminal's own drawing waits for it, so every frame the TUI sends costs the person typing."""
+
+    def __init__(self, *args: Any, **options: Any) -> None:
+        super().__init__(*args, **options)
+        self._shown: tuple[Any, ...] | None = None
+
+    def show_text(self, text: Text) -> None:
+        # Text's own == leaves out its base style (``Text("x", style="dim")``), which may be all that changed. Textual
+        # draws only these three: a Rich Text's no_wrap, overflow, and justify never reach the screen.
+        shown = (text.plain, text.style, tuple(text.spans))
+        if shown == self._shown:
+            return
+        self.update(text, layout=False)
+        self._shown = shown
+
+    def update(self, content: VisualType = "", *, layout: bool = True) -> None:
+        # Content set any other way is not what show_text last showed, so its next text is drawn whatever it is.
+        self._shown = None
+        super().update(content, layout=layout)
 
 
 class CommandInput(Input):

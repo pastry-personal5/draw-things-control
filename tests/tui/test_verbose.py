@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -14,6 +15,7 @@ from draw_things_control.tui.commands import completions
 from draw_things_control.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
 from draw_things_control.tui.panes.status import StatusPane
 from draw_things_control.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
+from draw_things_control.tui.widgets import SteadyText
 from tests.tui.fake_server import cooldown_started, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -397,6 +399,38 @@ class LowTests(VerboseTestCase):
             forced = self.text(app, "status-line")
         self.assertNotIn("Ctrl-C again", unforced)
         self.assertIn("Press Ctrl-C again to quit", forced)
+
+
+class RedrawTests(VerboseTestCase):
+    async def test_a_tick_redraws_only_the_text_that_changed_and_never_lays_out(self) -> None:
+        # Every tick renders at high, whatever the default level becomes.
+        self.preset("high")
+        clock = Clock()
+        app = self.make_app()
+        updates: list[tuple[str | None, bool]] = []
+        original = SteadyText.update
+
+        def spy(widget: SteadyText, content: Any = "", *, layout: bool = True) -> None:
+            updates.append((widget.id, layout))
+            original(widget, content, layout=layout)
+
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.running_job(pilot, clock)
+            assert app.live is not None
+            # The end times' clock too, so a minute turning between two ticks changes nothing.
+            wall = datetime(2026, 9, 29, 12, 0)
+            app.live._wall_clock = lambda: wall
+            running = app.main.running  # type: ignore[union-attr]
+            running.tick(force=True)
+            with mock.patch.object(SteadyText, "update", spy):
+                running.tick(force=True)
+                running.tick()
+                unchanged = list(updates)
+                clock.now += 1
+                running.tick()
+        self.assertEqual(unchanged, [])
+        # A second on: the elapsed times change; the status line does not.
+        self.assertEqual(sorted(updates), [("run-line", False), ("status", False)])
 
 
 class OfflineTests(VerboseTestCase):

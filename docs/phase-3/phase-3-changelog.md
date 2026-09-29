@@ -5,6 +5,16 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Change** [M04]: The TUI draws less while a job runs. Reported as the TUI responding slowly during a run; measured
+  during a live run: the TUI itself answered a key in about 2 ms and was idle (0.3% CPU, 15 feed events in 14 minutes),
+  while draw-things-cli held the GPU at 100%, which the terminal (Wave, an Electron app) needs to draw every frame. That
+  points to the terminal's drawing waiting on the GPU, not to the TUI. The TUI's share: every second it redrew the Status widget, the run line,
+  and the status line whether or not they had changed, each with a layout pass that also redrew both logs' scrollbars in a
+  second frame. They are now `tui/widgets.py`'s `SteadyText`, which skips an unchanged text and draws a changed one
+  without layout: one frame a second instead of two (about 3.4 KB/s instead of 6.1 KB/s), and none while nothing changes.
+  `/verbose low` still draws them once a minute. A Status widget line too long for its width now ends in an ellipsis
+  instead of wrapping and pushing the lines below it out of view: Textual drops a Rich Text's own `no_wrap` and
+  `overflow`, so `styles.tcss` sets them on `#status`.
 - **Change** [M04]: Fixes from reviewing Milestone 04. Low drops the active run's step readings
   (`LiveRun.forget_progress`) when chosen mid-run or when attaching at low, so the Status widget's `step N/M` line no
   longer freezes (that run then estimates from elapsed time, as a run begun at low does); `/verbose` and a confirmed

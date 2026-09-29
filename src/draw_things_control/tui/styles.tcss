@@ -11,10 +11,13 @@
     background: black;
 }
 
-/* 7 lines with its border: the phase, two bars, the details, and the last run (screens.STATUS_LINES). */
+/* 7 lines with its border: the phase, two bars, the details, and the last run (screens.STATUS_LINES). A line too long
+   for the width ends in an ellipsis, never wraps into the next: Textual drops a Rich Text's own no_wrap and overflow. */
 #status {
     height: 7;
     padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
     border: round $panel;
     border-title-color: $accent;
 }

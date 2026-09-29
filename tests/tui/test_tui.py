@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
+from rich.text import Text
 from textual.color import Color
 from typer.testing import CliRunner
 
@@ -18,6 +19,7 @@ from draw_things_control.jobs.text import plan_header, plan_steps
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
 from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.panes.status import StatusPane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 from tests.fixtures import JobTestCase, TestExecutor, job_executor
@@ -84,6 +86,18 @@ class TuiTests(TuiTestCase):
                 self.assertIn(str(self.data), status)
                 self.assertIn("idle", status)
                 self.assertIn("/help: commands, Ctrl-C twice: quit", status)
+
+    async def test_a_status_line_too_long_for_the_width_ends_in_an_ellipsis_and_keeps_the_lines_below(self) -> None:
+        app = self.app()
+        async with app.run_test(size=(80, 34)) as pilot:
+            await self.settle(pilot)
+            status = app.screen.query_one(StatusPane)
+            status.show_text(Text("\n").join([Text("walk " * 40), Text("second")]))
+            await pilot.pause()
+            # Under the border's top row, without its sides and the padding.
+            lines = [strip.text.strip("│ ") for strip in status.render_lines(status.region.reset_offset)][1:3]
+        self.assertTrue(lines[0].endswith("…"), lines[0])
+        self.assertEqual(lines[1], "second")
 
     async def test_the_app_is_dark_the_cursor_steady_and_the_palette_off(self) -> None:
         app = self.app()

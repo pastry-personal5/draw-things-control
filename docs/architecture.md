@@ -155,7 +155,7 @@ Adds what every later front end needs, without changing the CLI's behavior.
   | `screens.py`, `controller.py` | `MainScreen` (layout, events to panes) and `CommandController` (the `/` commands and their arguments) |
   | `panes/` | `StatusPane`, `CliPane`, `JobDefinitionPane`, `HistoryPane`, `ExecutionPane`, over `base.py` (the height rule for a table that scrolls sideways, and reads whose newest result wins) |
   | `text/` | Every text the TUI shows, by subject (`jobs`, `status`, `events`, `execution`, `prompts`, `arguments`, `history`); job text comes from `jobs/text.py` where the CLI prints the same |
-  | `commands.py`, `widgets.py`, `job_watch.py` | The command table, `CommandInput` and `MessageLog`, and the file watcher |
+  | `commands.py`, `widgets.py`, `job_watch.py` | The command table, `CommandInput`, `MessageLog`, and `SteadyText` (the text the one-second tick sets), and the file watcher |
   | `reader.py`, `job_sort.py`, `desktop.py` | `PaneHistory`, the kept sort, reveal in Finder and the clipboard |
   | `live_run.py`, `estimate.py` | `LiveRun`, the running job's state built from its events, and the run and job estimates |
 
@@ -365,7 +365,8 @@ Adds what every later front end needs, without changing the CLI's behavior.
 - `tui/running_job.py`'s `RunningJobView` (held by `MainScreen` as `running`) applies the job's events to the panes
   and owns `tick(force)`: at low, an unforced tick (the screen's one-second timer) renders the Status widget, run
   line, and status line only once `LOW_STATUS_REFRESH_SECONDS` after the last render; every event-driven caller
-  forces it.
+  forces it. All three are `tui/widgets.py`'s `SteadyText`: an unchanged text draws nothing, and a changed one is drawn
+  without a layout pass (`styles.tcss` fixes their heights), so a tick sends the terminal only the widgets that changed.
 - `tui/panes/cli_output.py`'s `CliPane.write_output` skips lines for good at low, and at medium once a run's first
   `MEDIUM_OUTPUT_WINDOW_SECONDS` have passed (or the minute since `/verbose medium` was typed, `LiveRun.output_window_start`).
 
