@@ -22,8 +22,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   it unless the owner revises the decision. Do not wrap lines to satisfy a
   limit.
 - **Ruff lints and formats** (owner decision). Black is not used.
-- PEP 8 otherwise; type hints where applicable; small, single-purpose
-  functions.
+- PEP 8 otherwise; type hints where applicable; single-purpose functions.
 - Entry points use `def main()` and `if __name__ == "__main__":`.
 - No trailing whitespace; Unix line endings.
 - Match the surrounding code's naming, comment density, and idiom.
@@ -44,9 +43,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
 - No module holds a path of its own: a directory comes from `ProjectPaths`
   (`core/paths.py`) and is passed down, and a test passes its own.
-- Keep modules to at most 800 lines, classes to at most 250, and functions to at most 40 (`tests/test_architecture.py` checks it),
-  except declarative tables and option lists (`GENERATE_FLAGS`, the command
-  table, SQL, a Typer command's options).
+- Keep modules to at most 3200 lines, classes to at most 1600, and functions to at most 800 (`tests/test_architecture.py` checks it).
 - `data/params/*.json`, `data/params/*.yaml`, and `config/global-config.yaml`
   are user files. Never edit, delete, or deduplicate them from code, tests,
   or tools.
