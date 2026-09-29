@@ -8,9 +8,10 @@ watching events can never see a claim's 'running' published before an earlier 'q
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from draw_things_control.core.clock import Clock
+from draw_things_control.services.history_delete import DeleteReport, delete_executions
 from draw_things_control.services.queue_events import QueueEventPublisher
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store
@@ -46,3 +47,9 @@ class QueueClaimGate:
         if cancelled:
             self._wake()
         return cancelled
+
+    def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
+        """Delete executions from the history (Milestone 06), checking which are running or in use under the shared
+        lock, so no claim, job start, or submission lands between the check and the delete; the files go after it is
+        released. Publishes nothing: other clients see a deletion when they next read the history."""
+        return delete_executions(self._store, numbers, dry_run=dry_run, lock=self._lock)

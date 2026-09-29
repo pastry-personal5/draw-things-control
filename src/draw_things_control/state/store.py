@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -13,7 +14,7 @@ from draw_things_control.core.paths import DATABASE_FILE_NAME
 from draw_things_control.core.run_lock import ensure_state_directory
 from draw_things_control.state.audit import AuditRepository
 from draw_things_control.state.database import Database, StateError
-from draw_things_control.state.executions import ExecutionRepository
+from draw_things_control.state.executions import DeletedExecution, ExecutionRepository
 from draw_things_control.state.job_ids import JobIdRepository
 from draw_things_control.state.queue import QueueRepository
 from draw_things_control.state.schema import SCHEMA_VERSION
@@ -38,12 +39,29 @@ class StoreMode(StrEnum):
 
 def _delete_log(path: Path) -> None:
     """Delete a pruned execution's log file. Only a regular ``.log`` file goes, and a file already gone or refused is no error: the row is deleted either way."""
-    if path.suffix != ".log" or path.is_symlink():
+    if path.suffix != ".log":
         return
+    # is_symlink() is inside the try: it raises too when the directory cannot be searched.
     try:
-        path.unlink(missing_ok=True)
+        if not path.is_symlink():
+            path.unlink(missing_ok=True)
     except OSError as error:
         logger.warning("Could not delete the old log {}: {}", path, error.strerror)
+
+
+def _delete_manifest(path: Path) -> bool:
+    """Delete a deleted execution's manifest (Milestone 06), so ``dtc import-history`` cannot bring it back; returns
+    whether it is gone. Only a regular ``.json`` file goes: a symbolic link or another file is kept, and so is one that
+    cannot be deleted (logged), since the importer could still find it. A file already gone is no error."""
+    # is_symlink() and exists() are inside the try: they raise too when the directory cannot be searched.
+    try:
+        if path.suffix != ".json" or path.is_symlink():
+            return not path.is_symlink() and not path.exists()
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        logger.warning("Could not delete the manifest {}: {}", path, error.strerror)
+        return False
+    return True
 
 
 class Store:
@@ -101,6 +119,18 @@ class Store:
         for log_path in log_paths:
             _delete_log(Path(log_path))
         return deleted + self.queue.prune(cutoff, keep=[queue for queue, _execution in kept])
+
+    def delete_execution_files(self, deleted: Sequence[DeletedExecution]) -> list[tuple[int, str]]:
+        """Delete the log and manifest of each execution ``ExecutionRepository.delete`` deleted, once its transaction
+        committed; returns the manifests that stayed, as (execution number, path). A file that cannot be deleted is
+        logged, and the row stays deleted either way."""
+        kept: list[tuple[int, str]] = []
+        for execution in deleted:
+            if execution.log_path is not None:
+                _delete_log(Path(execution.log_path))
+            if execution.manifest_path is not None and not _delete_manifest(Path(execution.manifest_path)):
+                kept.append((execution.number, execution.manifest_path))
+        return kept
 
     def retention_cutoff(self) -> float | None:
         """The UTC epoch before which history is pruned, or None when it is kept forever."""

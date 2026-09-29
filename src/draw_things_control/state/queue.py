@@ -36,7 +36,32 @@ _FINISHED_STATES_SQL = ", ".join(f"'{state}'" for state in FINISHED_STATES)
 # resumes it (a resume, a resume of that resume, and so on), until one of those has a succeeded run. Until then, a
 # resume that was cancelled, or whose first run failed, still walks back through the resumes between to the parked
 # entry; keeping them also keeps the parked entry from reading as never resumed, and so being resumed a second time.
-_KEPT_PARKED_SQL = "WITH RECURSIVE chain(root, queue_number, execution_number) AS (SELECT queue_number, queue_number, execution_number FROM queue WHERE state = 'parked' UNION ALL SELECT chain.root, queue.queue_number, queue.execution_number FROM queue JOIN chain ON queue.resumes = chain.queue_number) SELECT DISTINCT queue_number, execution_number FROM chain WHERE root NOT IN (SELECT chain.root FROM chain JOIN executions ON executions.execution_number = chain.execution_number JOIN runs ON runs.execution_id = executions.id WHERE chain.queue_number != chain.root AND runs.status = 'succeeded')"
+# Milestone 06: nor once a finished entry of the chain links an execution that no longer exists (deleted): the newest
+# resume would walk back to it and be refused, so nothing in the chain can be resumed. A running entry does not count,
+# since it links its execution number before JobStarted creates the row.
+_KEPT_PARKED_SQL = "WITH RECURSIVE chain(root, queue_number, execution_number, state) AS (SELECT queue_number, queue_number, execution_number, state FROM queue WHERE state = 'parked' UNION ALL SELECT chain.root, queue.queue_number, queue.execution_number, queue.state FROM queue JOIN chain ON queue.resumes = chain.queue_number) SELECT DISTINCT queue_number, execution_number FROM chain WHERE root NOT IN (SELECT chain.root FROM chain JOIN executions ON executions.execution_number = chain.execution_number JOIN runs ON runs.execution_id = executions.id WHERE chain.queue_number != chain.root AND runs.status = 'succeeded') AND root NOT IN (SELECT chain.root FROM chain LEFT JOIN executions ON executions.execution_number = chain.execution_number WHERE chain.execution_number IS NOT NULL AND executions.id IS NULL AND chain.state NOT IN ('queued', 'running'))"
+# Every entry with what a resume chain's walk reads of its linked execution (Milestone 06's in-use refusal and resume
+# warning): whether the row still exists, its run count, and its last succeeded run.
+_RESUME_LINKS_SQL = "SELECT queue.queue_number, queue.state, queue.execution_number, queue.resumes, queue.resumes_execution, executions.id IS NOT NULL AS execution_exists, executions.total_runs AS execution_total_runs, (SELECT MAX(runs.number) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS last_succeeded FROM queue LEFT JOIN executions ON executions.execution_number = queue.execution_number ORDER BY queue.queue_number"
+
+
+@dataclass(frozen=True)
+class ResumeLink:
+    """One queue entry as a resume chain's walk reads it: its links, and its linked execution's last succeeded run
+    (None when it has none, or there is no such row)."""
+
+    queue_number: int
+    state: str
+    execution_number: int | None
+    resumes: int | None
+    resumes_execution: int | None
+    execution_exists: bool
+    execution_total_runs: int | None
+    last_succeeded: int | None
+
+    @property
+    def label(self) -> str:
+        return queue_id_text(self.queue_number)
 
 
 @dataclass(frozen=True)
@@ -288,10 +313,15 @@ class QueueRepository:
 
     def kept_parked(self) -> list[tuple[int, int | None]]:
         """The entries retention keeps for parked ones, as (queue number, linked execution number): each parked entry
-        and the chain of resumes below it, until one of those resumes has a succeeded run. Read once, before anything
+        and the chain of resumes below it, until one of those resumes has a succeeded run, or a finished entry of it
+        links an execution that was deleted (Milestone 06). Read once, before anything
         is pruned (``Store.prune``): pruning the resume's execution first would otherwise hide the succeeded run that
         lets the chain go."""
         return [(row["queue_number"], row["execution_number"]) for row in self._database.connection().execute(_KEPT_PARKED_SQL)]
+
+    def resume_links(self) -> list[ResumeLink]:
+        """Every entry, oldest first, with what a resume chain's walk reads of its linked execution, in one query."""
+        return [ResumeLink(row["queue_number"], row["state"], row["execution_number"], row["resumes"], row["resumes_execution"], bool(row["execution_exists"]), row["execution_total_runs"], row["last_succeeded"]) for row in self._database.connection().execute(_RESUME_LINKS_SQL)]
 
     def prune(self, cutoff: float, *, keep: Sequence[int] = ()) -> int:
         """Delete entries finished before the epoch ``cutoff``; never a ``queued`` or ``running`` one, nor one whose

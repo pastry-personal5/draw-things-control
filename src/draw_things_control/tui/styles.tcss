@@ -124,3 +124,26 @@ Rule.command-rule {
 #status-line {
     height: 1;
 }
+
+/* The delete dialog (Milestone 06): a bordered box in the middle of the dimmed screen. */
+DeleteDialog {
+    align: center middle;
+}
+
+#delete-dialog {
+    width: 90;
+    max-width: 100%;
+    height: auto;
+    padding: 1 2;
+    border: round $error;
+    background: $surface;
+}
+
+#delete-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#delete-buttons Button {
+    margin-right: 2;
+}

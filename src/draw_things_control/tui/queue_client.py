@@ -1,6 +1,6 @@
 """The TUI's own async HTTP client for the queue commands (``/queue add``, ``/apply``, ``/queue cancel``,
 ``/queue resume``, ``c``, and, from Milestone 05, ``/queue park``, ``unpark``, ``hold``, and ``release``, ``p``, and
-``u``): submits, cancels, resumes, parks, and holds through the API, exactly as ``dtc queue`` does over its own
+``u``), and, from Milestone 06, ``/delete`` and ``d``: submits, cancels, resumes, parks, holds, and deletes through the API, exactly as ``dtc queue`` does over its own
 synchronous client (``cli/queue_app.py``) -- a small amount of the same shape duplicated once per front end, since
 front ends never import each other (``tests/test_architecture.py``)."""
 
@@ -97,3 +97,8 @@ async def list_queue(server_url: str, token_file: Path, transport: "httpx.AsyncB
     """The entries, and the queue's hold beside them."""
     body = await _request(server_url, token_file, transport, "GET", "/v1/queue", params={"limit": limit})
     return body["queue"], HoldState.from_body(body)
+
+
+async def delete_executions(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", execution_ids: list[str], *, dry_run: bool = False) -> dict[str, Any]:
+    """One ``POST /v1/executions/delete`` of up to 200 IDs; ``dry_run`` says what it would do now."""
+    return await _request(server_url, token_file, transport, "POST", "/v1/executions/delete", json={"executions": execution_ids, "dry_run": dry_run})

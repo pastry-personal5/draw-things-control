@@ -8,6 +8,7 @@ from typing import Any
 from draw_things_control.core.arguments import redact_command
 from draw_things_control.jobs.definition import JobDefinition, PromptPair
 from draw_things_control.jobs.planning import JobPreview
+from draw_things_control.services.history_delete import DeleteReport
 from draw_things_control.services.input_listing import InputImage
 from draw_things_control.services.job_catalog import JobRow
 from draw_things_control.services.queue_hold import HoldState
@@ -173,3 +174,16 @@ def queue_hold(hold: HoldState) -> dict[str, Any]:
     """The queue's hold (Milestone 05), beside the entries of ``GET /queue`` and ``GET /queue/{id}``, and the response
     of ``POST /queue/hold`` and ``/queue/release``."""
     return {"held": hold.held, "held_since": hold.since, "held_by": hold.by}
+
+
+def delete_report(report: DeleteReport, *, dry_run: bool) -> dict[str, Any]:
+    """``POST /executions/delete``'s answer (Milestone 06): each execution's outcome, the entries each deletion leaves
+    unresumable, and the manifests that could not be deleted."""
+    return {
+        "dry_run": dry_run,
+        "deleted": [execution_id_text(number) for number in report.deleted],
+        "refused": [{"execution_id": execution_id_text(number), "reason": reason} for number, reason in report.refused.items()],
+        "missing": [execution_id_text(number) for number in report.missing],
+        "resumes_ended": [{"execution_id": execution_id_text(number), "queue_ids": queue_ids} for number, queue_ids in report.resumes_ended.items()],
+        "manifests_kept": [{"execution_id": execution_id_text(number), "path": path} for number, path in report.manifests_kept],
+    }

@@ -113,6 +113,12 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         table = app.screen.query_one(HistoryPane)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
+    @staticmethod
+    def marks_of(app: DrawThingsApp) -> list[str]:
+        """The IDs of the history's marked rows, in order."""
+        table = app.screen.query_one(HistoryPane)
+        return [str(table.get_row_at(index)[0]).removeprefix("*") for index in range(table.row_count) if str(table.get_row_at(index)[0]).startswith("*")]
+
     def executions(self) -> list[ExecutionRow]:
         store = Store.open(self.paths.database)
         try:

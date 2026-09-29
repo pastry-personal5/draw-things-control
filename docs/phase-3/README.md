@@ -90,7 +90,7 @@ typed tools on top of it.
 | 03 | [Queue for people](milestone-03-queue-for-people.md) | done |
 | 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | done |
 | 05 | [Park and hold](milestone-05-park-and-hold.md) | done |
-| 06 | [Delete executions](milestone-06-delete-executions.md) | planned |
+| 06 | [Delete executions](milestone-06-delete-executions.md) | done |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
 | 08 | [MCP server](milestone-08-mcp-server.md) | planned |
 | 09 | [Safety hardening](milestone-09-safety-hardening.md) | planned |

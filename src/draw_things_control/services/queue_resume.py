@@ -13,6 +13,7 @@ from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.services.queue_submit import Enqueue, parse_snapshot
+from draw_things_control.services.resume_chain import walk_chain
 from draw_things_control.state.execution_rows import ExecutionRow
 from draw_things_control.state.ids import execution_id_text
 from draw_things_control.state.queue import NewQueueEntry, QueueRow, QueueState
@@ -137,16 +138,16 @@ def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_direct
 def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
     """Walk back through ``entry``'s own resumes to the last succeeded run of the chain; refuses, naming the reason,
     when no run of the chain ever succeeded, or the file it would start from is gone."""
-    current = entry
-    execution = _linked_execution(store, current)
-    succeeded = execution.succeeded_runs if execution is not None else ()
-    while not succeeded and current.resumes is not None:
-        ancestor = store.queue.by_number(current.resumes)
-        if ancestor is None:
+
+    def ancestor(current: QueueRow) -> QueueRow:
+        assert current.resumes is not None
+        found = store.queue.by_number(current.resumes)
+        if found is None:
             raise ResumeRefusedError(f"{current.label}'s ancestor Q{current.resumes:04d} is gone; it cannot be resumed")
-        current = ancestor
-        execution = _linked_execution(store, current)
-        succeeded = execution.succeeded_runs if execution is not None else ()
+        return found
+
+    _last_entry, execution = list(walk_chain(entry, linked=lambda current: _linked_execution(store, current), ancestor=ancestor, succeeded=lambda row: bool(row.succeeded_runs)))[-1]
+    succeeded = execution.succeeded_runs if execution is not None else ()
     if not succeeded:
         raise ResumeRefusedError(f"{entry.label} has no succeeded run in its chain; submit the job again instead of resuming it")
     last = succeeded[-1]
@@ -163,11 +164,11 @@ def _linked_execution(store: Store, entry: QueueRow) -> ExecutionRow | None:
     """The entry's linked execution, with its runs. None when it never started (no runs to resume from): either it
     truly has no link, or a number was reserved for it but the row was never created (the job failed before
     ``JobStarted``, which ``QueueWorker._fail_to_start`` clears the link for) -- both read the same way here, since
-    neither has a run to resume from. A linked execution whose row once existed and was since pruned by retention is
-    refused instead, naming it, since that chain did run and is not simply resumable from further back."""
+    neither has a run to resume from. A linked execution whose row once existed and was since pruned by retention, or
+    deleted (Milestone 06), is refused instead, naming it, since that chain did run and is not simply resumable from further back."""
     if entry.execution_number is None:
         return None
     execution = store.executions.by_number(entry.execution_number)
     if execution is None:
-        raise ResumeRefusedError(f"{entry.label}'s execution {execution_id_text(entry.execution_number)} was pruned; it cannot be resumed")
+        raise ResumeRefusedError(f"{entry.label}'s execution {execution_id_text(entry.execution_number)} was pruned or deleted; it cannot be resumed")
     return execution

@@ -1,4 +1,4 @@
-"""The job files as text: the list, the Job Definition rows, a job's summary and plan, and the confirmation of a run."""
+"""The job files as text: the list, the Job Definition rows, and a job's summary and plan."""
 
 from __future__ import annotations
 

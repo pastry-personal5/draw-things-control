@@ -26,6 +26,18 @@ class PaneHistory:
         except DtcError as error:
             return HistoryPage(offset, message=str(error))
 
+    def every(self, history_filter: HistoryFilter) -> list[ExecutionRow] | str:
+        try:
+            return self._reader.every(history_filter)
+        except DtcError as error:
+            return str(error)
+
+    def by_numbers(self, numbers: list[int]) -> list[ExecutionRow] | str:
+        try:
+            return self._reader.by_numbers(numbers)
+        except DtcError as error:
+            return str(error)
+
     def rows(self, execution_ids: list[int]) -> list[ExecutionRow] | str:
         try:
             return self._reader.rows(execution_ids)

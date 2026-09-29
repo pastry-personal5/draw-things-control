@@ -216,6 +216,43 @@ class ParkedTests(QueueCase):
         self.assertEqual(self.exists(*parked), (False, False))
         self.assertIsNotNone(self.store.queue.get(running.id))
 
+    def delete(self, execution_number: int | None) -> None:
+        assert execution_number is not None
+        self.assertEqual([deleted.number for deleted in self.store.executions.delete([execution_number], in_use={}).deleted], [execution_number])
+
+    def test_a_parked_chain_goes_once_the_parked_entrys_execution_is_deleted(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        self.delete(parked[1])
+        self.store.prune()
+        self.assertFalse(self.exists(*parked)[0])
+
+    def test_a_parked_chain_goes_once_a_finished_resume_below_it_links_a_deleted_execution(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        failed = self.finished(QueueState.FAILED, resumes=parked[0], failed=True)
+        self.store.prune()
+        self.assertEqual((self.exists(*parked), self.exists(*failed)), ((True, True), (True, True)))
+        self.delete(failed[1])
+        self.store.prune()
+        self.assertEqual((self.exists(*parked), self.exists(*failed)[0]), ((False, False), False))
+
+    def test_a_running_resume_linking_a_row_not_yet_created_keeps_the_chain(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        new = NewQueueEntry(job_path="/jobs/walk.yaml", job_text="name: walk\n", config_file="base.yaml", config_text="model: m.ckpt\n", input_directory="/in", output_directory="/out", cooldown_default=None, settings=ExecutionSettings(output_directory="/out"), submitted_at=OLD, total_runs=5, resumes=parked[0])
+        running = self.store.queue.submit(new)
+        self.store.queue.claim_oldest(NOW)
+        # Linked before JobStarted creates the row.
+        self.store.queue.link_execution(running.id, self.store.executions.reserve_number())
+        self.store.prune()
+        self.assertEqual(self.exists(*parked), (True, True))
+
+    def test_resume_links_read_each_entrys_execution(self) -> None:
+        parked = self.finished(QueueState.PARKED, succeeded=3)
+        failed = self.finished(QueueState.FAILED, resumes=parked[0], failed=True)
+        self.delete(failed[1])
+        first, second = self.store.queue.resume_links()
+        self.assertEqual((first.queue_number, first.state, first.execution_number, first.execution_exists, first.execution_total_runs, first.last_succeeded), (parked[0], "parked", parked[1], True, 5, 3))
+        self.assertEqual((second.resumes, second.execution_exists, second.last_succeeded), (parked[0], False, None))
+
 
 class SettingsTests(QueueCase):
     def test_delete_removes_a_key_and_a_missing_key_is_no_error(self) -> None:

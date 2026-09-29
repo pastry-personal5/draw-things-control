@@ -38,7 +38,11 @@ class HistoryPane(SidewaysTable):
 
     # The history's height with its border and header: 5 rows show (owner decision).
     HEIGHT_LINES = HISTORY_LINES
-    BINDINGS = [Binding("escape", "leave", "Command line", show=False)]
+    BINDINGS = [
+        Binding("escape", "leave", "Command line", show=False),
+        Binding("space", "toggle_mark", "Mark", show=False),
+        Binding("d", "delete", "Delete", show=False),
+    ]
 
     class RowsUpdated(Message):
         """Rows already shown were read again: a run of theirs may have finished."""
@@ -58,11 +62,15 @@ class HistoryPane(SidewaysTable):
             self.execution_id = execution_id
             self.message = message
 
-    def __init__(self, reader: PaneHistory, *, busy: Callable[[], bool], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, reader: PaneHistory, *, busy: Callable[[], bool], leave: Callable[[], None], delete: Callable[[list[int]], None] = lambda numbers: None, **options: Any) -> None:
         super().__init__(cursor_type="row", zebra_stripes=True, **options)
         self.reader = reader
         self.busy = busy
         self.leave = leave
+        # Asks to delete these executions, by number, in history order (Milestone 06).
+        self.delete = delete
+        # The executions marked for deletion, by number: kept across re-reads, cleared by a filter change or a deletion.
+        self.marks: set[int] = set()
         # An execution's public number (E0012) to move the cursor to once a read shows it: this TUI's new job.
         self.select_when_shown: int | None = None
         # Not ``filter``, ``rows``, or ``loading``: DataTable and Widget already use those names.
@@ -92,6 +100,26 @@ class HistoryPane(SidewaysTable):
         # Not focus_next: the Execution widget follows the history in the Tab order.
         self.leave()
 
+    def action_toggle_mark(self) -> None:
+        """``Space``: mark the selected row for deletion, or unmark it."""
+        row_id = self.selected
+        if row_id is None:
+            return
+        number = self.executions[row_id].execution_number
+        self.marks.symmetric_difference_update({number})
+        # update_width: the ID column is only as wide as its IDs, so the mark would crop the last digit.
+        self.update_cell(str(row_id), self.column_keys[0], history_cells(self.executions[row_id], marked=number in self.marks)[0], update_width=True)
+
+    def action_delete(self) -> None:
+        """``d``: delete the marked rows, or the selected row when none is marked, asking first."""
+        if self.marks:
+            numbers = [row.execution_number for row in self.executions.values() if row.execution_number in self.marks]
+        elif self.selected is not None:
+            numbers = [self.executions[self.selected].execution_number]
+        else:
+            return
+        self.delete(numbers)
+
     def check_lock(self) -> bool:
         """Whether another process holds the run lock now; posts LockChanged when that changes."""
         held = not self.busy() and not self.reader.lock_is_free()
@@ -109,6 +137,8 @@ class HistoryPane(SidewaysTable):
 
     def set_filter(self, history_filter: HistoryFilter) -> None:
         self.history_filter = history_filter
+        # The marked rows may no longer show.
+        self.marks = set()
         # The old filter's rows go at once, so a page read for the new filter is never appended to them.
         self.clear()
         self.executions = {}
@@ -139,8 +169,11 @@ class HistoryPane(SidewaysTable):
         for row in page.rows:
             if row.id not in self.executions:
                 self.executions[row.id] = row
-                self.add_row(*history_cells(row), key=str(row.id))
+                self.add_row(*history_cells(row, marked=row.execution_number in self.marks), key=str(row.id))
         self.all_read = page.complete
+        if page.offset == 0:
+            # A marked execution that left the history some other way (retention, another TUI) drops its mark.
+            self.marks &= {row.execution_number for row in self.executions.values()}
         # Text, not str: a str title is parsed as markup, and the filter and error texts are the user's or the store's.
         self.border_title = Text(f"Execution History: {history_filter.text()}" if history_filter.text() else "Execution History")
         self.border_subtitle = Text(page.message or "")
@@ -162,6 +195,25 @@ class HistoryPane(SidewaysTable):
         (E0012); None when it is not currently shown."""
         return next((row_id for row_id, row in self.executions.items() if row.execution_number == execution_number), None)
 
+    def remove_rows(self, numbers: list[int]) -> None:
+        """After a deletion: drop the deleted executions' rows at once, move the cursor to the nearest remaining row,
+        clear the marks, and read the history again."""
+        cursor = self.cursor_row
+        gone = set(numbers)
+        gone_ids = [row_id for row_id, row in self.executions.items() if row.execution_number in gone]
+        # The rows deleted above the cursor shift it: it stays on its execution, or, when that one went, on the next.
+        above = sum(1 for row_id in gone_ids if self.get_row_index(str(row_id)) < cursor)
+        for row_id in gone_ids:
+            del self.executions[row_id]
+            self.remove_row(str(row_id))
+        marked, self.marks = self.marks, set()
+        for row_id, row in self.executions.items():
+            if row.execution_number in marked:
+                self.update_cell(str(row_id), self.column_keys[0], history_cells(row)[0])
+        if self.row_count:
+            self.move_cursor(row=min(cursor - above, self.row_count - 1))
+        self.load()
+
     def refresh_rows(self, execution_ids: list[int]) -> None:
         """Update rows already shown, in place, without reading the whole pane again."""
         self.read_rows(self.read_count, execution_ids)
@@ -179,7 +231,7 @@ class HistoryPane(SidewaysTable):
             if row.id not in self.executions:
                 continue
             self.executions[row.id] = row
-            for column, cell in zip(self.column_keys, history_cells(row), strict=True):
+            for column, cell in zip(self.column_keys, history_cells(row, marked=row.execution_number in self.marks), strict=True):
                 self.update_cell(str(row.id), column, cell, update_width=True)
         self.post_message(self.RowsUpdated([row.id for row in rows]))
 

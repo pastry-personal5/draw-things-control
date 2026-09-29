@@ -46,6 +46,9 @@ COMMANDS = (
     ("filter", "status STATUS", f"Show only {', '.join(STATUSES)} executions"),
     ("filter", "name TEXT", "Show only executions whose job name or file name contains TEXT"),
     ("filter", "off", "Remove the history filters"),
+    ("delete", "execution <Execution ID> [<Execution ID> ...]", "Delete executions from the history, asking first; their outputs stay"),
+    ("delete", "filtered", "Delete every execution the history's filters show, asking first"),
+    ("delete", "all", "Delete the whole history, asking first"),
     ("reveal", "<Execution ID> [RUN]", "Reveal a run's output in Finder (default: the last output)"),
     ("verbose", "[high|medium|low]", "Show, or set, how much of draw-things-cli's output and status detail the TUI shows (high: everything; medium: a run's first minute of output; low: no output, status once a minute)"),
     ("clear", "", "Clear the messages"),
@@ -56,6 +59,7 @@ COMMAND_NAMES = tuple(dict.fromkeys(name for name, _, _ in COMMANDS))
 GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in COMMANDS if name == "get"))
 DESCRIBE_WORDS = ("job", "queue", "execution")
 QUEUE_WORDS = ("add", "cancel", "resume", "park", "unpark", "hold", "release")
+DELETE_WORDS = ("execution", "filtered", "all")
 # The Job Definition widget's sort keys, in the order `s` moves through them, and the directions.
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
@@ -65,6 +69,7 @@ VERBOSE_WORDS: tuple[str, ...] = VERBOSE_LEVELS
 FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
     (f"{PREFIX}get",): GET_WORDS,
     (f"{PREFIX}queue",): QUEUE_WORDS,
+    (f"{PREFIX}delete",): DELETE_WORDS,
     (f"{PREFIX}verbose",): VERBOSE_WORDS,
     (f"{PREFIX}filter",): FILTER_WORDS,
     (f"{PREFIX}filter", "status"): tuple(STATUSES),
@@ -81,6 +86,8 @@ KEYS = (
     ("c", "Cancel the selected entry (Queue)"),
     ("p / u", "Park the selected entry / withdraw its park reservation (Queue)"),
     ("s / r", "Sort by the next column / reverse the order (Job Definition)"),
+    ("Space", "Mark or unmark the selected row for deletion (Execution History)"),
+    ("d", "Delete the marked rows, or the selected row when none is marked, asking first (Execution History)"),
     ("Escape", "Clear the command line, or go back to it (the widgets)"),
     ("Ctrl-C", "Clear the command line, or press twice to quit"),
 )
@@ -169,7 +176,7 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
         # The noun may be left out, so a typed J, E, or Q completes to an ID too (in any case, as after the noun).
         matching = [f"{head} {word}" for word in DESCRIBE_WORDS if word.startswith(last) and word != last]
         return [*matching, *_identifier_completions(head, last, (*job_ids, *execution_ids, *queue_ids))] if last else matching
-    elif words in ([f"{PREFIX}describe", "execution"], [f"{PREFIX}reveal"]) or (len(words) == 2 and words[0] == f"{PREFIX}get" and words[1] in ("prompts", "positive", "negative", "param", "parameters")):
+    elif words in ([f"{PREFIX}describe", "execution"], [f"{PREFIX}reveal"]) or words[:2] == [f"{PREFIX}delete", "execution"] or (len(words) == 2 and words[0] == f"{PREFIX}get" and words[1] in ("prompts", "positive", "negative", "param", "parameters")):
         return _identifier_completions(head, last, execution_ids)
     elif words in ([f"{PREFIX}describe", "queue"], [f"{PREFIX}queue", "cancel"], [f"{PREFIX}queue", "resume"], [f"{PREFIX}queue", "park"], [f"{PREFIX}queue", "unpark"]):
         return _identifier_completions(head, last, queue_ids)

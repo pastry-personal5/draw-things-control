@@ -59,6 +59,12 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(completions("/help", self.JOBS), [])
         self.assertEqual(completions("h", self.JOBS), [])
 
+    def test_delete_completes_its_words_and_each_execution_id(self) -> None:
+        self.assertEqual(completions("/delete ", self.JOBS), ["/delete execution", "/delete filtered", "/delete all"])
+        self.assertEqual(completions("/delete f", self.JOBS), ["/delete filtered"])
+        self.assertEqual(completions("/delete execution E0012 e", self.JOBS, execution_ids=["E0012", "E0011"]), ["/delete execution E0012 e0012", "/delete execution E0012 e0011"])
+        self.assertIn("/delete filtered", str(help_text()))
+
     def test_job_names_complete_after_run_and_job(self) -> None:
         self.assertEqual(completions("/apply wa", self.JOBS), ["/apply walk.yaml", "/apply wave.yml"])
         self.assertEqual(completions("/describe job wav", self.JOBS), ["/describe job wave.yml"])

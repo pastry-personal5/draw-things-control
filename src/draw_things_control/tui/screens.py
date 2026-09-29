@@ -1,4 +1,5 @@
-"""The main screen, which lays out the panes and runs the commands, and the confirmation dialog."""
+"""The main screen, which lays out the panes and runs the commands. The one dialog, asking before a deletion, is
+``tui/delete_dialog.py``."""
 
 from __future__ import annotations
 
@@ -110,7 +111,7 @@ class MainScreen(Screen[None]):
                 self.catalog = JobCatalog(self.dtc.data_directory, self.dtc.settings, self.dtc.paths, store)
                 yield JobDefinitionPane(self.catalog, SortPreference(store), describe=self.describe_job, run=self.dtc.start_flow, announce=self.announce_jobs, leave=self.focus_command_line, id="jobs")
                 yield QueuePane(queue_reader, feed_connected=lambda: self.dtc.feed_connected, leave=self.focus_command_line, id="queue")
-                yield HistoryPane(self.reader, busy=lambda: self.dtc.feed_connected, leave=self.focus_command_line, id="history")
+                yield HistoryPane(self.reader, busy=lambda: self.dtc.feed_connected, leave=self.focus_command_line, delete=self.dtc.ask_to_delete, id="history")
                 yield ExecutionPane(self.reader, say=self.say, leave=self.focus_command_line, id="execution")
         yield Rule(line_style="solid", classes="command-rule")
         with Horizontal(id="command-line"):

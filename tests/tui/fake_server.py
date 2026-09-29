@@ -19,6 +19,10 @@ import httpx
 
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.events import CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, event_to_dict
+from draw_things_control.server.serializers import delete_report
+from draw_things_control.services.history_delete import delete_executions
+from draw_things_control.state.ids import EXECUTION_LETTER, parse_typed_id
+from draw_things_control.state.store import Store, StoreMode
 from draw_things_control.tui.feed import FORCE_RESET_ID
 from draw_things_control.tui.generated import monitor_pb2
 
@@ -108,6 +112,13 @@ class FakeServer:
         self.unparked_ids: list[str] = []
         self.hold: dict[str, Any] = {"held": False, "held_since": None, "held_by": None}
         self.park_responses: dict[str, httpx.Response] = {}
+        # Milestone 06: the state database POST /v1/executions/delete deletes from, through the real service; each
+        # request's IDs and whether it was a dry run; how many real deletions succeed before the server drops (None:
+        # never); and whether the server cannot be reached at all.
+        self.database: Path | None = None
+        self.deletions: list[tuple[list[str], bool]] = []
+        self.deletes_before_drop: int | None = None
+        self.unreachable = False
 
     # HTTP
 
@@ -116,6 +127,10 @@ class FakeServer:
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if self.unreachable:
+            raise httpx.ConnectError("Connection refused")
+        if request.method == "POST" and path == "/v1/executions/delete":
+            return self._delete(json.loads(request.content))
         self.http_paths.append(f"{request.method} {path}" + (f"?{request.url.query.decode()}" if request.url.query else ""))
         if path == "/v1/health":
             return httpx.Response(200, json={"status": "ok", "grpc_port": GRPC_PORT}) if self.health_ok else httpx.Response(503, json={})
@@ -138,6 +153,22 @@ class FakeServer:
         if path.startswith("/v1/executions/") and path.split("/")[-1] in self.executions:
             return httpx.Response(200, json=self.executions[path.split("/")[-1]])
         return httpx.Response(404, json={"message": f"no {path}"})
+
+    def _delete(self, body: dict[str, Any]) -> httpx.Response:
+        dry_run = body.get("dry_run", False)
+        if not dry_run and self.deletes_before_drop is not None:
+            if self.deletes_before_drop == 0:
+                raise httpx.ReadError("Connection reset")
+            self.deletes_before_drop -= 1
+        self.deletions.append((body["executions"], dry_run))
+        assert self.database is not None
+        store = Store.open(self.database, mode=StoreMode.BROWSE)
+        try:
+            numbers = [parse_typed_id(text, EXECUTION_LETTER) for text in body["executions"]]
+            report = delete_executions(store, [number for number in numbers if number is not None], dry_run=dry_run)
+        finally:
+            store.close()
+        return httpx.Response(200, json=delete_report(report, dry_run=dry_run))
 
     def _hold_or_release(self, hold: bool) -> httpx.Response:
         changed = self.hold["held"] != hold

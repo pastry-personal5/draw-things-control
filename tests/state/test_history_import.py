@@ -63,6 +63,21 @@ class ImportHistoryTests(unittest.TestCase):
     def run_import(self):
         return import_history(self.store, self.outputs, clock=NOW)
 
+    def test_an_import_after_a_deletion_does_not_bring_the_execution_back(self) -> None:
+        """Milestone 06: a deleted execution's manifest goes with it, so an import cannot bring it back."""
+        path = self.write("walk-job.json", manifest())
+        self.assertEqual(self.run_import().imported, 1)
+        [row] = self.store.executions.page()
+        deletion = self.store.executions.delete([row.execution_number], in_use={})
+        self.assertEqual(self.store.delete_execution_files(deletion.deleted), [])
+        self.assertFalse(path.exists())
+        self.assertEqual((self.run_import().imported, self.store.executions.page()), (0, []))
+        # The next execution gets a new number, never the deleted one's.
+        self.write("run-job.json", manifest())
+        self.run_import()
+        [again] = self.store.executions.page()
+        self.assertEqual(again.execution_number, row.execution_number + 1)
+
     def test_the_cooldown_mapping_is_copied_and_old_manifests_still_read(self) -> None:
         mapping = {"mode": "auto", "ratio": 0.5, "minimum_seconds": 300.0, "maximum_seconds": 1800.0}
         self.write("new-job.json", manifest(cooldown_seconds=None, cooldown_source="global_config", cooldown=mapping))

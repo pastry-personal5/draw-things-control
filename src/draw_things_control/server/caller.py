@@ -19,3 +19,15 @@ def resolve_caller(header_value: str | None) -> str:
     if header_value not in KNOWN_CALLERS:
         raise InputError(f"'{HEADER_NAME}' must be one of {', '.join(sorted(KNOWN_CALLERS))}", field=HEADER_NAME)
     return header_value
+
+
+def audit_caller(header_value: str | None) -> tuple[str, InputError | None]:
+    """The caller ``audited()`` should record: the real one when ``X-Dtc-Caller`` is valid, or the documented
+    default (``api``) when it is not -- the bad value itself is not trustworthy enough to store in the very column
+    meant to say who made the request. The error, when there is one, is raised once inside the caller's own
+    ``audited()`` block, so the refusal is recorded exactly as any other one that endpoint makes, instead of a
+    dependency that would fail before that block ever opened."""
+    try:
+        return resolve_caller(header_value), None
+    except InputError as error:
+        return DEFAULT_CALLER, error

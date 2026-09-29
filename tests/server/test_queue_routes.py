@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -18,6 +18,7 @@ from draw_things_control.server import routes_queue
 from draw_things_control.server.app import create_app
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.event_backlog import EventBacklog
+from draw_things_control.services.history_delete import DeleteReport, delete_executions
 from draw_things_control.services.queue_events import QueueEventPublisher
 from draw_things_control.services.queue_hold import HoldState, QueueHold
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
@@ -122,6 +123,9 @@ class FakeWorker:
 
     def hold_state(self) -> HoldState:
         return self._hold.snapshot()
+
+    def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
+        return delete_executions(self._store, numbers, dry_run=dry_run)
 
 
 class QueueRoutesTestCase(JobTestCase):

@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, cast
 from draw_things_control.core.errors import DtcError
 from draw_things_control.services.history import STATUSES, HistoryFilter
 from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, QUEUE_LETTER, execution_id_text, parse_bare_number, parse_typed_id, queue_id_text
-from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, VERBOSE_WORDS, CommandError, help_text, parse, usage
+from draw_things_control.tui.commands import DELETE_WORDS, GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, VERBOSE_WORDS, CommandError, help_text, parse, usage
+from draw_things_control.tui.deletion import DeleteSelection
 from draw_things_control.tui.panes.job_definitions import natural_descending
 from draw_things_control.tui.widgets import MessageLog
 
@@ -209,6 +210,24 @@ class CommandController:
             raise CommandError(f"Usage: {usage('filter')}")
         self.screen.say(f"Execution History: {history_filter.text() or 'all executions'}")
         self.screen.history.set_filter(history_filter)
+
+    def command_delete(self, what: str, *arguments: str) -> None:
+        """/delete execution <IDs...>, /delete filtered, and /delete all (Milestone 06): each asks first, in a dialog,
+        and deletes through the API. The whole history needs ``all`` written out, so a filter left off by mistake
+        cannot select it."""
+        word = what.lower()
+        dtc = self.screen.dtc
+        if word == "execution" and arguments:
+            dtc.delete_executions(DeleteSelection(tuple(dict.fromkeys(self.execution_number(argument, "delete", "execution") for argument in arguments))))
+        elif word == "filtered" and not arguments:
+            history_filter = self.screen.history.history_filter
+            if not history_filter.text():
+                raise CommandError("No filter is set; use /delete all to delete the whole history")
+            dtc.delete_executions(DeleteSelection(history_filter=history_filter))
+        elif word == "all" and not arguments:
+            dtc.delete_executions(DeleteSelection(history_filter=HistoryFilter()))
+        else:
+            raise CommandError(f"Usage: {usage('delete', word if word in DELETE_WORDS else None)}")
 
     def command_reveal(self, execution_id: str, run: str | None = None) -> None:
         self.screen.reveal(self.execution_number(execution_id, "reveal"), self.number(run, "reveal") if run is not None else None)

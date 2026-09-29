@@ -1,68 +1,21 @@
 """``dtc queue``: a client of the HTTP API (Milestone 03), replacing `run-job`'s own direct execution now that
-`dtc serve`'s worker is the only thing that ever starts `draw-things-cli`. The HTTP client lives here, importing
-``httpx`` only inside the commands, beside the gRPC client ``add --wait`` uses (``cli/queue_wait.py``)."""
+`dtc serve`'s worker is the only thing that ever starts `draw-things-cli`. The HTTP client is ``cli/api_client.py``,
+shared with ``dtc history`` (Milestone 06); the gRPC client ``add --wait`` uses is ``cli/queue_wait.py``."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, NoReturn
+from typing import Annotated, Any
 
 import typer
-from loguru import logger
 
+from draw_things_control.cli.api_client import AllowRemoteServerOption, QueueIdArgument, ServerUrlOption, TokenFileOption, api_client, api_request
 from draw_things_control.cli.context import errors_exit, services_of
-from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host, job_argument, read_client_token
-from draw_things_control.core.exit_codes import EXIT_CODES_BY_ERROR_CODE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from draw_things_control.core.client_config import DEFAULT_SERVER_URL, job_argument
 from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, hold_text, release_outcome_text
 from draw_things_control.services.queue_park_text import park_outcome_text, queue_state_text, unpark_outcome_text
 
-if TYPE_CHECKING:
-    import httpx
-
 queue_app = typer.Typer(help="Submit and watch jobs through the queue; dtc serve is what actually runs them.")
-
-CALLER_HEADER = "X-Dtc-Caller"
-ServerUrlOption = Annotated[str, typer.Option("--server-url", help="The dtc serve HTTP API; refused unless loopback, or --allow-remote-server is given.")]
-TokenFileOption = Annotated[Path | None, typer.Option("--token-file", help="The API's bearer token file; default: config/server-token in the project.")]
-AllowRemoteServerOption = Annotated[bool, typer.Option("--allow-remote-server", help="Allow --server-url beyond loopback; the token then crosses the network in plain HTTP.")]
-QueueIdArgument = Annotated[str, typer.Argument(help="A queue entry's ID (Q0007).")]
-
-
-def _client(ctx: typer.Context, server_url: str, token_file: Path | None, allow_remote_server: bool) -> "httpx.Client":
-    import httpx
-
-    services = services_of(ctx)
-    check_server_host(server_url, allow_remote_server=allow_remote_server)
-    token = read_client_token(token_file or services.paths.server_token)
-    return httpx.Client(base_url=server_url, transport=services.http_transport, headers={"Authorization": f"Bearer {token}", CALLER_HEADER: "cli"}, timeout=30.0)
-
-
-def _request(client: "httpx.Client", method: str, url: str, **kwargs: Any) -> "httpx.Response":
-    import httpx
-
-    try:
-        response = client.request(method, url, **kwargs)
-    except httpx.HTTPError as error:
-        logger.error("Cannot reach the server at {}: {}; is 'dtc serve' running?", client.base_url, error)
-        raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
-    if response.status_code == 401:
-        logger.error("The server at {} refused the token; is 'dtc serve' running with the same --token-file?", client.base_url)
-        raise typer.Exit(code=EXIT_STATE_UNAVAILABLE)
-    if response.is_error:
-        _exit_on_api_error(response)
-    return response
-
-
-def _exit_on_api_error(response: "httpx.Response") -> NoReturn:
-    try:
-        body = response.json()
-    except ValueError:
-        body = {}
-    code = body.get("code", "error")
-    message = body.get("message") or response.text or f"HTTP {response.status_code}"
-    field = body.get("field")
-    logger.error("{}", f"'{field}': {message}" if field else message)
-    raise typer.Exit(code=EXIT_CODES_BY_ERROR_CODE.get(code, EXIT_INVALID_INPUT))
 
 
 def _runs_text(row: dict[str, Any]) -> str:
@@ -82,9 +35,9 @@ def queue_add(
     """Submit a job to the queue; dtc serve runs it."""
     services = services_of(ctx)
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "POST", "/v1/queue", json={"job": job_argument(job, services.paths)}).json()
+        entry = api_request(client, "POST", "/v1/queue", json={"job": job_argument(job, services.paths)}).json()
         typer.echo(f"{entry['queue_id']} queued: {Path(entry['job_path']).name}")
         if not wait:
             return
@@ -105,9 +58,9 @@ def queue_list(
 ) -> None:
     """List the queue's entries: running and queued first, then finished ones, newest first."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        body = _request(client, "GET", "/v1/queue", params={"state": state} if state is not None else None).json()
+        body = api_request(client, "GET", "/v1/queue", params={"state": state} if state is not None else None).json()
     entries = body["queue"]
     hold = HoldState.from_body(body)
     if hold.held:
@@ -131,9 +84,9 @@ def queue_show(
 ) -> None:
     """Show one queue entry: its state, execution, current run, and whether it can be resumed."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "GET", f"/v1/queue/{queue_id}").json()
+        entry = api_request(client, "GET", f"/v1/queue/{queue_id}").json()
     typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({Path(entry['job_path']).name})")
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
@@ -160,9 +113,9 @@ def queue_cancel(
 ) -> None:
     """Cancel a queued or running entry; a running one stops at once, losing its current run ('dtc queue park' keeps it)."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "POST", f"/v1/queue/{queue_id}/cancel").json()
+        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/cancel").json()
     typer.echo(f"{entry['queue_id']} {entry['state']}")
 
 
@@ -176,9 +129,9 @@ def queue_resume(
 ) -> None:
     """Resume an interrupted, failed, cancelled, or parked entry from its last succeeded run, as a new queued entry."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "POST", f"/v1/queue/{queue_id}/resume").json()
+        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/resume").json()
     typer.echo(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}")
 
 
@@ -192,9 +145,9 @@ def queue_park(
 ) -> None:
     """Park a running entry: it ends once its current run finishes, keeping every run, and the queue is held."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "POST", f"/v1/queue/{queue_id}/park").json()
+        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/park").json()
     typer.echo(park_outcome_text(entry, "dtc queue release"))
 
 
@@ -208,9 +161,9 @@ def queue_unpark(
 ) -> None:
     """Withdraw a running entry's park reservation: it runs on, and the hold its reservation made is released."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = _request(client, "POST", f"/v1/queue/{queue_id}/unpark").json()
+        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/unpark").json()
     typer.echo(unpark_outcome_text(entry))
 
 
@@ -223,9 +176,9 @@ def queue_hold(
 ) -> None:
     """Hold the queue: a running job is not stopped, and nothing else starts until 'dtc queue release'."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        body = _request(client, "POST", "/v1/queue/hold").json()
+        body = api_request(client, "POST", "/v1/queue/hold").json()
     typer.echo(hold_outcome_text(body))
 
 
@@ -238,7 +191,7 @@ def queue_release(
 ) -> None:
     """End the hold: the oldest queued entry starts at once."""
     with errors_exit():
-        client = _client(ctx, server_url, token_file, allow_remote_server)
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        body = _request(client, "POST", "/v1/queue/release").json()
+        body = api_request(client, "POST", "/v1/queue/release").json()
     typer.echo(release_outcome_text(body))

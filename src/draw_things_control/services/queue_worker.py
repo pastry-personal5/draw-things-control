@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from draw_things_control.core.run_lock import SERVER_HOLDER_NAME, RunLock
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus
 from draw_things_control.jobs.executor import JobExecutor, ResumePoint
+from draw_things_control.services.history_delete import DeleteReport
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.queue_claim_gate import QueueClaimGate
 from draw_things_control.services.queue_events import EventSink, QueueEventPublisher
@@ -117,6 +118,10 @@ class QueueWorker:
     def cancel_queued(self, entry_id: int, label: str) -> bool:
         """``QueueClaimGate.cancel_queued``, sharing this worker's own claim lock."""
         return self._claim_gate.cancel_queued(entry_id, label)
+
+    def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
+        """``QueueClaimGate.delete_executions``, sharing this worker's own claim lock."""
+        return self._claim_gate.delete_executions(numbers, dry_run=dry_run)
 
     def cancel_running(self, entry_id: int) -> bool:
         """Cancel the entry if it is the one currently claimed; False when it is not (queued, finished, or another entry entirely). Idempotent: a second call on an entry already stopping does nothing new."""

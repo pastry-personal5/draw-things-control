@@ -152,7 +152,7 @@ Adds what every later front end needs, without changing the CLI's behavior.
   | Module | Responsibility |
   |--------|----------------|
   | `app.py` | The app: settings, paths, data directory, executable, the job executor (built with `handle_signals=False`), the job worker, and the two-press Ctrl-C |
-  | `signals.py`, `confirm.py` | `SignalGuard` and `QuitPress`; the yes-or-no dialog |
+  | `signals.py`, `delete_dialog.py` | `SignalGuard` and `QuitPress`; `DeleteDialog`, the one dialog (Phase 3 Milestone 6) |
   | `screens.py`, `controller.py` | `MainScreen` (layout, events to panes) and `CommandController` (the `/` commands and their arguments) |
   | `panes/` | `StatusPane`, `CliPane`, `JobDefinitionPane`, `HistoryPane`, `ExecutionPane`, over `base.py` (the height rule for a table that scrolls sideways, and reads whose newest result wins) |
   | `text/` | Every text the TUI shows, by subject (`jobs`, `status`, `events`, `execution`, `prompts`, `arguments`, `history`); job text comes from `jobs/text.py` where the CLI prints the same |
@@ -423,13 +423,41 @@ Adds what every later front end needs, without changing the CLI's behavior.
   queue read (`QueueSnapshot.hold` from the store while the server is down) for the Queue widget's title and the
   Status widget.
 
+### Milestone 6: delete executions (done)
+
+- **The delete path.** The TUI (`d`, `/delete`) and `dtc history delete` send `POST /v1/executions/delete`
+  (`server/routes_executions.py`), 1 to 200 IDs a request. The route takes `ServerContext.submission_lock` first, as a
+  resume holds it around the whole of `resume_entry`, so a deletion never lands between a resume's chain walk and its
+  insert. It then calls `QueueWorker.delete_executions`, which `QueueClaimGate` runs under the worker's `_state_lock`, so
+  no claim, job start, or submission lands between the check and the delete.
+  `services/history_delete.py`'s `delete_executions` reads `QueueRepository.resume_links()` (every entry with its linked
+  execution's existence, run count, and last succeeded run, in one query), works out the in-use executions and the
+  resumes each deletion ends, and calls `ExecutionRepository.delete`: one `BEGIN IMMEDIATE` transaction that skips a
+  missing, running, or in-use execution and deletes the rest (`ON DELETE CASCADE` takes the runs). The log and manifest
+  go after the lock is released (`Store.delete_execution_files`, `_delete_log` and `_delete_manifest`: a regular `.log`
+  or `.json` file only, never a symbolic link). A manifest that stays is reported. `"dry_run": true` runs the same code
+  under the same locks and deletes nothing.
+- **Refusals and the resume warning.** `services/resume_chain.py`'s `walk_chain` is the one definition of the executions
+  a resume chain reads: from the entry's own execution back through its ancestors to the first with a succeeded run.
+  `queue_resume._resolve_chain` walks full rows; `history_delete` walks the resume links. A queued or running entry's
+  own execution, its `resumes_execution`, and every execution its chain reads are in use. A resume ends when an entry a
+  resume would accept now (a resumable state, not yet resumed, a succeeded run in its chain, runs left) reads the
+  execution; the output file is not checked. A resume of a deleted execution is refused with "was pruned or deleted".
+- **Retention.** `kept_parked` stops keeping a parked chain once a finished entry of it links an execution with no row;
+  a running entry does not count, since it links its number before `JobStarted` creates the row.
+- **The API and the audit log.** Each ID gets its own `delete_execution` row (`ok`, `invalid_state`, `not_found`); a
+  request refused as a whole gets one row with no target, and a dry run none. `server/caller.py`'s `audit_caller` is
+  shared by both routers, and `errors.py`'s `AUDITED_BODY_ACTIONS` records a body FastAPI refuses for both audited POST
+  bodies. `GET /v1/executions` gains `name` (the store's `name_contains`).
+- **Front ends.** `cli/history_app.py` reads a filtered selection in full, lists it from a dry run, asks, and deletes;
+  it shares `cli/api_client.py` with `dtc queue`. In the TUI, `HistoryPane` keeps marks as a set of execution numbers,
+  shown as an `*` before the ID, and `remove_rows` drops deleted rows and reads again. `tui/deletion.py`'s `DeleteFlow`
+  reads the selection from the store (`HistoryReader.every`, `by_numbers`), sends a dry run first (the server's own
+  refusals and warnings, and proof the server and token work before any dialog opens), then pushes `DeleteDialog` for
+  each execution with `push_screen_wait` on a worker, sending one request per Delete and batches for Delete all.
+
 ### Milestones 3 onward (planned)
 
-- Deleting executions (Milestone 6): the TUI and `dtc history delete` call
-  `DELETE /v1/executions/{execution_id}` or `POST /v1/executions/delete`;
-  the server checks and deletes under the queue worker's lock, refusing a
-  running execution or one a queued or running entry uses, and reporting
-  the resumable entries a deletion leaves unresumable.
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
 - `mcp_server/` (`dtc mcp`): a thin client of the HTTP API and the gRPC

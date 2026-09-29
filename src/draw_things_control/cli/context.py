@@ -4,6 +4,7 @@ an error ends one. Its own module, not ``cli/app.py``, so ``cli/queue_app.py`` (
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,13 +29,15 @@ class CliServices:
 
     ``http_transport`` and ``grpc_stub_factory`` are ``dtc queue``'s own test seams (Milestone 03), both None in
     production: a transport its httpx client uses instead of the network, and a factory for the gRPC stub
-    ``add --wait`` streams ``WatchQueueEntry`` from instead of dialing a real ``dtc serve``.
+    ``add --wait`` streams ``WatchQueueEntry`` from instead of dialing a real ``dtc serve``. ``stdin_is_terminal``
+    says whether a command may ask a question (``dtc history delete``, Milestone 06); a test asks it with its own.
     """
 
     paths: ProjectPaths
     toolkit: Toolkit
     http_transport: "httpx.BaseTransport | None" = None
     grpc_stub_factory: Callable[[str], object] | None = None
+    stdin_is_terminal: Callable[[], bool] = lambda: sys.stdin.isatty()
 
 
 def services_of(ctx: typer.Context) -> CliServices:

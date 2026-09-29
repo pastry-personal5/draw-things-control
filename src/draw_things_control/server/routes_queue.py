@@ -8,10 +8,10 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Header
 
-from draw_things_control.core.errors import InputError, NotFoundError
+from draw_things_control.core.errors import NotFoundError
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.server.audit import audited
-from draw_things_control.server.caller import DEFAULT_CALLER, resolve_caller
+from draw_things_control.server.caller import audit_caller
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.dependencies import Page, get_context, get_page, require_auth
 from draw_things_control.server.job_reference import resolve_job_reference
@@ -37,24 +37,12 @@ class SubmitBody:
     job: str
 
 
-def _resolve_caller(x_dtc_caller: str | None) -> tuple[str, InputError | None]:
-    """The caller ``audited()`` should record: the real one when ``X-Dtc-Caller`` is valid, or the documented
-    default (``api``) when it is not -- the bad value itself is not trustworthy enough to store in the very column
-    meant to say who made the request. The error, when there is one, is raised once inside the caller's own
-    ``audited()`` block, so the refusal is recorded exactly as any other one that endpoint makes, instead of a
-    dependency that would fail before that block ever opened."""
-    try:
-        return resolve_caller(x_dtc_caller), None
-    except InputError as error:
-        return DEFAULT_CALLER, error
-
-
 @router.post("/v1/queue")
 def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     def before_submit(job: JobDefinition) -> None:
         check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
 
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="submit", target=body.job, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -134,7 +122,7 @@ def _last_run_seconds(context: ServerContext, entry: QueueRow) -> float | None:
 
 @router.post("/v1/queue/{queue_id}/cancel")
 def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="cancel", target=queue_id, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -150,7 +138,7 @@ def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_
 def post_hold(context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """Hold the queue (Milestone 05): a running job is not stopped, and nothing starts after it until a release.
     ``changed`` is False when the queue was already held."""
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="hold", target=None, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -161,7 +149,7 @@ def post_hold(context: ServerContext = Depends(get_context), x_dtc_caller: str |
 @router.post("/v1/queue/release")
 def post_release(context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """End the hold: the oldest queued entry starts at once. ``changed`` is False when the queue was not held."""
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="release", target=None, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -172,7 +160,7 @@ def post_release(context: ServerContext = Depends(get_context), x_dtc_caller: st
 @router.post("/v1/queue/{queue_id}/park")
 def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """Park a running entry: it ends once its current run finishes, and the queue is held (Milestone 05)."""
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="park", target=queue_id, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -185,7 +173,7 @@ def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_dt
 @router.post("/v1/queue/{queue_id}/unpark")
 def post_unpark(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """Withdraw a running entry's park reservation; the job runs on, and the hold is released when that reservation made it."""
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="unpark", target=queue_id, caller=caller):
         if caller_error is not None:
             raise caller_error
@@ -200,7 +188,7 @@ def post_resume(queue_id: str, context: ServerContext = Depends(get_context), x_
     def before_submit(job: JobDefinition, remaining_runs: int) -> None:
         check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context), remaining_runs=remaining_runs)
 
-    caller, caller_error = _resolve_caller(x_dtc_caller)
+    caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="resume", target=queue_id, caller=caller):
         if caller_error is not None:
             raise caller_error

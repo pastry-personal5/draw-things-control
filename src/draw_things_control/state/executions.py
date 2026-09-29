@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -22,8 +23,28 @@ from draw_things_control.state.execution_rows import (
     RunRow,
     epoch,
 )
+from draw_things_control.state.ids import execution_id_text
 
-__all__ = ["EXECUTION_COLUMNS", "RUN_COLUMNS", "SUCCEEDED_COUNT", "ExecutionRepository", "ExecutionRow", "ExecutionSettings", "NewExecution", "NewRun", "RunRow", "epoch"]
+__all__ = ["EXECUTION_COLUMNS", "RUN_COLUMNS", "SUCCEEDED_COUNT", "DeletedExecution", "ExecutionDeletion", "ExecutionRepository", "ExecutionRow", "ExecutionSettings", "NewExecution", "NewRun", "RunRow", "epoch"]
+
+
+@dataclass(frozen=True)
+class DeletedExecution:
+    """An execution a deletion removed (or, in a dry run, would remove), with the files it named."""
+
+    number: int
+    log_path: str | None
+    manifest_path: str | None
+
+
+@dataclass(frozen=True)
+class ExecutionDeletion:
+    """What ``ExecutionRepository.delete`` did: the executions deleted, those refused with the reason, and the numbers
+    no execution has."""
+
+    deleted: list[DeletedExecution] = field(default_factory=list)
+    refused: dict[int, str] = field(default_factory=dict)
+    missing: list[int] = field(default_factory=list)
 
 
 class ExecutionRepository:
@@ -166,6 +187,28 @@ class ExecutionRepository:
             log_paths = [row[0] for row in connection.execute(f"SELECT log_path FROM executions WHERE {condition} AND log_path IS NOT NULL", values)]
             deleted = connection.execute(f"DELETE FROM executions WHERE {condition}", values).rowcount
         return deleted, log_paths
+
+    def delete(self, numbers: Sequence[int], *, in_use: Mapping[int, str], dry_run: bool = False) -> ExecutionDeletion:
+        """Delete the executions with these numbers (and their runs) in one transaction (Milestone 06): never a missing,
+        ``running``, or in-use one (``in_use`` maps an execution number to the reason it is used). ``dry_run`` reads
+        and reports the same, deleting nothing."""
+        deleted: list[DeletedExecution] = []
+        refused: dict[int, str] = {}
+        missing: list[int] = []
+        with self._database.transaction() as connection:
+            for number in dict.fromkeys(numbers):
+                row = connection.execute("SELECT id, status, log_path, manifest_path FROM executions WHERE execution_number = ?", (number,)).fetchone()
+                if row is None:
+                    missing.append(number)
+                elif row["status"] == "running":
+                    refused[number] = f"{execution_id_text(number)} is running; it cannot be deleted"
+                elif number in in_use:
+                    refused[number] = in_use[number]
+                else:
+                    if not dry_run:
+                        connection.execute("DELETE FROM executions WHERE id = ?", (row["id"],))
+                    deleted.append(DeletedExecution(number, row["log_path"], row["manifest_path"]))
+        return ExecutionDeletion(deleted, refused, missing)
 
     @staticmethod
     def _insert_execution(connection: sqlite3.Connection, new: NewExecution) -> tuple[int, int]:

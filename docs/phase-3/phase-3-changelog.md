@@ -3,6 +3,45 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-09-30
+
+- **Change** [M06]: [Milestone 06: Delete executions](milestone-06-delete-executions.md) is done. Executions can be
+  deleted from the history through `POST /v1/executions/delete` (with `"dry_run": true` to ask first), `d` and `Space`
+  on the TUI's Execution History widget, `/delete execution|filtered|all`, and `dtc history delete`. A deletion
+  removes the row, its runs, its log, and its manifest, keeps the outputs, refuses a running or in-use execution, warns
+  of the resumes it ends, and is audited per execution. `GET /v1/executions` gains `name`.
+- **Design decision** [M06]: As built, against the plan (the milestone's "As built" section):
+  - The TUI checks its selection with a dry run before the dialog opens, instead of reading the in-use executions and
+    resume warnings from the store. The dry run applies the server's own rules under its locks, and it is also the
+    request that proves the server can be reached with the token; reading the store as well would have been a second
+    copy of the same answer. `services/history_delete.py` exposes `delete_executions` alone.
+  - `ExecutionRepository.delete` takes `dry_run`; the files go in `Store.delete_execution_files`, since the in-use rule
+    lives in `services/` and the files must go after the worker's lock is released.
+  - `DeleteDialog` has its own module, `tui/delete_dialog.py`, to avoid an import cycle through `screens.py`.
+  - A row's mark is an `*` before its ID rather than a column: a column overflowed the history's narrowest width
+    with no rows.
+  - `dtc queue`'s HTTP client is shared as `cli/api_client.py`.
+  - The TUI's deletion flow is `tui/deletion.py`'s `DeleteFlow`, not `tui/controller.py`, since `d` and `/delete`
+    both start it; `HistoryReader` gains `every` and `by_numbers` for it.
+  - `dtc history delete` refuses an empty `--status` or `--name`, which the server would read as no filter and so
+    select the whole history without `--all`.
+
+- **Design decision** [M06]: From a second review of the plan, checked against the code:
+  - Retention stops keeping a parked chain once a finished entry anywhere in it links an execution that no longer
+    exists, not only the parked entry itself. Checking only the parked entry would keep a chain forever once the
+    execution of a resume below it was deleted: that resume could never be resumed, and the parked entry was already
+    resumed.
+  - The in-use refusal also covers every execution a queued or running resume's chain reads, not only its own and its
+    `resumes_execution`. Otherwise, deleting one would leave that resume unresumable if it ended with no succeeded run.
+  - `POST /v1/executions/delete` gains `"dry_run": true`, which `dtc history delete` uses to list what it will delete
+    and which resumes each ends, one request per 200 IDs, under the same locks and rules as a delete. This replaces a
+    `resumes_ended` field on `GET /v1/executions/{execution_id}`, which needed one request per execution. It is still
+    one endpoint, as the owner decided.
+  - A request refused as a whole gets one audit row. `errors.py`'s audit of a body FastAPI refuses covers the new
+    endpoint too, and the delete route resolves `X-Dtc-Caller` as the queue routes do.
+  - A filtered or whole-history selection is read in full before anything is deleted, marks are kept by execution
+    across re-reads, and a request that fails partway through the TUI's dialog closes it.
+
 ## 2026-09-29
 
 - **Change** [M05]: From a code review of the milestone, two fixes to the worker. The claim now publishes its

@@ -19,6 +19,7 @@ from draw_things_control.services.queue_hold import HoldState, hold_outcome_text
 from draw_things_control.services.queue_park_text import park_outcome_text, unpark_outcome_text
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.services.toolkit import Toolkit
+from draw_things_control.tui.deletion import DeleteFlow, DeleteSelection
 from draw_things_control.tui.feed import QueueFeed
 from draw_things_control.tui.live_run import LiveRun, PastRun, latest_past_run
 from draw_things_control.tui.panes.cli_output import LOW_MARKER
@@ -86,6 +87,8 @@ class DrawThingsApp(App[None]):
         # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
         self._low_notice_due = self.verbose_level == "low"
         self._feed = QueueFeed(self)
+        # Whether a deletion (Milestone 06) is being asked about or sent.
+        self._deleting = False
         self.signals = SignalGuard(self.handle_signal)
         self.quit_press = QuitPress(QUIT_PRESS_SECONDS)
         self.theme = "textual-dark"
@@ -331,6 +334,26 @@ class DrawThingsApp(App[None]):
         self.set_queue_hold(HoldState.from_body(body))
         self.say(release_outcome_text(body))
         self.refresh_queue()
+
+    def ask_to_delete(self, numbers: list[int]) -> None:
+        """``d`` on the Execution History widget: delete these executions, asking first."""
+        self.delete_executions(DeleteSelection(tuple(numbers)))
+
+    def delete_executions(self, selection: DeleteSelection) -> None:
+        """``d`` and ``/delete`` (Milestone 06), through the API. One deletion is asked about at a time: a second one
+        while a dialog is open is refused rather than stacked on it."""
+        if self._deleting:
+            self.say("A deletion is already being asked about", "yellow")
+            return
+        self._deleting = True
+        self._run_deletion(selection)
+
+    @work(group="delete")
+    async def _run_deletion(self, selection: DeleteSelection) -> None:
+        try:
+            await DeleteFlow(self).run(selection)
+        finally:
+            self._deleting = False
 
     @work(exclusive=True, group="queue-detail")
     async def describe_queue_entry(self, queue_id: str) -> None:

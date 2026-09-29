@@ -70,6 +70,7 @@ different file.
 | `tui` | Browse, run, and watch jobs in a terminal UI |
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
 | `queue` | Submit, list, cancel, resume, park, and hold queue entries through `dtc serve` |
+| `history delete` | Delete executions from the history through `dtc serve` |
 
 Add `--help` to any command for its full option list.
 
@@ -407,6 +408,9 @@ so the Execution widget keeps about 9 lines under the other two.
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
 | `/filter off` | Remove both filters |
 | `/reveal <Execution ID> [RUN]` | Show a run's output in Finder (default: the last run with an output) |
+| `/delete execution <Execution ID> [<Execution ID> ...]` | Delete these executions, asking first (see [Delete executions](#delete-executions)) |
+| `/delete filtered` | Delete every execution the history's filters show, asking first; refused with no filter |
+| `/delete all` | Delete the whole history, asking first |
 | `/verbose [high\|medium\|low]` | Show, or set, how much output and status detail the TUI shows (see [Verbose levels](#verbose-levels)) |
 | `/clear` | Clear the messages |
 | `/quit` | Quit; `dtc serve` keeps running whatever it is running |
@@ -714,6 +718,68 @@ be used (unwritable, a filesystem without SQLite WAL support, or a database
 written by a newer version), `run-job` exits with 1 and the reason, and starts
 nothing.
 
+### Delete executions
+
+Failed experiments, test runs, and duplicates can be deleted from the history
+instead of waiting for `history_retention_days`. A deletion is final and goes
+through `dtc serve`'s API, so the server must be up. It removes the
+execution's row, its runs, its `.log` file, and its manifest (so
+`dtc import-history` cannot bring it back). Its outputs stay, and its number
+is never given again. A manifest that cannot be deleted (a permission error,
+a read-only volume) is named, since `dtc import-history` would bring the
+execution back under a new number; the row is deleted anyway.
+
+Refused, with the reason:
+
+- A running execution: `E0012 is running; it cannot be deleted`.
+- An execution a queued or running entry uses: its own, the one it resumes,
+  or one its resume chain reads between the two:
+  `Q0007 is queued to resume from E0012`.
+
+Anything else can be deleted, including the execution a parked, interrupted,
+failed, or cancelled entry would resume from. That entry then cannot be
+resumed (`Q0007's execution E0012 was pruned or deleted; it cannot be
+resumed`), and you are warned first: `Q0007 can no longer be resumed`. A
+parked entry left with nothing to resume is no longer kept by retention.
+
+In the TUI, `Space` on the Execution History widget marks the selected row
+(an `*` before its ID) and `d` deletes the marked rows, or the selected row
+when none is marked. `/delete execution E0012 E0013`, `/delete filtered`
+(every execution the current filters show, all pages), and `/delete all`
+do the same from the command line. Marks follow their executions across
+re-reads; a filter change or a deletion clears them. A dialog asks about
+each execution, newest first:
+
+```text
+Delete E0012 (walk, failed, 3/7 runs, 2026-09-28 14:03)?  1 of 12
+Its log and manifest are deleted; its outputs stay.
+Q0007 can no longer be resumed.
+
+  [Delete]  [Skip]  [Delete all]  [Cancel]
+```
+
+`y` or Enter deletes it, `s` skips it, `a` deletes it and every remaining
+one without asking again, and `n` or Escape stops (what was already deleted
+stays deleted). One execution offers only Delete and Cancel. Executions the
+server would refuse are left out first, and Messages names each one. With the
+server down, no dialog opens and Messages says it cannot be reached.
+
+From the command line:
+
+```bash
+uv run dtc history delete E0012 E0013
+uv run dtc history delete --status failed --name walk
+uv run dtc history delete --all --yes
+```
+
+It lists what it will delete, with any resume each ends, and asks
+`Delete 12 executions? [y/N]`; `--yes` skips the question. Without a terminal
+it refuses unless `--yes` is given (exit 2). IDs, filters (`--status`,
+`--name`, matching as the TUI's `/filter` does), and `--all` cannot be mixed,
+and one of them is required. Answering no, or a filter that matches nothing,
+deletes nothing and exits 0. An execution refused or missing is named, the
+rest are deleted, and the exit code is 2.
+
 ## Server: HTTP API and gRPC monitoring
 
 `dtc serve` runs an HTTP API and a gRPC monitoring service in one foreground
@@ -774,13 +840,16 @@ execution in the history, whichever front end ran it.
 | `POST /queue/{id}/park`, `POST /queue/{id}/unpark` | Park a running entry, or withdraw its park reservation; each returns the entry as `GET /queue/{id}` does |
 | `POST /queue/hold`, `POST /queue/release` | Hold or release the queue; each returns `held`, `held_since`, `held_by`, and `changed` (false when the queue already was, or was not, held) |
 | `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs, and each run's output file with whether it is complete |
-| `GET /audit` | The audit log of every submit, cancel, resume, park, unpark, hold, and release, refused ones included |
+| `POST /executions/delete` | Delete executions: body `{"executions": ["E0012", ...], "dry_run": false}`, 1 to 200 IDs; answers `deleted`, `refused` (ID and reason), `missing`, `resumes_ended` (ID and the entries it ends), and `manifests_kept` (ID and path). With `"dry_run": true` it says what a deletion would do now and deletes nothing |
+| `GET /audit` | The audit log of every submit, cancel, resume, park, unpark, hold, release, and execution deletion, refused ones included |
 
 A `{job}` reference is a job ID (`J0001`) or a file name in `data/jobs/`, and
 a queue entry or execution is named by its own ID (`Q0007`, `E0012`) — never a
 raw path or a store row number. `GET /jobs`, `/executions`, `/inputs`, and
 `/audit` are paged (`limit`, default and maximum 200, and an opaque `cursor`
-from the previous page). `GET /queue` pages the same way, but only its
+from the previous page). `GET /executions` filters by `status`, by `job` (a
+job reference), and by `name`, which matches the job name or file name as the
+TUI's `/filter name` does. `GET /queue` pages the same way, but only its
 finished entries (newest first); queued and running ones always come back in
 full on the first page, since those alone are bounded by `max_queued_jobs`.
 Each entry carries `park_requested`, true for a running entry with a park
@@ -820,7 +889,9 @@ tell a person from an agent.
 
 **Audit log.** Every submit, cancel, resume, park, unpark, hold, and release
 is recorded in the state store (time, action, target, outcome, caller; hold and
-release have no target), refused ones included, read
+release have no target), refused ones included, and so is each execution a
+`POST /executions/delete` names (`delete_execution`, one row per ID; a request
+refused as a whole has one row with no target; a dry run has none), read
 back with `GET /audit`. It holds no prompt text, YAML, or credential, and is
 never pruned by `history_retention_days`.
 

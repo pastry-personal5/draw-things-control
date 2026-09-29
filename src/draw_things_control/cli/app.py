@@ -12,8 +12,10 @@ from typing import Annotated
 import typer
 from loguru import logger
 
+from draw_things_control.cli.api_client import AllowRemoteServerOption, ServerUrlOption, TokenFileOption
 from draw_things_control.cli.context import CliServices, errors_exit, services_of
-from draw_things_control.cli.queue_app import AllowRemoteServerOption, ServerUrlOption, TokenFileOption, queue_app
+from draw_things_control.cli.history_app import history_app
+from draw_things_control.cli.queue_app import queue_app
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host
 from draw_things_control.core.draw_things_config import load_config
 from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
@@ -30,6 +32,7 @@ from draw_things_control.state.store import StateError, Store, StoreMode
 
 app = typer.Typer(help="Control Draw Things from the command line.", no_args_is_help=True)
 app.add_typer(queue_app, name="queue")
+app.add_typer(history_app, name="history")
 
 
 @contextmanager

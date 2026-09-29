@@ -98,6 +98,13 @@ class QueueResumeTests(JobTestCase):
         # Distinct from "no succeeded run": this entry did have one, but it is gone now, not never-happened.
         self.assertNotIn("no succeeded run", str(caught.exception))
 
+    def test_a_resume_of_a_deleted_execution_says_it_was_pruned_or_deleted(self) -> None:
+        entry = self.submit(run_count=7)
+        execution_number, _last_frame = self.succeed_three_of_seven(entry.id)
+        self.store.executions.delete([execution_number], in_use={})
+        with self.assertRaisesRegex(ResumeRefusedError, "was pruned or deleted; it cannot be resumed"):
+            resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+
     def test_a_resume_of_a_resume_starts_from_the_last_succeeded_run_of_the_chain(self) -> None:
         entry = self.submit(run_count=7)
         self.succeed_three_of_seven(entry.id)

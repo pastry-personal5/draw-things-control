@@ -67,6 +67,31 @@ class HistoryReader:
         message = None if rows or offset else ("No executions match the filter" if history_filter.text() else NO_HISTORY)
         return HistoryPage(offset, rows, len(rows) < limit, message)
 
+    def every(self, history_filter: HistoryFilter) -> list[ExecutionRow]:
+        """Every execution the filter shows, newest first, every page read (Milestone 06: a deletion's selection is read
+        in full before anything is deleted, since paging by offset while deleting would skip rows)."""
+        # By row id, since an execution that starts between two pages shifts the next one down by a row.
+        rows: dict[int, ExecutionRow] = {}
+        offset = 0
+        while True:
+            page = self.page(history_filter, offset)
+            offset += len(page.rows)
+            for row in page.rows:
+                rows.setdefault(row.id, row)
+            if page.complete:
+                return list(rows.values())
+
+    def by_numbers(self, numbers: list[int]) -> list[ExecutionRow]:
+        """The executions with these numbers (E0012), newest first, with their runs; a number with none is left out."""
+
+        def read(store: Store) -> list[ExecutionRow]:
+            # Probed once, not once per number: the probe takes the run lock for an instant.
+            running_as_interrupted = self.lock_is_free()
+            found = (store.executions.by_number(number, running_as_interrupted=running_as_interrupted) for number in numbers)
+            return sorted((row for row in found if row is not None), key=lambda row: (row.started_epoch, row.id), reverse=True)
+
+        return self._read(read)
+
     def rows(self, execution_ids: list[int]) -> list[ExecutionRow]:
         """The executions with these row ids, each with its count of successful runs, to update rows already shown."""
         return self._read(lambda store: store.executions.by_ids(execution_ids, running_as_interrupted=self.lock_is_free()))

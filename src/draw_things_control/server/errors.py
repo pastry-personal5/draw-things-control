@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import DtcError, InputError, LimitExceededError
-from draw_things_control.server.caller import DEFAULT_CALLER, resolve_caller
+from draw_things_control.server.caller import audit_caller
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.dependencies import is_authenticated
 
@@ -28,6 +28,9 @@ STATUS_BY_ERROR_CODE = {
     "state_unavailable": 503,
 }
 DEFAULT_STATUS = 503
+# The audited POST endpoints whose body FastAPI's own validation can refuse before the route runs, with the action
+# their audit rows record.
+AUDITED_BODY_ACTIONS = {"/v1/queue": "submit", "/v1/executions/delete": "delete_execution"}
 
 
 def status_for_error(error: DtcError) -> int:
@@ -59,25 +62,24 @@ def validation_input_error(error: RequestValidationError) -> InputError:
     return InputError(message, field=field)
 
 
-def _audit_unparsed_submission(request: Request, error: InputError) -> None:
-    """``POST /v1/queue``'s body (``{"job": ...}``) is the one audited endpoint whose validation FastAPI can refuse
-    before the route body -- and so before its own ``audited()`` block -- ever runs (a path parameter like
+def _audit_unparsed_body(request: Request, error: InputError) -> None:
+    """``POST /v1/queue``'s body (``{"job": ...}``) and ``POST /v1/executions/delete``'s (``{"executions": [...]}``,
+    Milestone 06) are the audited endpoints whose validation FastAPI can refuse before the route body -- and so
+    before its own audit -- ever runs (a path parameter like
     ``{queue_id}`` is always a plain string at this level; whatever it names is checked, and audited, inside the
     route body itself). Recorded here instead: headers are read independently of the body, so a valid
     ``X-Dtc-Caller`` is still recorded as itself, falling back to the documented default ``api`` only when that
-    header is itself missing or unknown (as ``routes_queue.py``'s own ``_resolve_caller`` does). Never for an
+    header is itself missing or unknown (as ``caller.py``'s ``audit_caller`` does). Never for an
     unauthenticated request, as ``require_auth``'s own 401 is never recorded either -- and FastAPI does not guarantee
     body validation runs after it, so this checks the token itself rather than assuming that order."""
-    if request.method != "POST" or request.url.path != "/v1/queue":
+    action = AUDITED_BODY_ACTIONS.get(request.url.path) if request.method == "POST" else None
+    if action is None:
         return
     if not is_authenticated(request, request.headers.get("authorization")):
         return
     context: ServerContext = request.app.state.context
-    try:
-        caller = resolve_caller(request.headers.get("x-dtc-caller"))
-    except InputError:
-        caller = DEFAULT_CALLER
-    context.store.audit.record(action="submit", target=None, outcome=error.code, caller=caller, at=local_timestamp(datetime.now()))
+    caller, _error = audit_caller(request.headers.get("x-dtc-caller"))
+    context.store.audit.record(action=action, target=None, outcome=error.code, caller=caller, at=local_timestamp(datetime.now()))
 
 
 def install_error_handler(app: FastAPI) -> None:
@@ -91,5 +93,5 @@ def install_error_handler(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
         input_error = validation_input_error(error)
-        _audit_unparsed_submission(request, input_error)
+        _audit_unparsed_body(request, input_error)
         return await handle_dtc_error(request, input_error)
