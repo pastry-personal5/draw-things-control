@@ -1,6 +1,8 @@
 """Tests for the SQLite state store: the database file, the execution repository, and the store that opens them."""
 
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -57,6 +59,18 @@ class DatabaseTests(StoreCase):
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         self.assertEqual(oct(self.path.stat().st_mode & 0o777), "0o600")
+
+    def test_opening_a_second_store_keeps_the_first_ones_writes_visible_to_other_processes(self) -> None:
+        # The API server opens several stores on one file while it runs a job; a TUI process then opens and closes the
+        # database. Opening an existing file used to release this process's SQLite locks, so the TUI's close deleted the WAL
+        # and the job's later writes went to that unlinked file, never seen by any other process.
+        execution_id = self.add("first", started=iso(1))
+        self.open(mode=StoreMode.WRITE)
+        other = f"import sqlite3; connection = sqlite3.connect({str(self.path)!r}); connection.execute('SELECT COUNT(*) FROM runs').fetchone(); connection.close()"
+        subprocess.run([sys.executable, "-c", other], check=True)
+        self.store.executions.finish_run(execution_id, 1, status="succeeded", exit_code=0, seconds=1.0, output="a.mov", last_frame=None)
+        reader = f"import sqlite3; print(sqlite3.connect({str(self.path)!r}).execute('SELECT status FROM runs').fetchone()[0])"
+        self.assertEqual(subprocess.run([sys.executable, "-c", reader], check=True, capture_output=True, text=True).stdout.strip(), "succeeded")
 
     def test_reopening_keeps_the_data(self) -> None:
         execution_id = self.add("first", started=iso(1), finished=iso(1))

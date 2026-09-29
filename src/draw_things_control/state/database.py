@@ -80,9 +80,16 @@ class Database:
             raise
 
     def _create_file(self) -> None:
-        """Create the database file with mode 0600 first, so SQLite's WAL files inherit it: history holds prompts."""
+        """Create the database file with mode 0600 first, so SQLite's WAL files inherit it: history holds prompts.
+
+        An existing file is never opened: closing any descriptor of it drops every POSIX lock this process holds on it,
+        including those of this process's open SQLite connections. Another process closing its last connection then
+        believes itself the last user and deletes the WAL, and this process's later writes go to that unlinked file and
+        are lost (the API server's job stopped updating its execution after a TUI was opened and closed)."""
         try:
-            os.close(os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600))
+            os.close(os.open(self._path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600))
+        except FileExistsError:
+            pass
         except OSError as error:
             raise StateError(f"Cannot create the state database {self._path}: {error.strerror}") from error
 

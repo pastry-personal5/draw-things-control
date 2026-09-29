@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Change**: Fixed lost state-store writes while `dtc serve` runs a job. Every store opened in WRITE or RUN mode
+  opened and closed the database file itself to create it with mode 0600, which dropped every POSIX lock the process
+  held on it, SQLite's included. A TUI that then opened and closed the database took itself for the last user and
+  deleted the WAL; the server went on writing to that unlinked file, so its execution stayed at `running` with 0 runs
+  succeeded in the Execution History while the job went on. The file is now created only when it does not exist
+  (`O_EXCL`), and an existing one is never opened outside SQLite.
 - **Design decision** [M05]: From a code review of the milestone:
   - Retention keeps a parked entry until a resume anywhere in the chain below it has a succeeded run, and keeps the
     resumes in between with it. Counting only the entries that resume it directly kept it forever when its own
