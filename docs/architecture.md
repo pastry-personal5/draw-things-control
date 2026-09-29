@@ -398,7 +398,9 @@ Adds what every later front end needs, without changing the CLI's behavior.
   reservation holds the queue by its entry, and unpark releases only a hold that entry's reservation made;
   `/queue hold` makes a hold its own. While held, the claim finds nothing (checked under `_state_lock`), the
   between-jobs wait ends at once and is forgotten, and `state()` reads `held` while no job runs. A release wakes the
-  worker, which claims at once. `services/queue_park.py`'s `park_entry` and `unpark_entry` refuse with
+  worker, which claims at once; one that lands once the claimed job has ended drops that job's between-jobs cooldown
+  (`_release_skips_wait`). The claim publishes its `running` under `_state_lock`, as the park and hold events are, so
+  a park made just after a claim never reaches a front end before it. `services/queue_park.py`'s `park_entry` and `unpark_entry` refuse with
   `ParkRefusedError` (`invalid_state`), naming the reason.
 - **Retention.** `Store.prune` reads the entries to keep once, before either prune (`QueueRepository.kept_parked`: each
   parked entry and the chain of resumes below it, walked by a recursive query, until one of those resumes has a

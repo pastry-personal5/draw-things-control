@@ -79,6 +79,9 @@ class QueueWorker:
         self._park_pending = False
         self._job_started = False
         self._job_finished = False
+        # Set by a release that lands once the claimed job has ended: the between-jobs cooldown before the next claim is
+        # dropped (release). Cleared by the claim.
+        self._release_skips_wait = False
         self._hold = QueueHold(store.settings, self._events, clock=clock)
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -199,6 +202,10 @@ class QueueWorker:
         change."""
         with self._state_lock:
             released = self._hold.release()
+            # Once the claimed job has ended (or with none claimed), the next claim skips the between-jobs cooldown, even
+            # when this lands before _wait_after reads the hold; a release while the job still runs leaves it to wait.
+            if released and (self._current is None or self._job_finished):
+                self._release_skips_wait = True
             hold = self._hold.snapshot()
         self.wake()
         return released, hold
@@ -266,9 +273,11 @@ class QueueWorker:
                 self._events.entry_changed(entry.label, str(QueueState.QUEUED))
                 return True
             self._current, self._stop_reason, self._pending_cancel = entry, None, False
-            self._park_pending = self._job_started = self._job_finished = False
-        self._status.entry_claimed()
-        self._events.entry_changed(entry.label, entry.state)
+            self._park_pending = self._job_started = self._job_finished = self._release_skips_wait = False
+            self._status.entry_claimed()
+            # Published under the lock, as park_changed and held are: a park that lands right after the claim then never
+            # reaches a front end before the 'running' it reads as this entry's claim (tui/feed.py's pending_queue_id).
+            self._events.entry_changed(entry.label, entry.state)
         job: JobDefinition | None = None
         try:
             job = self._run_claimed(entry)
@@ -373,7 +382,7 @@ class QueueWorker:
         and the queue is not held (a release then claims at once, with no cooldown to wait out). Reuses ``job``
         (already parsed and validated by ``_run_claimed``) instead of parsing the snapshot again, which would re-check
         the job's own input file and could raise if it was since removed."""
-        if self._stop_event.is_set() or self._hold.is_held:
+        if self._stop_event.is_set() or self._hold.is_held or self._release_skips_wait:
             return
         updated = self._store.queue.get(entry.id)
         if updated is None or updated.state not in _COOLDOWN_AFTER or not self._store.queue.has_queued():
@@ -399,8 +408,9 @@ class QueueWorker:
     def _poll_wait(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            # A hold ends the wait at once; nothing of it is remembered, so a release claims at once.
-            if self._stop_event.is_set() or self._hold.is_held or not self._store.queue.has_queued():
+            # A hold ends the wait at once; nothing of it is remembered, so a release claims at once, even one that ended a
+            # hold made and released between two polls.
+            if self._stop_event.is_set() or self._hold.is_held or self._release_skips_wait or not self._store.queue.has_queued():
                 return
             self._wake_event.wait(timeout=min(self._poll_interval, max(0.0, deadline - time.monotonic())))
             self._wake_event.clear()

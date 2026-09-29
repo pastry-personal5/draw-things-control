@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Change** [M05]: From a code review of the milestone, two fixes to the worker. The claim now publishes its
+  `queue_entry_changed` `running` under the worker's lock, as the park and hold events already were, so a park made
+  just as an entry is claimed never reaches a front end first; before, the TUI's feed then reset the pending
+  reservation, and the Status widget never showed `parking`. A release that lands once the claimed job has ended now
+  drops the between-jobs cooldown even when it lands before the worker reads the hold after that job; before, the
+  worker could still wait the cooldown out.
 - **Change**: Fixed lost state-store writes while `dtc serve` runs a job. Every store opened in WRITE or RUN mode
   opened and closed the database file itself to create it with mode 0600, which dropped every POSIX lock the process
   held on it, SQLite's included. A TUI that then opened and closed the database took itself for the last user and

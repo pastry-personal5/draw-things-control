@@ -15,7 +15,7 @@ from draw_things_control.core.client_config import job_argument
 from draw_things_control.core.exit_codes import exit_code_for_signal
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
-from draw_things_control.services.queue_hold import HoldState, hold_outcome_text
+from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, release_outcome_text
 from draw_things_control.services.queue_park_text import park_outcome_text, unpark_outcome_text
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.services.toolkit import Toolkit
@@ -329,7 +329,7 @@ class DrawThingsApp(App[None]):
             self.say(error.text, "red")
             return
         self.set_queue_hold(HoldState.from_body(body))
-        self.say("Queue released" if body.get("changed") else "The queue is not held")
+        self.say(release_outcome_text(body))
         self.refresh_queue()
 
     @work(exclusive=True, group="queue-detail")

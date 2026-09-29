@@ -13,7 +13,7 @@ from loguru import logger
 from draw_things_control.cli.context import errors_exit, services_of
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host, job_argument, read_client_token
 from draw_things_control.core.exit_codes import EXIT_CODES_BY_ERROR_CODE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
-from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, hold_text
+from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, hold_text, release_outcome_text
 from draw_things_control.services.queue_park_text import park_outcome_text, queue_state_text, unpark_outcome_text
 
 if TYPE_CHECKING:
@@ -241,4 +241,4 @@ def queue_release(
         client = _client(ctx, server_url, token_file, allow_remote_server)
     with client:
         body = _request(client, "POST", "/v1/queue/release").json()
-    typer.echo("Queue released" if body.get("changed") else "The queue is not held")
+    typer.echo(release_outcome_text(body))

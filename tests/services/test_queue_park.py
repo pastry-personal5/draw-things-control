@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -129,6 +130,73 @@ class ParkTests(QueueWorkerCase):
             release.set()
             thread.join(timeout=5)
         self.assertEqual((self.entry(label).state, self.starts), ("parked", 1))
+
+    def test_a_park_that_lands_as_the_entry_is_claimed_is_published_after_its_running(self) -> None:
+        def record_slowly(kind: str, data: dict[str, Any]) -> None:
+            # A slow sink: the claim's own 'running' takes a while to publish, so a park made meanwhile could overtake it.
+            if kind == "queue_entry_changed" and data["state"] == "running":
+                time.sleep(0.05)
+            self.record_event(kind, data)
+
+        self.worker = self.build_worker(on_event=record_slowly)
+        label = self.submit(run_count=3)
+        real_claim = self.store.queue.claim_oldest
+        parkers: list[threading.Thread] = []
+        # Asserted after the claim: claim_and_run_one logs and swallows an error raised inside it.
+        parker_waiting: list[bool] = []
+
+        def claim_then_park(now: Any) -> Any:
+            entry = real_claim(now)
+            if entry is not None and not parkers:
+                # The park waits on the worker's lock, which the claim holds, and takes it the moment the claim lets go.
+                waiting = threading.Event()
+
+                def park() -> None:
+                    waiting.set()
+                    self.worker.park_running(entry.id, entry.label)
+
+                parkers.append(threading.Thread(target=park))
+                parkers[0].start()
+                parker_waiting.append(waiting.wait(5))
+                time.sleep(0.05)
+            return entry
+
+        with mock.patch.object(self.store.queue, "claim_oldest", side_effect=claim_then_park):
+            self.worker.claim_and_run_one()
+        parkers[0].join(timeout=5)
+        self.assertEqual(parker_waiting, [True])
+        # A front end reads 'running' as the claim, and a park it hears before that as nobody's.
+        changes = [(kind, data.get("state")) for kind, data in self.events if kind in ("queue_entry_changed", "queue_park_changed")]
+        self.assertEqual(changes[:2], [("queue_entry_changed", "running"), ("queue_park_changed", None)])
+        self.assertEqual(self.entry(label).state, "parked")
+
+    def test_a_release_once_the_parked_job_has_ended_drops_the_between_jobs_cooldown(self) -> None:
+        waits: list[float] = []
+        self.worker = self.build_worker(on_event=self.record_event, wait_between_jobs=waits.append)
+        label = self.submit(run_count=3, cooldown={"mode": "manual", "seconds": 30})
+        waiting = self.submit(run_count=1)
+        self.during_run(1, lambda: self.park(label))
+
+        def release_once_parked(kind: str, data: dict[str, Any]) -> None:
+            # The entry is marked parked, and the worker has not yet decided on the cooldown after it.
+            if kind == "queue_entry_changed" and data["state"] == "parked":
+                self.worker.release()
+
+        self.on_event = release_once_parked
+        self.worker.claim_and_run_one()
+        self.assertEqual((self.entry(label).state, waits), ("parked", []))
+        self.assertTrue(self.worker.claim_and_run_one())
+        self.assertEqual(self.entry(waiting).state, "succeeded")
+
+    def test_a_release_while_the_parking_job_still_runs_keeps_the_between_jobs_cooldown(self) -> None:
+        waits: list[float] = []
+        self.worker = self.build_worker(on_event=self.record_event, wait_between_jobs=waits.append)
+        label = self.submit(run_count=3, cooldown={"mode": "manual", "seconds": 30})
+        self.submit(run_count=1)
+        self.during_run(1, lambda: (self.park(label), self.worker.release()))
+        self.worker.claim_and_run_one()
+        # The entry still parks, and the worker moves on as after a succeeded job, with the usual cooldown.
+        self.assertEqual((self.entry(label).state, waits), ("parked", [30.0]))
 
     def test_an_unpark_before_the_job_starts_withdraws_the_pending_park(self) -> None:
         label = self.submit(run_count=3)
@@ -345,6 +413,7 @@ class ParkTests(QueueWorkerCase):
         label = self.submit(run_count=3)
         self.next_runner = lambda arguments: BlockingRunner(arguments)
         self.worker.start()
+        self.addCleanup(self.worker.stop)
         self.wait_until(lambda: self.starts >= 1)
         self.park(label)
         self.worker.stop()

@@ -128,3 +128,8 @@ def hold_text(hold: HoldState, *, already: bool = False) -> str:
 def hold_outcome_text(body: dict[str, Any]) -> str:
     """What ``POST /v1/queue/hold`` did, from its response, for ``dtc queue hold`` and the TUI's ``/queue hold``."""
     return hold_text(HoldState.from_body(body), already=not body.get("changed", True))
+
+
+def release_outcome_text(body: dict[str, Any]) -> str:
+    """What ``POST /v1/queue/release`` did, from its response, for ``dtc queue release`` and the TUI's ``/queue release``."""
+    return "Queue released" if body.get("changed") else "The queue is not held"
