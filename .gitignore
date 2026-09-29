@@ -51,6 +51,9 @@ config/global-config.yaml
 # The API server's bearer token (generated on first `dtc serve`)
 config/server-token
 
+# The terminal UI's own preferences (its verbose level), written by `/verbose`
+config/tui-preferences.yaml
+
 # gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
 # stays the single source of truth, with no generated code to drift from it. One copy per front end with a gRPC
 # client (server/, cli/, tui/; mcp_server/ in Milestone 08), since front ends never import each other.

@@ -354,8 +354,9 @@ The screen, top to bottom:
 - **draw-things-cli** (below it, 15 lines): the run line (the running run's
   number, elapsed time, step progress, and output file, or the cooldown
   countdown), then the last 2000 lines `draw-things-cli` printed. stderr is
-  in red, and progress-bar lines update the run line instead of adding
-  lines.
+  in red, and progress-bar lines (`Sampling... 4 / 40 [ ] 10  %`) are shown
+  as lines too, as well as updating the run line. `/verbose` changes how
+  much of this is shown (see [Verbose levels](#verbose-levels)).
 - **Messages** (below it, like the draw-things-cli pane and the status line
   on black): the output of each command and a readable log of
   the running job: when it started, each run's start (with its command,
@@ -388,7 +389,7 @@ so the Execution widget keeps about 9 lines under the other two.
 | `/describe job <Job ID>` | The summary, prompt pairs, and dry-run plan of a job |
 | `/sort jobs KEY [asc\|desc]` | Sort the Job Definition widget by `id`, `name`, `changed`, `mode`, or `runs` |
 | `/apply <Job ID>` | Read the job again, confirm, and run it |
-| `/stop` | Stop the running job, after confirmation |
+| `/stop` | Cancel the queue entry the draw-things-cli pane is following (no confirmation) |
 | `/get history` | Read the history again |
 | `/get prompts <Execution ID> [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
 | `/get positive <Execution ID> [RUN]` | Its positive prompts only |
@@ -400,8 +401,9 @@ so the Execution widget keeps about 9 lines under the other two.
 | `/filter name TEXT` | Show only executions whose job name or job file name contains `TEXT` |
 | `/filter off` | Remove both filters |
 | `/reveal <Execution ID> [RUN]` | Show a run's output in Finder (default: the last run with an output) |
+| `/verbose [high\|medium\|low]` | Show, or set, how much output and status detail the TUI shows (see [Verbose levels](#verbose-levels)) |
 | `/clear` | Clear the messages |
-| `/quit` | Quit; while a job runs, asks to stop it first |
+| `/quit` | Quit; `dtc serve` keeps running whatever it is running |
 
 `/get prompts`, `/get positive`, and `/get negative` show each `positive:`
 or `negative:` label on its own line, with the prompt starting on the next
@@ -493,6 +495,28 @@ terminal does.
   are marked `imported`.
 - `/reveal` runs `open -R` on the output (macOS). If the file is missing,
   or `open` fails, Messages says so.
+
+### Verbose levels
+
+`/verbose high|medium|low` (any letter case) trades the draw-things-cli pane's detail for less noise and less
+traffic from `dtc serve`; `/verbose` alone says the current level. The level is kept in
+`config/tui-preferences.yaml` (a per-machine file, ignored by git) and is the level of the next session too; a
+missing or unreadable file means `high`. If the file cannot be written, the level still applies to this session and
+Messages says it could not be saved.
+
+| Level | The draw-things-cli pane | Status widget, run line, status line |
+|-------|--------------------------|--------------------------------------|
+| `high` (default) | Every output line, live | Refreshed every second |
+| `medium` | Every line is streamed, but the pane shows only each run's first minute (`(output hidden: verbose medium, after 1 min)` marks the end, once per run) | Every second |
+| `low` | No output: `dtc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run line nor the Status widget shows step progress |
+
+- Typing `/verbose medium` while a run is going opens a fresh minute at that moment, so output shows at once. A line
+  medium or low hides is never shown later, and `high` shows only the lines that arrive after the switch.
+- Switching into or out of `low` reconnects the TUI to `dtc serve` (Messages says so). Going back out of low may
+  replay the output that arrived meanwhile as one burst, or, after a very chatty run, reread the running job's state
+  and show `(earlier output not shown)`. `high` and `medium` differ only in what the pane shows, so switching between
+  them reconnects nothing. Without a running server the level still applies and takes effect on the next connection.
+- The Queue widget is not affected by the level and stays live.
 
 ### The Status widget
 

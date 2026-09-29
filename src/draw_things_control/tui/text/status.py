@@ -12,6 +12,7 @@ from draw_things_control.core.yaml_files import is_yaml_file
 from draw_things_control.jobs.text import duration_text
 from draw_things_control.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
 from draw_things_control.tui.live_run import LiveRun
+from draw_things_control.tui.preferences import VerboseLevel
 from draw_things_control.tui.text.common import STATUS_STYLE
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
@@ -37,15 +38,16 @@ def cooldown_text(live: LiveRun) -> Text:
     return text
 
 
-def run_line_text(live: LiveRun | None) -> Text:
-    """The draw-things-cli pane's run line: the active run, the cooldown, or what the job is doing."""
+def run_line_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text:
+    """The draw-things-cli pane's run line: the active run, the cooldown, or what the job is doing. At verbose low no
+    progress is shown: it arrives only as run output, which low never receives, so it would freeze at a stale reading."""
     if live is None:
         return Text("No job has run in this session", style="dim")
     if live.active_run is not None and live.run_started_at is not None:
         elapsed = max(0.0, live.now() - live.run_started_at)
         text = Text(f"Run {live.active_run}/{len(live.runs)}", style="bold")
         text.append(f"  {duration_text(int(elapsed))} elapsed")
-        progress = progress_text(live)
+        progress = progress_text(live) if level != "low" else None
         if progress is not None:
             text.append("  progress ", style="bold")
             text.append(progress)

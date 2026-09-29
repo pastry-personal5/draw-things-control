@@ -14,13 +14,11 @@ from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.run_lock import CHILD_EXECUTABLE_NAME
-from draw_things_control.jobs.events import JobEvent, JobStarted, RunFinished
 from draw_things_control.services.history import HistoryReader
 from draw_things_control.services.job_catalog import JobCatalog, JobListing
 from draw_things_control.services.job_details import JobDetails, add_plan, read_details
 from draw_things_control.services.queue_reader import QueueReader
 from draw_things_control.services.toolkit import Toolkit
-from draw_things_control.state.ids import EXECUTION_LETTER, parse_typed_id
 from draw_things_control.tui.commands import CommandSuggester
 from draw_things_control.tui.controller import CommandController
 from draw_things_control.tui.desktop import copy_text, reveal_run
@@ -32,12 +30,11 @@ from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
 from draw_things_control.tui.panes.queue import QueuePane
 from draw_things_control.tui.panes.status import StatusPane
 from draw_things_control.tui.reader import PaneHistory
-from draw_things_control.tui.text.arguments import parameters_text, run_arguments
-from draw_things_control.tui.text.events import event_text, result_text
+from draw_things_control.tui.running_job import RunningJobView
+from draw_things_control.tui.text.arguments import parameters_text
 from draw_things_control.tui.text.execution import execution_text
 from draw_things_control.tui.text.jobs import details_text, jobs_text
 from draw_things_control.tui.text.prompts import prompts_text
-from draw_things_control.tui.text.status import status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
 
 if TYPE_CHECKING:
@@ -63,6 +60,7 @@ class MainScreen(Screen[None]):
         self.catalog: JobCatalog | None = None
         self.reader: PaneHistory | None = None
         self.commands = CommandController(self)
+        self.running = RunningJobView(self)
 
     @property
     def dtc(self) -> DrawThingsApp:
@@ -128,8 +126,16 @@ class MainScreen(Screen[None]):
             log.can_focus = False
         self.command_line.focus()
         self.say(Text("Type /help for the commands.", style="dim"))
-        self.set_interval(1, self.tick)
-        self.render_live()
+        # A feed that connected before this screen was mounted could not tell the person yet.
+        if self.dtc.feed_connected:
+            self.call_after_refresh(self.dtc.on_feed_connection_changed)
+        self.set_interval(1, self.running.tick)
+        if self.dtc.live is not None:
+            # The feed followed a job before this screen was mounted (a fast local server): show it as an attach, since
+            # whatever it printed until now was never shown.
+            self.running.job_started(seeded=True)
+        else:
+            self.running.render_live()
 
     def on_resize(self, event: events.Resize) -> None:
         # The draw-things-cli pane gives up lines, down to its least, so Messages keeps its least on a short terminal.
@@ -222,7 +228,7 @@ class MainScreen(Screen[None]):
             self.detail.follow(self.detail.execution_id, pause=False)
 
     def on_history_pane_lock_changed(self, event: HistoryPane.LockChanged) -> None:
-        self.render_status()
+        self.running.render_status()
 
     @work(thread=True, group="execution")
     def show_execution(self, number: int) -> None:
@@ -251,57 +257,3 @@ class MainScreen(Screen[None]):
     def reveal(self, number: int, run: int | None) -> None:
         assert self.reader is not None
         self.app.call_from_thread(self.say, *reveal_run(self.reader.numbered(number), run))
-
-    # The running job
-
-    def job_started(self, *, seeded: bool = False) -> None:
-        """A job starts (live), or is attached to already running (``seeded``): either way its output replaces the
-        last job's, marked "earlier output not shown" only when seeded, since only then is there earlier output
-        this session never saw."""
-        if self.dtc.live is not None:
-            self.cli.new_job(self.dtc.live, seeded=seeded)
-        self.tick()
-
-    def job_event(self, event: JobEvent) -> None:
-        """Log the event, update the draw-things-cli pane, and refresh the history where the store changed."""
-        text = event_text(event, *run_arguments(self.dtc.live, event))
-        if text is not None:
-            self.say(text)
-        self.render_live(event)
-        # A new execution needs its row; a finished run changes only that row. The end of the job reads the pane again.
-        number = self._live_execution_number()
-        if isinstance(event, JobStarted):
-            # The cursor moves to the new execution, unless the person is browsing the history or the detail.
-            if self.focused not in (self.history, self.detail):
-                self.history.select_when_shown = number
-            self.history.load()
-        elif isinstance(event, RunFinished) and number is not None:
-            row_id = self.history.row_id_for(number)
-            if row_id is not None:
-                self.history.refresh_rows([row_id])
-
-    def _live_execution_number(self) -> int | None:
-        live = self.dtc.live
-        if live is None or live.execution_id is None:
-            return None
-        return parse_typed_id(live.execution_id, EXECUTION_LETTER)
-
-    def job_ended(self) -> None:
-        live = self.dtc.live
-        if live is not None:
-            self.say(result_text(live), block=True)
-        self.render_live()
-        self.history.load()
-
-    def render_live(self, event: JobEvent | None = None) -> None:
-        self.cli.show(self.dtc.live, event)
-        self.tick()
-
-    def render_status(self) -> None:
-        self.status.show(self.dtc.live, self.history.other_process_running, message=self.history.other_process_message)
-
-    def tick(self) -> None:
-        """Update the elapsed time, the cooldown countdown, the Status widget, and the status line."""
-        self.cli.tick(self.dtc.live)
-        self.render_status()
-        self.query_one("#status-line", Static).update(status_line_text(self.dtc.data_directory, self.dtc.live, self.dtc.job_running, self.dtc.quit_armed))

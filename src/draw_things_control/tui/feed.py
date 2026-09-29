@@ -1,4 +1,4 @@
-"""The TUI's one gRPC connection to ``dtc serve`` (Milestone 03): ``WatchEvents(include_output=true)`` feeds both
+"""The TUI's one gRPC connection to ``dtc serve`` (Milestone 03): ``WatchEvents`` (``include_output`` unless the verbose level is low, Milestone 04) feeds both
 the Queue widget and the draw-things-cli pane, since the TUI no longer runs a job itself to read events from
 directly. Reconnects on any drop, replaying the gap when the server never went down in between, and reseeding
 (``GET /queue?state=running``, ``GET /queue/{id}``, ``GET /executions/{id}``) exactly as attaching does otherwise.
@@ -27,6 +27,7 @@ from draw_things_control.state.queue import FINISHED_STATES
 from draw_things_control.tui.client import CALLER, CALLER_HEADER, GrpcStubFactory, MonitorStub
 from draw_things_control.tui.generated import monitor_pb2, monitor_pb2_grpc
 from draw_things_control.tui.live_run import LiveRun
+from draw_things_control.tui.preferences import wants_output
 
 if TYPE_CHECKING:
     import httpx
@@ -50,6 +51,11 @@ class QueueFeed:
         # The next open must force Reset: true at startup, and after any health-check failure during a gap (a
         # resumed real ID could, in a vanishingly rare race, be clamped by a freshly restarted server with no Reset).
         self._reopen_fresh = True
+
+    @property
+    def last_event_id(self) -> int:
+        """The ID of the last event received (never one a subscriber's own filter left out)."""
+        return self._last_event_id
 
     async def run(self) -> None:
         while True:
@@ -94,7 +100,7 @@ class QueueFeed:
 
     async def _watch(self, stub: MonitorStub, metadata: tuple[tuple[str, str], ...], http: httpx.AsyncClient) -> None:
         open_id = FORCE_RESET_ID if self._reopen_fresh else self._last_event_id
-        call = stub.WatchEvents(monitor_pb2.WatchEventsRequest(last_event_id=open_id, include_output=True), metadata=metadata)
+        call = stub.WatchEvents(monitor_pb2.WatchEventsRequest(last_event_id=open_id, include_output=wants_output(self._app.verbose_level)), metadata=metadata)
         try:
             async for event in call:
                 await self._handle(event, http)
@@ -138,7 +144,7 @@ class QueueFeed:
             app.pending_queue_id = None
             app.live = live
             if app.main is not None:
-                app.main.job_started()
+                app.main.running.job_started()
             live.past_run = await asyncio.to_thread(app.read_past_run)
             return
         if app.live is None:
@@ -146,15 +152,15 @@ class QueueFeed:
         was_ended = app.live.ended
         app.live.apply(job_event)
         if app.main is not None:
-            app.main.job_event(job_event)
+            app.main.running.job_event(job_event)
         if not was_ended and app.live.ended and app.main is not None:
-            app.main.job_ended()
+            app.main.running.job_ended()
 
     def _end_followed(self, live: LiveRun, *, error: str | None = None) -> None:
         live.end(error=error)
         self._app.refresh_queue()
         if self._app.main is not None:
-            self._app.main.job_ended()
+            self._app.main.running.job_ended()
 
     async def _reseed(self, http: httpx.AsyncClient) -> None:
         self._app.refresh_queue()
@@ -186,7 +192,7 @@ class QueueFeed:
         live.past_run = await asyncio.to_thread(self._app.read_past_run)
         self._app.live = live
         if self._app.main is not None:
-            self._app.main.job_started(seeded=True)
+            self._app.main.running.job_started(seeded=True)
 
 
 @asynccontextmanager

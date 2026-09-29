@@ -8,6 +8,7 @@ from pathlib import Path
 DATABASE_FILE_NAME = "dtc.db"
 LOCK_FILE_NAME = "run.lock"
 SERVER_TOKEN_FILE_NAME = "server-token"
+TUI_PREFERENCES_FILE_NAME = "tui-preferences.yaml"
 # As a person names them in messages: relative to the project root.
 GLOBAL_CONFIG_RELATIVE = Path("config/global-config.yaml")
 EXAMPLE_GLOBAL_CONFIG_RELATIVE = Path("config/global-config.example.yaml")
@@ -47,6 +48,12 @@ class ProjectPaths:
         """The API token ``dtc serve`` generates on first start (0600, gitignored): beside ``global_config``, not in
         the state directory, so the secret stays out of a file that may be shared or committed."""
         return self.root / "config" / SERVER_TOKEN_FILE_NAME
+
+    @property
+    def tui_preferences(self) -> Path:
+        """The terminal UI's own per-machine preferences (gitignored): the verbose level today. Not
+        ``global_config``, which is shared with ``dtc serve``, hand-edited, and strictly validated."""
+        return self.root / "config" / TUI_PREFERENCES_FILE_NAME
 
 
 # The project this package is installed in (src/draw_things_control/core/paths.py).

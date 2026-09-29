@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 import re
-import signal
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -14,10 +13,8 @@ from typer.testing import CliRunner
 
 from draw_things_control.cli import app as cli
 from draw_things_control.core.paths import DEFAULT_PATHS
-from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import plan_header, plan_steps
-from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
 from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
@@ -48,8 +45,8 @@ def make_service(missing: frozenset[str] = frozenset()) -> TestExecutor:
 
 
 class TuiTests(TuiTestCase):
-    def app(self, *, data: Path | None = None, executable: str = "draw-things-cli", missing: frozenset[str] = frozenset()) -> DrawThingsApp:
-        return self.make_app(make_service(missing), data=data, executable=executable)
+    def app(self, *, data: Path | None = None, missing: frozenset[str] = frozenset()) -> DrawThingsApp:
+        return self.make_app(make_service(missing), data=data)
 
     async def show(self, pilot, name: str) -> str:
         await self.command(pilot, f"/describe job {name}")
@@ -63,7 +60,7 @@ class TuiTests(TuiTestCase):
                 async with app.run_test(size=size) as pilot:
                     await self.settle(pilot)
                     width, height = size
-                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "jobs", "history", "execution", "command-line", "status-line")}
+                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "jobs", "queue", "history", "execution", "command-line", "status-line")}
                     rules = [rule.region for rule in app.screen.query(".command-rule")]
                     focused = app.focused
                     status = self.text(app, "status-line")
@@ -71,11 +68,12 @@ class TuiTests(TuiTestCase):
                 self.assertEqual((regions["cli"].x, regions["cli"].y, regions["cli"].height), (0, 7, cli_height))
                 self.assertEqual((regions["messages"].x, regions["messages"].y, regions["messages"].bottom), (0, *messages))
                 self.assertGreaterEqual(regions["messages"].height, 6)
-                # Job Definition shows 8 rows (11 lines with its border and header), Execution History 5 (8 lines); the
-                # detail fills the rest of the column.
+                # Job Definition shows 8 rows (11 lines with its border and header), the Queue and Execution History 5 (8
+                # lines each); the detail fills the rest of the column.
                 self.assertEqual((regions["jobs"].x, regions["jobs"].y, regions["jobs"].right, regions["jobs"].height), (regions["history"].x, 0, width, 11))
-                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (11, width, 8))
-                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 19, width, height - 4))
+                self.assertEqual((regions["queue"].y, regions["queue"].right, regions["queue"].height), (11, width, 8))
+                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (19, width, 8))
+                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 27, width, height - 4))
                 self.assertEqual(regions["history"].x, regions["cli"].right)
                 # A third of the width, at least 36 columns.
                 self.assertEqual(regions["history"].width, max(36, width // 3))
@@ -273,22 +271,13 @@ class TuiTests(TuiTestCase):
     async def test_an_os_error_while_planning_shows_in_the_plan(self) -> None:
         self.write_data_job("walk.yaml")
         app = self.app()
-        with mock.patch.object(app.job_executor, "preview", side_effect=PermissionError(13, "Permission denied", "/out")):
+        with mock.patch.object(app.toolkit.job_executor(), "preview", side_effect=PermissionError(13, "Permission denied", "/out")):
             async with app.run_test() as pilot:
                 await self.settle(pilot)
                 shown = await self.show(pilot, "walk")
                 self.assertTrue(app.is_running)
         self.assertIn("  runs: 5", shown)
         self.assertIn("Permission denied", shown)
-
-    async def test_the_executable_option_is_used_for_the_plan(self) -> None:
-        self.write_data_job("walk.yaml")
-        app = self.app(executable="/opt/local/draw-things-cli", missing=frozenset({"draw-things-cli"}))
-        async with app.run_test() as pilot:
-            await self.settle(pilot)
-            shown = await self.show(pilot, "walk")
-        self.assertNotIn("Could not find", shown)
-        self.assertIn("\nExecutable: /opt/local/draw-things-cli\n", shown)
 
     async def test_each_job_command_reads_the_file_again(self) -> None:
         self.write_data_job("walk.yaml")
@@ -314,7 +303,7 @@ class TuiTests(TuiTestCase):
                 ("/jobs", "Unknown command '/jobs'; type /help"),
                 ("/history", "Unknown command '/history'; type /help"),
                 ("/describe job", "Usage: /describe job <Job ID>"),
-                ("/describe jobs walk", "Usage: /describe job <Job ID> | /describe execution <Execution ID>"),
+                ("/describe jobs walk", "Usage: /describe job <Job ID> | /describe queue <Queue ID> | /describe execution <Execution ID>"),
                 ("/describe execution", "Usage: /describe execution <Execution ID>"),
                 ("/describe execution x", "Usage: /describe execution <Execution ID>"),
                 ("/describe execution 12", "Use E0012: an execution ID begins with E"),
@@ -329,7 +318,7 @@ class TuiTests(TuiTestCase):
                 ("/get param E1 2 3", "Usage: /get param <Execution ID> [RUN]"),
                 ("/get param 1", "Use E0001: an execution ID begins with E"),
                 ("/get everything", f"Usage: {usage('get')}"),
-                ("/apply a b", "Usage: /apply <Job ID>"),
+                ("/apply a b", "Usage: /apply [<Job ID>]"),
                 ("/stop now", "Usage: /stop"),
                 ("/filter status done", "Unknown status 'done'; use one of succeeded, failed, interrupted, running"),
                 ("/filter clear", "Usage: /filter status STATUS | /filter name TEXT | /filter off"),
@@ -491,36 +480,30 @@ class TuiCommandTests(JobTestCase):
 
     def test_tui_builds_the_app_from_its_options(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run, mock.patch("draw_things_control.tui.app.DrawThingsApp.__init__", return_value=None) as init, mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=0):
-            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--executable", "/opt/dtc/cli"])
+            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--server-url", "http://127.0.0.1:9000", "--token-file", str(self.root / "token")])
             self.assertEqual(result.exit_code, 0, result.output)
             run.assert_called_once_with()
             options = init.call_args.kwargs
             self.assertEqual(options["data_directory"], DEFAULT_PATHS.jobs)
-            self.assertEqual(options["executable"], "/opt/dtc/cli")
             self.assertEqual(options["settings"].output_directory, self.output_directory)
-            self.assertIsInstance(options["job_executor"], JobExecutor)
-            # Jobs run on a worker thread, where a service that installs signal handlers would raise.
-            self.assertFalse(options["job_executor"]._handle_signals)
-            self.assertEqual(options["shutdown_grace"], 10.0)
-            self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--data-dir", str(self.root), "--shutdown-grace", "2.5"])
+            self.assertEqual(options["server_url"], "http://127.0.0.1:9000")
+            self.assertEqual(options["token_file"], self.root / "token")
+            self.assertFalse(options["allow_remote_server"])
+            self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--data-dir", str(self.root)])
             self.assertEqual(init.call_args.kwargs["data_directory"], self.root)
-            self.assertEqual(init.call_args.kwargs["shutdown_grace"], 2.5)
+            self.assertEqual(init.call_args.kwargs["token_file"], DEFAULT_PATHS.server_token)
 
-    def test_a_negative_shutdown_grace_exits_with_2(self) -> None:
+    def test_a_remote_server_url_is_refused_unless_allowed(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run:
-            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--shutdown-grace", "-1"])
+            result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--server-url", "http://192.0.2.7:8765"])
         self.assertEqual(result.exit_code, 2)
         run.assert_not_called()
 
-    def test_any_running_job_is_cancelled_after_the_app_returns(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")), mock.patch.object(JobExecutor, "cancel") as cancel:
+    def test_the_terminal_sinks_come_back_when_the_app_raises(self) -> None:
+        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")):
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertIsInstance(result.exception, RuntimeError)
-        cancel.assert_called_once_with(signal.SIGINT)  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
         cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
-
-    def test_run_job_keeps_a_service_that_handles_signals(self) -> None:
-        self.assertTrue(Toolkit().job_executor()._handle_signals)
 
     def test_a_failed_app_exits_with_its_return_code_and_logging_is_restored(self) -> None:
         with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):

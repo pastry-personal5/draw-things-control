@@ -22,7 +22,6 @@ from draw_things_control.services.job_catalog import JobCatalog, JobRow
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.confirm import ConfirmScreen
 from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
 from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
@@ -93,8 +92,7 @@ class JobDefinitionTests(TuiTestCase):
                 await self.command(pilot, line)
             await self.command(pilot, "/apply J9")
             await self.command(pilot, "/apply j0002")
-            await self.wait_for(pilot, lambda: isinstance(pilot.app.screen, ConfirmScreen), "the run confirmation")
-            await pilot.press("n")
+            await self.wait_for(pilot, lambda: self.server.submitted, "the submission")
         # Listed by file name when first seen: bad.yaml is J0001. An invalid file keeps its ID; its mode and runs read invalid.
         self.assertEqual(rows["bad"][0::3], ["J0001", "invalid"])
         self.assertEqual(rows["bad"][4], "invalid")
@@ -103,6 +101,8 @@ class JobDefinitionTests(TuiTestCase):
             shown = "\n".join(self.since(line))
             self.assertTrue(shown.startswith(f"Job ID: J0002\nJob file: {self.data / 'walk.yaml'}"), shown)
         self.assertEqual(self.since("/apply J9")[:1], [f"No job file has the ID J0009 in {self.data}"])
+        # Only the ID that exists was submitted, by its file name (what the API resolves job files by), never run here.
+        self.assertEqual(self.server.submitted, ["walk.yaml"])
 
     async def test_the_sort_follows_the_keys_and_the_command_and_is_kept(self) -> None:
         for name, when in (("b.yaml", 3_000_000), ("a.yaml", 1_000_000), ("c.yaml", 2_000_000)):
@@ -138,7 +138,7 @@ class JobDefinitionTests(TuiTestCase):
             kept = [row[1] for row in self.rows(pilot.app)]
         self.assertEqual(kept, ["c", "b", "a"])
 
-    async def test_enter_describes_the_job_and_a_asks_to_run_it(self) -> None:
+    async def test_enter_describes_the_job_and_a_submits_it_to_the_queue(self) -> None:
         self.write_data_job("walk.yaml")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
@@ -148,10 +148,9 @@ class JobDefinitionTests(TuiTestCase):
             await self.settle(pilot)
             described = "\n".join(self.said)
             await pilot.press("a")
-            await self.wait_for(pilot, lambda: isinstance(pilot.app.screen, ConfirmScreen), "the run confirmation")
-            # Only y runs; n cancels, and the job did not start.
-            await pilot.press("n")
+            await self.wait_for(pilot, lambda: self.server.submitted, "the submission")
             await self.settle(pilot)
+            # Submitting is not running: this process never starts a job, and nothing was followed yet.
             running = cast(DrawThingsApp, pilot.app).job_running
             await pilot.press("escape")
             focused = pilot.app.focused

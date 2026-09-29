@@ -11,6 +11,7 @@ from rich.text import Text
 from textual.suggester import Suggester
 
 from draw_things_control.services.history import STATUSES
+from draw_things_control.tui.preferences import VERBOSE_LEVELS
 
 PREFIX = "/"
 # Name, arguments, and what it does, in the order help lists them. For /get and /describe, the first argument names
@@ -38,6 +39,7 @@ COMMANDS = (
     ("filter", "name TEXT", "Show only executions whose job name or file name contains TEXT"),
     ("filter", "off", "Remove the history filters"),
     ("reveal", "<Execution ID> [RUN]", "Reveal a run's output in Finder (default: the last output)"),
+    ("verbose", "[high|medium|low]", "Show, or set, how much of draw-things-cli's output and status detail the TUI shows (high: everything; medium: a run's first minute of output; low: no output, status once a minute)"),
     ("clear", "", "Clear the messages"),
     ("quit", "", "Quit; dtc serve keeps running whatever it is running"),
 )
@@ -50,6 +52,17 @@ QUEUE_WORDS = ("add", "cancel", "resume")
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
 FILTER_WORDS = ("status", "name", "off")
+VERBOSE_WORDS: tuple[str, ...] = VERBOSE_LEVELS
+# The fixed words that may follow a command line's earlier words (lowercase), built once rather than per keystroke.
+FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
+    (f"{PREFIX}get",): GET_WORDS,
+    (f"{PREFIX}queue",): QUEUE_WORDS,
+    (f"{PREFIX}verbose",): VERBOSE_WORDS,
+    (f"{PREFIX}filter",): FILTER_WORDS,
+    (f"{PREFIX}filter", "status"): tuple(STATUSES),
+    (f"{PREFIX}sort",): ("jobs",),
+    (f"{PREFIX}sort", "jobs"): SORT_KEYS,
+}
 # Characters a shell would split or interpret, escaped with a backslash in a completed job file name.
 SHELL_SPECIAL = re.compile(r"([^\w@%+=:,./-])")
 KEYS = (
@@ -143,10 +156,6 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
     words = [word.lower() for word in head.split()]
     if not words:
         candidates = [f"{PREFIX}{name}" for name in COMMAND_NAMES] if not head else []
-    elif words == [f"{PREFIX}get"]:
-        candidates = list(GET_WORDS)
-    elif words == [f"{PREFIX}queue"]:
-        candidates = list(QUEUE_WORDS)
     elif words == [f"{PREFIX}describe"]:
         # The noun may be left out, so a typed J, E, or Q completes to an ID too (in any case, as after the noun).
         matching = [f"{head} {word}" for word in DESCRIBE_WORDS if word.startswith(last) and word != last]
@@ -155,20 +164,17 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
         return _identifier_completions(head, last, execution_ids)
     elif words in ([f"{PREFIX}describe", "queue"], [f"{PREFIX}queue", "cancel"], [f"{PREFIX}queue", "resume"]):
         return _identifier_completions(head, last, queue_ids)
-    elif words == [f"{PREFIX}filter"]:
-        candidates = list(FILTER_WORDS)
-    elif words == [f"{PREFIX}filter", "status"]:
-        candidates = list(STATUSES)
-    elif words == [f"{PREFIX}sort"]:
-        candidates = ["jobs"]
-    elif words == [f"{PREFIX}sort", "jobs"]:
-        candidates = list(SORT_KEYS)
-    elif len(words) == 3 and words[:2] == [f"{PREFIX}sort", "jobs"]:
-        candidates = list(SORT_DIRECTIONS)
     else:
-        candidates = []
+        candidates = _words_after(words)
     prefix = f"{head} " if head or line.startswith(" ") else ""
     return [f"{prefix}{candidate}" for candidate in candidates if candidate.startswith(last) and candidate != last]
+
+
+def _words_after(words: list[str]) -> list[str]:
+    """The fixed words that may follow the command line's earlier ``words`` (lowercase), in the order help lists them."""
+    if len(words) == 3 and words[:2] == [f"{PREFIX}sort", "jobs"]:
+        return list(SORT_DIRECTIONS)
+    return list(FOLLOWING_WORDS.get(tuple(words), ()))
 
 
 def _identifier_completions(head: str, last: str, identifiers: Sequence[str]) -> list[str]:

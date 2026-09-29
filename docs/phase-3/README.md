@@ -78,7 +78,7 @@ typed tools on top of it.
 | 01 | [Queue and run manager](milestone-01-queue-run-manager.md) | done |
 | 02 | [HTTP API: read and run](milestone-02-http-api.md) | done |
 | 03 | [Queue for people](milestone-03-queue-for-people.md) | done |
-| 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | planned |
+| 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | done |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
 | 08 | [MCP server](milestone-08-mcp-server.md) | planned |
 | 09 | [Safety hardening](milestone-09-safety-hardening.md) | planned |

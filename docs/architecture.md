@@ -354,6 +354,21 @@ Adds what every later front end needs, without changing the CLI's behavior.
 - Out of scope here, and still planned: job file management behind a write
   flag, the MCP server, and the queue and Queue widget for people.
 
+### Milestone 4: TUI verbose mode (done)
+
+- `tui/preferences.py`: `VerboseLevel` (`high`, `medium`, `low`), the saved level in `config/tui-preferences.yaml`
+  (`ProjectPaths.tui_preferences`, gitignored; a missing or malformed file is `high`, never an error), and
+  `wants_output(level)`, false only for `low`.
+- `tui/feed.py` opens `WatchEvents` with `include_output=wants_output(level)`. `DrawThingsApp.set_verbose_level`
+  restarts the feed worker only when a switch crosses the low boundary; it resumes from the last event ID, and a
+  backlog that cannot explain the gap is the ordinary `Reset` and reseed.
+- `tui/running_job.py`'s `RunningJobView` (held by `MainScreen` as `running`) applies the job's events to the panes
+  and owns `tick(force)`: at low, an unforced tick (the screen's one-second timer) renders the Status widget, run
+  line, and status line only once `LOW_STATUS_REFRESH_SECONDS` after the last render; every event-driven caller
+  forces it.
+- `tui/panes/cli_output.py`'s `CliPane.write_output` skips lines for good at low, and at medium once a run's first
+  `MEDIUM_OUTPUT_WINDOW_SECONDS` have passed (or the minute since `/verbose medium` was typed, `LiveRun.output_window_start`).
+
 ### Milestones 3 onward (planned)
 
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and

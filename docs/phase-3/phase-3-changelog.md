@@ -5,6 +5,34 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-29
 
+- **Change** [M04]: Fixes from reviewing Milestone 04. Low drops the active run's step readings
+  (`LiveRun.forget_progress`) when chosen mid-run or when attaching at low, so the Status widget's `step N/M` line no
+  longer freezes (that run then estimates from elapsed time, as a run begun at low does); `/verbose` and a confirmed
+  `/stop` render at once instead of at low's next once-a-minute refresh; a job's start is logged in Messages again
+  (`Job started: ...`, lost with the same Milestone 03 dead branch as the history refresh); and the TUI's signal
+  exit codes, signal registration, and the server's run-lock status line have tests again.
+- **Change** [M04]: Milestone 04 is implemented and done: `/verbose high|medium|low` (kept in
+  `config/tui-preferences.yaml`), `include_output` on the shared `WatchEvents` stream by level with a reconnect across
+  the low boundary, medium's per-run first-minute window, and low's once-a-minute periodic rendering. See the
+  milestone's "Built" section for the message wording and the cases the plan left open (medium between runs, the
+  startup notice, what low hides in the run line).
+- **Change** [M04]: The `tests/tui` harness now runs the app against a fake `dtc serve` (`tests/tui/fake_server.py`).
+  Removed with it, because they tested local job execution that Milestone 03 retired: the `/apply` confirmation and
+  its tests, the busy-lock, `run-job` file, and signal-stops-a-local-job tests in `test_live_run.py` (rewritten around
+  the feed, with the tests that still describe live behavior ported: the history cursor and row updates, the
+  redacted command, the estimate from a past run), `tests/tui/sigterm_app.py` and its SIGTERM test,
+  `tests/tui/fake_runs.py`, and the `--executable` and `--shutdown-grace` `dtc tui` option tests. Stale expectations from Milestone 03 were updated (the Queue widget in
+  the layout and Tab order, `/apply [<Job ID>]` and `/describe queue` in usage, `LiveRun`'s constructor in
+  `test_estimate.py`). `MainScreen`'s running-job methods moved to `tui/running_job.py`'s `RunningJobView`, taking
+  the class under the size limit; `tests/test_architecture.py` passes again.
+- **Change** [M04]: Fixed a Milestone 03 regression found while porting the history tests: a job's start never reached
+  the history. `JobStarted` arrives through `RunningJobView.job_started` (as the feed calls it), but the code that
+  read the history again and moved its cursor to the new execution sat in `job_event`'s `JobStarted` branch, which
+  the feed never reaches, so the new row only appeared when the job ended. `job_started` now does it (for an attach
+  too), and the dead branch is gone.
+- **Design decision** [M04]: `MainScreen.on_mount` shows a job the feed already followed as an attach (`seeded=True`),
+  and re-runs the feed-connected notice, since a fast local server can connect and seed before the screen is mounted,
+  which lost the pane's content and the startup low notice. No earlier decision changed.
 - **Owner decision** [M03]: Milestone 03 is marked done. Its code landed in `feat(queue): add queue CLI and TUI live
   output`; the owner accepted it as complete even though `tests/tui`'s harness still uses the pre-Milestone-03 app
   constructor and `MainScreen` is over the class size limit (both are Milestone 04's first steps), and the user

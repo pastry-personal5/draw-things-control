@@ -101,6 +101,8 @@ class LiveRun:
         self.runs: list[RunState] = []
         self.active_run: int | None = None
         self.run_started_at: float | None = None  # Monotonic time the active run's RunStarted was applied.
+        # Verbose medium's own window opens when /verbose medium is typed mid-run (Milestone 04), not only at a run's start.
+        self.output_window_start: float | None = None
         self.active_output: str | None = None
         self.command: tuple[str, ...] = ()
         self.progress: tuple[int, int] | None = None
@@ -223,6 +225,14 @@ class LiveRun:
         self.stop_requested = True
         if self.stopped_at is None:
             self.stopped_at = self._clock()
+
+    def forget_progress(self) -> None:
+        """Drop the active run's step and percent readings: at verbose low (Milestone 04) they stop arriving, since
+        they come only as run output, and a reading frozen where it was is worse than none. The run then estimates
+        as one begun at low does."""
+        self._check_thread()
+        self.progress = self.percent = None
+        self.first_step = self.last_step = None
 
     def _read_step(self, step: int, total: int) -> None:
         """Keep the counter's first and latest readings; a counter that goes back or changes its total starts over."""

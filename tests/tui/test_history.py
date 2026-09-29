@@ -6,7 +6,6 @@ import json
 import sqlite3
 import subprocess
 import unittest
-from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, cast
 from unittest import mock
@@ -14,10 +13,8 @@ from unittest import mock
 from rich.text import Text
 from textual.content import Content
 
-from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
 from draw_things_control.jobs.events import CooldownStarted, RunStarted
-from draw_things_control.jobs.parsing import load_job
 from draw_things_control.services.history import HistoryFilter, HistoryPage
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
@@ -27,14 +24,13 @@ from draw_things_control.tui.desktop import copy_to_pasteboard
 from draw_things_control.tui.panes.execution import ExecutionBody, ExecutionPane
 from draw_things_control.tui.panes.history import HistoryPane
 from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.panes.queue import QueuePane
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.text.arguments import argument_rows, override_notes, parameters_text
 from draw_things_control.tui.text.events import event_text
 from draw_things_control.tui.text.execution import reveal_action, stored_cooldown_text
-from draw_things_control.tui.text.jobs import confirm_run_text
 from draw_things_control.tui.widgets import CommandInput
-from tests.fixtures import execution_row, job_data, run_row
-from tests.tui.fake_runs import FakeRuns
+from tests.fixtures import execution_row, run_row
 from tests.tui.tui_case import TuiTestCase
 
 START = datetime(2026, 9, 20, 9, 0).astimezone()
@@ -58,7 +54,10 @@ class HistoryCase(TuiTestCase):
         self.outputs.mkdir()
 
     def app(self) -> DrawThingsApp:
-        return self.make_app(FakeRuns().service)
+        # No dtc serve to reach: the history is read from the store, and polled while another process holds the lock,
+        # which is what these tests are about (a connected feed would say the server is up and stop the polling).
+        self.server.health_ok = False
+        return self.make_app()
 
     def store(self) -> Store:
         ensure_state_directory(self.state)
@@ -215,7 +214,7 @@ class HistoryTests(HistoryCase):
         self.assertEqual(stored_cooldown_text(row(900.0, "global_config", None)), "900 s (global_config)")
         self.assertEqual(stored_cooldown_text(row(None, "default", None)), "-")
 
-    def test_the_cooldown_messages_and_the_confirmation(self) -> None:
+    def test_the_cooldown_messages(self) -> None:
         def started(**changes: Any) -> str:
             return str(event_text(CooldownStarted(**{"at": at(0), "after_run": 1, "seconds": 900.0, "until": "14:05:00", "run_seconds": 1440.0, **changes})))
 
@@ -224,11 +223,6 @@ class HistoryTests(HistoryCase):
         self.assertEqual(started(mode="auto", ratio=0.4, seconds=576.0), "Cooldown 9 min 36 s (40% of run 1's 24 min) before run 2, until 14:05:00")
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=300.0, run_seconds=180.0, bound="minimum"), "Cooldown 5 min (the minimum; half of run 1's 3 min is less) before run 2, until 14:05:00")
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=1800.0, run_seconds=4800.0, bound="maximum"), "Cooldown 30 min (the maximum; half of run 1's 1 h 20 min is more) before run 2, until 14:05:00")
-        self.global_config = replace(self.global_config, cooldown=CooldownPolicy(mode="auto", minimum_seconds=300.0, maximum_seconds=1800.0))
-        job = load_job(self.write_job(job_data(run_count=3, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
-        self.assertIn("  Cooldown: auto: half of each run's time, 5 min to 30 min, from global_config (up to 2 waits, 1 h total at most)\n", str(confirm_run_text(job, "draw-things-cli")))
-        job = load_job(self.write_job(job_data(cooldown={"mode": "off"})), self.global_config, self.params)
-        self.assertIn("  Cooldown: off (job)\n", str(confirm_run_text(job, "draw-things-cli")))
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
         (self.outputs / "old-1.mov").write_bytes(b"video")
@@ -497,10 +491,10 @@ class ExecutionDetailTests(HistoryCase):
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
             focused = []
-            for _ in range(4):
+            for _ in range(5):
                 await pilot.press("tab")
                 focused.append(type(app.focused).__name__)
-        self.assertEqual(focused, ["JobDefinitionPane", "HistoryPane", "ExecutionPane", "CommandInput"])
+        self.assertEqual(focused, ["JobDefinitionPane", "QueuePane", "HistoryPane", "ExecutionPane", "CommandInput"])
 
     async def test_a_click_on_a_file_name_reveals_it_and_a_click_on_a_run_selects_it(self) -> None:
         execution_id = self.add("walk", 0, runs=("succeeded", "succeeded"), outputs=("one [x].mov", "two.mov"), measured=(832, 448, 81))
@@ -546,10 +540,10 @@ class ExecutionDetailTests(HistoryCase):
                     table = app.screen.query_one(HistoryPane)
                     shown, height = table.show_horizontal_scrollbar, table.region.height
                     execution_top = app.screen.query_one(ExecutionPane).region.y
-                    jobs = app.screen.query_one(JobDefinitionPane).region.height
+                    above = app.screen.query_one(JobDefinitionPane).region.height + app.screen.query_one(QueuePane).region.height
                 # The border, the header, 5 rows, and a line for the sideways scrollbar when there is one; the Job
-                # Definition widget above it, 8 rows high.
-                self.assertEqual((shown, height, execution_top), (scrolls, 9 if scrolls else 8, jobs + height))
+                # Definition and Queue widgets above it, 8 lines high each.
+                self.assertEqual((shown, height, execution_top), (scrolls, 9 if scrolls else 8, above + height))
 
     async def test_the_execution_command_shows_the_settings_steps_and_measured_output(self) -> None:
         execution_id = self.add("walk", 0, runs=("succeeded", "failed"), status="failed", command=WAN_COMMAND, measured=(832, 448, 81))

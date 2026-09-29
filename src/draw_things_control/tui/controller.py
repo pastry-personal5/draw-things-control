@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from draw_things_control.core.errors import DtcError
 from draw_things_control.services.history import STATUSES, HistoryFilter
 from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, QUEUE_LETTER, execution_id_text, parse_bare_number, parse_typed_id, queue_id_text
-from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, CommandError, help_text, parse, usage
+from draw_things_control.tui.commands import GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, VERBOSE_WORDS, CommandError, help_text, parse, usage
 from draw_things_control.tui.panes.job_definitions import natural_descending
 from draw_things_control.tui.widgets import MessageLog
 
 if TYPE_CHECKING:
+    from draw_things_control.tui.preferences import VerboseLevel
     from draw_things_control.tui.screens import MainScreen
 
 
@@ -100,6 +101,16 @@ class CommandController:
         descending = direction.lower() == "desc" if direction is not None else natural_descending(key)
         self.screen.jobs.set_sort(key, descending)
         self.screen.say(f"Job Definition: by {key}, {'descending' if descending else 'ascending'}")
+
+    def command_verbose(self, level: str = "") -> None:
+        """/verbose [high|medium|low]: show the level, or set it (kept across sessions)."""
+        word = level.lower()
+        if not word:
+            self.screen.say(f"Verbose level: {self.screen.dtc.verbose_level}.")
+        elif word in VERBOSE_WORDS:
+            self.screen.dtc.set_verbose_level(cast("VerboseLevel", word))
+        else:
+            raise CommandError(f"Usage: {usage('verbose')}")
 
     def command_apply(self, name: str | None = None) -> None:
         """/apply [JOB]: an alias for /queue add, the current Job Definition file when JOB is left out."""

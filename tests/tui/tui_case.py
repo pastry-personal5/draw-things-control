@@ -22,7 +22,10 @@ from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.panes.history import HistoryPane
 from draw_things_control.tui.widgets import CommandInput, MessageLog
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import FakeToolkit, JobTestCase, job_data
+from tests.tui.fake_server import TOKEN, FakeServer
+
+SERVER_URL = "http://127.0.0.1:8765"
 
 
 class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
@@ -32,6 +35,10 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.data = self.root / "jobs-elsewhere"
         self.data.mkdir()
         self.state = self.paths.state
+        # A fake dtc serve, and the token file the app reads before it connects to it (nothing is ever reached over a network).
+        self.server = FakeServer()
+        self.paths.server_token.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.server_token.write_text(TOKEN, encoding="ascii")
         # As dtc tui leaves it: no sink writes to the terminal while the app runs.
         logger.remove()
         self.addCleanup(logger.add, sys.stderr)
@@ -53,8 +60,9 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         path.write_text(yaml.safe_dump(job_data(**changes), sort_keys=False), encoding="utf-8")
         return path
 
-    def make_app(self, service: JobExecutor, *, data: Path | None = None, executable: str = "draw-things-cli", settings: GlobalConfig | None = None, shutdown_grace: float = 10.0) -> DrawThingsApp:
-        return DrawThingsApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, executable=executable, job_executor=service, shutdown_grace=shutdown_grace)
+    def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> DrawThingsApp:
+        """The app, talking only to ``self.server``; ``service`` is the executor the Job Definition widget's dry-run plan builds."""
+        return DrawThingsApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, server_url=SERVER_URL, token_file=self.paths.server_token, toolkit=FakeToolkit(service), http_transport=self.server.transport(), grpc_stub_factory=self.server.stub_factory)
 
     async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
         deadline = time.monotonic() + timeout
@@ -65,9 +73,9 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     async def settle(pilot: Any) -> None:
-        """Wait for the workers that read jobs and history; never for the job itself, which may be blocked on purpose."""
+        """Wait for the workers that read jobs and history; never for the feed, which reads the server for as long as the app runs."""
         for _ in range(2):
-            readers = [worker for worker in pilot.app.workers if worker.group != "job"]
+            readers = [worker for worker in pilot.app.workers if worker.group != "feed"]
             # An empty list would mean every worker to wait_for_complete.
             if readers:
                 await pilot.app.workers.wait_for_complete(readers)

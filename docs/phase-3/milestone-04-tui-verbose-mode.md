@@ -1,7 +1,7 @@
 # Milestone 04: TUI verbose mode
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** done (2026-09-29)
 **Depends on:** [Milestone 03: Queue for people](milestone-03-queue-for-people.md), whose shared
 `WatchEvents(include_output=true)` subscription (`tui/feed.py`) this milestone makes conditional.
 
@@ -201,7 +201,7 @@ correct and as timely as at any level; only how often the widgets *render* them 
   write it: the line goes into `output` and the pane like any other, and still updates `progress` and `percent`.
   A seeded reading (`_seed_active_run` applies a `RunOutput` with empty text) adds no line. Done, with
   `tests/tui/test_pane_output.py`.
-- **Size and test prerequisites** (found reviewing the code):
+- **Size and test prerequisites** (found reviewing the code; both done, see "Built" below):
 
 - `tests/test_architecture.py` already fails on `main`: `MainScreen` (`tui/screens.py`) is 252 lines, over
   `MAX_CLASS_LINES = 250`. This milestone adds to it (`tick(force)`, `_last_low_render`, the level passed to the
@@ -214,6 +214,38 @@ correct and as timely as at any level; only how often the widgets *render* them 
   `test_commands` currently report 2 failures and 28 errors. The tests this milestone lists need a harness that
   builds the app with `server_url`, `token_file`, `http_transport`, and `grpc_stub_factory`, so repairing it is the
   first step here unless Milestone 03's own finishing work has done it by then.
+
+### Built
+
+Both first steps are done, and the feature followed the plan above, with these details the plan left open:
+
+- **Where the code is.** `tui/preferences.py` (levels, the two 60-second constants, `wants_output`, load and save),
+  `tui/running_job.py` (`RunningJobView`, the running-job methods moved out of `MainScreen`, which now holds it as
+  `screen.running`; `tick(force)` and the low throttle live there, on an injectable `clock`), `CliPane` (the level
+  is an argument of `new_job`, `show`, `tick`, and `write_output`; `MEDIUM_MARKER` and `LOW_MARKER`),
+  `DrawThingsApp.set_verbose_level`, and `CommandController.command_verbose`.
+- **Messages, by case.** Any change says `Verbose level: LEVEL.` (into low, `LOW_NOTICE`, the wording above); a change
+  across the low boundary with the feed connected then says `Reconnecting to dtc serve for verbose LEVEL...`; with
+  the feed down, either direction says `Verbose level: LEVEL. It applies when dtc serve is reachable.` instead. A
+  failed save adds one warning line. The startup notice for low is said once, when the feed first connects, and not
+  again by a later reconnect.
+- **Medium between runs.** With neither a run's start nor a `/verbose medium` time known, nothing says the window
+  has closed, so a line is written. The medium marker is written once per closed window (per window start), so a
+  second run's own window gets its own marker.
+- **Low hides all of the run line's progress**, the percent as well as the step count, since both arrive only as
+  run output.
+- **Low drops the step readings too** (`LiveRun.forget_progress`), when `/verbose low` is typed mid-run and when a
+  job is attached to at low (the seeding read's `current_step`), so the Status widget's `step N/M` line and run bar
+  never freeze at a stale reading either; the run then estimates as one begun at low does (from elapsed time and the
+  past run, not per step). A switch of level, and a confirmed `/stop`, render at once rather than at low's next
+  once-a-minute refresh.
+- **A race found on the way.** A feed that connected (and seeded a running entry) before `MainScreen` was mounted
+  lost its pane content and the low notice; `MainScreen.on_mount` now shows an already-followed job as an attach.
+- **The test harness** builds the app against `tests/tui/fake_server.py` (an HTTP `MockTransport` and a gRPC stub
+  that records each `WatchEventsRequest`, replays the backlog on a resumed call, and filters `run_output` per call
+  as the server does). `tests/tui/test_live_run.py` was rewritten around it; the tests of retired local execution
+  (the confirmation, the busy lock, signals stopping a local job, `run-job` files), `sigterm_app.py`, and
+  `fake_runs.py` were removed. The acceptance tests are in `tests/tui/test_verbose.py`.
 
 ### Documentation
 

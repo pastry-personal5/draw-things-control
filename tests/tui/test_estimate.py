@@ -8,7 +8,6 @@ from rich.text import Text
 
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
-from draw_things_control.jobs.parsing import load_job
 from draw_things_control.tui.estimate import job_estimate, moment, run_estimate
 from draw_things_control.tui.live_run import LiveRun, PastRun
 from draw_things_control.tui.text.status import bar_line, end_text, status_lines, whole_duration
@@ -33,7 +32,7 @@ class EstimateTests(JobTestCase):
 
     def live(self, runs: int = 3, cooldown: CooldownPolicy = MANUAL_100) -> LiveRun:
         path = self.write_job(job_data(run_count=runs, prompt_pairs=[{"name": "only", "positive": "walk"}]))
-        live = LiveRun(load_job(path, self.global_config, self.params), path, clock=self.clock, wall_clock=lambda: WALL + timedelta(seconds=self.clock.now))
+        live = LiveRun(clock=self.clock, wall_clock=lambda: WALL + timedelta(seconds=self.clock.now))
         live.apply(JobStarted(at=self.stamp(), job_name="sunset-walk", job_file=str(path), source_text="", mode="i2v", total_runs=runs, output_directory="/out", input=None, model="base.ckpt", seed=1, seed_source="job", cooldown=cooldown, cooldown_source="job", manifest=None, log=None))
         return live
 
@@ -280,6 +279,7 @@ class EstimateTests(JobTestCase):
         self.step(live, 30, 1)
         self.step(live, 40, 2)
         lines = [str(line) for line in status_lines(live, False, 60)]
+        assert live.path is not None
         self.assertEqual(lines[0], f"running  {live.path.stem}  run 1/2")
         # Once the state store has recorded it, the execution's ID leads.
         live.execution_id = "E0012"
@@ -299,8 +299,9 @@ class EstimateTests(JobTestCase):
         live.apply(CooldownEnded(at=self.stamp(), waited_seconds=100.0, cut_short=False))
         self.one_run(live, 2, end + 100)
         live.apply(JobFinished(at=self.stamp(), status=JobStatus.SUCCEEDED, exit_code=0, completed_runs=2, total_runs=2, signal=None))
-        lines = [str(line) for line in status_lines(live, True, 60)]
         # A job another process starts afterwards is announced in its place.
+        self.assertEqual(str(status_lines(live, True, 60)[0]), "A job is running in another process")
+        lines = [str(line) for line in status_lines(live, False, 60)]
         self.assertEqual(lines[0], f"finished (succeeded)  {live.path.stem}")
         # Run 1 from 0 s to 450 s, the 100 s wait, and run 2 to 1000 s.
         self.assertEqual(lines[1:], ["2/2 runs succeeded", "", "job took 16 min 40 s", "last run took 7 min 10 s"])
@@ -311,8 +312,7 @@ class EstimateTests(JobTestCase):
         self.start(live, 2)
         self.finish(live, self.clock.now + 5, 2, seconds=5.0, status=RunStatus.FAILED)
         self.assertEqual(str(status_lines(live, False, 60)[4]), "last run took 7 min 10 s")
-        path = self.write_job(job_data())
-        never = LiveRun(load_job(path, self.global_config, self.params), path, clock=self.clock)
-        never.end("The run lock is held")
-        self.assertEqual([str(line) for line in status_lines(never, False, 60)], [f"did not start  {path.stem}", "", "", "", ""])
+        never = LiveRun(clock=self.clock)
+        never.end(error="The run lock is held")
+        self.assertEqual([str(line) for line in status_lines(never, False, 60)], ["did not start  ", "", "", "", ""])
         self.assertIsInstance(status_lines(never, False, 60)[0], Text)

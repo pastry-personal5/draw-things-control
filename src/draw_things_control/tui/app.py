@@ -19,6 +19,8 @@ from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.services.toolkit import Toolkit
 from draw_things_control.tui.feed import QueueFeed
 from draw_things_control.tui.live_run import LiveRun, PastRun, latest_past_run
+from draw_things_control.tui.panes.cli_output import LOW_MARKER
+from draw_things_control.tui.preferences import VerboseLevel, load_verbose_level, save_verbose_level, wants_output
 from draw_things_control.tui.queue_client import ApiError, cancel, list_queue, resume, show, submit
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.signals import QuitPress, SignalGuard
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 # How long a first Ctrl-C waits for the second that quits.
 QUIT_PRESS_SECONDS = 2.0
 QUEUE_LIST_LIMIT = 5
+LOW_NOTICE = "Verbose level: low. Bare output is hidden and status updates once a minute."
 
 
 class DrawThingsApp(App[None]):
@@ -71,6 +74,10 @@ class DrawThingsApp(App[None]):
         # ordering guarantee (it always precedes that entry's JobStarted), read once and then cleared.
         self.pending_queue_id: str | None = None
         self.feed_connected = False
+        # How much of draw-things-cli's output the TUI streams and shows (Milestone 04); read once, changed by /verbose.
+        self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
+        # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
+        self._low_notice_due = self.verbose_level == "low"
         self._feed = QueueFeed(self)
         self.signals = SignalGuard(self.handle_signal)
         self.quit_press = QuitPress(QUIT_PRESS_SECONDS)
@@ -99,6 +106,47 @@ class DrawThingsApp(App[None]):
         only while running a job, so a feed that is up already says everything that line otherwise would)."""
         if self.main is not None:
             self.main.history.check_lock()
+        if self.feed_connected and self._low_notice_due and self.main is not None:
+            self._low_notice_due = False
+            self.say(LOW_NOTICE)
+
+    def set_verbose_level(self, level: VerboseLevel) -> None:
+        """/verbose LEVEL: apply it for the session, keep it for the next, and reconnect the shared stream when the
+        level crosses the low boundary (``include_output`` differs); high and medium request the same lines."""
+        old = self.verbose_level
+        if level == old:
+            self.say(f"Verbose level: {level}.")
+            return
+        self.verbose_level = level
+        self._low_notice_due = False
+        crossed = wants_output(level) != wants_output(old)
+        connected = self.feed_connected
+        if crossed and not connected:
+            self.say(f"Verbose level: {level}. It applies when dtc serve is reachable.")
+        else:
+            self.say(LOW_NOTICE if level == "low" else f"Verbose level: {level}.")
+        if crossed and connected:
+            self.say(f"Reconnecting to dtc serve for verbose {level}...")
+            self.run_feed()
+        self._save_verbose_level(level)
+        live, main = self.live, self.main
+        if live is not None and self.job_running:
+            if level == "medium":
+                live.output_window_start = live.now()
+            elif level == "low":
+                live.forget_progress()
+        if main is None:
+            return
+        if level == "low" and self.job_running:
+            main.cli.write_marker(LOW_MARKER)
+        # At once, not at low's next once-a-minute refresh: the run line and the Status widget change with the level.
+        main.running.tick(force=True)
+
+    def _save_verbose_level(self, level: VerboseLevel) -> None:
+        try:
+            save_verbose_level(self.paths.tui_preferences, level)
+        except OSError as error:
+            self.say(f"The verbose level could not be saved ({error}); it applies to this session only.", "yellow")
 
     def handle_signal(self, received: signal.Signals) -> None:
         """SIGHUP, SIGINT, or SIGTERM: exit at once, with the code the CLI would give the same signal. Nothing here
@@ -137,7 +185,7 @@ class DrawThingsApp(App[None]):
 
     def show_status(self) -> None:
         if self.main is not None:
-            self.main.tick()
+            self.main.running.tick(force=True)
 
     async def action_quit(self) -> None:
         """Ends the app at once, whether or not a job is running: dtc serve is what runs it, and quitting the TUI
@@ -187,6 +235,8 @@ class DrawThingsApp(App[None]):
             return
         if self.live is not None and self.live.queue_id == queue_id:
             self.live.request_stop()
+            # "stopping" shows at once at every level, not at low's next once-a-minute refresh.
+            self.show_status()
         self.say(f"{entry['queue_id']} {entry['state']}")
         self.refresh_queue()
 
