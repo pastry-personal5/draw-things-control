@@ -6,8 +6,8 @@ import math
 
 from rich.text import Text
 
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, JobStatus, RunFinished, RunStarted, RunStatus
-from draw_things_control.jobs.text import auto_wait_text, duration_text, seconds_text
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobStarted, JobStatus, MediaChecked, RunFinished, RunStarted, RunStatus
+from draw_things_control.jobs.text import auto_wait_text, duration_text, media_check_text, seconds_text
 from draw_things_control.tui.live_run import LiveRun
 from draw_things_control.tui.text.arguments import Arguments, PreviousRun, arguments_text
 from draw_things_control.tui.text.common import STATUS_STYLE
@@ -48,6 +48,8 @@ def event_text(event: JobEvent, arguments: Arguments | None = None, previous: Pr
         else:
             wait = duration_text(math.ceil(event.seconds))
         return Text(f"Cooldown {wait} before run {event.after_run + 1}, until {event.until}")
+    if isinstance(event, MediaChecked):
+        return Text(media_check_text(event), style="yellow" if event.verdict == "warning" else "")
     if isinstance(event, CooldownEnded):
         return Text(f"Cooldown cut short after {seconds_text(event.waited_seconds)}", style="yellow") if event.cut_short else None
     return None

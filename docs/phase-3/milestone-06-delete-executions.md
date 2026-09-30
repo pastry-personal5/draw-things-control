@@ -167,7 +167,7 @@ Out of scope:
 - Telling other clients about a deletion: no gRPC event. Another TUI drops the rows when it next reads the history
   (`/get history`, a filter, or paging), and its detail for a deleted execution already reads "That execution is no
   longer in the history"
-- An MCP tool ([Milestone 08](milestone-08-mcp-server.md) may add one later), and gating deletion behind `--allow-write`
+- An MCP tool ([Milestone 10](milestone-10-mcp-server.md) may add one later), and gating deletion behind `--allow-write`
 - Retention's own pruning, which still leaves manifests in place, so `dtc import-history` can bring back an execution
   retention pruned. That is not changed here; only an explicit deletion removes the manifest.
 

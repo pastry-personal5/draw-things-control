@@ -131,7 +131,7 @@ In scope:
 
 Out of scope:
 
-- MCP tools for park and hold. [Milestone 08](milestone-08-mcp-server.md) is planned separately; the endpoints it
+- MCP tools for park and hold. [Milestone 10](milestone-10-mcp-server.md) is planned separately; the endpoints it
   would wrap exist after this milestone.
 - Parking a run in the middle. The run is still the smallest unit that can be resumed.
 - A park that takes effect after more than one run ("park after run 5"), and a park reservation on a queued entry.

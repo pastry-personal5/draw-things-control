@@ -12,10 +12,12 @@ from draw_things_control.core.generation import GenerationService
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor
 from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner, RunnerFactory, StoppableRunner
 from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.jobs.media.checks import MediaChecker
 from draw_things_control.jobs.media.frames import extract_last_frame
 from draw_things_control.jobs.media.info import measure_output
+from draw_things_control.jobs.media.stream_color import resolve_video_color
 from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.jobs.media.tools import require_ffmpeg, require_ffprobe
+from draw_things_control.jobs.media.tools import find_ffprobe, require_ffmpeg, require_ffprobe
 from draw_things_control.jobs.media.video_color import tag_video_colors
 
 
@@ -39,7 +41,7 @@ class Toolkit:
 
     def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: RunnerFactory[StoppableRunner] = create_job_runner) -> None:
         self._find_executable = find_executable
-        self._media = media or MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output)
+        self._media = media or MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, color_reader=lambda video: resolve_video_color(video, shutil.which("ffmpeg"), find_ffprobe()), require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output, checker=MediaChecker(lambda: shutil.which("ffmpeg")))
         self._job_runner_factory = job_runner_factory
 
     def generation_service(self) -> GenerationService:

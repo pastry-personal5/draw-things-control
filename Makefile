@@ -4,7 +4,7 @@
 # ends never import each other (tests/test_architecture.py), so cli/ and tui/ cannot import server/generated's
 # copy. server/ is also generated into, since it alone imports the generated *server* code (Servicer, add_..._to_
 # server) the same file carries alongside the client Stub every copy shares. mcp_server/generated joins this list
-# in Milestone 08, when mcp_server/ itself exists.
+# in Milestone 10, when mcp_server/ itself exists.
 PROTO_SRC = src/draw_things_control/server/proto/monitor.proto
 PROTO_OUTS = src/draw_things_control/server/generated src/draw_things_control/cli/generated src/draw_things_control/tui/generated
 

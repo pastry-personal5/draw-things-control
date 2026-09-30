@@ -6,8 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunStarted, RunStatus
-from draw_things_control.jobs.text import auto_wait_text, cooldown_summary, seconds_text
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted, RunStatus
+from draw_things_control.jobs.text import auto_wait_text, cooldown_summary, media_check_text, seconds_text
 
 
 class JobLogWriter:
@@ -33,6 +33,8 @@ class JobLogWriter:
             self._cooldown_started(event)
         elif isinstance(event, CooldownEnded):
             self._cooldown_ended(event)
+        elif isinstance(event, MediaChecked):
+            (logger.warning if event.verdict == "warning" else logger.info)("{}", media_check_text(event))
         elif isinstance(event, JobFinished):
             self._job_finished(event)
 

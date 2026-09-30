@@ -13,6 +13,7 @@ from unittest import mock
 
 from draw_things_control.core.arguments import redact_command
 from draw_things_control.core.run_lock import RunLock
+from draw_things_control.jobs.events import MediaChecked
 from draw_things_control.services.history import HistoryReader
 from draw_things_control.state.executions import ExecutionRow, NewExecution, NewRun
 from draw_things_control.state.store import Store
@@ -53,6 +54,19 @@ class LiveRunTests(FeedTestCase):
         self.assertIn("walk: finished", final_run_line)
         self.assertIn("Job started: walk (i2v, 2 runs, seed 1 (job), model base.ckpt)", self.said)
         self.assertIn("Job succeeded: 2/2 runs completed", self.log())
+
+    async def test_a_media_check_reaches_messages_and_an_unknown_event_kind_is_skipped(self) -> None:
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.connect(pilot)
+            await self.start_job(pilot, total_runs=1)
+            check = MediaChecked(at="2026-09-30T10:00:00+09:00", run=1, stage="last_frame", file="o-last-frame.png", summary="PNG 64x48, 16-bit RGBA", verdict="warning", notes=("It has alpha.",))
+            # A kind from a newer server, which this TUI does not know, is skipped and the feed goes on.
+            unknown = self.server.send_raw("frame_measured", {"kind": "frame_measured", "run": 1})
+            await self.received(pilot, [unknown])
+            await self.push(pilot, check, run_started(1, 1), run_finished(1), job_finished(1))
+        self.assertIn("Last frame check (run 1): o-last-frame.png: PNG 64x48, 16-bit RGBA: warning. It has alpha.", self.log())
+        self.assertIn("Job succeeded: 1/1 runs completed", self.log())
 
     async def test_a_new_job_replaces_the_last_ones_output(self) -> None:
         app = self.make_app()

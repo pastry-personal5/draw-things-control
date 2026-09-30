@@ -78,10 +78,10 @@ sections that follow.
   both read this one serializer path, so `dtc queue list`, `dtc queue show`, and the Queue widget's rows agree; the
   TUI's own read-only fallback reader (below, "while it is down") runs the same joined query directly against the
   store, so the queue reads the same whether or not the server is up.
-- **The gRPC target.** `dtc queue add --wait`, the TUI, and (Milestone 08) `dtc mcp` each need a gRPC client
+- **The gRPC target.** `dtc queue add --wait`, the TUI, and (Milestone 10) `dtc mcp` each need a gRPC client
   alongside their HTTP one, but every client today is configured with `--server-url` alone (an HTTP URL); nothing
   says how to reach `--grpc-port` (default 8766, `server/serve.py`, which need not equal the HTTP port) and no
-  client-facing flag exists for it. Milestone 08's own plan already assumes `dtc mcp` "also holds a generated gRPC
+  client-facing flag exists for it. Milestone 10's own plan already assumes `dtc mcp` "also holds a generated gRPC
   client" built from `--server-url` alone, without saying how -- the same gap, not new to this milestone.
   `GET /v1/health` gains `"grpc_port": options.grpc_port` (no new auth: health is already unauthenticated, and a
   port number is not a credential); every gRPC client this phase builds derives its target from the HTTP host it
@@ -356,7 +356,7 @@ and `--executable` are removed from `dtc tui`'s, replaced by `--server-url`,
   for `succeeded`, `cancelled`, `interrupted`, and `failed` respectively (`EXIT_CODES_BY_QUEUE_STATE`, not
   `EXIT_CODES_BY_ERROR_CODE`, which stays for `add`'s own submission refusal); a Ctrl-C during the wait cancels the
   entry first. Without `--wait`, `add` returns immediately, as before. `dtc queue add --wait`, the TUI's live
-  output, and (Milestone 08) `dtc mcp` all derive their gRPC target from `GET /v1/health`'s `grpc_port` and the
+  output, and (Milestone 10) `dtc mcp` all derive their gRPC target from `GET /v1/health`'s `grpc_port` and the
   already-configured HTTP host, with no gRPC flag of their own; a non-loopback host is refused the same way the
   HTTP target already is.
 - With no server, or a wrong token, each command, `add --wait` included,

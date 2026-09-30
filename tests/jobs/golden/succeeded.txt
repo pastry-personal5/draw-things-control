@@ -17,17 +17,17 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
 
 === EVENTS ===
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "config_file": "base.yaml", "config_override": {}, "cooldown": {"mode": "manual", "seconds": 90.0}, "cooldown_source": "job", "execution_id": "E0001", "first_run": 1, "input": "ROOT/input/first-frame.png", "input_resize": null, "job_file": "ROOT/job.yaml", "job_name": "sunset-walk", "kind": "job_started", "log": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-job.log", "manifest": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-job.json", "mode": "i2v", "model": "base.ckpt", "output_directory": "ROOT/output/sunset-walk", "resumes_execution": null, "seed": 42, "seed_source": "config_file", "source_text": "version: 1\nname: sunset-walk\nmode: i2v\ninput: first-frame.png\nrun_count: 3\nprompt_pairs:\n- name: walk\n  positive: walk\n  negative: blurry\n  runs:\n  - 1\n  - 3\n- name: wave\n  positive: wave\n  default: true\nconfig_file: base.yaml\ncooldown:\n  mode: manual\n  seconds: 90\n", "total_runs": 3}
-{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "walk", "--negative-prompt", "blurry", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/input/first-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov"], "input": "ROOT/input/first-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1000-last-frame.png", "negative": "blurry", "number": 1, "output": "sunset-walk-20260924-153012-1000.mov", "pair": "walk", "positive": "walk", "resized_input": null, "total": 3}
+{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "walk", "--negative-prompt", "blurry", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/input/first-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov", "--video-format", "prores4444", "--disable-preview"], "input": "ROOT/input/first-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1000-last-frame.png", "negative": "blurry", "number": 1, "output": "sunset-walk-20260924-153012-1000.mov", "pair": "walk", "positive": "walk", "resized_input": null, "total": 3}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "run_output", "number": 1, "percent": null, "progress": [3, 8], "stream": "stdout", "text": "Sampling 3/8"}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "run_output", "number": 1, "percent": null, "progress": null, "stream": "stderr", "text": "a warning"}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "exit_code": 0, "kind": "run_finished", "last_frame": "sunset-walk-20260924-153012-1000-last-frame.png", "number": 1, "output": "sunset-walk-20260924-153012-1000.mov", "output_frames": 81, "output_height": 448, "output_width": 832, "seconds": 12.5, "status": "succeeded"}
 {"after_run": 1, "at": "2026-09-24T15:30:12+ZZ:ZZ", "bound": null, "kind": "cooldown_started", "mode": "manual", "ratio": null, "run_seconds": 12.5, "seconds": 90.0, "until": "15:31:42"}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "cut_short": false, "kind": "cooldown_ended", "waited_seconds": 90.0}
-{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "wave", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov"], "input": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1001-last-frame.png", "negative": null, "number": 2, "output": "sunset-walk-20260924-153012-1001.mov", "pair": "wave", "positive": "wave", "resized_input": null, "total": 3}
+{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "wave", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov", "--video-format", "prores4444", "--disable-preview"], "input": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1001-last-frame.png", "negative": null, "number": 2, "output": "sunset-walk-20260924-153012-1001.mov", "pair": "wave", "positive": "wave", "resized_input": null, "total": 3}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "exit_code": 0, "kind": "run_finished", "last_frame": "sunset-walk-20260924-153012-1001-last-frame.png", "number": 2, "output": "sunset-walk-20260924-153012-1001.mov", "output_frames": 81, "output_height": 448, "output_width": 832, "seconds": 12.5, "status": "succeeded"}
 {"after_run": 2, "at": "2026-09-24T15:30:12+ZZ:ZZ", "bound": null, "kind": "cooldown_started", "mode": "manual", "ratio": null, "run_seconds": 12.5, "seconds": 90.0, "until": "15:31:42"}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "cut_short": false, "kind": "cooldown_ended", "waited_seconds": 90.0}
-{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "walk", "--negative-prompt", "blurry", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov"], "input": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1002-last-frame.png", "negative": "blurry", "number": 3, "output": "sunset-walk-20260924-153012-1002.mov", "pair": "walk", "positive": "walk", "resized_input": null, "total": 3}
+{"at": "2026-09-24T15:30:12+ZZ:ZZ", "command": ["draw-things-cli", "generate", "--model", "base.ckpt", "--prompt", "walk", "--negative-prompt", "blurry", "--seed", "42", "--config-json", "{\"model\":\"base.ckpt\",\"refinerModel\":\"base-refiner.ckpt\",\"refinerStart\":0.2,\"width\":832,\"height\":448,\"seed\":42,\"steps\":30}", "--image", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png", "--output", "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov", "--video-format", "prores4444", "--disable-preview"], "input": "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png", "kind": "run_started", "last_frame": "sunset-walk-20260924-153012-1002-last-frame.png", "negative": "blurry", "number": 3, "output": "sunset-walk-20260924-153012-1002.mov", "pair": "walk", "positive": "walk", "resized_input": null, "total": 3}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "exit_code": 0, "kind": "run_finished", "last_frame": "sunset-walk-20260924-153012-1002-last-frame.png", "number": 3, "output": "sunset-walk-20260924-153012-1002.mov", "output_frames": 81, "output_height": 448, "output_width": 832, "seconds": 12.5, "status": "succeeded"}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "completed_runs": 3, "exit_code": 0, "kind": "job_finished", "signal": null, "status": "succeeded", "total_runs": 3}
 
@@ -68,7 +68,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
         "--image",
         "ROOT/input/first-frame.png",
         "--output",
-        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov"
+        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov",
+        "--video-format",
+        "prores4444",
+        "--disable-preview"
       ],
       "cooldown_after_seconds": 90.0,
       "exit_code": 0,
@@ -101,7 +104,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
         "--image",
         "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png",
         "--output",
-        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov"
+        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov",
+        "--video-format",
+        "prores4444",
+        "--disable-preview"
       ],
       "cooldown_after_seconds": 90.0,
       "exit_code": 0,
@@ -136,7 +142,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
         "--image",
         "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png",
         "--output",
-        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov"
+        "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov",
+        "--video-format",
+        "prores4444",
+        "--disable-preview"
       ],
       "cooldown_after_seconds": null,
       "exit_code": 0,
@@ -231,7 +240,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
           "--image",
           "ROOT/input/first-frame.png",
           "--output",
-          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov"
+          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000.mov",
+          "--video-format",
+          "prores4444",
+          "--disable-preview"
         ],
         "cooldown_after_seconds": 90.0,
         "exit_code": 0,
@@ -265,7 +277,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
           "--image",
           "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1000-last-frame.png",
           "--output",
-          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov"
+          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001.mov",
+          "--video-format",
+          "prores4444",
+          "--disable-preview"
         ],
         "cooldown_after_seconds": 90.0,
         "exit_code": 0,
@@ -301,7 +316,10 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
           "--image",
           "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1001-last-frame.png",
           "--output",
-          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov"
+          "ROOT/output/sunset-walk/sunset-walk-20260924-153012-1002.mov",
+          "--video-format",
+          "prores4444",
+          "--disable-preview"
         ],
         "cooldown_after_seconds": null,
         "exit_code": 0,

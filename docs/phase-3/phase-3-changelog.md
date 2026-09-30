@@ -5,6 +5,232 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-30
 
+- **Owner decision** [M08]: From an interview on the code review's open items:
+  - The last frame, which the next run reads, is 16-bit RGB from every source, H.264 included. Each sample holds one
+    8-bit value `v` as `v * 256 + 128`, which `draw-things-cli` reads exactly by its high byte, and `v` adds back
+    the half level Draw Things truncates. This supersedes two entries below: 16-bit from ProRes and 8-bit from H.264,
+    and the 257/256 rescale. An 8-bit PNG (then recommended), keeping the rescale, measuring the `duo` chain first,
+    and 16-bit from ProRes only were offered.
+  - Each sample is rounded against a 2x2 ordered dither, so a flat area holds `v` and `v + 1` in equal parts. Plain
+    rounding, measured half a level off in every flat area, and no half level at all were offered.
+  - A resume's input, the chain's own last frame, is checked as a handoff, not as a person's input. Skipping the check
+    on a resume, accepting 16-bit input everywhere, and keeping the warning were offered.
+  - A media check that cannot be stored is skipped and logged once, and the rest of the execution is still recorded.
+    Keeping the all-or-nothing policy, and retrying before skipping, were offered.
+  - The checks of a run that never started are shown on the execution. Emitting the input checks after `RunStarted`,
+    and leaving them hidden, were offered.
+  - The media checker finds `ffmpeg` and `ffprobe` at each check. Keeping fixed paths and documenting a restart was
+    offered.
+  - The resized-input summary says `mean color moved 3.2 levels` when it warns. A neutral wording, and leaving it,
+    were offered.
+  - Built now, rather than only recorded.
+
+- **Design decision** [M08]: The half level added back is `0.5 * min(1, e)`, tapered to nothing below one level, so
+  clipped black and letterbox bars stay 0; a flat half level everywhere would lift every black sample to 1 at every
+  handoff. The decode asks swscale for `accurate_rnd+full_chroma_int`: without it, ffmpeg 8.1.1 decodes 8-bit YCbCr to
+  16-bit RGB 0.8 to 1.6 levels dark, measured, which the owner's choice of 16-bit from H.264 would otherwise have hit.
+  `StreamColor.bits` and `source_bits` are removed, since the depth no longer follows the source.
+
+- **Change** [M08]: Built the decisions above. `jobs/media/frames.py` writes the handoff with `ffmpeg`'s `geq` (0.3 s
+  for an 832x448 frame), and the last-frame check expects 16-bit from every source. `check_handoff` checks a resume's
+  input. `ExecutionRecorder` skips a check it cannot store. `ExecutionRow.checks` holds the checks of runs that never
+  started, shown as `checks` in `GET /v1/executions/{id}` (each with its `run`) and as `Before run N (never started)`
+  in the TUI. `MediaChecker` takes a lookup for `ffmpeg` instead of a fixed path. Milestone 09's open question on the
+  handoff format is settled by this, and the research note records the flat-area and swscale measurements.
+
+- **Owner decision** [M09]: Milestone 09, left open until now, is color preservation, planned from an interview:
+  - The drifts to fix are brightness and contrast, saturation creep, and hue or skin-tone casts; all three were seen.
+  - What a chain's colors are held to is a per-job setting (none, the previous run, the first image, or a blend), and
+    a job that says nothing gets no correction. A fixed blend, always the first image, and always the previous run
+    were offered as the rule; a blend, and the first image, as the default.
+  - A correction may change the frame handed to the next run and write a corrected copy of each clip, in the
+    original's format; Draw Things' files are never changed. Correcting the handoff only (a jump at each join),
+    measuring only, and a ProRes 422 HQ or H.264 copy were offered.
+  - The correction is region-aware, with Apple Vision. A global correction in Oklab, a global correction with
+    histogram matching, a classical skin model, and ONNX face parsing were offered.
+  - Drift metrics per run, generation-side settings, and wide-gamut first images are in scope; a stitched video of
+    the whole chain is not.
+  - Plan only: no `draw-things-cli` runs and no measurement of existing outputs while planning; the measurements are
+    the milestone's first step. Short test runs, and analyzing existing outputs, were offered.
+
+- **Design decision** [M09]: Measure and correct in Oklab, from region statistics (lightness percentiles, chroma
+  median, mean hue, neutral cast), with a tone curve, a saturation gain, a hue rotation, and a cast per region, capped
+  per run and ramped over each clip so clips join. Rejected: the `color-matcher` transfers (`mkl`, `hm`, `reinhard`)
+  that Wan users apply, which cannot tell drift from a change of content; and Draw Things' own `colorCalibration:
+  lab`, which takes each frame's large-scale color from the input at the input's positions (a ghost with motion) and
+  cannot hold to the first image. It stays a setting to test, through a new `config_override` key. Skin comes from
+  Vision's person mask and a color model sampled from each face, since Vision has no skin segmentation.
+
+- **Change** [M09]: Added [the color drift research note](../research/color-drift.md) and
+  [the Milestone 09 plan](milestone-09-color-preservation.md). From Draw Things' source (`draw-things-community`
+  `0e9c180`): `draw-things-cli` truncates every output frame to 8 bits (half a level dark on average), reads PNG
+  values with no color management, and reads a 16-bit PNG by its high byte. That undercuts Milestone 08's 16-bit last
+  frame and its 257/256 rescale, which the owner is asked to decide again; Milestone 08 points to it.
+
+- **Owner decision** [M08]: Trust the pixels, superseding the "honor the header" decision below. When the pixels
+  tell which matrix encoded them (4:4:4 at 10 bits or more: ProRes 4444), a video is decoded and tagged with that
+  matrix; otherwise with what its stream states; BT.709 limited range when it states none. Keeping honor the header,
+  and decoding every Draw Things video as BT.709 whatever it states, were offered. The reason: the owner's `duo`
+  chain (832x448) states `smpte170m` in its ProRes frames while its pixels are BT.709, and honoring that made each
+  last frame 1.4 levels off on average, 12 at most.
+
+- **Owner decision** [M08]: A 16-bit last frame is rescaled to full scale (x257/256). Switching to 8-bit, and
+  leaving ffmpeg's output, were offered.
+
+- **Correction** [M08]: The research note and Milestone 08 said the header changed from `smpte170m` to `bt709` for
+  an unknown reason. It follows the frame size: 832x448 and 448x576 state `smpte170m`, 576x768 and 576x1152 state
+  `bt709`, and the pixels are BT.709 at every size. The `duo` chain also showed 16-bit PNG input works at 40 steps,
+  so the first verification run's noise points to its 8 steps.
+
+- **Change** [M08]: `jobs/media/stream_color.py`'s `resolve_video_color` measures the matrix of a ProRes 4444 video
+  from its first 5 frames before tagging, and uses it over the stream's when it is conclusive (`StreamColor` gains
+  `measured`, `stated`, and `bits`); the tagger and the extractor follow it, and the output check notes when the
+  pixels overrule the stream. The last frame's depth now follows the source's bits, and a 16-bit frame is rescaled
+  so white is 65535: ffmpeg 8 writes about 256 times the 8-bit value, which read 0.47 levels dark on average.
+
+- **Owner decision** [M08]: From an interview after the media checks landed:
+  - The last frame drops alpha now, at 16 bits from ProRes (10 or 12 bits) and 8 bits from H.264. Always 8-bit, and
+    16-bit for H.264 too, were offered. The owner verifies 16-bit with a chain run.
+  - A media check only warns, whatever it finds. Stopping the run on noise, or on any warning, was offered.
+  - The resized input copy stays unlabeled (read as sRGB). sRGB chunks, and an embedded sRGB ICC profile, were
+    offered.
+  - `t2v` jobs get the video and last-frame checks too.
+  - Honor the header is built now, not later in the milestone.
+  - ProRes 4444 is the default now; keeping it opt-in until the chain run was offered.
+  - Each run's checks are kept in the execution history. Events and log lines only was offered.
+
+- **Change** [M08]: Built the rest of Milestone 08 ([As built](milestone-08-video-format-and-color.md#as-built)):
+  `output.video_format` defaults to `prores4444` (an `mp4` job names `h264` or `hevc`), shown as `output format` in
+  `validate-job` and the Job Definition widget and as `video_format` in `GET /v1/jobs/{job}`; `dtc generate` passes
+  `prores4444` for a `.mov` output; the last frame is RGB without alpha; and a video is decoded and tagged with the
+  matrix and range its stream states, read once before tagging (`jobs/media/stream_color.py`), BT.709 limited range
+  when it states none.
+
+- **Change**: Media checks run for every video job (`t2v` gets the video and last-frame checks), and each run's
+  checks are kept in the state store (schema 7, table `media_checks`, deleted with its execution), shown under each
+  run in the TUI's execution detail and as `checks` in each run of `GET /v1/executions/{id}`. The last-frame check
+  also warns when the frame's depth is not 16-bit from a source of more than 8 bits, 8-bit otherwise. The TUI now
+  skips a job event kind it does not know instead of ending its feed.
+
+- **Change**: Every `i2v` job checks its input, the resized copy, each run's video, and each last frame, and says
+  what each holds in a `media_checked` event, shown on `dtc serve`'s console, in the job log, in the TUI's Messages
+  (warnings in yellow), and on the gRPC event stream. The video check reads the color the stream states before
+  tagging (its first frame, since ffprobe's stream value reports a `colr` box once there is one), the `colr` box
+  after, and, for ProRes 4444, measures the matrix the pixels were encoded with. A check only reads, and never fails
+  a run. Nothing that runs changes: the resize, the tagger, and the decode are as before. The HTTP API and the state
+  store do not record checks.
+
+- **Owner decision** [M08]: Honor the header. Extraction decodes a video with the matrix and range its own stream
+  states, read from the first frame before tagging, and the tagger writes that matrix into the `colr` box; a stream
+  that states nothing is decoded and tagged as BT.709 limited range, as today. This settles the decode rule the
+  2026-09-30 interview left open. Decoding ProRes as BT.709 whatever it states ("decode what was encoded") was
+  offered. The cost is accepted: a file whose header misstates its matrix, as the 9 older app files do, is decoded
+  as stated.
+
+- **Correction** [M08]: The Design decision below says the current `draw-things-cli` states `smpte170m` in its
+  ProRes frame headers. Its first clean run (job `v-i8x`, 2026-09-30) states `bt709`, as does a new file from the
+  Draw Things app, and both were encoded BT.709, so in current output the header and the pixels agree. Only the
+  noise run stated `smpte170m`. The 16-bit input and the 8 steps are both still candidates for the noise
+  ([research note](../research/prores-color-matrix.md)).
+
+- **Design decision** [M08]: The color space is read once, from the first decoded frame, before the tagger runs,
+  and passed to both the tagger and the extractor, which always names the matrix and range to ffmpeg. Tested with
+  ffmpeg: once a `colr` box is added, ffprobe's stream-level `color_space` reports the box, while a ProRes frame
+  still decodes with its header, so `has_matrix_tag` (which reads the stream after tagging) cannot see what the
+  stream states. Primaries and transfer stay BT.709 and sRGB, since no Draw Things file states them; honoring
+  stated primaries or transfer was left with HDR, out of scope.
+
+- **Change** [M08]: Step 1, `output.video_format` in video jobs, checked and passed to every run as
+  `--video-format`, so a job can write ProRes for the color investigation. No default yet: a job without the key
+  runs as before. `data/jobs/v-i8x.yaml` sets `prores4444`.
+- **Change** [M08]: Every job run passes `--disable-preview` to `draw-things-cli`: a job's output is captured, so
+  the live sampling preview is never shown. `dtc generate` keeps its own `--disable-preview` option.
+
+- **Owner decision** [M08]: Milestone 08 is video format and color, planned from an interview:
+  - Video jobs gain `output.video_format` (`prores4444`, `prores422hq`, `h264`, `hevc`), default `prores4444`
+    whatever the extension. A fixed `prores4444` with no key was offered; so was a default that follows the
+    extension (`h264` for `mp4`), so no `mp4` job would be refused.
+  - `.mov` is required only by the ProRes formats; `mp4` stays allowed with `h264` and `hevc`. Allowing only `mov`
+    in video jobs was offered.
+  - `dtc generate` passes `prores4444` for a `.mov` output with no `--video-format`. Leaving `generate` as it is
+    was offered.
+  - The last frame is saved without alpha, at the source's depth (16-bit from ProRes). Always 8-bit was offered.
+  - The ProRes frames' `smpte170m` tag is not to be ignored; the decode rule is decided after verifying the current
+    CLI's output. Honoring the tag, and decoding as BT.709 regardless, were offered.
+  - The tagger writes the matrix extraction decodes with. Skipping ProRes, and keeping today's BT.709 tag, were
+    offered.
+  - `data/params/` is not changed: `--video-format` is a `draw-things-cli` option, not a configuration key.
+  - After the verification run gave noise, the owner investigates it before the decode rule and the last frame's
+    depth are settled. Two more runs (8-bit input, then 40 steps), or one 40-step run, were offered.
+
+- **Design decision** [M08]: Measured before planning ([research note](../research/prores-color-matrix.md)). Draw
+  Things' ProRes 4444 states `smpte170m` in its frame headers, and ffmpeg decodes with it even after the tagger has
+  written a BT.709 `colr` box, so a tagged ProRes file contradicts itself and its last frame is decoded as BT.601.
+  On 9 older ProRes files only a BT.709 decode lands the pixels near whole 8-bit levels, a test that picks the right
+  matrix on ffmpeg-made controls of either kind; this is stronger evidence than the four-run comparison in the
+  Phase 2 changelog that kept the file's `smpte170m`. One run of the current CLI with `--video-format prores4444`
+  wrote the same format and tags, but its frames were noise, so it could not confirm the matrix. The ProRes alpha
+  plane is 4080 of 4095, which reads as 254 in an 8-bit mask.
+
+- **Owner decision** [M10, M11]: The MCP server moves from Milestone 08 to Milestone 10, and safety hardening from
+  Milestone 09 to Milestone 11. Milestones 08 and 09 are left open for now. The build order is 01 to 07, then 10
+  and 11. Entries below this one use the old numbers.
+
+- **Owner decision** [M07]: From a second interview on the plan:
+  - A replace and a delete must send the SHA-256 of the text they last saw (`expected_sha256`, in the body of `PUT`
+    and the query of `DELETE`), checked under the server's lock just before the write; a mismatch is 409 `conflict`
+    with the current hash only, not the current text. `GET /v1/jobs/{job}` gains `sha256`. This keeps an agent from
+    overwriting or trashing a change a person made in their editor after the agent read the file. Last write wins
+    with backups as the safety net, and an optional hash, were offered; so were an `If-Match` header with 412, and
+    returning the current text with the refusal.
+  - The body of `POST /v1/validate` and `PUT` is JSON only, `{"yaml": "..."}`. This supersedes the plan's `text/plain`
+    alternative. Accepting both, or raw text only, was offered.
+  - A `parked` entry does not protect its job file, as planned: its resume runs its snapshot. Refusing writes while
+    parked was offered.
+  - Backups are never pruned, as planned. Keeping the last N, or pruning by `history_retention_days`, was offered.
+
+- **Owner decision** [M07]: From an interview on the reviewed plan:
+  - With writes off, `PUT` and `DELETE /v1/jobs/{name}` answer 405, as Starlette does for a path `GET` already
+    has. This supersedes the plan's 404. Registering them always, to answer 404 while writes are off, was offered.
+  - Job files are written through the API and MCP only. `dtc jobs create|replace|delete`, and TUI commands as well,
+    were offered: people edit job files in their own editor.
+
+- **Design decision** [M07]: Reviewed the Milestone 07 plan against the code as Milestones 02 to 06 left it, before
+  building it. The fixes to the plan:
+  - The endpoints are under `/v1/`, as every route is: `POST /v1/validate`, and `PUT` and `DELETE /v1/jobs/{name}`.
+    Milestone 08's tool table is corrected to match.
+  - With writes off, the unregistered `PUT` and `DELETE` answer 405, not 404, since `GET /v1/jobs/{job}` shares their
+    path; the acceptance criterion says 405. Answering 404 would need handlers registered while writes are off, which
+    would make the routes exist after all (owner decision, below).
+  - `dtc serve` gains `--allow-write`. `ServeOptions`, `ServerContext`, and `/v1/capabilities` carry it already, but
+    no option sets it.
+  - A new error code, `conflict` (409, and `EXIT_INVALID_INPUT` in the CLI's table), for a file that exists, a stem
+    taken in another case or suffix, a symbolic link, and a job in use. `invalid_state`, the only other 409 but
+    `busy`, is about a queue entry's state.
+  - `max_job_file_bytes` is enforced here for the first time, as `limit_exceeded` (422) like the other limits, on
+    the decoded text before YAML is parsed, with the raw body capped at 8 times the limit before JSON is parsed. A
+    413 was not chosen: every other limit is a 422 naming its key.
+  - The checks run in `submit_job`'s order, so an input outside the input directory is refused before it is decoded,
+    and use `check_job_rules` and `check_job_limits`, not `check_api_rules`: a full queue does not stop a write.
+  - Writes and their in-use check run under `ServerContext.submission_lock`, which a submission already holds from
+    reading the job file to inserting its entry, so a replace can never land between the two. The worker's own lock
+    is not needed: a claim moves an entry from `queued` to `running`, both of which refuse a write.
+  - The in-use states are `queued` and `running` (which includes parking). A `parked` entry does not stop a write,
+    since its resume uses the snapshot.
+  - Symbolic links are refused for `.trash/`, `.backups/`, and `.backups/<name>/` as well as the job file, since a
+    linked directory would put a file outside `data/jobs/`.
+  - Starlette's own 404 and 405 answers (`{"detail": ...}`, checked through `create_app`) get the API's error shape
+    from a handler in `errors.py`, a 405 as `writes_off` naming `--allow-write`, so the MCP server reports them as
+    any other error. A 405 comes before `require_auth`, so a request without a token gets it too.
+  - A trashed file gets the backups' `-2`, `-3` suffixes and is linked into `.trash/`, never renamed there, and a
+    backup is created with `O_EXCL`: a rename onto a trashed copy from the same second would replace it, and the
+    first plan had no suffix rule for the trash.
+  - `?overwrite=1` on a missing name is 404, so a replace never creates by mistake.
+  - The audit actions are `create_job`, `replace_job`, and `delete_job`, after Milestone 06's `delete_execution`.
+    The routes read their bodies themselves, so each refusal is audited in the route and `AUDITED_BODY_ACTIONS`
+    needs no rows.
+  - The plan names its modules, by layer, as Milestone 06's does.
+
 - **Change** [M06]: [Milestone 06: Delete executions](milestone-06-delete-executions.md) is done. Executions can be
   deleted from the history through `POST /v1/executions/delete` (with `"dry_run": true` to ask first), `d` and `Space`
   on the TUI's Execution History widget, `/delete execution|filtered|all`, and `dtc history delete`. A deletion

@@ -41,7 +41,8 @@ prompt_pairs:
 
 output:
   # directory: sunset-walk             # under the global output_directory; omitted: <output_directory>/<name>
-  extension: mov                       # i2v default; mp4 also allowed
+  extension: mov                       # i2v default; mp4 only with h264 or hevc
+  # video_format: prores4444           # prores4444 (the default), prores422hq, h264, or hevc
   # Files are named sunset-walk-<YYYYmmdd-HHMMSS>-<NNNN>.mov,
   # with the last frame saved as sunset-walk-<YYYYmmdd-HHMMSS>-<NNNN>-last-frame.png,
   # and the job manifest and log as sunset-walk-<YYYYmmdd-HHMMSS>-job.json and -job.log.

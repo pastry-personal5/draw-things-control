@@ -95,6 +95,11 @@ uv run dtc generate \
   --timeout 3600
 ```
 
+A `.mov` output is ProRes 4444 (`--video-format prores4444`) unless
+`--video-format` says otherwise; an `.mp4` output is passed on as asked, which
+is H.264 when `--video-format` is not given. `generate` neither tags its output
+nor extracts a last frame.
+
 Always preview first with `--dry-run`: it prints the exact command, with
 credentials redacted, and starts nothing.
 
@@ -203,7 +208,7 @@ jobs are rejected before any generation starts.
 | `prompt_pairs` | Named positive/negative prompts; see below |
 | `config_file` | A YAML file name in `data/params/`, the [base configuration](#base-configurations) |
 | `config_override` | Settings applied to every run on top of `config_file` |
-| `output` | `directory` and `extension` (`mov` or `mp4` for video) |
+| `output` | `directory`, `extension` (`mov` or `mp4` for video), and, in video jobs, `video_format`: `prores4444` (the default), `prores422hq`, `h264`, or `hevc`, passed to every run as `--video-format`. ProRes needs `mov`, so an `mp4` job names `h264` or `hevc`. ProRes 4444 keeps 4:4:4 chroma at 12 bits, where H.264 is 4:2:0 at 8 bits, and its files are about 7 times larger per pixel (an 81-frame 448x576 clip is about 28 MB); set `video_format: h264` for small files |
 | `run_timeout_seconds` | Limit for each run |
 | `cooldown` | The wait after each successful run except the last; replaces the global `cooldown` as a whole; see [Cooldown](#cooldown) |
 | `desired_input_width`, `desired_input_height` | Resize the first input; see below |
@@ -316,17 +321,34 @@ ends a wait at once and stops the job.
 
 - Files go to `<output_directory>/<name>/`, or `output.directory` under the
   global `output_directory` if the job sets it.
-- Names are `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`. Draw Things writes video
-  with no color tags, so each finished video in a job is tagged in place with a
-  `colr` box (BT.709 primaries, sRGB transfer, BT.709 matrix); only that box is
-  added, and the frames and timing stay byte-identical. A video that already
-  has color tags, or that cannot be tagged, is left as it is (with a warning in
-  the second case). Video runs also save
-  `<name>-…-last-frame.png`, taken from the final second of the video with
-  `ffmpeg` and labeled sRGB (`sRGB`, `cHRM`, and `gAMA` chunks). Draw Things'
-  current H.264 videos carry no color tags, so the frame is decoded as BT.709
-  limited range, which is how Draw Things encodes them; a video that does state
-  its matrix is decoded with it. The label itself changes no pixel. Nothing is ever overwritten.
+- Names are `<name>-<YYYYmmdd-HHMMSS>-<NNNN>.<ext>`. Nothing is ever overwritten.
+- A video is read and tagged by its matrix: the one its pixels were encoded
+  with, measured from the first 5 frames when they tell (ProRes 4444), else the
+  one its stream states (its first frame's, read before anything is added).
+  Draw Things' ProRes states BT.601 for smaller frames (832x448, 448x576) but
+  is always encoded BT.709, so its header alone cannot be trusted. Draw Things writes
+  no `colr` box, so each finished video in a job is tagged in place with one:
+  BT.709 primaries, the sRGB transfer, and that matrix
+  (BT.709 when nothing says, as Draw Things' H.264 does; in an `mp4`, the
+  range too). Only that box is added; the frames and timing stay
+  byte-identical. A video that already has a `colr` box, that states a matrix
+  this cannot tag, or that cannot be tagged, is left as it is (with a warning
+  in the last two cases).
+- Video runs also save `<name>-…-last-frame.png`, taken from the final second
+  of the video with `ffmpeg`, decoded with the same matrix and the range the
+  stream states (BT.709 limited range when nothing says, which is how Draw
+  Things encodes its untagged H.264), as RGB without alpha (Draw Things reads alpha
+  as a mask), and labeled sRGB (`sRGB`, `cHRM`, and `gAMA` chunks; the label
+  changes no pixel). It is the handoff the next run reads, 16-bit RGB from
+  every format: each sample holds one 8-bit value `v` as `v * 256 + 128`,
+  because `draw-things-cli` reads a 16-bit PNG by its high byte and so reads
+  exactly `v` (a viewer that divides by 65535 sees it within half a level).
+  `draw-things-cli` truncates every value it writes, so a decoded level stands
+  for that level to the next: half a level is added back (none at black, so
+  black stays black), and each sample is rounded against a 2x2 ordered-dither
+  pattern, so a flat area holds `v` and `v + 1` in equal parts instead of
+  being half a level off ([research note](research/color-drift.md#the-handoff)).
+  The output check below says when the pixels overrule the stream.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
@@ -338,6 +360,38 @@ ends a wait at once and stops the job.
   execution history and, as `output_width`, `output_height`, and
   `output_frames`, in each manifest run. A file that cannot be measured is a
   warning, and the run still succeeds.
+
+- A video job checks each file it passes through and says what the file
+  holds, in a line of its own: on `dtc serve`'s console, in the job log, in
+  the TUI's Messages (a warning in yellow), and as a `media_checked` event on
+  the gRPC event stream. Each run's checks are also kept in the execution
+  history: under each run in the TUI's execution detail, and as `checks`
+  (`stage`, `file`, `summary`, `verdict`, `notes`, `facts`, `at`) in each run
+  of `GET /v1/executions/{id}`. The checks of a run that never started (a stop
+  during the input checks) are shown under `Before run N (never started)` in
+  the TUI, and as the execution's own `checks` in the API, each with its `run`.
+  A check that cannot be stored (a locked database, say) is skipped with one
+  error in the log, and the rest of the execution is still recorded. `ffmpeg`
+  and `ffprobe` are looked up at each check, so a `dtc serve` started before
+  they were installed finds them without a restart. A check only reads the file; a warning never
+  changes or fails a run (owner decision). A `t2v` job has no input, so it
+  gets the last two. The four checks:
+
+  | Check | When | What it reads, and what makes a warning |
+  |-------|------|-----------------------------------------|
+  | `Input check` | Before run 1 of an `i2v` job | Format, size, bit depth, alpha, ICC profile, EXIF orientation, a PNG's `sRGB`/`gAMA`/`cHRM` chunks. A warning for CMYK with no profile, for a PNG that states its color with `gAMA` or `cHRM` only (not read), or, when the job makes no resized copy, for anything but upright 8-bit sRGB RGB, which `draw-things-cli` then gets as it is (it reads only the high byte of a 16-bit sample). On a resume, the last frame the chain continues from is checked as the handoff it is: a warning only when it is not an RGB PNG or has alpha, at 8 or 16 bits |
+  | `Resized input check` | After the copy is made, when the job resizes | The copy as above, and what the resize did (`converted from Display P3 to sRGB`, transparency flattened, turned upright). Its mean color is compared with the source's, in the space the resize worked in, over the picture only (`mean color kept within 0.4 levels`, or `moved 3.2 levels`); a warning when it moved more than 1 level, when the copy is not 8-bit RGB PNG, or not the planned size |
+  | `Output check` | After each run, around the color tagging | The codec (against `output.video_format`), size, frames, pixel format, the matrix, range, primaries, and transfer the stream itself states (read from its first frame before tagging), the `colr` box after tagging, and the matrix and range the video is decoded with. For ProRes 4444 (4:4:4 at 10 bits or more), the first 5 frames are measured to tell which matrix the pixels were really encoded with ([research note](research/prores-color-matrix.md)). A warning for a different codec, a missing `colr` box, a box whose matrix differs from the stream's, a stated matrix the pixels contradict, or pixels with no 8-bit structure (noise) |
+  | `Last frame check` | After the last frame is extracted | Format, size, bit depth, alpha, color chunks, and the matrix and range it was decoded from. A warning for alpha (Draw Things reads it as a mask), a missing sRGB label, a size that differs from the video's, or a depth other than 16-bit |
+
+  For example, a ProRes 4444 run of a Display P3 photo:
+
+  ```
+  Input check (run 1): /inputs/a1-0000.jpg: JPEG 959x1280, 8-bit RGB, ICC Display P3, no alpha: ok. The resized copy converts it from Display P3 to sRGB.
+  Resized input check (run 1): a1-0000-576x768.png: PNG 576x768, 8-bit RGB, no color profile (read as sRGB), no alpha; converted from Display P3 to sRGB; letterbox to 576x768; mean color kept within 0.0 levels: ok
+  Output check (run 1): v-i8x-20260930-093737-5745.mov: ProRes 4444 (ap4h), 576x768, 17 frames, yuva444p12le; stream states matrix bt709, range tv, primaries -, transfer -; colr nclc 1/13/1 (BT.709/sRGB/BT.709); pixels encoded bt709 (bt709 0.217, bt470bg 0.242, bt2020nc 0.258); decoded as bt709, limited range, as its stream states: ok
+  Last frame check (run 1): v-i8x-20260930-093737-5745-last-frame.png: PNG 576x768, 16-bit RGB, sRGB, cHRM, gAMA chunks, no alpha; decoded from bt709, limited range, as its stream states: ok
+  ```
 
 ## Browse and run jobs in the terminal UI
 

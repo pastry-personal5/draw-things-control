@@ -3,10 +3,13 @@
 import itertools
 import json
 import signal
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from loguru import logger
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.jobs.definition import JobDefinition
@@ -76,6 +79,55 @@ class RecorderTests(JobTestCase):
             self.assertEqual((stored.pair, stored.positive, stored.negative, stored.input, stored.output, stored.last_frame, list(stored.command), stored.started_at, stored.seconds, stored.exit_code, stored.status, stored.cooldown_after_seconds), (recorded["pair"], recorded["positive"], recorded["negative"], recorded["input"], recorded["output"], recorded["last_frame"], recorded["command"], recorded["started_at"], recorded["seconds"], recorded["exit_code"], recorded["status"], recorded["cooldown_after_seconds"]))
         self.assertEqual([run.cooldown_after_seconds for run in execution.runs], [30.0, 30.0, None])
         self.assertEqual((execution.settings.cooldown, manifest["cooldown"]), ({"mode": "manual", "seconds": 30.0}, {"mode": "manual", "seconds": 30.0}))
+
+    def test_each_runs_media_checks_are_kept_with_it_shown_and_deleted_with_the_execution(self) -> None:
+        from draw_things_control.server.serializers import run_summary
+        from draw_things_control.tui.text.execution import execution_text
+        from tests.jobs.test_media_checks import FakeChecker
+
+        self.service = job_executor(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg", checker=FakeChecker(), clock=lambda: NOW, handle_signals=False, cooldown=lambda seconds: seconds)
+        self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=False)
+        [row] = self.store.executions.page()
+        runs = self.stored(row.id).runs
+        self.assertEqual([[check.stage for check in run.checks] for run in runs], [["input", "output", "last_frame"], ["output", "last_frame"]])
+        output = runs[0].checks[1]
+        self.assertEqual((output.run, output.file, output.summary, output.verdict, output.notes), (1, runs[0].output, "a video", "warning", ("A warning.",)))
+        self.assertEqual(run_summary(runs[0])["checks"][1], {"stage": "output", "file": runs[0].output, "summary": "a video", "verdict": "warning", "notes": ["A warning."], "facts": {}, "at": output.at})
+        self.assertIn(f"output check: {runs[0].output}: a video: warning. A warning.", execution_text(self.stored(row.id)).plain)
+        self.store.executions.delete([row.execution_number], in_use={})
+        self.assertEqual(self.store._database.connection().execute("SELECT COUNT(*) FROM media_checks").fetchone()[0], 0)
+
+    def test_checks_of_a_run_that_never_started_are_shown_on_the_execution(self) -> None:
+        from draw_things_control.server.serializers import execution_detail
+        from draw_things_control.state.executions import MediaCheckRow
+        from draw_things_control.tui.text.execution import execution_text
+
+        self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=False)
+        [row] = self.store.executions.page()
+        # As a stop during the input checks leaves it: stored for a run that has no row.
+        self.store.executions.add_check(row.id, MediaCheckRow(run=3, stage="input", file="last.png", summary="PNG 64x48", verdict="ok", notes=(), facts={}, at="2026-09-30T10:00:00+09:00"))
+        execution = self.stored(row.id)
+        self.assertEqual([run.checks for run in execution.runs], [(), ()])
+        self.assertEqual([(check.run, check.stage) for check in execution.checks], [(3, "input")])
+        self.assertEqual(execution_detail(execution)["checks"], [{"run": 3, "stage": "input", "file": "last.png", "summary": "PNG 64x48", "verdict": "ok", "notes": [], "facts": {}, "at": "2026-09-30T10:00:00+09:00"}])
+        self.assertIn("Before run 3 (never started)\n  input check: last.png: PNG 64x48: ok", execution_text(execution).plain)
+        self.assertEqual(self.store.executions.page()[0].checks, ())
+
+    def test_a_media_check_that_cannot_be_stored_is_skipped_and_the_rest_is_still_recorded(self) -> None:
+        from tests.jobs.test_media_checks import FakeChecker
+
+        self.service = job_executor(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg", checker=FakeChecker(), clock=lambda: NOW, handle_signals=False, cooldown=lambda seconds: seconds)
+        messages: list[str] = []
+        sink = logger.add(lambda message: messages.append(message.record["message"]), level="ERROR")
+        self.addCleanup(logger.remove, sink)
+        with mock.patch.object(self.store.executions, "add_check", side_effect=sqlite3.OperationalError("database is locked")):
+            self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=False)
+        [row] = self.store.executions.page()
+        execution = self.stored(row.id)
+        self.assertEqual((execution.status, [run.status for run in execution.runs]), ("succeeded", ["succeeded", "succeeded"]))
+        self.assertEqual([run.checks for run in execution.runs], [(), ()])
+        # Five checks failed to store (input, then output and last frame of each run); it is said once.
+        self.assertEqual(sum("Storing a media check failed" in message for message in messages), 1)
 
     def test_the_measured_output_is_recorded_as_in_the_manifest(self) -> None:
         self.service.knobs.output_measurer = lambda path: MediaInfo(832, 448, 81)

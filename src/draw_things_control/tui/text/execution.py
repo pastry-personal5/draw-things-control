@@ -11,8 +11,8 @@ from rich.text import Text
 
 from draw_things_control.core.arguments import CommandSettings, command_settings
 from draw_things_control.core.cooldown import parse_cooldown
-from draw_things_control.jobs.text import policy_text, seconds_text
-from draw_things_control.state.executions import ExecutionRow, RunRow
+from draw_things_control.jobs.text import MEDIA_CHECK_LABELS, media_check_result, policy_text, seconds_text
+from draw_things_control.state.executions import ExecutionRow, MediaCheckRow, RunRow
 from draw_things_control.state.ids import execution_id_text
 from draw_things_control.tui.text.arguments import PreviousRun, argument_rows, arguments_text, execution_notes
 from draw_things_control.tui.text.common import STATUS_STYLE, VIDEO_MODES
@@ -89,6 +89,7 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None)))
     if run.cooldown_after_seconds is not None:
         _fields(text, (("cooldown after", seconds_text(run.cooldown_after_seconds)),))
+    _check_lines(text, run.checks)
     if not run.command:
         return previous
     # The arguments as a table, never the command line with its bare --config-json.
@@ -96,6 +97,20 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     arguments = argument_rows(run.command, notes)
     text.append_text(arguments_text(arguments, previous))
     return (int(run.number), arguments)
+
+
+def _check_lines(text: Text, checks: Sequence[MediaCheckRow]) -> None:
+    for check in checks:
+        text.append(f"  {MEDIA_CHECK_LABELS.get(check.stage, check.stage).lower()}: ", style="bold")
+        text.append(media_check_result(check.file, check.summary, check.verdict, check.notes) + "\n", style="yellow" if check.verdict == "warning" else "")
+
+
+def _unstarted_checks_text(text: Text, checks: Sequence[MediaCheckRow]) -> None:
+    """Checks made before a run that never started (a stop during the input checks), under the run they were for."""
+    for number in sorted({check.run for check in checks}):
+        text.append(f"\nBefore run {number} ", style="bold")
+        text.append("(never started)\n", style="yellow")
+        _check_lines(text, [check for check in checks if check.run == number])
 
 
 def execution_text(execution: ExecutionRow) -> Text:
@@ -112,6 +127,7 @@ def execution_text(execution: ExecutionRow) -> Text:
     previous: PreviousRun | None = None
     for run in execution.runs:
         previous = _run_text(text, execution, run, notes, previous)
+    _unstarted_checks_text(text, execution.checks)
     text.rstrip()
     return text
 

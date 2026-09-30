@@ -151,6 +151,28 @@ class CooldownEnded:
 
 
 @dataclass(frozen=True)
+class MediaChecked:
+    """What a file of an i2v job holds, and whether it is what it should be: the first input, its resized copy, a run's
+    video, or its last frame. A check only reads the file; a warning never changes the run."""
+
+    at: str
+    # The run the file belongs to; the first run's for the input and its resized copy.
+    run: int
+    # input, resized_input, output, or last_frame.
+    stage: str
+    # The input by its path; every other file by its name.
+    file: str
+    # What the file holds, in one line.
+    summary: str
+    # ok or warning.
+    verdict: str
+    # Why a warning is one, and what a reader should know, one sentence each.
+    notes: tuple[str, ...] = ()
+    # What was read, by short names, for a program that wants the values rather than the line.
+    facts: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class JobFinished:
     """The job ended: succeeded, failed, interrupted, or parked. Always the last event of a started job."""
 
@@ -164,7 +186,7 @@ class JobFinished:
     signal: str | None
 
 
-JobEvent = JobStarted | RunStarted | RunOutput | RunFinished | CooldownStarted | CooldownEnded | JobFinished
+JobEvent = JobStarted | RunStarted | RunOutput | RunFinished | CooldownStarted | CooldownEnded | MediaChecked | JobFinished
 JobObserver = Callable[[JobEvent], None]
 
 
@@ -194,6 +216,7 @@ EVENT_KINDS: dict[type, str] = {
     RunFinished: "run_finished",
     CooldownStarted: "cooldown_started",
     CooldownEnded: "cooldown_ended",
+    MediaChecked: "media_checked",
     JobFinished: "job_finished",
 }
 

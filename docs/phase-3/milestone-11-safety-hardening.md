@@ -1,8 +1,8 @@
-# Milestone 09: Safety Hardening
+# Milestone 11: Safety Hardening
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
 **Status:** planned
-**Depends on:** [Milestone 07: Job file management](milestone-07-job-file-management.md), [Milestone 08: MCP server](milestone-08-mcp-server.md), [Milestone 03: Queue for people](milestone-03-queue-for-people.md) (built before this one)
+**Depends on:** [Milestone 07: Job file management](milestone-07-job-file-management.md), [Milestone 10: MCP server](milestone-10-mcp-server.md), [Milestone 03: Queue for people](milestone-03-queue-for-people.md) (built before this one)
 
 ## Goal
 

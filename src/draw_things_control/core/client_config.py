@@ -1,6 +1,6 @@
 """What every client of `dtc serve` needs before it can call it: reading the bearer token from --token-file, and
 refusing a --server-url beyond loopback without --allow-remote-server (Milestone 03's own client-side rule,
-mirroring `dtc serve`'s own --allow-remote-bind check). `cli/`, `tui/`, and (Milestone 08) `mcp_server/` each hold
+mirroring `dtc serve`'s own --allow-remote-bind check). `cli/`, `tui/`, and (Milestone 10) `mcp_server/` each hold
 their own thin httpx/gRPC client around this: the framework calls themselves cannot live here (core imports no
 framework, tests/test_architecture.py), only what every one of those clients needs in common."""
 

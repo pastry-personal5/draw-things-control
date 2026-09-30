@@ -10,7 +10,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.arguments import DEFAULT_VIDEO_FORMAT, DrawThingsGenerateArguments, redact_command
 from draw_things_control.core.errors import InputError, ToolMissingError
 from draw_things_control.core.exit_codes import EXIT_TIMEOUT, exit_code_for_child_signal, exit_code_for_signal
 from draw_things_control.core.process.output import MessageCallback
@@ -103,6 +103,9 @@ class GenerationService:
         if output is not None and not output.parent.is_dir():
             raise InputError(f"Output directory does not exist: {output.parent}")
         passed = {field.name: getattr(request, field.name) for field in fields(request) if field.name not in RESOLVED_OPTIONS}
+        # A .mov output is ProRes 4444 unless --video-format says otherwise (owner decision); .mp4 is passed on as asked.
+        if passed.get("video_format") is None and output is not None and output.suffix.lower() == ".mov":
+            passed["video_format"] = DEFAULT_VIDEO_FORMAT
         return DrawThingsGenerateArguments(
             **passed,
             model=model,

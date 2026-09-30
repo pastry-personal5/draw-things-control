@@ -110,6 +110,17 @@ class ConfigurationFileTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def test_a_mov_output_is_prores4444_unless_the_format_is_given(self) -> None:
+        def video_format(output: str, given: str | None = None) -> str | None:
+            return self.service.prepare(generate_options(model="m.ckpt", output=self.root / output, video_format=given)).video_format
+
+        self.assertEqual(video_format("clip.mov"), "prores4444")
+        self.assertEqual(video_format("clip.MOV"), "prores4444")
+        self.assertEqual(video_format("clip.mov", "h264"), "h264")
+        self.assertIsNone(video_format("clip.mp4"))
+        self.assertEqual(video_format("clip.mp4", "hevc"), "hevc")
+        self.assertIsNone(video_format("image.png"))
+
     def test_yaml_is_passed_inline_with_config_json_merged_on_top(self) -> None:
         config = self.write("wan.yaml", "# Wan\nmodel: base.ckpt\nsteps: 30\nshift: 3.99\nloras: []\n")
         arguments = self.service.prepare(generate_options(config_file=config, config_json='{"steps": 8, "sharpness": 0.5}'))

@@ -43,7 +43,7 @@ class JobOutputTests(JobTestCase):
         return result.stdout.replace(str(self.root), "ROOT")
 
     def test_validate_job_output(self) -> None:
-        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  config file: batch.yaml\n  model: base.ckpt\n  seed: 42 (config_file)\n"
+        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  output format: prores4444 (.mov)\n  config file: batch.yaml\n  model: base.ckpt\n  seed: 42 (config_file)\n"
         self.assertEqual(self.invoke("validate-job", str(self.job_path)), expected)
         self.assertEqual(self.logged, IGNORED)
 
@@ -51,7 +51,7 @@ class JobOutputTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
         job_path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_file="noseed.yaml", cooldown={"mode": "off"}), name="noseed.yaml")
         output = self.invoke("validate-job", str(job_path))
-        self.assertEqual(output.splitlines()[-6:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  config file: noseed.yaml", "  model: m.ckpt", "  seed: (random, drawn when the job starts) (random)"])
+        self.assertEqual(output.splitlines()[-7:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  output format: prores4444 (.mov)", "  config file: noseed.yaml", "  model: m.ckpt", "  seed: (random, drawn when the job starts) (random)"])
         self.assertEqual(self.logged, [])
 
     def test_auto_and_off_cooldown_lines(self) -> None:

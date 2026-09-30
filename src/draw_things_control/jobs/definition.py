@@ -88,6 +88,8 @@ class JobDefinition:
     config_override: ConfigOverride
     model: str
     run_timeout_seconds: float | None
+    # draw-things-cli's --video-format for every run of a video job (prores4444 unless the job names another); None for an image job.
+    video_format: str | None = None
     ignored_config: dict[str, Any] = field(default_factory=dict)
     # Set only when a desired_input_* key is: the size of every run, and how the first input gets there.
     size: tuple[int, int] | None = None

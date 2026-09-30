@@ -115,5 +115,6 @@ class JobPlanner:
             width, height = job.size
             config["width"], config["height"] = job.size
         flags = {**override_arguments(override.as_dict()), "model": job.model, "width": width, "height": height, "seed": seed}
-        arguments = DrawThingsGenerateArguments(executable=executable, prompt=pair.positive, negative_prompt=pair.negative, config_json=json.dumps(config, separators=(",", ":")), image=run_input, output=output, **flags)
+        # A job's output is captured, never shown, so the live sampling preview is only extra work.
+        arguments = DrawThingsGenerateArguments(executable=executable, prompt=pair.positive, negative_prompt=pair.negative, config_json=json.dumps(config, separators=(",", ":")), image=run_input, output=output, video_format=job.video_format, disable_preview=True, **flags)
         return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments)

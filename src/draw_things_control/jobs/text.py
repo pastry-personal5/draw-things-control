@@ -12,6 +12,7 @@ from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.definition import JobDefinition, PromptPair
 
 if TYPE_CHECKING:
+    from draw_things_control.jobs.events import MediaChecked
     from draw_things_control.jobs.planning import JobPreview, PlannedRun
 
 # The seed a front end shows in a plan for a job with no configured seed, so the plan is the same every time it is shown.
@@ -129,6 +130,20 @@ def report_ignored_config(job: JobDefinition) -> None:
         logger.info("{}", line)
 
 
+MEDIA_CHECK_LABELS = {"input": "Input check", "resized_input": "Resized input check", "output": "Output check", "last_frame": "Last frame check"}
+
+
+def media_check_text(event: MediaChecked) -> str:
+    """The line the job log, ``dtc serve``'s output, and the TUI's Messages print for a media check."""
+    return f"{MEDIA_CHECK_LABELS.get(event.stage, event.stage)} (run {event.run}): {media_check_result(event.file, event.summary, event.verdict, event.notes)}"
+
+
+def media_check_result(file: str, summary: str, verdict: str, notes: tuple[str, ...]) -> str:
+    """What a media check found, after its label: the file, what it holds, the verdict, and any notes."""
+    line = f"{file}: {summary}: {verdict}"
+    return f"{line}. {' '.join(notes)}" if notes else line
+
+
 def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> list[tuple[str, str]]:
     """The (label, value) rows validate-job prints under ``Valid job:``; ``random_seed_text``, if given, is the whole seed value when the job sets none."""
     seed, source = job.configured_seed()
@@ -140,6 +155,7 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
         ("cooldown", cooldown_details(job)),
         ("input", str(job.input or "(none, text only)")),
         ("output directory", str(job.output_directory)),
+        *([("output format", f"{job.video_format} (.{job.extension})")] if job.video_format is not None else []),
         ("config file", job.config_file),
         ("model", job.model),
         ("seed", seed_value),

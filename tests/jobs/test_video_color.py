@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.media.video_color import tag_video_colors
+from draw_things_control.jobs.media.stream_color import StreamColor
+from draw_things_control.jobs.media.video_color import read_colr, tag_video_colors
 from draw_things_control.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
@@ -53,15 +54,17 @@ class TagVideoColorsTests(unittest.TestCase):
         subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=16:duration=1", "-c:v", codec, "-pix_fmt", pixel_format, *extra, str(video)], check=True)
         return video
 
-    def check_tagged_only_by_the_new_box(self, video: Path, added: int) -> None:
+    def check_tagged_only_by_the_new_box(self, video: Path, added: int, matrix: str = "bt709") -> None:
         before_frames, before_packets, before_size, before_media = frames(video), packets(video), video.stat().st_size, top_level(video)["mdat"]
         self.assertTrue(tag_video_colors(video))
         self.assertEqual(video.stat().st_size, before_size + added)
         self.assertEqual(top_level(video)["mdat"], before_media)
         self.assertEqual(packets(video), before_packets)
         self.assertEqual(frames(video), before_frames)
-        primaries, transfer, matrix = probe(video, "stream=color_primaries,color_transfer,color_space")[:3]
-        self.assertEqual((primaries, transfer, matrix), ("bt709", "iec61966-2-1", "bt709"))
+        # By name: ffprobe prints the fields in its own order, not the order asked for.
+        fields = dict(line.split("=", 1) for line in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_primaries,color_transfer,color_space", "-of", "default=nw=1", str(video)], capture_output=True, text=True, check=True).stdout.split())
+        primaries, transfer, tagged_matrix = fields["color_primaries"], fields["color_transfer"], fields["color_space"]
+        self.assertEqual((primaries, transfer, tagged_matrix), ("bt709", "iec61966-2-1", matrix))
         subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"], check=True)
         # Tagging again does nothing.
         stamp = video.stat().st_mtime_ns
@@ -73,13 +76,32 @@ class TagVideoColorsTests(unittest.TestCase):
         self.check_tagged_only_by_the_new_box(video, 18)
 
     def test_prores_and_hevc_are_tagged_too(self) -> None:
-        self.check_tagged_only_by_the_new_box(self.make("prores.mov", "prores_ks", "yuva444p12le"), 18)
+        # ffmpeg converts testsrc with BT.601 and states nothing: the pixels say so, and the box says so too.
+        self.check_tagged_only_by_the_new_box(self.make("prores.mov", "prores_ks", "yuva444p12le"), 18, "bt470bg")
         self.check_tagged_only_by_the_new_box(self.make("hevc.mov", "libx265", "yuv420p", "-tag:v", "hvc1"), 18)
 
     def test_an_mp4_gets_an_nclx_box_with_limited_range(self) -> None:
         video = self.make("clip.mp4", "libx264", "yuv420p")
         self.check_tagged_only_by_the_new_box(video, 19)
         self.assertEqual(probe(video, "stream=color_range"), ["tv"])
+
+    def test_the_box_states_the_matrix_and_the_range_the_stream_states(self) -> None:
+        prores = self.make("stated.mov", "prores_ks", "yuva444p12le", "-colorspace", "smpte170m", "-color_range", "tv")
+        self.assertTrue(tag_video_colors(prores))
+        colr = read_colr(prores)
+        assert colr is not None
+        self.assertEqual((colr.kind, colr.primaries, colr.transfer, colr.matrix), ("nclc", 1, 13, 6))
+        full = self.make("full.mp4", "libx264", "yuv420p", "-color_range", "pc")
+        self.assertTrue(tag_video_colors(full, StreamColor(None, "pc")))
+        colr = read_colr(full)
+        assert colr is not None
+        self.assertEqual((colr.kind, colr.matrix, colr.full_range), ("nclx", 1, True))
+
+    def test_a_matrix_this_cannot_tag_is_left_untagged(self) -> None:
+        video = self.make("odd.mov", "libx264", "yuv420p")
+        before = video.read_bytes()
+        self.assertFalse(tag_video_colors(video, StreamColor("ycgco", "tv")))
+        self.assertEqual(video.read_bytes(), before)
 
     def test_chunk_offsets_are_shifted_when_the_moov_box_comes_first(self) -> None:
         video = self.make("faststart.mp4", "libx264", "yuv420p", "-movflags", "+faststart")

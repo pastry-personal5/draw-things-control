@@ -13,7 +13,7 @@ from draw_things_control.services.input_listing import InputImage
 from draw_things_control.services.job_catalog import JobRow
 from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.state.audit import AuditRow
-from draw_things_control.state.execution_rows import ExecutionRow, RunRow
+from draw_things_control.state.execution_rows import ExecutionRow, MediaCheckRow, RunRow
 from draw_things_control.state.ids import execution_id_text, queue_id_text
 from draw_things_control.state.queue import QueueRow
 
@@ -43,6 +43,7 @@ def job_detail(job: JobDefinition, source_text: str) -> dict[str, Any]:
         "prompt_pairs": [prompt_pair(pair) for pair in job.prompt_pairs],
         "output_directory": str(job.output_directory),
         "extension": job.extension,
+        "video_format": job.video_format,
         "config_file": job.config_file,
         "config_override": job.config_override.as_dict(),
         "model": job.model,
@@ -86,7 +87,17 @@ def run_summary(run: RunRow) -> dict[str, Any]:
         "output_height": run.output_height,
         "output_frames": run.output_frames,
         "command": redact_command(run.command),
+        "checks": [media_check(check) for check in run.checks],
     }
+
+
+def media_check(check: MediaCheckRow) -> dict[str, Any]:
+    return {"stage": check.stage, "file": check.file, "summary": check.summary, "verdict": check.verdict, "notes": list(check.notes), "facts": check.facts, "at": check.at}
+
+
+def unstarted_check(check: MediaCheckRow) -> dict[str, Any]:
+    """A check of a run that never started, listed on the execution, so it names the run it was made before."""
+    return {"run": check.run, **media_check(check)}
 
 
 def execution_summary(row: ExecutionRow) -> dict[str, Any]:
@@ -122,6 +133,8 @@ def execution_detail(row: ExecutionRow) -> dict[str, Any]:
         "manifest": row.manifest_path,
         "log": row.log_path,
         "runs": [run_summary(run) for run in row.runs],
+        # Checks made before a run that never started (a stop during the input checks); each names its run.
+        "checks": [unstarted_check(check) for check in row.checks],
     }
 
 

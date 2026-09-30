@@ -76,7 +76,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual([pair.name for pair in job.schedule()], ["only"] * 3)
 
     def test_output_directory_is_relative_to_global_output(self) -> None:
-        job = self.load(output={"directory": "custom", "extension": "mp4"})
+        job = self.load(output={"directory": "custom", "extension": "mp4", "video_format": "h264"})
         self.assertEqual(job.output_directory, self.output_directory / "custom")
         self.assertEqual(job.extension, "mp4")
 
@@ -113,6 +113,18 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("not a path", config_file="../base.yaml")
         self.assert_invalid("available: base.yaml", config_file="missing.yaml")
         self.assert_invalid("run_timeout_seconds", run_timeout_seconds=0)
+
+    def test_video_format_defaults_to_prores4444_is_checked_and_only_in_video_jobs(self) -> None:
+        self.assertEqual(self.load().video_format, "prores4444")
+        self.assertEqual(self.load(mode="t2v", input=None, output={"extension": "mov"}).video_format, "prores4444")
+        self.assertIsNone(self.load(mode="i2i").video_format)
+        self.assert_invalid(r"'output\.video_format' prores4444 requires extension mov; set video_format to h264 or hevc for mp4", output={"extension": "mp4"})
+        for value in ("prores4444", "prores422hq", "h264", "hevc"):
+            self.assertEqual(self.load(output={"video_format": value}).video_format, value)
+        self.assertEqual(self.load(output={"extension": "mp4", "video_format": "hevc"}).video_format, "hevc")
+        self.assert_invalid(r"'output\.video_format' must be prores4444, prores422hq, h264, hevc", output={"video_format": "av1"})
+        self.assert_invalid(r"'output\.video_format' prores4444 requires extension mov; set video_format to h264 or hevc for mp4", output={"extension": "mp4", "video_format": "prores4444"})
+        self.assert_invalid(r"'output\.video_format' only in video jobs", mode="i2i", output={"video_format": "h264"})
 
     def test_config_file_must_name_a_yaml_file(self) -> None:
         (self.params / "base.json").write_text(json.dumps(BASE_CONFIG), encoding="utf-8")

@@ -7,9 +7,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from draw_things_control.jobs.events import CooldownEnded, JobEvent, JobFinished, JobStarted, RunFinished, RunStarted
+from draw_things_control.jobs.events import CooldownEnded, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted
 from draw_things_control.state.database import StateError
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
+from draw_things_control.state.executions import ExecutionSettings, MediaCheckRow, NewExecution, NewRun
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.store import Store
 
@@ -18,7 +18,8 @@ class ExecutionRecorder:
     """A job observer that writes one execution and its runs to the store.
 
     A failure is logged once and stops recording for this execution, so later events never update rows that
-    were not created; the generation carries on.
+    were not created; the generation carries on. A media check is the exception (owner decision): it is a diagnostic
+    that no later event depends on, so one that cannot be stored is skipped, logged once, and recording goes on.
     """
 
     def __init__(self, store: Store) -> None:
@@ -28,6 +29,7 @@ class ExecutionRecorder:
         self._label: str | None = None
         self._last_run: int | None = None
         self._failed = False
+        self._check_failed = False
 
     @property
     def execution_id(self) -> int | None:
@@ -68,8 +70,19 @@ class ExecutionRecorder:
             self._run_finished(self._execution_id, event)
         elif isinstance(event, CooldownEnded):
             self._cooldown_ended(self._execution_id, event)
+        elif isinstance(event, MediaChecked):
+            self._media_checked(self._execution_id, event)
         elif isinstance(event, JobFinished):
             self._executions.finish(self._execution_id, status=event.status, exit_code=event.exit_code, signal=event.signal, finished_at=event.at)
+
+    def _media_checked(self, execution_id: int, event: MediaChecked) -> None:
+        try:
+            self._executions.add_check(execution_id, MediaCheckRow(run=event.run, stage=event.stage, file=event.file, summary=event.summary, verdict=event.verdict, notes=event.notes, facts=event.facts, at=event.at))
+        # Whatever breaks storing a check, the runs and the job's end are still recorded.
+        except Exception:
+            if not self._check_failed:
+                self._check_failed = True
+                logger.exception("Storing a media check failed; it is skipped (as is any other that fails), and the rest of this job is still recorded")
 
     def _job_started(self, event: JobStarted) -> None:
         # The number reserved before the job started; a job run without one takes the next when it is recorded.

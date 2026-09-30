@@ -97,6 +97,24 @@ class NewExecution:
 
 
 @dataclass(frozen=True)
+class MediaCheckRow:
+    """One stored media check of a run, as its ``media_checked`` event said it."""
+
+    run: int
+    stage: str
+    file: str
+    summary: str
+    verdict: str
+    notes: tuple[str, ...]
+    facts: dict[str, Any]
+    at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> MediaCheckRow:
+        return cls(run=row["run"], stage=row["stage"], file=row["file"], summary=row["summary"], verdict=row["verdict"], notes=tuple(json.loads(row["notes"])), facts=json.loads(row["facts"]), at=row["at"])
+
+
+@dataclass(frozen=True)
 class RunRow:
     """One stored run of an execution."""
 
@@ -120,6 +138,8 @@ class RunRow:
     # The store's own row number and start time as an epoch, for ordering.
     id: int = 0
     started_epoch: float = 0.0
+    # The run's media checks, in the order they were made (a video job's; none for an image job or an imported run).
+    checks: tuple[MediaCheckRow, ...] = ()
 
     @classmethod
     def from_row(cls, row: sqlite3.Row, running_as_interrupted: bool = False) -> RunRow:
@@ -180,6 +200,9 @@ class ExecutionRow:
     runs: tuple[RunRow, ...] = ()
     first_run: int = 1
     resumes: int | None = None
+    # Media checks of a run that never started (a stop during the input checks), which no run row can show; filled, like
+    # ``runs``, only when the execution is read by itself.
+    checks: tuple[MediaCheckRow, ...] = ()
 
     @classmethod
     def from_row(cls, row: sqlite3.Row, running_as_interrupted: bool = False, runs: tuple[RunRow, ...] = ()) -> ExecutionRow:

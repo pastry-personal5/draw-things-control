@@ -1,4 +1,4 @@
-# Milestone 08: MCP Server
+# Milestone 10: MCP Server
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
 **Status:** planned
@@ -59,35 +59,35 @@ Read and run (always offered):
 
 | Tool | API |
 |------|-----|
-| `get_capabilities` | `GET /capabilities` |
-| `list_jobs` | `GET /jobs` |
-| `get_job` | `GET /jobs/{job}` |
-| `preview_job` | `GET /jobs/{job}/preview` |
-| `validate_job_text` | `POST /validate` |
-| `list_inputs` | `GET /inputs` |
-| `submit_job` | `POST /queue` |
-| `get_queue` | `GET /queue` |
-| `get_queue_entry` | `GET /queue/{id}` |
-| `cancel_queue_entry` | `POST /queue/{id}/cancel` |
-| `resume_queue_entry` | `POST /queue/{id}/resume` |
-| `list_executions` | `GET /executions` |
-| `get_execution` | `GET /executions/{id}` |
-| `list_outputs` | `GET /executions/{id}/outputs` |
+| `get_capabilities` | `GET /v1/capabilities` |
+| `list_jobs` | `GET /v1/jobs` |
+| `get_job` | `GET /v1/jobs/{job}` |
+| `preview_job` | `GET /v1/jobs/{job}/preview` |
+| `validate_job_text` | `POST /v1/validate` |
+| `list_inputs` | `GET /v1/inputs` |
+| `submit_job` | `POST /v1/queue` |
+| `get_queue` | `GET /v1/queue` |
+| `get_queue_entry` | `GET /v1/queue/{id}` |
+| `cancel_queue_entry` | `POST /v1/queue/{id}/cancel` |
+| `resume_queue_entry` | `POST /v1/queue/{id}/resume` |
+| `list_executions` | `GET /v1/executions` |
+| `get_execution` | `GET /v1/executions/{id}` |
+| `list_outputs` | `GET /v1/executions/{id}/outputs` |
 
-Write (offered only while `GET /capabilities` reports writes on):
+Write (offered only while `GET /v1/capabilities` reports writes on):
 
 | Tool | API |
 |------|-----|
-| `create_job` | `PUT /jobs/{name}` |
-| `replace_job` | `PUT /jobs/{name}?overwrite=1` |
-| `delete_job` | `DELETE /jobs/{name}` |
+| `create_job` | `PUT /v1/jobs/{name}` |
+| `replace_job` | `PUT /v1/jobs/{name}?overwrite=1` |
+| `delete_job` | `DELETE /v1/jobs/{name}` |
 
-- The tool list is read from `GET /capabilities` whenever the client asks
+- The tool list is read from `GET /v1/capabilities` whenever the client asks
   for it, so a server restarted with or without `--allow-write` changes it.
   With the API down, only the read and run tools are offered. A write tool
   called after writes were turned off returns the API's error.
 - Tool arguments have the API's names and bounds: a job reference or name, a
-  queue or execution ID, YAML text, a page cursor. No argument is a path, a
+  queue or execution ID, YAML text, the `expected_sha256` that `replace_job` and `delete_job` require (from `get_job`), a page cursor. No argument is a path, a
   `draw-things-cli` flag, or a credential; paths inside job text are
   confined by [Milestone 07](milestone-07-job-file-management.md#validation-before-writing).
   An unknown argument is rejected.

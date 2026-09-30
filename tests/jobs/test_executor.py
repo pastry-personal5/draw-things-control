@@ -251,6 +251,13 @@ class JobExecutorTests(JobTestCase):
         self.assertFalse(job.output_directory.exists())
         self.assertEqual(self.calls, [])
 
+    def test_every_run_carries_the_jobs_video_format_and_disables_the_preview(self) -> None:
+        commands = self.service.preview(self.job(output={"video_format": "prores4444"}), executable="draw-things-cli").commands
+        self.assertTrue(all(command[command.index("--video-format") + 1] == "prores4444" and "--disable-preview" in command for command in commands))
+        # Without the key, every run of a video job is ProRes 4444.
+        self.assertTrue(all(command[command.index("--video-format") + 1] == "prores4444" for command in self.service.preview(self.job(), executable="draw-things-cli").commands))
+        self.assertTrue(all(command[command.index("--video-format") + 1] == "h264" for command in self.service.preview(self.job(output={"extension": "mp4", "video_format": "h264"}), executable="draw-things-cli").commands))
+
     def test_a_yaml_base_configuration_plans_the_config_json_of_the_equal_json_file(self) -> None:
         text = "# Wan 2.2\nmodel: base.ckpt\nrefinerModel: base-refiner.ckpt\nrefinerStart: 0.2\nwidth: 832\nheight: 448\nseed: 42\nsteps: 30\nshift: 3.99\nfaceRestoration: ''\ncolorCalibration: none\ncontrols: []\nloras: [{file: l.ckpt, weight: 0.6}]\nhiresFix: false\n"
         (self.params / "wan.yaml").write_text(text, encoding="utf-8")

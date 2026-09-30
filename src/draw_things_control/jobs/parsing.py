@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from draw_things_control.core import draw_things_config
+from draw_things_control.core.arguments import DEFAULT_VIDEO_FORMAT, VIDEO_FORMATS
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, parse_cooldown, replaced_cooldown_message
 from draw_things_control.core.errors import InputError
 from draw_things_control.core.global_config import GlobalConfig
@@ -19,7 +20,7 @@ from draw_things_control.jobs.prompt_pairs import NAME_PATTERN, parse_prompt_pai
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
 JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs", "config_file")
-OUTPUT_KEYS = {"directory", "extension"}
+OUTPUT_KEYS = {"directory", "extension", "video_format"}
 # Base configuration keys each mode drops, because the job itself decides them.
 IGNORED_CONFIG_KEYS = {"i2v": ("batchCount",)}
 # The desired_input_* keys and max_input_crop_percent, as (width, height, crop percent).
@@ -65,7 +66,7 @@ class JobParser:
         input_path = self._input_path(data, mode)
         run_count = self._run_count(data["run_count"])
         prompt_pairs = parse_prompt_pairs(data["prompt_pairs"], run_count, self._fail, self._check_keys)
-        output_directory, extension = self._output(data.get("output", {}), mode, name)
+        output_directory, extension, video_format = self._output(data.get("output", {}), mode, name)
         config_file = self._config_file(data["config_file"])
         base_config = self._base_config(config_file)
         ignored_config = {key: base_config.pop(key) for key in IGNORED_CONFIG_KEYS.get(mode, ()) if key in base_config}
@@ -84,6 +85,7 @@ class JobParser:
             prompt_pairs=prompt_pairs,
             output_directory=output_directory,
             extension=extension,
+            video_format=video_format,
             config_file=config_file,
             base_config=base_config,
             config_override=override,
@@ -256,7 +258,7 @@ class JobParser:
         source = f"width and height from {sources[0]}" if sources[0] == sources[1] else f"width from {sources[0]}, height from {sources[1]}"
         return (size[0], size[1]), source
 
-    def _output(self, value: Any, mode: GenerationMode, name: str) -> tuple[Path, str]:
+    def _output(self, value: Any, mode: GenerationMode, name: str) -> tuple[Path, str, str | None]:
         if not isinstance(value, dict):
             self._fail("output", "must be a mapping")
         self._check_keys(value, OUTPUT_KEYS, "output.")
@@ -273,4 +275,18 @@ class JobParser:
         extension = value.get("extension", mode.default_extension)
         if extension not in mode.allowed_extensions:
             self._fail("output.extension", f"must be {' or '.join(mode.allowed_extensions)} in {mode} jobs")
-        return output_directory.resolve(), extension
+        return output_directory.resolve(), extension, self._video_format(value.get("video_format"), mode, extension)
+
+    def _video_format(self, value: Any, mode: GenerationMode, extension: str) -> str | None:
+        if not mode.is_video:
+            if value is not None:
+                self._fail("output.video_format", "only in video jobs")
+            return None
+        # ProRes 4444 by default, whatever the extension (owner decision): an mp4 must then name h264 or hevc.
+        if value is None:
+            value = DEFAULT_VIDEO_FORMAT
+        if value not in VIDEO_FORMATS:
+            self._fail("output.video_format", f"must be {', '.join(VIDEO_FORMATS)}")
+        if value.startswith("prores") and extension != "mov":
+            self._fail("output.video_format", f"{value} requires extension mov; set video_format to h264 or hevc for {extension}")
+        return value

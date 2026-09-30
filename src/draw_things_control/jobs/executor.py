@@ -20,10 +20,11 @@ from draw_things_control.core.exit_codes import EXIT_PARKED, exit_code_for_signa
 from draw_things_control.core.process.output import MessageCallback, ProcessMessage
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
-from draw_things_control.jobs.definition import JobDefinition, PromptPair
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, notify
+from draw_things_control.jobs.definition import GenerationMode, JobDefinition, PromptPair
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, notify
 from draw_things_control.jobs.launcher import RunLauncher
 from draw_things_control.jobs.log_writer import JobLogWriter
+from draw_things_control.jobs.media.checks import MediaCheck
 from draw_things_control.jobs.media.toolkit import MediaTools
 from draw_things_control.jobs.output_naming import RandomNumber, random_four_digits
 from draw_things_control.jobs.planning import JobPlanner, JobPreview, PlannedRun
@@ -123,7 +124,8 @@ class JobExecutor:
         self._planner = JobPlanner(find_executable, media, clock=clock, random_number=random_number, random_seed=random_seed)
         self._token = CancelToken(handle_signals=handle_signals)
         self._cooldown = cooldown or self._token.wait
-        self._launcher = RunLauncher(runner_factory, find_executable, RunFinisher(media), self._token)
+        self._media = media
+        self._launcher = RunLauncher(runner_factory, find_executable, RunFinisher(media, self._report_check), self._token)
         self._observer: JobObserver | None = None
         self._log_writer = JobLogWriter()
         self._on_child_start: ChildStartCallback | None = None
@@ -173,6 +175,26 @@ class JobExecutor:
         self._log_writer(event)
         if self._observer is not None:
             notify(self._observer, event)
+
+    def _report_check(self, run: int, check: MediaCheck) -> None:
+        self._emit(MediaChecked(at=self._timestamp(), run=run, stage=check.stage, file=check.file, summary=check.summary, verdict=check.verdict, notes=check.warnings + check.notes, facts=check.facts))
+
+    def _check_input(self, chain: _Chain, run: int, run_input: Path | None) -> None:
+        """An i2v job's first input, and its resized copy, checked before the run that reads them; a resume's input,
+        the chain's own last frame, is checked as a handoff."""
+        checker = self._media.checker
+        if checker is None or chain.job.mode is not GenerationMode.I2V or run_input is None:
+            return
+        if chain.options.resume is not None:
+            self._report_check(run, checker.handoff(run_input))
+            return
+        source = chain.job.input if chain.temporary_input is not None else run_input
+        if source is None:
+            return
+        self._report_check(run, checker.input(source, resized=chain.temporary_input is not None))
+        plan = chain.job.input_copy
+        if chain.temporary_input is not None and plan is not None:
+            self._report_check(run, checker.resized_input(source, chain.temporary_input.path, plan))
 
     def _timestamp(self) -> str:
         return local_timestamp(self._clock())
@@ -238,6 +260,7 @@ class JobExecutor:
         if chain.temporary_input is not None:
             logger.info("Run 1 input: temporary copy {} (removed after run 1)", chain.temporary_input.path)
             current_input = chain.temporary_input.path
+        self._check_input(chain, start, current_input)
         completed = 0
         exit_code = 0
         for number, pair in enumerate(chain.schedule[start - 1 :], start=start):

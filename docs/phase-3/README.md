@@ -52,6 +52,14 @@ typed tools on top of it.
   filters show, or, written out as `all`, the whole history, from the TUI (after a confirmation dialog) and `dtc history
   delete`, through the API; never a running one, nor one a queued or
   running entry uses ([Milestone 06](milestone-06-delete-executions.md))
+- Video jobs write ProRes 4444 by default (`output.video_format`), the last
+  frame has no alpha, and its color decode and the video's `colr` tag both
+  follow the color space the video's own stream states
+  ([Milestone 08](milestone-08-video-format-and-color.md))
+- A chain's colors held to its first image: an unbiased handoff, the first
+  image's gamut mapped, drift measured in every run, and, when a job asks, a
+  region-aware correction of each handoff and a corrected copy of each clip
+  ([Milestone 09](milestone-09-color-preservation.md))
 
 ## Non-goals
 
@@ -92,10 +100,12 @@ typed tools on top of it.
 | 05 | [Park and hold](milestone-05-park-and-hold.md) | done |
 | 06 | [Delete executions](milestone-06-delete-executions.md) | done |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
-| 08 | [MCP server](milestone-08-mcp-server.md) | planned |
-| 09 | [Safety hardening](milestone-09-safety-hardening.md) | planned |
+| 08 | [Video format and color](milestone-08-video-format-and-color.md) | in-progress |
+| 09 | [Color preservation](milestone-09-color-preservation.md) | planned |
+| 10 | [MCP server](milestone-10-mcp-server.md) | planned |
+| 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 
-They are built in the order 01, 02, 03, 04, 05, 06, 07, 08, 09 (owner decision):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision); it is planned, and its place in the order is not decided yet. Milestone 08 is built and waits on the owner's chain run with the new handoff (a 16-bit last frame that `draw-things-cli` reads exactly); its place in the order is not decided yet either. The rest are built in the order 01, 02, 03, 04, 05, 06, 07, 10, 11 (owner decision):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -108,8 +118,8 @@ They are built in the order 01, 02, 03, 04, 05, 06, 07, 08, 09 (owner decision):
    hold and release the queue.
 6. Milestone 06 lets people delete executions from the history.
 7. After Milestone 07, agents can draft and write jobs.
-8. Milestone 08 adds MCP.
-9. Milestone 09 reviews the whole surface, `dtc queue` included, adds the
+8. Milestone 10 adds MCP.
+9. Milestone 11 reviews the whole surface, `dtc queue` included, adds the
    security suite, and closes any gaps it finds.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before

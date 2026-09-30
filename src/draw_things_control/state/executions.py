@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +18,7 @@ from draw_things_control.state.execution_rows import (
     SUCCEEDED_COUNT,
     ExecutionRow,
     ExecutionSettings,
+    MediaCheckRow,
     NewExecution,
     NewRun,
     RunRow,
@@ -25,7 +26,7 @@ from draw_things_control.state.execution_rows import (
 )
 from draw_things_control.state.ids import execution_id_text
 
-__all__ = ["EXECUTION_COLUMNS", "RUN_COLUMNS", "SUCCEEDED_COUNT", "DeletedExecution", "ExecutionDeletion", "ExecutionRepository", "ExecutionRow", "ExecutionSettings", "NewExecution", "NewRun", "RunRow", "epoch"]
+__all__ = ["EXECUTION_COLUMNS", "RUN_COLUMNS", "SUCCEEDED_COUNT", "DeletedExecution", "ExecutionDeletion", "ExecutionRepository", "ExecutionRow", "ExecutionSettings", "MediaCheckRow", "NewExecution", "NewRun", "RunRow", "epoch"]
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,11 @@ class ExecutionRepository:
                 (status, exit_code, seconds, output, last_frame, output_width, output_height, output_frames, execution_id, number),
             )
 
+    def add_check(self, execution_id: int, check: MediaCheckRow) -> None:
+        """Keep one media check of run ``check.run``; the run's own row may not exist yet (the input's checks come first)."""
+        with self._database.transaction() as connection:
+            connection.execute("INSERT INTO media_checks (execution_id, run, stage, file, summary, verdict, notes, facts, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (execution_id, check.run, check.stage, check.file, check.summary, check.verdict, json.dumps(list(check.notes)), json.dumps(check.facts), check.at))
+
     def set_run_cooldown(self, execution_id: int, number: int, seconds: float) -> None:
         with self._database.transaction() as connection:
             connection.execute("UPDATE runs SET cooldown_after_seconds = ? WHERE execution_id = ? AND number = ?", (seconds, execution_id, number))
@@ -120,8 +126,12 @@ class ExecutionRepository:
         row = connection.execute(f"SELECT executions.*, {SUCCEEDED_COUNT} FROM executions WHERE id = ?", (execution_id,)).fetchone()
         if row is None:
             return None
-        runs = tuple(RunRow.from_row(run, running_as_interrupted) for run in connection.execute("SELECT * FROM runs WHERE execution_id = ? ORDER BY number", (execution_id,)))
-        return ExecutionRow.from_row(row, running_as_interrupted, runs)
+        checks: dict[int, list[MediaCheckRow]] = {}
+        for check in connection.execute("SELECT * FROM media_checks WHERE execution_id = ? ORDER BY id", (execution_id,)):
+            checks.setdefault(check["run"], []).append(MediaCheckRow.from_row(check))
+        runs = tuple(replace(RunRow.from_row(run, running_as_interrupted), checks=tuple(checks.pop(run["number"], ()))) for run in connection.execute("SELECT * FROM runs WHERE execution_id = ? ORDER BY number", (execution_id,)))
+        unstarted = tuple(check for number in sorted(checks) for check in checks[number])
+        return replace(ExecutionRow.from_row(row, running_as_interrupted, runs), checks=unstarted)
 
     def by_ids(self, execution_ids: Sequence[int], *, running_as_interrupted: bool = False) -> list[ExecutionRow]:
         """The executions with these row ids, without their runs, in no set order; a missing id is left out."""

@@ -1,6 +1,6 @@
 """Write color tags into a generated video's container without touching its frames or timing.
 
-Draw Things' H.264 (and older ProRes) files carry no ``colr`` box, so players guess the color matrix. Remuxing with
+Draw Things' H.264 and ProRes files carry no ``colr`` box, so players guess the color matrix. Remuxing with
 ffmpeg would add one, but it rewrites the timestamps of these files (they have ``pts < dts``), so this edits the
 MP4/QuickTime boxes directly: one ``colr`` box is added to the video sample entry, the sizes of its parent boxes are
 raised by that many bytes, and, when the ``moov`` box comes before the media data, the chunk offsets are shifted. The
@@ -18,10 +18,13 @@ from pathlib import Path
 
 from loguru import logger
 
-# ITU-T H.273 codes: BT.709 primaries, the sRGB transfer (the PNG label uses the same), and the BT.709 matrix.
+from draw_things_control.jobs.media.stream_color import StreamColor, resolve_video_color
+from draw_things_control.jobs.media.tools import find_ffprobe
+
+# ITU-T H.273 codes: BT.709 primaries and the sRGB transfer (the PNG label uses the same). The matrix is the one the
+# stream states (stream_color.py), BT.709 when it states none.
 PRIMARIES_BT709 = 1
 TRANSFER_SRGB = 13
-MATRIX_BT709 = 1
 # The visual sample entry's fixed fields (reserved, data reference, size, resolution, compressor name, depth, and so on).
 VISUAL_ENTRY_FIELDS = 78
 # Boxes that hold the path to the video sample entry.
@@ -43,13 +46,26 @@ class Box:
         return self.start + self.header
 
 
-def tag_video_colors(video: Path) -> bool:
-    """Add BT.709 / sRGB / BT.709 color tags to ``video`` if it has none; return whether the file was changed.
+def tag_video_colors(video: Path, color: StreamColor | None = None) -> bool:
+    """Add BT.709 primaries, the sRGB transfer, and ``color``'s matrix (the pixels' when they tell, else the stream's,
+    BT.709 when neither does; and in an ``mp4``, its range) to ``video`` if it has no ``colr`` box; return whether the
+    file was changed.
 
-    A video that already has a ``colr`` box is left alone, since its tags are the writer's statement. The file is
-    replaced atomically by a copy that differs only by the new box. Raises ValueError, leaving the file untouched,
-    when it is not a plain (non-fragmented) MP4 or QuickTime file with a video track this can edit.
+    A video that already has a ``colr`` box is left alone, since its tags are the writer's statement, and so is one
+    whose stream states a matrix this does not know. The file is replaced atomically by a copy that differs only by
+    the new box. Raises ValueError, leaving the file untouched, when it is not a plain (non-fragmented) MP4 or
+    QuickTime file with a video track this can edit. ``color`` is ``resolve_video_color``'s, read before tagging.
     """
+    # Without ``color``, the stream is read now; call it before any box is added, which is what it reads through. A file
+    # that already has a box is left alone before that: resolving decodes frames, and its matrix would not be used.
+    if color is None:
+        if read_colr(video) is not None:
+            return False
+        color = resolve_video_color(video, shutil.which("ffmpeg"), find_ffprobe())
+    matrix = color.matrix_code
+    if matrix is None:
+        logger.warning("Not tagging {}: its stream states the matrix {}, which this cannot tag", video.name, color.matrix)
+        return False
     with video.open("rb") as file:
         size = os.fstat(file.fileno()).st_size
         top = _boxes(file, 0, size)
@@ -61,12 +77,12 @@ def tag_video_colors(video: Path) -> bool:
         brand = _major_brand(file, top)
         file.seek(moov.start)
         old = file.read(moov.end - moov.start)
-        patched = _patch_moov(old, moov, brand, media_after_moov=any(box.kind == b"mdat" and box.start > moov.start for box in top))
+        patched = _patch_moov(old, moov, _colr_box(brand, matrix, full_range=color.decode_range == "pc"), media_after_moov=any(box.kind == b"mdat" and box.start > moov.start for box in top))
     if patched is None:
         return False
     added = len(patched) - len(old)
     _replace(video, moov, patched, size)
-    logger.info("Tagged {} as BT.709 primaries, sRGB transfer, BT.709 matrix ({} bytes added)", video.name, added)
+    logger.info("Tagged {} as BT.709 primaries, sRGB transfer, {} matrix ({} bytes added)", video.name, color.matrix or "bt709", added)
     return True
 
 
@@ -94,6 +110,43 @@ def _boxes(file, start: int, end: int) -> list[Box]:
     return boxes
 
 
+@dataclass(frozen=True)
+class ColrTag:
+    """A video's ``colr`` box: its kind (``nclc`` or ``nclx``) and its H.273 codes; ``full_range`` only in ``nclx``."""
+
+    kind: str
+    primaries: int
+    transfer: int
+    matrix: int
+    full_range: bool | None
+
+    def text(self) -> str:
+        """For example ``nclc 1/13/1``."""
+        return f"{self.kind} {self.primaries}/{self.transfer}/{self.matrix}" + ("" if self.full_range is None else f", {'full' if self.full_range else 'limited'} range")
+
+
+def read_colr(video: Path) -> ColrTag | None:
+    """The first video track's ``colr`` box, or None when it has none (or states its color with an ICC profile);
+    raises ValueError when the file is not an MP4 or QuickTime file this can read."""
+    with video.open("rb") as file:
+        size = os.fstat(file.fileno()).st_size
+        moov = next((box for box in _boxes(file, 0, size) if box.kind == b"moov"), None)
+        if moov is None:
+            raise ValueError(f"{video} has no moov box")
+        file.seek(moov.start)
+        data = bytearray(file.read(moov.end - moov.start))
+    tree = _video_path(data, Box(b"moov", 0, moov.header, len(data)))
+    colr = _child(data, tree[-1], b"colr") if tree is not None else None
+    if colr is None:
+        return None
+    kind = bytes(data[colr.body : colr.body + 4])
+    if kind not in (b"nclc", b"nclx") or colr.end - colr.body < 10:
+        return None
+    primaries, transfer, matrix = struct.unpack(">HHH", data[colr.body + 4 : colr.body + 10])
+    full_range = bool(data[colr.body + 10] & 0x80) if kind == b"nclx" and colr.end - colr.body >= 11 else None
+    return ColrTag(kind.decode(), primaries, transfer, matrix, full_range)
+
+
 def _major_brand(file, top: list[Box]) -> bytes:
     ftyp = next((box for box in top if box.kind == b"ftyp"), None)
     if ftyp is None:
@@ -102,7 +155,7 @@ def _major_brand(file, top: list[Box]) -> bytes:
     return file.read(4)
 
 
-def _patch_moov(moov: bytes, box: Box, brand: bytes, *, media_after_moov: bool) -> bytes | None:
+def _patch_moov(moov: bytes, box: Box, colr: bytes, *, media_after_moov: bool) -> bytes | None:
     """``moov`` with a colr box added to the video sample entry, or None if it already has one."""
     data = bytearray(moov)
     tree = _video_path(data, Box(b"moov", 0, box.header, len(data)))
@@ -112,7 +165,6 @@ def _patch_moov(moov: bytes, box: Box, brand: bytes, *, media_after_moov: bool) 
         return None
     if _child(data, tree[0], b"mvex") is not None:
         raise ValueError("fragmented MP4 files are not supported")
-    colr = _colr_box(brand)
     entry = tree[-1]
     # Insert after the entry's last child box, which is before the 4 zero bytes QuickTime leaves at its end, then
     # raise every enclosing box's size.
@@ -126,12 +178,12 @@ def _patch_moov(moov: bytes, box: Box, brand: bytes, *, media_after_moov: bool) 
     return bytes(data)
 
 
-def _colr_box(brand: bytes) -> bytes:
-    """A QuickTime ``nclc`` box for ``qt`` files, an ISO ``nclx`` box (limited range) for the rest."""
-    codes = struct.pack(">HHH", PRIMARIES_BT709, TRANSFER_SRGB, MATRIX_BT709)
+def _colr_box(brand: bytes, matrix: int, *, full_range: bool) -> bytes:
+    """A QuickTime ``nclc`` box for ``qt`` files (it has no range field), an ISO ``nclx`` box for the rest."""
+    codes = struct.pack(">HHH", PRIMARIES_BT709, TRANSFER_SRGB, matrix)
     if brand == b"qt  ":
         return struct.pack(">I4s4s", 8 + 4 + len(codes), b"colr", b"nclc") + codes
-    return struct.pack(">I4s4s", 8 + 4 + len(codes) + 1, b"colr", b"nclx") + codes + b"\x00"
+    return struct.pack(">I4s4s", 8 + 4 + len(codes) + 1, b"colr", b"nclx") + codes + (b"\x80" if full_range else b"\x00")
 
 
 def _video_path(data: bytearray, moov: Box) -> list[Box] | None:

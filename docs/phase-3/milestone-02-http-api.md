@@ -25,7 +25,7 @@ In scope:
 Out of scope:
 
 - Creating, editing, deleting, or validating job text (Milestone 07)
-- The MCP server (Milestone 08)
+- The MCP server (Milestone 10)
 - TLS and users. A bind beyond loopback is the owner's explicit choice
   (`--allow-remote-bind`); an SSH tunnel is the safer way in from elsewhere.
 

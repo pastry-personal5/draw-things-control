@@ -21,6 +21,10 @@ GENERATE_FLAGS = (
     ("--remote", "switch"), ("--remote-url", "value"), ("--remote-port", "value"), ("--remote-tls", "negatable"), ("--remote-shared-secret", "value"),
     ("--cloud-compute", "switch"), ("--api-key", "value"), ("--cloud-api-base-url", "value"),
 )  # fmt: skip
+# draw-things-cli's --video-format values, and the one a .mov output (and every video job) gets when none is named
+# (owner decision); ProRes needs a .mov output.
+VIDEO_FORMATS = ("prores4444", "prores422hq", "h264", "hevc")
+DEFAULT_VIDEO_FORMAT = "prores4444"
 # The flags written with a value after them; the rest stand alone.
 VALUE_FLAGS = frozenset(flag for flag, kind in GENERATE_FLAGS if kind in ("value", "images"))
 # What each job override key (``config_override`` in a job file) becomes: the draw-things-cli flag it sets, if it has one,
@@ -157,7 +161,7 @@ class DrawThingsGenerateArguments:
         if not self.avc and (self.segment_frames is not None or self.cond_frames is not None):
             raise ValueError("--segment-frames and --cond-frames require --avc")
         if self.video_format is not None:
-            if self.video_format not in {"prores4444", "prores422hq", "h264", "hevc"}:
+            if self.video_format not in VIDEO_FORMATS:
                 raise ValueError("Unsupported --video-format")
             if self.output is None or self.output.suffix.lower() not in {".mov", ".mp4"}:
                 raise ValueError("--video-format requires a .mov or .mp4 output")

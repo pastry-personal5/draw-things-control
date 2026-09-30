@@ -140,7 +140,26 @@ ALTER TABLE queue ADD COLUMN total_runs INTEGER;
 UPDATE queue SET total_runs = (SELECT e.total_runs FROM executions e WHERE e.execution_number = queue.execution_number) WHERE execution_number IS NOT NULL
 """
 
+# Each media check of a video job's run (its input, the resized copy, the video, the last frame), as its
+# ``media_checked`` event said it: kept per run number rather than per run row, since the input's checks come before
+# the run's row exists. Deleted with its execution.
+SCHEMA_V7 = """
+CREATE TABLE media_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id INTEGER NOT NULL REFERENCES executions (id) ON DELETE CASCADE,
+    run INTEGER NOT NULL,
+    stage TEXT NOT NULL,
+    file TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '[]',
+    facts TEXT NOT NULL DEFAULT '{}',
+    at TEXT NOT NULL
+);
+CREATE INDEX media_checks_execution ON media_checks (execution_id, run)
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7)
 SCHEMA_VERSION = len(MIGRATIONS)

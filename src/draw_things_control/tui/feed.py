@@ -22,7 +22,7 @@ from draw_things_control.core.client_config import read_client_token
 from draw_things_control.core.cooldown import CooldownPolicy, parse_cooldown
 from draw_things_control.core.errors import DtcError
 from draw_things_control.core.network import grpc_target
-from draw_things_control.jobs.events import CooldownStarted, JobEvent, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, event_from_dict
+from draw_things_control.jobs.events import EVENT_TYPES_BY_KIND, CooldownStarted, JobEvent, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, event_from_dict
 from draw_things_control.state.queue import FINISHED_STATES
 from draw_things_control.tui.client import CALLER, CALLER_HEADER, GrpcStubFactory, MonitorStub
 from draw_things_control.tui.generated import monitor_pb2, monitor_pb2_grpc
@@ -123,6 +123,9 @@ class QueueFeed:
                 self._apply_queue_entry_changed(data)
             elif event.kind == "queue_park_changed":
                 self._apply_park_changed(data)
+            return
+        # A job event kind this TUI does not know, from a newer server, is skipped rather than ending the feed.
+        if event.kind not in EVENT_TYPES_BY_KIND:
             return
         await self._apply_job_event(event_from_dict(data))
 
