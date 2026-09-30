@@ -5,6 +5,32 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-30
 
+- **Design decision** [M10]: Reviewed the Milestone 10 plan against the code as Milestones 02 to 08 left it, and
+  Milestone 07's plan, before building it. The fixes to the plan:
+  - `get_queue_entry`'s wait cannot return the first message of `WatchQueueEntry`: the service always sends the
+    current snapshot first, so that read never waits. The first message is the baseline; the wait ends on a later one
+    that differs in state, execution, run, error, park reservation, hold, or `cooldown_until`, not in the step, which
+    changes with every diffusion step. The answer is `GET /v1/queue/{id}`'s, with `changed` added, since the snapshot
+    has no `last_run_seconds` or resume fields. A finished entry is answered at once, from `mcp_server/`'s own copy of
+    the finished states, which a test compares with `FINISHED_STATES`.
+  - An argument that goes into a URL path is refused when empty or only dots, and percent-encoded otherwise:
+    `quote(safe="")` leaves `..` as it is and `httpx` removes dot segments, so encoding alone would let `..` reach
+    another route. The API's grammar of IDs is not copied, since it accepts `q7` as well as `Q0007`.
+  - `mcp_server/` still imports nothing from the package. `cli/app.py` checks `--server-url` and resolves the token
+    file's path; `mcp_server/` reads the token itself, lazily, so `dtc mcp` starts with no server and no token file.
+    `dtc mcp` is the third import between front ends; the architecture test, `AGENTS.md`, and the development rules
+    name it. `mcp_server/generated/` joins `make proto`, `.gitignore`, and the Ruff and pyright excludes.
+  - `dtc mcp` removes `main()`'s log sinks, whose stdout sink would corrupt the protocol, and logs to stderr only.
+  - The capabilities are read again before a call when the last read is over 5 seconds old or failed, and a change
+    of `allow_write` sends MCP's list-changed notification. A client that ignores it gets Milestone 07's `writes_off`.
+  - The tools gain Milestone 07's arguments (`validate_job_text`'s `name`, `expected_sha256` for `replace_job` and
+    `delete_job`) and MCP's read-only and destructive annotations. Results are the API's JSON as it is; errors are
+    its error shape, plus `server_unreachable` and `unauthorized` for failures that never reached a route.
+  - The audit log stays out of the tools. Park, unpark, hold, release, and deleting executions, which the first draft
+    predates, are open questions for the owner.
+  - The SDK is on its 2.x line (2.2.0 on PyPI, for the 2026-07-28 protocol). Context7 was not available while
+    planning, so the plan states what the SDK must do, not its names; they are checked when the milestone is built.
+
 - **Owner decision** [M08]: From an interview on the code review's open items:
   - The last frame, which the next run reads, is 16-bit RGB from every source, H.264 included. Each sample holds one
     8-bit value `v` as `v * 256 + 128`, which `draw-things-cli` reads exactly by its high byte, and `v` adds back
