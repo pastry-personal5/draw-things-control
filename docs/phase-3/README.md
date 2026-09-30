@@ -58,7 +58,8 @@ typed tools on top of it.
   ([Milestone 08](milestone-08-video-format-and-color.md))
 - A chain's colors held to its first image: an unbiased handoff, the first
   image's gamut mapped, drift measured in every run, and, when a job asks, a
-  region-aware correction of each handoff and a corrected copy of each clip
+  region-aware correction of each handoff and a corrected copy of each clip,
+  re-anchored where the prompt pair changes unless the job says not to
   ([Milestone 09](milestone-09-color-preservation.md))
 
 ## Non-goals
@@ -105,7 +106,7 @@ typed tools on top of it.
 | 10 | [MCP server](milestone-10-mcp-server.md) | planned |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision); it is planned, and its place in the order is not decided yet. Milestone 08 is built and waits on the owner's chain run with the new handoff (a 16-bit last frame that `draw-things-cli` reads exactly); its place in the order is not decided yet either. The rest are built in the order 01, 02, 03, 04, 05, 06, 07, 10, 11 (owner decision):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and is built next, before Milestone 07 (owner decision, 2026-09-30). Milestone 08 was built after Milestone 06 and waits on the owner's chain run with the new handoff (a 16-bit last frame that `draw-things-cli` reads exactly). The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -117,10 +118,15 @@ Milestone 09, left open until 2026-09-30, is color preservation (owner decision)
 5. Milestone 05 lets people park a running job at the end of its run, and
    hold and release the queue.
 6. Milestone 06 lets people delete executions from the history.
-7. After Milestone 07, agents can draft and write jobs.
-8. Milestone 10 adds MCP.
-9. Milestone 11 reviews the whole surface, `dtc queue` included, adds the
-   security suite, and closes any gaps it finds.
+7. Milestone 08 makes video jobs write ProRes 4444 and hands the next run a
+   last frame `draw-things-cli` reads exactly.
+8. Milestone 09 holds a chain's colors to its first image: it removes the
+   pipeline's own biases, measures drift in every run, and corrects it when
+   a job asks.
+9. After Milestone 07, agents can draft and write jobs.
+10. Milestone 10 adds MCP.
+11. Milestone 11 reviews the whole surface, `dtc queue` included, adds the
+    security suite, and closes any gaps it finds.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before
 anything can be submitted or written. Each milestone documents what it adds
@@ -133,7 +139,7 @@ store, and the run lock, in the layout that
 [Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md)
 gives them. The server is one more front end beside the CLI and the TUI.
 What changes below it: the state store gains tables and columns by forward
-migration (schemas 4, 5, and 6), `JobExecutor` can start a chain at run *k*,
+migration (schemas 4 to 8), `JobExecutor` can start a chain at run *k*,
 the job parser can take a stored base configuration, and a job's log file is
 scoped to that job.
 

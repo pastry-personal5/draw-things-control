@@ -199,9 +199,11 @@ Vision has no skin segmentation. What it has, through
 | `VNGeneratePersonInstanceMaskRequest` | macOS 14 | A mask per person, up to four |
 | `VNDetectFaceLandmarksRequest` | macOS 10.13 | Per face: contour, eyes, brows, nose, lips, as normalized points |
 
-A skin mask can be built from these: the face's own skin (inside the face contour, outside the eyes, brows, and
-lips) gives a sample of this chain's skin colors, a Gaussian over those colors in Oklab gives a likelihood, and the
-person mask confines it. That needs no model weights, runs on the Neural Engine, and follows each person's own skin
+A skin mask can be built from these: the face's own skin gives a sample of this chain's skin colors, a Gaussian over
+those colors in Oklab gives a likelihood, and the person mask confines it. `faceContour` runs from one cheek over the
+chin to the other, open at the top, so the face's skin is taken as the hull of the contour and the brows, less the
+eyes, the brows, and the lips. Landmark points are relative to the face's bounding box, with the origin at its lower
+left ([`VNFaceLandmarks2D`](https://developer.apple.com/documentation/vision/vnfacelandmarks2d)). That needs no model weights, runs on the Neural Engine, and follows each person's own skin
 rather than a fixed skin-color range. Draw Things itself runs only on Apple platforms, so a macOS-only dependency
 costs this project nothing.
 

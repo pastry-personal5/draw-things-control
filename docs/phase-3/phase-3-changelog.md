@@ -5,6 +5,67 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-30
 
+- **Owner decision** [M09]: From an interview on the Milestone 09 plan's review:
+  - Milestone 09 is built next, before Milestone 07, which answers the plan's open question on its place. The order
+    is 01 to 06, 08, 09, 07, 10, 11.
+  - A failed correction warns and hands off the uncorrected frame, and the run succeeds. Failing the run was offered.
+  - A stop or park during the correction takes effect when it ends, as one during the last frame's extraction does.
+    Aborting with the uncorrected handoff, and aborting with the run interrupted, were offered.
+  - Every job with an input, video or image, resized or not, gives `draw-things-cli` a normalized 8-bit sRGB copy for
+    run 1. Video jobs only, and only jobs that resize (today), were offered.
+  - Re-anchoring is on by default: a run whose prompt pair differs from the previous run's makes its own input the
+    anchor, and `color.reanchor: never` turns it off. An opt-in key and no re-anchoring were offered first. Asked
+    again, knowing that alternating pairs (as in `example-job.yaml`) then re-anchor at every run, so `first` and
+    `blend` act as `previous` there, the owner kept every change re-anchoring at the run's input. An anchor per
+    prompt pair, set at the end of its first run or at its input, was offered.
+  - The first image's file stays when its execution is deleted, as outputs do. Deleting it with the log and the
+    manifest was offered.
+  - Gamut compression starts at 90% of the sRGB edge's chroma and goes only as far as the source profile reaches. A
+    knee at 80% (the plan's), and clipping at constant hue with no knee, were offered.
+  - Upstream reports on `pixelByte`'s truncation and the 16-bit read are drafted after step 0 confirms the installed
+    build. Drafting now, and no reports, were offered.
+
+- **Design decision** [M09]: Reviewed the Milestone 09 plan against the code as Milestone 08 left it. The fixes:
+  - The handoff is `<clip>-last-frame.png` (`last_frame_path`), so the raw frame is `<clip>-last-frame-raw.png`, and
+    the copy is `<clip>-cc.<ext>`, since `mp4` originals exist. `next_output_path` checks both new names, as it checks
+    the last frame's.
+  - The first image is named from the manifest's stem, `<stem>-first-image.png`, since `<job>-anchor.png` would
+    collide between executions of one job; `job_file_stem` checks it. It is kept for every video execution, since the
+    metrics need it. A resume takes the first image of the execution it resumes and, since the anchor can move, the
+    anchor of the run it continues after, so each run records its anchor (`runs.anchor` in schema 8). An execution
+    recorded before this milestone has no first image: its resume leaves the since-the-first-image comparison out,
+    with a note, and its snapshot has no `color` block to need one.
+  - The tone curve passes through black and white as well as the three percentiles. Identity beyond the 10th and 90th
+    percentiles, as drafted, jumps wherever they move.
+  - Only the anchor's pull is ramped over a clip; each frame's fit to the run's input applies in full. Ramping both,
+    as the draft could be read, would leave the middle of each clip mostly uncorrected, and applying the fit at frame
+    0 brings it to the input's statistics, which makes the join closer.
+  - The corrected handoff takes the dither and `v * 256 + 128` only: its values already carry the half level, and
+    adding it again would lift each handoff by half a level. Its rounding is a numpy twin of Milestone 08's `geq`,
+    tested against it.
+  - The half level added to decoded frames tapers at black, as the handoff's does, and PNGs the tool wrote are read by
+    their high byte, as `draw-things-cli` reads them, without it.
+  - Vision's `faceContour` is open, one cheek over the chin to the other (Apple's documentation, through Context7),
+    so the face's skin is the hull of the contour and the brows, less the eyes, brows, and lips. Landmark points are
+    relative to the face's box, from its lower left.
+  - A 16-bit RGB first image is read through ffmpeg (Pillow 12.3 opens it as 8-bit, checked); an image job, which
+    does not need ffmpeg, keeps Pillow's high bytes when it is missing, with a note.
+  - The override keys reach `draw-things-cli` through `core/arguments.py`'s `OVERRIDE_TARGETS`, not `overrides.py`,
+    which only checks them. `monitor.proto` needs no change, since events travel as JSON. The plan now names the
+    events, the manifest, the recorder, the run columns, and the history import that carry the new fields.
+  - `first_weight` is refused unless `anchor` is `blend`, and `reanchor` unless it is `first` or `blend`. The copy
+    states what Milestone 08's tagger writes: BT.709 primaries, the sRGB transfer, the BT.709 matrix, limited range.
+  - The correction has its own time limit, and the API's `max_job_seconds` worst case adds it to each run of a job
+    that corrects, so the limit stays a bound.
+  - The goal no longer says Draw Things' files are never changed: Milestone 08's tagger adds a `colr` box. They are
+    never re-encoded and no pixel changes.
+  - The correction returns to sRGB without a knee: a color it leaves inside sRGB passes unchanged, and only one it
+    pushes outside is brought onto the edge at constant lightness and hue. Layer 2's knee, as drafted here too,
+    would move near-edge colors on every run, even at identity, and the chain would compound the loss.
+  - A `t2v` job has no input, so its first image is run 1's last frame, the first frame any of its runs is given, and
+    its run 1 is measured within itself and not corrected. Refusing `first` and `blend` in `t2v` jobs was the
+    alternative; it would leave text-to-video chains with no correction toward a fixed reference.
+
 - **Design decision** [M10]: Reviewed the Milestone 10 plan against the code as Milestones 02 to 08 left it, and
   Milestone 07's plan, before building it. The fixes to the plan:
   - `get_queue_entry`'s wait cannot return the first message of `WatchQueueEntry`: the service always sends the
