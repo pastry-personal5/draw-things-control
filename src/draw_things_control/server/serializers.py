@@ -53,6 +53,8 @@ def job_detail(job: JobDefinition, source_text: str) -> dict[str, Any]:
         "seed_source": seed_source,
         "cooldown": job.cooldown.as_dict(),
         "cooldown_source": job.cooldown_source,
+        # The color correction (Milestone 09): {"anchor": "none"} for a job without one.
+        "color": job.color.as_dict(),
     }
 
 
@@ -86,6 +88,9 @@ def run_summary(run: RunRow) -> dict[str, Any]:
         "output_width": run.output_width,
         "output_height": run.output_height,
         "output_frames": run.output_frames,
+        # The corrected copy's file name, and the file the run's colors were held to (Milestone 09).
+        "corrected_output": run.corrected_output,
+        "anchor": run.anchor,
         "command": redact_command(run.command),
         "checks": [media_check(check) for check in run.checks],
     }
@@ -132,6 +137,8 @@ def execution_detail(row: ExecutionRow) -> dict[str, Any]:
         "config_file": row.config_file,
         "manifest": row.manifest_path,
         "log": row.log_path,
+        # The chain's first image, which its color checks compare with (Milestone 09); None before it was kept.
+        "first_image": row.first_image,
         "runs": [run_summary(run) for run in row.runs],
         # Checks made before a run that never started (a stop during the input checks); each names its run.
         "checks": [unstarted_check(check) for check in row.checks],
@@ -147,6 +154,7 @@ def execution_outputs(row: ExecutionRow) -> dict[str, Any]:
 def _run_output(execution: ExecutionRow, run: RunRow) -> dict[str, Any]:
     output_path = execution.run_file(run.output)
     last_frame_path = execution.run_file(run.last_frame)
+    corrected_path = execution.run_file(run.corrected_output)
     output_exists = output_path is not None and output_path.exists()
     return {
         "number": run.number,
@@ -159,6 +167,8 @@ def _run_output(execution: ExecutionRow, run: RunRow) -> dict[str, Any]:
         "output_frames": run.output_frames,
         "last_frame": str(last_frame_path) if last_frame_path is not None else None,
         "last_frame_exists": last_frame_path is not None and last_frame_path.exists(),
+        "corrected_output": str(corrected_path) if corrected_path is not None else None,
+        "corrected_output_exists": corrected_path is not None and corrected_path.exists(),
     }
 
 

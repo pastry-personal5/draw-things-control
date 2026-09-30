@@ -96,16 +96,17 @@ class MediaChecker:
         ffmpeg = self._find_ffmpeg()
         return ffmpeg, find_ffprobe(ffmpeg)
 
-    def input(self, path: Path, *, resized: bool) -> MediaCheck:
-        """The job's input (or a resume's), before run 1; ``resized`` when the job gives draw-things-cli a resized copy."""
-        return _guarded("input", str(path), lambda: check_input(path, resized=resized))
+    def input(self, path: Path) -> MediaCheck:
+        """The job's input, before run 1; draw-things-cli reads its copy, never the file itself."""
+        return _guarded("input", str(path), lambda: check_input(path))
 
     def handoff(self, path: Path) -> MediaCheck:
         """A resume's input: the chain's own last frame, which it continues from, before the resumed run."""
         return _guarded("input", str(path), lambda: check_handoff(path))
 
     def resized_input(self, source: Path, copy: Path, plan: ResizePlan) -> MediaCheck:
-        return _guarded("resized_input", copy.name, lambda: check_resized_input(source, copy, plan))
+        """Run 1's copy of the input, resized or at scale 1, against the source read as the copy was made."""
+        return _guarded("resized_input", copy.name, lambda: check_resized_input(source, copy, plan, self._find_ffmpeg()))
 
     def probe(self, video: Path) -> VideoProbe | str:
         """The video as its writer left it, read before the tagger adds a box; the reason as text when it cannot be read."""
@@ -131,6 +132,22 @@ class MediaChecker:
 
     def last_frame(self, png: Path, video: VideoProbe | None, color: StreamColor) -> MediaCheck:
         return _guarded("last_frame", png.name, lambda: check_last_frame(png, video, color))
+
+    def color_drift(self, video: Path, color: StreamColor, run_input: Path | None, first_image: Path | None, notes: tuple[str, ...] = ()) -> MediaCheck:
+        """The run's color drift (Milestone 09): its frames decoded with ``color``, against its input and the first image."""
+
+        def check() -> MediaCheck:
+            # Imported here, as LittleCMS is, so a process that never checks a run does not load them.
+            from draw_things_control.jobs.media.clip_frames import probe_clip
+            from draw_things_control.jobs.media.drift import check_color_drift
+
+            ffmpeg, ffprobe = self._tools()
+            if ffmpeg is None or ffprobe is None:
+                raise ValueError("ffmpeg or ffprobe was not found")
+            info = probe_clip(video, ffprobe)
+            return check_color_drift(video, color, ffmpeg, (info.width, info.height), run_input=run_input, first_image=first_image, notes=notes)
+
+        return _guarded("color_drift", video.name, check)
 
 
 def _guarded(stage: str, file: str, check: Callable[[], MediaCheck]) -> MediaCheck:
@@ -222,7 +239,9 @@ def _is_srgb_profile(name: str | None) -> bool:
     return name is not None and name.startswith("sRGB")
 
 
-def check_input(path: Path, *, resized: bool) -> MediaCheck:
+def check_input(path: Path) -> MediaCheck:
+    """The job's first input. draw-things-cli reads its copy, upright 8-bit sRGB RGB at the job's size (owner
+    decision, Milestone 09), so an input that is not plain 8-bit sRGB RGB is a note, not a warning."""
     facts = image_facts(path)
     warnings: list[str] = []
     notes: list[str] = []
@@ -232,13 +251,11 @@ def check_input(path: Path, *, resized: bool) -> MediaCheck:
         warnings.append("It is CMYK with no ICC profile, so its conversion to RGB is a plain formula and colors may shift.")
     if ("gAMA" in chunks or "cHRM" in chunks) and not profile and "sRGB" not in chunks:
         warnings.append("It states its color with gAMA or cHRM only, which is not read: its values are taken as sRGB.")
-    if resized:
-        if profile and not _is_srgb_profile(profile):
-            notes.append(f"The resized copy converts it from {profile} to sRGB.")
-    else:
-        plain = facts["mode"] == "RGB" and facts["bit_depth"] == 8 and not facts["alpha"] and (not profile or _is_srgb_profile(profile)) and facts.get("exif_orientation") in (None, 1)
-        if not plain:
-            warnings.append("The job makes no resized copy, so draw-things-cli reads it as it is, not as upright 8-bit sRGB RGB.")
+    if profile and not _is_srgb_profile(profile):
+        notes.append(f"The copy converts it from {profile} to sRGB.")
+    plain = facts["mode"] == "RGB" and facts["bit_depth"] == 8 and not facts["alpha"] and (not profile or _is_srgb_profile(profile)) and facts.get("exif_orientation") in (None, 1)
+    if not plain:
+        notes.append("draw-things-cli reads its copy, upright 8-bit sRGB RGB, not the file itself.")
     return MediaCheck("input", str(path), _image_text(facts), tuple(warnings), tuple(notes), facts)
 
 
@@ -254,45 +271,83 @@ def check_handoff(path: Path) -> MediaCheck:
     return MediaCheck("input", str(path), f"{_image_text(facts)}; the chain's own last frame", tuple(warnings), (), facts)
 
 
-def check_resized_input(source: Path, copy: Path, plan: ResizePlan) -> MediaCheck:
-    """The resized copy: 8-bit RGB PNG at the planned size, and the source's mean color kept, compared in the space the
-    resize worked in (linear light when downscaling, sRGB values otherwise), over the picture only, bars left out."""
+def check_resized_input(source: Path, copy: Path, plan: ResizePlan, ffmpeg: str | None = None) -> MediaCheck:
+    """Run 1's copy: 8-bit RGB PNG at the planned size, and the source's mean color kept, compared in the space the
+    resize worked in (linear light when downscaling, sRGB values otherwise), over the picture only, bars left out. The
+    source is read as the copy was made (``read_srgb``), so the check also says how its values became sRGB."""
     import numpy as np
-    from PIL import ImageOps
 
-    from draw_things_control.jobs.inputs.resize import SRGB_TO_LINEAR, to_srgb
+    from draw_things_control.jobs.inputs.resize import read_srgb
 
     facts = image_facts(copy)
     warnings: list[str] = []
+    notes: list[str] = []
     if facts["format"] != "PNG" or facts.get("color_type") != "RGB" or facts["bit_depth"] != 8:
         warnings.append(f"It is {facts['bit_depth']}-bit {facts.get('color_type') or facts['mode']}, not 8-bit RGB PNG.")
     if (facts["width"], facts["height"]) != plan.target_size:
         warnings.append(f"It is {facts['width']}x{facts['height']}, not the planned {plan.target_size[0]}x{plan.target_size[1]}.")
-    with Image.open(source) as opened:
-        original = image_facts(source)
-        converted = to_srgb(ImageOps.exif_transpose(opened))
-    left, top, right, bottom = plan.box if plan.box is not None else (0.0, 0.0, float(converted.width), float(converted.height))
+    original = image_facts(source)
+    values, report = read_srgb(source, ffmpeg)
+    height, width = values.shape[:2]
+    left, top, right, bottom = plan.box if plan.box is not None else (0.0, 0.0, float(width), float(height))
     picture_width, picture_height = plan.picture_size
     downscaling = max((right - left) / picture_width, (bottom - top) / picture_height) > 1
-    source_pixels = np.asarray(converted)[int(round(top)) : int(round(bottom)), int(round(left)) : int(round(right))]
+    source_pixels = values[int(round(top)) : int(round(bottom)), int(round(left)) : int(round(right))]
     with Image.open(copy) as written:
-        copy_pixels = np.asarray(written.convert("RGB"))
+        copy_pixels = np.asarray(written.convert("RGB"), dtype=np.float32) / 255
     x = (plan.target_size[0] - picture_width) // 2
     y = (plan.target_size[1] - picture_height) // 2
     copy_pixels = copy_pixels[y : y + picture_height, x : x + picture_width]
-    # Each channel's mean from its 256-level histogram, so a large photo needs no float copy of its pixels.
-    weights = SRGB_TO_LINEAR if downscaling else np.arange(256, dtype=np.float64)
-    before, after = (np.array([np.bincount(pixels[..., index].ravel(), minlength=256) @ weights / max(pixels[..., index].size, 1) for index in range(3)]) for pixels in (source_pixels, copy_pixels))
-    if downscaling:
-        before, after = _srgb_level(before), _srgb_level(after)
+    # One channel at a time, so a large photo needs one more float channel, not a copy of all three.
+    before, after = (np.array([_channel_mean(pixels[..., index], downscaling) for index in range(3)]) for pixels in (source_pixels, copy_pixels))
     drift = [round(float(value), 2) for value in after - before]
     facts["mean_color_drift_levels"] = drift
+    facts["source"] = _source_facts(report)
     largest = max(abs(value) for value in drift)
     if largest > DRIFT_LEVELS:
         warnings.append(f"Its mean color moved by {', '.join(f'{value:+.1f}' for value in drift)} levels (R, G, B) from the source's, more than {DRIFT_LEVELS:.0f}.")
+    _source_messages(report, warnings, notes)
     mean_color = f"mean color moved {largest:.1f} levels" if largest > DRIFT_LEVELS else f"mean color kept within {largest:.1f} levels"
-    summary = f"{_image_text(facts)}; {_conversion_text(original)}; {plan.fit} to {plan.target_size[0]}x{plan.target_size[1]}; {mean_color}"
-    return MediaCheck("resized_input", copy.name, summary, tuple(warnings), (), facts)
+    summary = f"{_image_text(facts)}; {_conversion_text(original, report)}; {plan.fit} to {plan.target_size[0]}x{plan.target_size[1]}; {mean_color}"
+    return MediaCheck("resized_input", copy.name, summary, tuple(warnings), tuple(notes), facts)
+
+
+def _channel_mean(channel: Any, linear: bool) -> float:
+    """A channel's mean in 8-bit sRGB levels, averaged in linear light when ``linear``."""
+    import numpy as np
+
+    if not linear:
+        return float(np.mean(channel, dtype=np.float64)) * 255
+    return float(_srgb_level(np.mean(_srgb_to_linear(channel), dtype=np.float64)))
+
+
+def _srgb_to_linear(values: Any) -> Any:
+    import numpy as np
+
+    return np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
+
+
+def _source_facts(report: Any) -> dict[str, Any]:
+    gamut = report.gamut
+    return {
+        "profile": report.profile,
+        "conversion": report.conversion,
+        "sixteen_bit": report.sixteen_bit,
+        "gamut": None if gamut is None else {"beyond_knee": gamut.beyond_knee, "largest_chroma_reduction": round(gamut.largest_reduction, 4), "onto_edge": gamut.onto_edge},
+    }
+
+
+def _source_messages(report: Any, warnings: list[str], notes: list[str]) -> None:
+    """What the reading of the source did that the owner should know."""
+    if report.sixteen_bit == "high_bytes":
+        notes.append("ffmpeg was not found, so its 16-bit samples were read by their high bytes, about half a level dark.")
+    if report.conversion == "littlecms":
+        notes.append(f"{report.profile} is not a matrix-and-curves profile: LittleCMS converted it with the perceptual intent, at 8 bits, and clipped what was still outside sRGB.")
+    elif report.conversion == "failed":
+        warnings.append(f"Its profile ({report.profile}) could not be used, so its values were taken as sRGB and colors may shift.")
+    gamut = report.gamut
+    if gamut is not None and gamut.beyond_knee:
+        notes.append(f"{gamut.beyond_knee} pixels beyond 90% of the sRGB edge's chroma were brought in at constant lightness and hue; the largest chroma reduction was {gamut.largest_reduction:.3f} (Oklab).")
 
 
 def _srgb_level(linear: Any) -> Any:
@@ -302,17 +357,25 @@ def _srgb_level(linear: Any) -> Any:
     return np.where(linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055) * 255
 
 
-def _conversion_text(original: dict[str, Any]) -> str:
-    """What the resize did to the source's color."""
+def _conversion_text(original: dict[str, Any], report: Any) -> str:
+    """What the copy did to the source's color."""
     steps: list[str] = []
     profile = original.get("icc_profile")
-    if profile and not _is_srgb_profile(profile):
-        steps.append(f"converted from {profile} to sRGB")
+    if report.conversion == "matrix":
+        steps.append(f"converted from {profile} to sRGB with gamut mapping")
+    elif report.conversion == "littlecms":
+        steps.append(f"converted from {profile} to sRGB by LittleCMS")
+    elif report.conversion == "failed":
+        steps.append(f"{profile} not usable, values kept as sRGB")
     elif profile:
         steps.append("sRGB profile, values kept")
     else:
         steps.append("no profile, values kept as sRGB")
-    if original["bit_depth"] > 8:
+    if report.sixteen_bit == "ffmpeg":
+        steps.append("16-bit read by ffmpeg and rounded to 8")
+    elif report.sixteen_bit == "high_bytes":
+        steps.append("16-bit read by its high bytes")
+    elif original["bit_depth"] > 8:
         steps.append(f"{original['bit_depth']}-bit scaled to 8")
     if original["alpha"]:
         steps.append("transparency flattened onto black")

@@ -68,11 +68,11 @@ class ExecutionRepository:
         with self._database.transaction() as connection:
             self._insert_run(connection, execution_id, number, new)
 
-    def finish_run(self, execution_id: int, number: int, *, status: str, exit_code: int | None, seconds: float | None, output: str | None, last_frame: str | None, output_width: int | None = None, output_height: int | None = None, output_frames: int | None = None) -> None:
+    def finish_run(self, execution_id: int, number: int, *, status: str, exit_code: int | None, seconds: float | None, output: str | None, last_frame: str | None, output_width: int | None = None, output_height: int | None = None, output_frames: int | None = None, corrected_output: str | None = None) -> None:
         with self._database.transaction() as connection:
             connection.execute(
-                "UPDATE runs SET status = ?, exit_code = ?, seconds = ?, output = ?, last_frame = ?, output_width = ?, output_height = ?, output_frames = ? WHERE execution_id = ? AND number = ?",
-                (status, exit_code, seconds, output, last_frame, output_width, output_height, output_frames, execution_id, number),
+                "UPDATE runs SET status = ?, exit_code = ?, seconds = ?, output = ?, last_frame = ?, output_width = ?, output_height = ?, output_frames = ?, corrected_output = ? WHERE execution_id = ? AND number = ?",
+                (status, exit_code, seconds, output, last_frame, output_width, output_height, output_frames, corrected_output, execution_id, number),
             )
 
     def add_check(self, execution_id: int, check: MediaCheckRow) -> None:

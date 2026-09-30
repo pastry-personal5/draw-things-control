@@ -37,7 +37,7 @@ GOLDEN = Path(__file__).parent / "golden"
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 # A timestamp's offset depends on the machine's time zone, and the job log's clock is the real one.
 OFFSET = re.compile(r"(\d{2}:\d{2}:\d{2})[+-]\d{2}:\d{2}")
-TEMPORARY_COPY = re.compile(r"[^\s'\"]*/draw-things-control-\w+/")
+TEMPORARY_COPY = re.compile(r"[^\s'\"=]*/draw-things-control-\w+/")
 LOG_TIME = re.compile(r"(?m)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}")
 NOT_KEPT = {"id", "execution_id", "started_epoch", "finished_epoch"}
 

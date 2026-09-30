@@ -109,7 +109,7 @@ class TestExecutor(JobExecutor):
     knobs: Knobs
 
 
-def job_executor(*, runner_factory: Callable[..., Any], find_executable: Callable[[str], str | None], frame_extractor: Callable[[Path, Path], None], require_ffmpeg: Callable[[], object], video_tagger: Callable[[Path], bool] | None = None, require_ffprobe: Callable[[], object] | None = None, output_measurer: Callable[[Path], MediaInfo] | None = None, checker: Any = None, **options: Any) -> TestExecutor:
+def job_executor(*, runner_factory: Callable[..., Any], find_executable: Callable[[str], str | None], frame_extractor: Callable[[Path, Path], None], require_ffmpeg: Callable[[], object], video_tagger: Callable[[Path], bool] | None = None, require_ffprobe: Callable[[], object] | None = None, output_measurer: Callable[[Path], MediaInfo] | None = None, checker: Any = None, corrector: Any = None, **options: Any) -> TestExecutor:
     """A JobExecutor built from the tools a test gives, with its ``knobs`` to change them later."""
     knobs = Knobs(runner_factory, find_executable, frame_extractor, require_ffmpeg)
     knobs.video_tagger, knobs.require_ffprobe, knobs.output_measurer = video_tagger, require_ffprobe, output_measurer
@@ -124,7 +124,7 @@ def job_executor(*, runner_factory: Callable[..., Any], find_executable: Callabl
     def measure(output: Path) -> MediaInfo:
         return knobs.output_measurer(output) if knobs.output_measurer is not None else MediaInfo(None, None, None)
 
-    media = MediaTools(require_ffmpeg=lambda: knobs.require_ffmpeg(), frame_extractor=lambda video, png, _color: knobs.frame_extractor(video, png), require_ffprobe=probe, video_tagger=tag, output_measurer=measure, checker=checker)
+    media = MediaTools(require_ffmpeg=lambda: knobs.require_ffmpeg(), frame_extractor=lambda video, png, _color: knobs.frame_extractor(video, png), require_ffprobe=probe, video_tagger=tag, output_measurer=measure, checker=checker, corrector=corrector)
     executor = TestExecutor(lambda *args: knobs.runner_factory(*args), lambda name: knobs.find_executable(name), media, **options)
     executor.knobs = knobs
     return executor

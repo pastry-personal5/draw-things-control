@@ -68,6 +68,13 @@ class ApiRulesTests(JobTestCase):
             check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=35_999))
         self.assertEqual(context.exception.key, "max_job_seconds")
 
+    def test_a_correcting_jobs_worst_case_adds_the_correction_limit_to_each_run(self) -> None:
+        # 7*3600 + 6*1800 = 36,000s, and 7 corrections of 17 frames at 10 + 17 seconds each: 36,189s (Milestone 09).
+        job = self.job(run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"}, color={"anchor": "blend"}, config_override={"frame_count": 17})
+        check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=36_189))
+        with self.assertRaises(LimitExceededError):
+            check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=36_188))
+
     def test_queue_not_full_at_the_limit_is_accepted_and_one_over_is_refused(self) -> None:
         check_queue_not_full(19, ApiLimits(max_queued_jobs=20))
         with self.assertRaises(LimitExceededError) as context:

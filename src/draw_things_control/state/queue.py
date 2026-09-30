@@ -89,6 +89,9 @@ class NewQueueEntry:
     resume_first_run: int | None = None
     resume_input: str | None = None
     resume_seed: int | None = None
+    # The resumed execution's first image and the anchor of the run it continues after (schema 8, Milestone 09).
+    resume_first_image: str | None = None
+    resume_anchor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,9 @@ class QueueRow:
     # in the linked execution (list_active, list_finished), 0 from get()/by_number()/list(), which do not.
     total_runs: int | None = None
     succeeded: int = 0
+    # The resumed execution's first image and the anchor of the run it continues after (schema 8, Milestone 09).
+    resume_first_image: str | None = None
+    resume_anchor: str | None = None
 
     @property
     def label(self) -> str:
@@ -167,13 +173,15 @@ class QueueRow:
             resume_first_run=row["resume_first_run"],
             resume_input=row["resume_input"],
             resume_seed=row["resume_seed"],
+            resume_first_image=row["resume_first_image"],
+            resume_anchor=row["resume_anchor"],
             error=row["error"],
             total_runs=row["total_runs"],
             succeeded=(exec_first_run or 1) - 1 + succeeded_count,
         )
 
 
-QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed")
+QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed", "resume_first_image", "resume_anchor")
 # list_active, list_finished, and by_number all join in the linked execution to compute "succeeded"
 # (QueueRow.from_row's formula) rather than one executions.by_number() lookup per row (list_active/list_finished:
 # the same reasoning that moved _queued_count to a bare COUNT(*), since a list read can run on every relevant

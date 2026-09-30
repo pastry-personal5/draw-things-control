@@ -132,11 +132,18 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
         first_run=first_run,
         resumes=resumes,
         settings=_settings(manifest),
+        # Written since Milestone 09; older manifests have none.
+        first_image=_text(manifest.get("first_image")),
     )
     epoch(execution.started_at)
     if finished_at is not None:
         epoch(finished_at)
     return execution, runs, first_run
+
+
+def _text(value: Any) -> str | None:
+    """A manifest's optional file name or path; anything but non-empty text reads as none."""
+    return value if isinstance(value, str) and value else None
 
 
 def _convert_run(run: dict[str, Any]) -> NewRun:
@@ -159,6 +166,8 @@ def _convert_run(run: dict[str, Any]) -> NewRun:
         output_width=positive_whole(run.get("output_width")),
         output_height=positive_whole(run.get("output_height")),
         output_frames=positive_whole(run.get("output_frames")),
+        anchor=_text(run.get("anchor")),
+        corrected_output=_text(run.get("corrected_output")),
     )
     epoch(converted.started_at)
     return converted

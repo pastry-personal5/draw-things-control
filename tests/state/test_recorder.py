@@ -89,10 +89,10 @@ class RecorderTests(JobTestCase):
         self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=False)
         [row] = self.store.executions.page()
         runs = self.stored(row.id).runs
-        self.assertEqual([[check.stage for check in run.checks] for run in runs], [["input", "output", "last_frame"], ["output", "last_frame"]])
-        output = runs[0].checks[1]
+        self.assertEqual([[check.stage for check in run.checks] for run in runs], [["input", "resized_input", "output", "last_frame", "color_drift"], ["output", "last_frame", "color_drift"]])
+        output = runs[0].checks[2]
         self.assertEqual((output.run, output.file, output.summary, output.verdict, output.notes), (1, runs[0].output, "a video", "warning", ("A warning.",)))
-        self.assertEqual(run_summary(runs[0])["checks"][1], {"stage": "output", "file": runs[0].output, "summary": "a video", "verdict": "warning", "notes": ["A warning."], "facts": {}, "at": output.at})
+        self.assertEqual(run_summary(runs[0])["checks"][2], {"stage": "output", "file": runs[0].output, "summary": "a video", "verdict": "warning", "notes": ["A warning."], "facts": {}, "at": output.at})
         self.assertIn(f"output check: {runs[0].output}: a video: warning. A warning.", execution_text(self.stored(row.id)).plain)
         self.store.executions.delete([row.execution_number], in_use={})
         self.assertEqual(self.store._database.connection().execute("SELECT COUNT(*) FROM media_checks").fetchone()[0], 0)

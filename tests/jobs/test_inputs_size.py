@@ -2,7 +2,7 @@
 
 import unittest
 
-from draw_things_control.jobs.inputs.size import floor_to_step, read_image_info, resize_plan
+from draw_things_control.jobs.inputs.size import copy_plan, floor_to_step, read_image_info, resize_plan
 from draw_things_control.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data
 
@@ -64,21 +64,25 @@ class ResizePlanTests(unittest.TestCase):
         self.assertEqual((plan.target_size, plan.fit, plan.scaled_size, plan.crop_percent), ((1280, 704), "letterbox", (1252, 704), None))
         self.assertIn("letterboxed to 1280x704", plan.describe("photo.jpg"))
 
-    def test_upright_input_at_the_target_needs_no_copy(self) -> None:
+    def test_upright_input_at_the_target_is_copied_at_scale_1(self) -> None:
         plan = self.plan((832, 448), width=832, height=448)
-        self.assertEqual((plan.fit, plan.needs_copy), ("none", False))
-        self.assertEqual(plan.describe("photo.jpg"), "Input photo.jpg is already 832x448; no resize needed")
-        self.assertFalse(self.plan((832, 448), width=832, orientation=1).needs_copy)
-        # Values that floor to the input's size, and a zero crop limit, still need no copy.
+        self.assertEqual(plan.fit, "none")
+        self.assertEqual(plan.describe("photo.jpg"), "Input photo.jpg is already 832x448; copied as 8-bit sRGB for run 1")
+        self.assertEqual(self.plan((832, 448), width=832, orientation=1).fit, "none")
+        # Values that floor to the input's size, and a zero crop limit, need no resampling.
         for plan in (self.plan((832, 448), width=850), self.plan((832, 448), height=470), self.plan((832, 448), width=850, height=470), self.plan((832, 448), width=832, max_crop=0)):
             with self.subTest(desired=(plan.desired_width, plan.desired_height)):
-                self.assertEqual((plan.target_size, plan.fit, plan.needs_copy, plan.box), ((832, 448), "none", False, None))
+                self.assertEqual((plan.target_size, plan.fit, plan.box), ((832, 448), "none", None))
 
     def test_rotated_input_at_the_target_gets_an_upright_copy(self) -> None:
         plan = self.plan((832, 448), width=832, orientation=6)
-        self.assertTrue(plan.needs_copy)
         self.assertEqual((plan.fit, plan.scaled_size, plan.crop_percent), ("rotate", (832, 448), 0.0))
-        self.assertEqual(plan.describe("photo.jpg"), "Input photo.jpg (EXIF orientation 6) will be rotated upright; already 832x448")
+        self.assertEqual(plan.describe("photo.jpg"), "Input photo.jpg (EXIF orientation 6) will be rotated upright and copied as 8-bit sRGB; already 832x448")
+
+    def test_a_job_without_a_desired_size_gets_a_scale_1_copy_plan(self) -> None:
+        plan = copy_plan((832, 448), None)
+        self.assertEqual((plan.target_size, plan.fit, plan.scaled_size, plan.box, plan.desired_width, plan.desired_height), ((832, 448), "none", (832, 448), None, None, None))
+        self.assertEqual(copy_plan((832, 448), 6).fit, "rotate")
 
     def test_exact_fit_is_scale_not_crop_or_letterbox(self) -> None:
         for plan in (self.plan((1664, 896), width=832, height=448), self.plan((1664, 896), width=832)):

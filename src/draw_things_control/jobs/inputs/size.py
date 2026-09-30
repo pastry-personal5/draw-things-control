@@ -63,9 +63,10 @@ def floor_to_step(value: int | Fraction) -> int:
 class ResizePlan:
     """How the first input becomes the job's size: the target, the fit, and the scaled picture.
 
-    ``fit`` is ``none`` (upright and already the target; used as-is), ``rotate`` (already the target, but
-    needs an upright copy), ``scale`` (scaled to exactly the target: no crop and no bars), ``crop``, or
-    ``letterbox``. ``box`` is the area of the upright input that is resampled; ``None`` means all of it.
+    Run 1 always reads a copy: upright, alpha flattened, sRGB, 8-bit, at exactly the target (owner decision,
+    Milestone 09). ``fit`` is ``none`` (upright and already the target; copied at scale 1), ``rotate`` (already the
+    target once upright), ``scale`` (scaled to exactly the target: no crop and no bars), ``crop``, or ``letterbox``.
+    ``box`` is the area of the upright input that is resampled; ``None`` means all of it.
     """
 
     desired_width: int | None
@@ -84,18 +85,13 @@ class ResizePlan:
         """The size the ``box`` area is resampled to: the scaled size when letterboxed, otherwise the target."""
         return self.scaled_size if self.fit == "letterbox" else self.target_size
 
-    @property
-    def needs_copy(self) -> bool:
-        """Whether run 1 needs a resized or upright copy instead of the original file."""
-        return self.fit != "none"
-
     def describe(self, name: str) -> str:
         """One line saying what happens to the input before run 1."""
         target = _size_text(self.target_size)
         if self.fit == "none":
-            return f"Input {name} is already {target}; no resize needed"
+            return f"Input {name} is already {target}; copied as 8-bit sRGB for run 1"
         if self.fit == "rotate":
-            return f"Input {name} (EXIF orientation {self.exif_orientation}) will be rotated upright; already {target}"
+            return f"Input {name} (EXIF orientation {self.exif_orientation}) will be rotated upright and copied as 8-bit sRGB; already {target}"
         rotated = "" if self.exif_orientation in UPRIGHT_ORIENTATIONS else f", after rotating it upright (EXIF orientation {self.exif_orientation})"
         scaled = _size_text(self.scaled_size)
         if self.fit == "scale":
@@ -118,6 +114,12 @@ class ResizePlan:
             "scaled_size": list(self.scaled_size),
             "crop_percent": round(self.crop_percent, 1) if cropping and self.crop_percent is not None else None,
         }
+
+
+def copy_plan(input_size: tuple[int, int], orientation: int | None) -> ResizePlan:
+    """The scale-1 plan of a job without desired_input_*: its input, upright, is already the job's size."""
+    fit = "none" if orientation in UPRIGHT_ORIENTATIONS else "rotate"
+    return ResizePlan(None, None, None, input_size, orientation, input_size, fit, input_size, None)
 
 
 def resize_plan(name: str, input_size: tuple[int, int], orientation: int | None, desired_width: int | None, desired_height: int | None, max_crop_percent: float | None = None) -> ResizePlan:

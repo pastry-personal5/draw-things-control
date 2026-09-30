@@ -119,6 +119,7 @@ class ExecutionRecorder:
                 settings=settings,
                 first_run=event.first_run,
                 resumes=resumes,
+                first_image=event.first_image,
             )
         )
         if number is None:
@@ -127,10 +128,10 @@ class ExecutionRecorder:
 
     def _run_started(self, execution_id: int, event: RunStarted) -> None:
         self._last_run = event.number
-        self._executions.start_run(execution_id, event.number, NewRun(pair=event.pair, positive=event.positive, negative=event.negative, input=event.input, resized_input=event.resized_input, output=event.output, last_frame=event.last_frame, command=event.command, started_at=event.at))
+        self._executions.start_run(execution_id, event.number, NewRun(pair=event.pair, positive=event.positive, negative=event.negative, input=event.input, resized_input=event.resized_input, output=event.output, last_frame=event.last_frame, command=event.command, started_at=event.at, anchor=event.anchor))
 
     def _run_finished(self, execution_id: int, event: RunFinished) -> None:
-        self._executions.finish_run(execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame, output_width=event.output_width, output_height=event.output_height, output_frames=event.output_frames)
+        self._executions.finish_run(execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame, output_width=event.output_width, output_height=event.output_height, output_frames=event.output_frames, corrected_output=event.corrected_output)
 
     def _cooldown_ended(self, execution_id: int, event: CooldownEnded) -> None:
         if self._last_run is not None:

@@ -37,6 +37,9 @@ class ResumeChain:
     first_run: int
     input: Path
     seed: int
+    # The execution's first image, and the anchor of the last succeeded run (Milestone 09); None when not recorded.
+    first_image: str | None
+    anchor: str | None
     # The execution number this resume point's last succeeded run came from, shown as "the execution it resumes" on
     # JobStarted, the manifest, and the resumed execution's own row (never the same as ``entry.execution_number``
     # once the chain has been walked back past an ancestor that never itself succeeded).
@@ -88,6 +91,8 @@ def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, sub
         resume_first_run=chain.first_run,
         resume_input=str(chain.input),
         resume_seed=chain.seed,
+        resume_first_image=chain.first_image,
+        resume_anchor=chain.anchor,
     )
 
 
@@ -157,7 +162,7 @@ def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
     input_path = execution.run_file(last.last_frame or last.output)
     if input_path is None or not input_path.is_file():
         raise ResumeRefusedError(f"{entry.label}: run {last.number}'s output is gone: {input_path or '(no file)'}")
-    return ResumeChain(first_run=last.number + 1, input=input_path, seed=execution.seed or 0, execution_number=execution.execution_number)
+    return ResumeChain(first_run=last.number + 1, input=input_path, seed=execution.seed or 0, first_image=execution.first_image, anchor=last.anchor, execution_number=execution.execution_number)
 
 
 def _linked_execution(store: Store, entry: QueueRow) -> ExecutionRow | None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_config import load_config
@@ -19,6 +20,9 @@ from draw_things_control.jobs.media.stream_color import resolve_video_color
 from draw_things_control.jobs.media.toolkit import MediaTools
 from draw_things_control.jobs.media.tools import find_ffprobe, require_ffmpeg, require_ffprobe
 from draw_things_control.jobs.media.video_color import tag_video_colors
+
+if TYPE_CHECKING:
+    from draw_things_control.jobs.color_run import CorrectionRequest, CorrectionResult, Corrector
 
 
 def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
@@ -35,13 +39,42 @@ def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | N
     return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
 
 
+def default_media_tools() -> MediaTools:
+    """The media tools of this machine: ffmpeg and ffprobe, found when each is used, and the color correction."""
+    checker = MediaChecker(lambda: shutil.which("ffmpeg"))
+    return MediaTools(
+        require_ffmpeg=require_ffmpeg,
+        frame_extractor=extract_last_frame,
+        color_reader=lambda video: resolve_video_color(video, shutil.which("ffmpeg"), find_ffprobe()),
+        require_ffprobe=require_ffprobe,
+        video_tagger=tag_video_colors,
+        output_measurer=measure_output,
+        checker=checker,
+        corrector=_lazy_corrector(checker),
+    )
+
+
+def _lazy_corrector(checker: MediaChecker) -> Corrector:
+    """The color correction, loaded (with numpy) only when a job first corrects, so a front end starts without it."""
+    loaded: list[Corrector] = []
+
+    def correct(request: CorrectionRequest) -> CorrectionResult:
+        if not loaded:
+            from draw_things_control.jobs.color_run import ColorCorrector
+
+            loaded.append(ColorCorrector(lambda: shutil.which("ffmpeg"), checker))
+        return loaded[0](request)
+
+    return correct
+
+
 class Toolkit:
     """The tools of this machine. Built once by a front end, which asks it for the services that use them; a test builds one
     with fake tools, or overrides ``generation_service`` and ``job_executor``."""
 
     def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: RunnerFactory[StoppableRunner] = create_job_runner) -> None:
         self._find_executable = find_executable
-        self._media = media or MediaTools(require_ffmpeg=require_ffmpeg, frame_extractor=extract_last_frame, color_reader=lambda video: resolve_video_color(video, shutil.which("ffmpeg"), find_ffprobe()), require_ffprobe=require_ffprobe, video_tagger=tag_video_colors, output_measurer=measure_output, checker=MediaChecker(lambda: shutil.which("ffmpeg")))
+        self._media = media or default_media_tools()
         self._job_runner_factory = job_runner_factory
 
     def generation_service(self) -> GenerationService:

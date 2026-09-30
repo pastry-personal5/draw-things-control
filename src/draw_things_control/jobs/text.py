@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.definition import JobDefinition, PromptPair
+from draw_things_control.jobs.definition import ColorPolicy, JobDefinition, PromptPair
 
 if TYPE_CHECKING:
     from draw_things_control.jobs.events import MediaChecked
@@ -119,8 +119,9 @@ def ignored_config_lines(job: JobDefinition) -> list[str]:
                 lines.append(f"Ignoring {key} ({value}) from config_file {job.config_file}: desired_input_width/desired_input_height set the size ({size})")
             else:
                 lines.append(f"Ignoring config_override.{key} ({value}): desired_input_width/desired_input_height set the size ({size})")
-    if job.input_resize is not None and job.input is not None:
-        lines.append(job.input_resize.describe(job.input.name))
+    plan = job.input_copy
+    if plan is not None and job.input is not None:
+        lines.append(plan.describe(job.input.name))
     return lines
 
 
@@ -130,7 +131,7 @@ def report_ignored_config(job: JobDefinition) -> None:
         logger.info("{}", line)
 
 
-MEDIA_CHECK_LABELS = {"input": "Input check", "resized_input": "Resized input check", "output": "Output check", "last_frame": "Last frame check"}
+MEDIA_CHECK_LABELS = {"input": "Input check", "resized_input": "Resized input check", "output": "Output check", "last_frame": "Last frame check", "color_drift": "Color drift check", "color_correction": "Color correction check"}
 
 
 def media_check_text(event: MediaChecked) -> str:
@@ -156,10 +157,24 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
         ("input", str(job.input or "(none, text only)")),
         ("output directory", str(job.output_directory)),
         *([("output format", f"{job.video_format} (.{job.extension})")] if job.video_format is not None else []),
+        *([("color", color_text(job.color))] if job.color.corrects else []),
         ("config file", job.config_file),
         ("model", job.model),
         ("seed", seed_value),
     ]
+
+
+def color_text(policy: ColorPolicy) -> str:
+    """A correcting job's color policy in one line, for example ``blend, first 0.25, reanchor on prompt pair, regions``."""
+    parts = [policy.anchor]
+    if policy.anchor == "blend":
+        parts.append(f"first {policy.first_weight:g}")
+    if policy.holds_to_anchor:
+        parts.append("reanchor on prompt pair" if policy.reanchor == "prompt_pair" else "never reanchor")
+    if policy.strength != 1:
+        parts.append(f"strength {policy.strength:g}")
+    parts.append("regions" if policy.regions else "whole frame")
+    return ", ".join(parts)
 
 
 def pair_runs(job: JobDefinition) -> list[tuple[PromptPair, tuple[int, ...]]]:

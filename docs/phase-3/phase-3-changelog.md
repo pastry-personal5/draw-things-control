@@ -5,6 +5,87 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-09-30
 
+- **Change** [M09]: Built increment D, the whole-frame correction. A video job's `color` block (`anchor`, `strength`,
+  `first_weight`, `reanchor`, `regions`) corrects each run toward its input and its anchor, re-anchoring where the
+  prompt pair changes; each correcting run writes `<clip>-last-frame-raw.png`, a corrected `<clip>-last-frame.png`
+  handoff, and `<clip>-cc.<ext>`, with a `color_correction` check and the copy's own output check. Each run records
+  its anchor (`runs.anchor`, `anchor` in the manifest and on `RunStarted`) and its copy (`corrected_output`).
+- **Design decision** [M09]: Increment D, as built:
+  - Each frame is fitted once, to a target between the run's input and the anchor (`lerp(input, anchor, pull *
+    smoothstep(t))`), instead of a fit to the input followed by a fitted pull. To first order they are the same, and one
+    transform per frame gets the caps and `strength`. Composing two tone curves was the alternative.
+  - The corrected copy's values are rounded to 8 bits as the handoff's are (the ordered dither), fed to the encoder as
+    the level times 256. So the copy holds what Draw Things' own files hold, 8-bit values in 12-bit ProRes, its last
+    frame is the handoff's values, and its pixels keep the structure the matrix measurement reads (measured: BT.709
+    0.134 against 0.250; times 257, or unrounded values, measure no matrix, which the plan's criterion needs).
+  - A cast is measured on the least chromatic tenth of the pixels, when that tenth is near-neutral, not on the pixels
+    under a fixed chroma of 0.03. Under a fixed limit, a change of saturation moved pixels across it, the cast picked up
+    the frame's dominant hue, and correcting a pure change of saturation added about 2% chroma per run (the simulated
+    chain). A set chosen by rank does not change under a gain or a turn.
+  - The chroma gain is refined on a sample of each frame (every fourth pixel of each row and column, kept from the
+    first pass): the tone curve works at constant a and b, so darkening saturated shadows pushes them outside sRGB,
+    and bringing them onto the edge lowers their chroma, which a gain fitted from statistics cannot see. Measured on
+    E0012's run 2: frame 0's chroma came out at x0.92 of its input's without it, x0.96 with it (x0.97 uncorrected), and
+    the run's own chroma creep at x1.06, then x1.01.
+  - An identity transform returns the frame itself, and the numpy handoff nudges its sum by 1e-4 of a level before
+    flooring (a decoded level lies on a 1/512 grid), so `strength: 0` hands off exactly what Milestone 08's extraction
+    does (tested). A decoded white, raised by the half level to 255.5, counts as inside sRGB, and the tone curve has
+    slope 1 beyond black and white, so it passes through.
+  - A correcting run's `color_drift` check comes from the correction's first pass, so the run is decoded twice, not
+    three times. The correction took 7.9 s on an 81-frame 576x768 H.264 run (its limit: 91 s) and 1.6 s on a 17-frame
+    ProRes 4444 run (27 s).
+  - VideoToolbox drops the primaries and the transfer from what it encodes, so the copy's frame headers are set by
+    ffmpeg's `prores_metadata`, `h264_metadata`, and `hevc_metadata` bitstream filters.
+  - The API's worst case assumes 257 frames for a job that states none; the configurations state `numFrames`.
+  - The correction is loaded (with numpy) only when a job first corrects, so `dtc` and the TUI start without it.
+  - The simulated chain compares statistics (the lightness median, and the chroma median at the mean hue), averaged
+    over four seeded chains: per pixel, the pinned black and white and the fake model's own clipping dominate.
+    Measured: `none` 0.207, `previous` 0.045, `blend` 0.012, `first` 0.004.
+- **Owner decision** [M09]: A ProRes copy's frame header states BT.709 primaries and matrix, limited range, and an
+  unknown transfer; its `colr` box states the sRGB transfer, as Milestone 08's tagger writes it. The ProRes format
+  offers no sRGB transfer (only unknown, BT.709, PQ, and HLG; ffmpeg's `prores_metadata` lists the same), so the
+  plan's header stating sRGB cannot be met. Stating BT.709 in the header, which would contradict the box, was offered.
+- **Design decision** [M09]: Built step 0 and increments A to C (layers 4, 1 and 3, and 2):
+  - The schema 8 migration also adds `queue.resume_first_image` and `queue.resume_anchor`, beyond the plan's three
+    columns: a queued resume's whole resume point lives on its queue row, which is all the worker reads when it
+    starts the entry. Looking both up in the execution at claim time was the alternative.
+  - A job that writes no records has no manifest stem, so it keeps no first image, and its drift checks leave the
+    comparison with it out, with a note. Keeping one in the temporary directory for the job's length was the
+    alternative.
+  - The scale-1 plan of a job without `desired_input_*` is `JobDefinition.copy_plan`, apart from `input_resize`,
+    which sets the job's size and is what the manifest and `JobStarted` record. Putting it in `input_resize` would
+    have put `--width` and `--height` on every job's command.
+  - The gamut edges are tabulated over lightness and hue only to pick the colors near the edge. Bilinear
+    interpolation cuts the sharp peaks at the primaries (by 12% near sRGB's blue), so every color above 80% of the
+    tabulated sRGB edge gets both edges exactly, by bisection on each channel's cubic in chroma. A real 832x448 photo
+    maps in 0.09 s; 12 MP of random saturated colors, the worst case, in 18 s.
+  - The corrected copy of a ProRes 4444 original is encoded by `prores_videotoolbox` (`-profile:v 4444` from
+    `p416le`), which step 0 found writes `ap4h` at 12 bits within 0.005 level of its input, its pixels measuring
+    BT.709; `prores_ks` from `yuv444p10le` stays the fallback.
+  - `write_handoff_png` refuses an existing file itself: ffmpeg 8.1.1's `-n` refuses to overwrite but exits 0.
+  - The `color_drift` check's limits (3 in `L`, 10% in contrast or chroma, 5° in hue) are named constants in
+    `jobs/media/drift.py`, as proposed, until the owner's A/B chains set them. Only the whole frame is measured until
+    Vision's regions are built.
+- **Change** [M09]: Every job with an input hands `draw-things-cli` an 8-bit sRGB copy for run 1, at scale 1 without
+  `desired_input_*`; 16-bit RGB inputs are read through `ffmpeg`; Display P3 and other matrix-and-curves profiles are
+  gamut mapped at constant Oklab lightness and hue, and any other profile goes through LittleCMS's perceptual intent
+  instead of the relative colorimetric. Every video run gets a `color_drift` check, and every video execution that
+  writes records keeps its first image. `config_override` takes `cfg_zero_star`, `cfg_zero_init_steps`, and
+  `color_calibration`. Schema 8.
+- **Owner decision** [M09]: This pass builds increments A to D (the override keys; the rest of the exact handoff, the
+  first image, and the metrics; the gamut mapping; and the whole-frame correction with its copies). Vision's regions
+  (E) come later, once its masks are timed and inspected, and the anchor chains run whole-frame meanwhile. The
+  proposed caps and limits are named constants until the A/B chains set them. All of A to E now, and pausing after
+  the metrics, were offered.
+- **Owner decision** [M09]: Step 1's measurement of the handoff on E0016 is deferred: that chain's clips are no longer
+  on disk. Measuring E0012's H.264 chain instead, whose 4:2:0 chroma and pre-Milestone 08 handoff confound it, and a
+  new ProRes chain, were offered. The upstream report drafts are kept in
+  [docs/research/draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md).
+- **Design decision** [M09]: Step 0: the installed `draw-things-cli` was built on 2026-09-23 from `draw-things-community`
+  `da9b0c8` (2026-09-22), not `0e9c180`. Its `pixelByte`, its PNG read, and its `swift-png` pin are the same as the
+  research read, so the plan stands. `cfgZeroStar` is a Bool, `cfgZeroInitSteps` an Int32, and `colorCalibration` a
+  string where `lab` turns calibration on and anything else off ([research
+  note](../research/color-drift.md#checked-in-milestone-09s-step-0)).
 - **Owner decision** [M09]: From an interview on the Milestone 09 plan's review:
   - Milestone 09 is built next, before Milestone 07, which answers the plan's open question on its place. The order
     is 01 to 06, 08, 09, 07, 10, 11.

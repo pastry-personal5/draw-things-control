@@ -4,15 +4,20 @@
 # pyright: reportIndexIssue=false, reportOptionalSubscript=false, reportGeneralTypeIssues=false, reportOptionalIterable=false, reportArgumentType=false, reportOperatorIssue=false, reportCallIssue=false
 from __future__ import annotations
 
+import shutil
+import struct
+import subprocess
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
 from loguru import logger
 from PIL import Image, ImageChops, ImageCms, ImageDraw, ImageOps, ImageStat
 
-from draw_things_control.jobs.inputs.resize import TemporaryInput, resize_image
+from draw_things_control.jobs.inputs.resize import TemporaryInput, read_srgb, resize_image
 from draw_things_control.jobs.inputs.size import ResizePlan, decode_image, resize_plan
 
 DISPLAY_P3 = Path("/System/Library/ColorSync/Profiles/Display P3.icc")
@@ -79,7 +84,7 @@ class InputResizeTests(unittest.TestCase):
         # Stored 448x832 (portrait); displayed 832x448 after the 90-degree rotation.
         source = self.save(Image.new("RGB", (448, 832), "white"), "rotated.jpg", exif=exif)
         plan = resize_plan("rotated.jpg", (832, 448), 6, 832, None)
-        self.assertTrue(plan.needs_copy)
+        self.assertEqual(plan.fit, "rotate")
         self.assertEqual(self.resized(source, plan).size, (832, 448))
 
     # Fidelity: color, bit depth, geometry, and resampling quality.
@@ -91,12 +96,56 @@ class InputResizeTests(unittest.TestCase):
         image = self.resized(source, resize_plan("gray16.png", (128, 64), None, 128, 64))
         self.assertEqual(image.getextrema(), ((128, 128),) * 3)
 
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_16_bit_rgb_is_read_with_rounding_through_ffmpeg_or_by_high_bytes_without_it(self) -> None:
+        # 25840 is 100.545 levels: rounding gives 101, and the high byte (what Pillow and draw-things-cli keep) 100.
+        source = self.root / "deep.png"
+        samples = np.full((64, 128, 3), 25840, dtype=">u2")
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb48be", "-s", "128x64", "-i", "-", str(source)], input=samples.tobytes(), check=True)
+        plan = resize_plan("deep.png", (128, 64), None, 128, 64)
+        for ffmpeg, level, read in ((shutil.which("ffmpeg"), 101, "ffmpeg"), (None, 100, "high_bytes")):
+            with self.subTest(read=read):
+                destination = self.root / f"{read}.png"
+                report = resize_image(source, plan, destination, ffmpeg)
+                self.assertEqual(report.sixteen_bit, read)
+                with Image.open(destination) as image:
+                    self.assertEqual(image.getextrema(), ((level, level),) * 3)
+                values, _report = read_srgb(source, ffmpeg)
+                self.assertAlmostEqual(float(values[0, 0, 0]) * 255, 100.545 if ffmpeg else 100, places=2)
+        self.assertIsNone(resize_image(self.save(Image.new("RGB", (8, 8))), resize_plan("input.png", (8, 8), None, 64, None), self.root / "plain.png").sixteen_bit)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_16_bit_rgb_read_through_ffmpeg_is_turned_upright_once_for_every_exif_orientation(self) -> None:
+        # ffmpeg 8.1.1 turns a PNG upright by its eXIf chunk unless told not to; turned again here, it came out scrambled.
+        samples = np.zeros((3, 5, 3), dtype="<u2")
+        samples[0, 0], samples[0, 1, 0], samples[2, 4, 1] = 65535, 30000, 50000
+        stored = self.root / "stored.png"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb48le", "-s", "5x3", "-i", "-", "-frames:v", "1", str(stored)], input=samples.tobytes(), check=True)
+        data = stored.read_bytes()
+        for orientation in range(1, 9):
+            with self.subTest(orientation=orientation):
+                exif = Image.Exif()
+                exif[0x0112] = orientation
+                body = exif.tobytes().removeprefix(b"Exif\x00\x00")
+                chunk = struct.pack(">I", len(body)) + b"eXIf" + body + struct.pack(">I", zlib.crc32(b"eXIf" + body))
+                # The eXIf chunk goes straight after the 8-byte signature and the 25-byte IHDR chunk.
+                source = self.root / f"deep-{orientation}.png"
+                source.write_bytes(data[:33] + chunk + data[33:])
+                values, report = read_srgb(source, shutil.which("ffmpeg"))
+                self.assertEqual(report.sixteen_bit, "ffmpeg")
+                with Image.open(source) as image:
+                    expected = np.asarray(ImageOps.exif_transpose(image).convert("RGB"), dtype=np.float32) / 255
+                self.assertEqual(values.shape, expected.shape)
+                self.assertLess(float(np.abs(values - expected).max()), 1 / 255)
+
     def test_display_p3_is_converted_to_srgb(self) -> None:
         if not DISPLAY_P3.is_file():
             self.skipTest("macOS Display P3 profile not available")
         profile = DISPLAY_P3.read_bytes()
         source = self.save(Image.new("RGB", (128, 64), (200, 100, 50)), "p3.png", icc_profile=profile)
         red, green, blue = self.resized(source, resize_plan("p3.png", (128, 64), None, 128, 64)).getpixel((64, 32))
+        _values, report = read_srgb(source)
+        self.assertEqual((report.profile, report.conversion), ("Display P3", "matrix"))
         # The same color written in sRGB numbers is more saturated: more red, less green and blue.
         self.assertGreater(red, 205)
         self.assertLess(green, 100)
@@ -223,7 +272,7 @@ class InputResizeTests(unittest.TestCase):
 
     def test_unconvertible_mode_reports_the_input(self) -> None:
         source = self.save(Image.new("RGB", (256, 128), "white"))
-        with mock.patch("draw_things_control.jobs.inputs.resize.to_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
+        with mock.patch("draw_things_control.jobs.inputs.resize.read_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
             with self.assertRaisesRegex(ValueError, "Could not resize input .*input.png: conversion from LAB"):
                 TemporaryInput(source, resize_plan("input.png", (256, 128), None, 128, None))
 

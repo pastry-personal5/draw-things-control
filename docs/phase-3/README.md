@@ -102,7 +102,7 @@ typed tools on top of it.
 | 06 | [Delete executions](milestone-06-delete-executions.md) | done |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
 | 08 | [Video format and color](milestone-08-video-format-and-color.md) | in-progress |
-| 09 | [Color preservation](milestone-09-color-preservation.md) | planned |
+| 09 | [Color preservation](milestone-09-color-preservation.md) | in-progress |
 | 10 | [MCP server](milestone-10-mcp-server.md) | planned |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 

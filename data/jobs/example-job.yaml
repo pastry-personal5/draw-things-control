@@ -65,6 +65,21 @@ config_override:
   frame_count: 17
   strength: 1.0
   seed: 829023514                      # omitted: config_file's seed, else one random seed for the whole job
+  # cfg_zero_star: true                # CFG-Zero* guidance (Draw Things' cfgZeroStar)
+  # cfg_zero_init_steps: 0             # the first steps CFG-Zero* zeroes; an integer from 0
+  # color_calibration: none            # none, or lab: every frame matched to the run's input inside Draw Things
+
+# Optional (video jobs): correct each run's colors toward the chain's first image.
+# Every video run measures its color drift either way (the Color drift check).
+# This job's pairs alternate (walk, wave, walk, ...), and a run whose pair differs
+# from the previous run's makes its own input the anchor, so here first and blend
+# act as previous unless reanchor is never.
+# color:
+#   anchor: blend                      # none (the default), previous, first, or blend
+#   strength: 1.0                      # 0 to 1: how much of the correction is applied
+#   first_weight: 0.25                 # blend only: the share of the gap to the anchor each run closes
+#   reanchor: prompt_pair              # first and blend: prompt_pair (the default) or never
+#   regions: true                      # people and skin apart (Apple Vision, to come); false: the whole frame
 
 run_timeout_seconds: 3600              # limit for each run
 # cooldown:                            # optional; the wait after each run but the last; replaces the global cooldown as a whole

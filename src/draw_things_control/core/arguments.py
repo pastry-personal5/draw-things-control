@@ -41,6 +41,9 @@ OVERRIDE_TARGETS: dict[str, tuple[str | None, str]] = {
     "refiner_model": (None, "refinerModel"),
     "refiner_start": (None, "refinerStart"),
     "shift": (None, "shift"),
+    "cfg_zero_star": (None, "cfgZeroStar"),
+    "cfg_zero_init_steps": (None, "cfgZeroInitSteps"),
+    "color_calibration": (None, "colorCalibration"),
 }
 # The override keys draw-things-cli has no flag for, and their Draw Things names.
 CONFIG_ONLY_KEYS = {key: config_key for key, (flag, config_key) in OVERRIDE_TARGETS.items() if flag is None}

@@ -213,6 +213,7 @@ jobs are rejected before any generation starts.
 | `cooldown` | The wait after each successful run except the last; replaces the global `cooldown` as a whole; see [Cooldown](#cooldown) |
 | `desired_input_width`, `desired_input_height` | Resize the first input; see below |
 | `max_input_crop_percent` | With one desired size, refuse a larger crop (default 10) |
+| `color` | Video jobs: correct each run's colors toward the chain's first image; see [Color correction](#color-correction) |
 
 ### Prompt pairs
 
@@ -227,10 +228,22 @@ fail validation with a message naming the new key (`run_count`, `runs`).
 ### Configuration overrides
 
 `config_override` may set `model`, `refiner_model`, `refiner_start`, `steps`,
-`guidance_scale`, `shift`, `width`, `height`, `frame_count`, `strength`, and
-`seed`. Anything left out comes from `config_file`, then from the model's
-recommended settings. With no `seed` in either, one random seed is chosen for
-the whole job.
+`guidance_scale`, `shift`, `width`, `height`, `frame_count`, `strength`,
+`seed`, and three settings that affect color. Anything left out comes from
+`config_file`, then from the model's recommended settings. With no `seed` in
+either, one random seed is chosen for the whole job.
+
+| Key | Draw Things key | Values | What it does |
+|-----|-----------------|--------|--------------|
+| `cfg_zero_star` | `cfgZeroStar` | `true` or `false` | CFG-Zero\*, an improved guidance for flow-matching models such as Wan |
+| `cfg_zero_init_steps` | `cfgZeroInitSteps` | an integer from 0 | The first steps CFG-Zero\* zeroes |
+| `color_calibration` | `colorCalibration` | `none` or `lab` | `lab` matches every frame's color and large-scale brightness to the run's input image, inside Draw Things; expect a ghost of the first frame with motion |
+
+These three have no `draw-things-cli` flag and reach it in `--config-json`.
+They are compared in the [color drift research](research/color-drift.md).
+High `guidance_scale` is the best-documented cause of oversaturation: this
+project's Wan 2.2 configuration uses 5, and Wan's own reference for
+image-to-video is 3.5.
 
 ### Input size
 
@@ -251,10 +264,34 @@ input is never stretched:
   `desired_input_width: 850` becomes 832x448.
 - **Both keys:** the input is scaled to fit and padded with black bars.
 
-A rotated photo is turned upright first, and an embedded color profile is
-converted to sRGB. `--dry-run` shows the resized copy as
-`'<photo.jpg resized to 832x448>'`. The full rules are in the
+Every job with an input, resized or not, hands `draw-things-cli` a copy for
+run 1: upright, transparency flattened onto black, converted to sRGB, 8-bit,
+at exactly the job's size. A job without `desired_input_*` gets its copy at
+scale 1, since its input must already be the job's size. `draw-things-cli`
+then only ever reads a PNG it takes as it is (it reads PNG values with no
+color management), and this tool decides every value the model sees.
+`--dry-run` shows the copy as `'<photo.jpg resized to 832x448>'`, or
+`'<photo.png copied as 8-bit sRGB at 832x448>'` at scale 1. The full resize
+rules are in the
 [input resize milestone](archive/phase-1/milestone-03-input-image-resize.md).
+
+How the copy's values are made:
+
+- **Read in floating point, rounded once.** The source is converted,
+  resampled, and only then rounded to 8 bits.
+- **16-bit RGB PNGs** are read through `ffmpeg`, which keeps every bit
+  (Pillow reads only each sample's high byte, half a level dark). An image
+  job, which does not need `ffmpeg`, uses the high bytes when it is not
+  installed, and the resized input check says so.
+- **A matrix-and-curves profile** (Display P3, Adobe RGB, ProPhoto,
+  Rec. 2020) is applied in floating point. Colors outside sRGB are not
+  clipped channel by channel, which would bend their hue (a P3 red turns
+  orange). Instead their chroma is compressed toward gray at constant Oklab
+  lightness and hue: colors within 90% of the sRGB edge do not move, and from
+  there a smooth curve takes the profile's own edge onto sRGB's.
+- **Any other profile** (lookup tables, CMYK) goes through LittleCMS with the
+  perceptual intent. What is still outside sRGB is clipped, and the resized
+  input check says so.
 
 ### Cooldown
 
@@ -317,6 +354,83 @@ cooldown:
 No wait follows the last run or a failed run. Ctrl-C (or `/cancel` in the TUI)
 ends a wait at once and stops the job.
 
+### Color correction
+
+A long chain drifts in color: brightness and contrast, saturation creeping up,
+a cast on skin. Every video run measures its drift (the `Color drift check`
+below). A job that asks also corrects it, with a `color` block:
+
+```yaml
+color:
+  anchor: blend          # none (the default), previous, first, or blend
+  strength: 1.0          # 0 to 1: how much of the estimated correction is applied
+  first_weight: 0.25     # blend only: the share of the remaining gap to the anchor each run closes
+  reanchor: prompt_pair  # first and blend: prompt_pair (the default) or never
+  regions: true          # people and skin apart from the background (Apple Vision, to come); false: the whole frame
+```
+
+Each key is checked and named as `color.<key>` on error; `first_weight` is
+refused unless `anchor` is `blend`, `reanchor` unless it is `first` or
+`blend`, and an image job refuses the block. `validate-job` shows a
+correcting job's policy as a `color` row, and `GET /v1/jobs/{job}` as `color`.
+
+**Anchors.** Each run is first corrected back to its own input, which removes
+the drift the model added in that run. The anchor then says what else pulls it:
+
+| Anchor | Pull toward the anchor | Over many runs |
+|--------|------------------------|----------------|
+| `previous` | none | What each correction leaves adds up like a random walk |
+| `first` | all of the remaining gap, within each run's caps | Held to the anchor; an intended change of light within one prompt pair is pulled back |
+| `blend` | `first_weight` of the gap | Bounded; an intended change fades back over a few runs |
+
+The anchor is the first image, as `draw-things-cli` saw it for run 1. With
+`reanchor: prompt_pair` (the default), a run whose prompt pair differs from the
+previous run's makes its own input the anchor from then on, so an intended
+change of scene is not pulled back past it. Every change counts: a job whose
+pairs alternate, as `example-job.yaml`'s walk and wave do, re-anchors at every
+run, and `first` and `blend` then act as `previous`. `reanchor: never` holds
+such a job to the first image. A resume takes the anchor of the run it
+continues after.
+
+**What it does**, in Oklab, from statistics only (pixels cannot be matched
+across motion): a tone curve through black, white, and the 10th, 50th, and
+90th lightness percentiles moves brightness and contrast; a gain, a turn, and
+a shift of the color plane move saturation, hue, and a gray cast. The anchor's
+pull is ramped in over the clip, from nothing at frame 0 (the model's copy of
+the run's input, so the clips join without a jump) to all of it at the last
+frame. The parameters are smoothed over frames, and each run's are capped
+(lightness median ±4 hundredths, spread ×0.92 to 1.08, chroma ×0.88 to 1.12,
+hue ±6°, cast 0.015); a cap that binds is reported, never exceeded, since a
+large difference is more likely a change of scene than drift. These caps are
+proposed, to be set from measured chains. A color the correction leaves inside
+sRGB passes through; one it pushes outside is brought onto the edge at
+constant lightness and hue. Until Apple Vision's regions are built, the whole
+frame is corrected as one region, with a note.
+
+**What it writes**, beside each run's video:
+
+- `<name>-…-last-frame.png`, the handoff, is the corrected last frame, written
+  as every handoff is, so a resume reads it as before.
+- `<name>-…-last-frame-raw.png` is the uncorrected last frame.
+- `<name>-…-cc.<ext>` is the corrected copy, in the original's format and
+  container, with its frame rate and frame count: ProRes by
+  `prores_videotoolbox` (or `prores_ks` without VideoToolbox), H.264 and HEVC by
+  their VideoToolbox encoders at no less than the original's bit rate. Its
+  values are rounded to 8 bits as the handoff's are, so its last frame is the
+  handoff's values and its pixels measure BT.709. Its frame header and `colr`
+  box state BT.709 primaries and matrix, limited range, and the sRGB transfer;
+  ProRes cannot state that transfer in its frame header, so only the box does.
+- A file Draw Things wrote is never re-encoded, and none of its pixels change.
+
+**When it fails** (an encoder or `ffmpeg` missing or failing, or its time
+limit of 10 seconds plus 1 per frame reached), the run still succeeds: its
+`Color correction check` warns, the uncorrected frame is the handoff, and no
+copy is kept. The next run corrects back to its own input as every run does. A
+stop or a park during the correction takes effect when it ends. The API's
+`max_job_seconds` worst case adds the correction's time limit to each run of
+a job that corrects (assuming 257 frames when neither the job nor its
+configuration states a count).
+
 ## Where outputs go
 
 - Files go to `<output_directory>/<name>/`, or `output.directory` under the
@@ -352,6 +466,12 @@ ends a wait at once and stops the job.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
+- A video job that writes records also keeps its **first image**,
+  `<name>-<timestamp>-job-first-image.png`: a copy of run 1's 8-bit sRGB
+  input (for a `t2v` job, which has no input, run 1's last frame). The color
+  drift check compares every run with it. A resumed execution uses the first
+  image of the execution it resumes, and deleting an execution leaves the file,
+  as it leaves the outputs. An execution recorded before this has none.
 - After each successful run, its output is measured: a video's displayed
   width, height, and frame count with `ffprobe`, and a PNG's width and height
   from its header. Draw Things may round a requested size to a multiple of
@@ -375,22 +495,31 @@ ends a wait at once and stops the job.
   and `ffprobe` are looked up at each check, so a `dtc serve` started before
   they were installed finds them without a restart. A check only reads the file; a warning never
   changes or fails a run (owner decision). A `t2v` job has no input, so it
-  gets the last two. The four checks:
+  gets the last three. The checks:
 
   | Check | When | What it reads, and what makes a warning |
   |-------|------|-----------------------------------------|
-  | `Input check` | Before run 1 of an `i2v` job | Format, size, bit depth, alpha, ICC profile, EXIF orientation, a PNG's `sRGB`/`gAMA`/`cHRM` chunks. A warning for CMYK with no profile, for a PNG that states its color with `gAMA` or `cHRM` only (not read), or, when the job makes no resized copy, for anything but upright 8-bit sRGB RGB, which `draw-things-cli` then gets as it is (it reads only the high byte of a 16-bit sample). On a resume, the last frame the chain continues from is checked as the handoff it is: a warning only when it is not an RGB PNG or has alpha, at 8 or 16 bits |
-  | `Resized input check` | After the copy is made, when the job resizes | The copy as above, and what the resize did (`converted from Display P3 to sRGB`, transparency flattened, turned upright). Its mean color is compared with the source's, in the space the resize worked in, over the picture only (`mean color kept within 0.4 levels`, or `moved 3.2 levels`); a warning when it moved more than 1 level, when the copy is not 8-bit RGB PNG, or not the planned size |
+  | `Input check` | Before run 1 of an `i2v` job | Format, size, bit depth, alpha, ICC profile, EXIF orientation, a PNG's `sRGB`/`gAMA`/`cHRM` chunks. A warning for CMYK with no profile, or for a PNG that states its color with `gAMA` or `cHRM` only (not read). Anything but upright 8-bit sRGB RGB is a note, since `draw-things-cli` reads the copy. On a resume, the last frame the chain continues from is checked as the handoff it is: a warning only when it is not an RGB PNG or has alpha, at 8 or 16 bits |
+  | `Resized input check` | After run 1's copy is made, resized or at scale 1 | The copy as above, and how the source's values became sRGB (`converted from Display P3 to sRGB with gamut mapping`, `16-bit read by ffmpeg and rounded to 8`, transparency flattened, turned upright). Its mean color is compared with the source's, in the space the resize worked in, over the picture only (`mean color kept within 0.4 levels`, or `moved 3.2 levels`); a warning when it moved more than 1 level, when the copy is not 8-bit RGB PNG, not the planned size, or when the source's profile could not be used. Notes say how many pixels the gamut mapping brought in and by how much, that LittleCMS clipped a profile it converted, or that a 16-bit source was read by its high bytes |
   | `Output check` | After each run, around the color tagging | The codec (against `output.video_format`), size, frames, pixel format, the matrix, range, primaries, and transfer the stream itself states (read from its first frame before tagging), the `colr` box after tagging, and the matrix and range the video is decoded with. For ProRes 4444 (4:4:4 at 10 bits or more), the first 5 frames are measured to tell which matrix the pixels were really encoded with ([research note](research/prores-color-matrix.md)). A warning for a different codec, a missing `colr` box, a box whose matrix differs from the stream's, a stated matrix the pixels contradict, or pixels with no 8-bit structure (noise) |
   | `Last frame check` | After the last frame is extracted | Format, size, bit depth, alpha, color chunks, and the matrix and range it was decoded from. A warning for alpha (Draw Things reads it as a mask), a missing sRGB label, a size that differs from the video's, or a depth other than 16-bit |
+  | `Color correction check` | After the correction of a job with `color.anchor` set | The anchor and whether the run re-anchored, the caps that bound and in how many frames, and the drift left after correction, measured on the corrected frames with the same three comparisons. A warning when the correction failed. The corrected copy also gets its own `Output check` |
+  | `Color drift check` | After the last frame check, for every video run | The run's frames, decoded as the last frame is and raised by the half level Draw Things truncated, measured in Oklab over the whole frame: the lightness median (brightness, `L` in hundredths), the 10th-to-90th-percentile lightness spread (contrast), the chroma median (saturation), the chroma-weighted mean hue, and the cast of near-neutral pixels. Three comparisons: `since the first image` (the chain's drift so far), `within the run` (the last frame against frame 0, the model's own drift), and `frame 0 from its input` (a nonzero mean here is a pipeline bias). A warning beyond 3 in `L`, 10% in contrast or chroma, or 5° in hue; these limits are proposed, to be set from the first measurements. `facts` keep every number and the curve over every fourth frame. A `t2v` job's run 1 has no input and is measured within itself |
 
   For example, a ProRes 4444 run of a Display P3 photo:
 
   ```
-  Input check (run 1): /inputs/a1-0000.jpg: JPEG 959x1280, 8-bit RGB, ICC Display P3, no alpha: ok. The resized copy converts it from Display P3 to sRGB.
-  Resized input check (run 1): a1-0000-576x768.png: PNG 576x768, 8-bit RGB, no color profile (read as sRGB), no alpha; converted from Display P3 to sRGB; letterbox to 576x768; mean color kept within 0.0 levels: ok
+  Input check (run 1): /inputs/a1-0000.jpg: JPEG 959x1280, 8-bit RGB, ICC Display P3, no alpha: ok. The copy converts it from Display P3 to sRGB.
+  Resized input check (run 1): a1-0000-576x768.png: PNG 576x768, 8-bit RGB, no color profile (read as sRGB), no alpha; converted from Display P3 to sRGB with gamut mapping; letterbox to 576x768; mean color kept within 0.0 levels: ok
   Output check (run 1): v-i8x-20260930-093737-5745.mov: ProRes 4444 (ap4h), 576x768, 17 frames, yuva444p12le; stream states matrix bt709, range tv, primaries -, transfer -; colr nclc 1/13/1 (BT.709/sRGB/BT.709); pixels encoded bt709 (bt709 0.217, bt470bg 0.242, bt2020nc 0.258); decoded as bt709, limited range, as its stream states: ok
   Last frame check (run 1): v-i8x-20260930-093737-5745-last-frame.png: PNG 576x768, 16-bit RGB, sRGB, cHRM, gAMA chunks, no alpha; decoded from bt709, limited range, as its stream states: ok
+  ```
+
+  And the color drift of run 2 of the owner's `v-path-0000-i8x` chain (E0012, H.264, measured after the fact with
+  run 1's input as the first image): saturation crept up by a third over two runs.
+
+  ```
+  Color drift check (run 2): v-path-0000-i8x-20260929-224509-9421.mov: since the first image: L -0.6, contrast x0.95, chroma x1.32, hue -7°; within the run: L +0.4, contrast x1.03, chroma x1.01, hue -1°; frame 0 from its input: L -0.5, contrast x0.95, chroma x0.97, hue +0°: warning. Since the first image, it drifted beyond the limits: L -0.6, contrast x0.95, chroma x1.32, hue -7°.
   ```
 
 ## Browse and run jobs in the terminal UI
@@ -893,7 +1022,7 @@ execution in the history, whichever front end ran it.
 | `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, cancelled, or parked one from its last succeeded run |
 | `POST /queue/{id}/park`, `POST /queue/{id}/unpark` | Park a running entry, or withdraw its park reservation; each returns the entry as `GET /queue/{id}` does |
 | `POST /queue/hold`, `POST /queue/release` | Hold or release the queue; each returns `held`, `held_since`, `held_by`, and `changed` (false when the queue already was, or was not, held) |
-| `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs, and each run's output file with whether it is complete |
+| `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs (with its `first_image`, and each run's `anchor` and `corrected_output`), and each run's output file with whether it is complete, its last frame, and its corrected copy with `corrected_output_exists` |
 | `POST /executions/delete` | Delete executions: body `{"executions": ["E0012", ...], "dry_run": false}`, 1 to 200 IDs; answers `deleted`, `refused` (ID and reason), `missing`, `resumes_ended` (ID and the entries it ends), and `manifests_kept` (ID and path). With `"dry_run": true` it says what a deletion would do now and deletes nothing |
 | `GET /audit` | The audit log of every submit, cancel, resume, park, unpark, hold, release, and execution deletion, refused ones included |
 

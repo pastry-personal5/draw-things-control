@@ -11,6 +11,7 @@ from draw_things_control.jobs.media.info import MediaInfo
 from draw_things_control.jobs.media.stream_color import StreamColor
 
 if TYPE_CHECKING:
+    from draw_things_control.jobs.color_run import Corrector
     from draw_things_control.jobs.media.checks import MediaChecker
 
 # Writes the last frame of a video to a PNG, decoded with the color its stream states; raises ValueError when it cannot.
@@ -36,3 +37,5 @@ class MediaTools:
     color_reader: ColorReader | None = None
     # Checks each file of a video job and says what it holds; None makes no checks (tests with fake tools).
     checker: MediaChecker | None = None
+    # Corrects a run's colors when its job asks (Milestone 09); None corrects nothing (tests with fake tools).
+    corrector: Corrector | None = None

@@ -68,6 +68,10 @@ class JobStarted:
     first_run: int = 1
     # The execution (E0012) this one resumes, when it is a resume.
     resumes_execution: str | None = None
+    # The chain's first image, which the color checks compare with and the color correction's first and blend anchors
+    # start from (Milestone 09): kept for every video execution that writes records, or the resumed execution's; None
+    # without one. A t2v job's is run 1's last frame, written after run 1.
+    first_image: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,9 @@ class RunStarted:
     last_frame: str | None
     # The command with credentials redacted.
     command: tuple[str, ...]
+    # The file the run's colors are held to: the first image, or the input of the run that last re-anchored; None when
+    # the job does not correct toward an anchor (Milestone 09).
+    anchor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,8 @@ class RunFinished:
     output_width: int | None = None
     output_height: int | None = None
     output_frames: int | None = None
+    # The corrected copy of the video, <clip>-cc.<ext>, when the job corrects and the correction succeeded.
+    corrected_output: str | None = None
 
 
 @dataclass(frozen=True)

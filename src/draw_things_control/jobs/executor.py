@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import random
+import shutil
 import signal
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,10 +27,11 @@ from draw_things_control.jobs.launcher import RunLauncher
 from draw_things_control.jobs.log_writer import JobLogWriter
 from draw_things_control.jobs.media.checks import MediaCheck
 from draw_things_control.jobs.media.toolkit import MediaTools
+from draw_things_control.jobs.media.tools import find_ffmpeg
 from draw_things_control.jobs.output_naming import RandomNumber, random_four_digits
 from draw_things_control.jobs.planning import JobPlanner, JobPreview, PlannedRun
 from draw_things_control.jobs.records import JobManifest, JobRecords, RunRecord
-from draw_things_control.jobs.run_finisher import RunFinisher
+from draw_things_control.jobs.run_finisher import RunColor, RunFinisher
 from draw_things_control.jobs.text import report_ignored_config, seconds_text
 
 if TYPE_CHECKING:
@@ -50,6 +52,10 @@ class ResumePoint:
     input: Path | None
     seed: int
     resumes_execution: str | None = None
+    # The resumed execution's first image, and the anchor of the run this one continues after (Milestone 09); None
+    # for an execution recorded before them, or without one.
+    first_image: Path | None = None
+    anchor: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -94,9 +100,15 @@ class _Chain:
     job: JobDefinition
     records: JobRecords
     options: JobRunOptions
-    # Run 1's resized or upright copy of the input, removed after run 1.
+    # Run 1's copy of the input (upright, 8-bit sRGB, the job's size), removed after run 1.
     temporary_input: TemporaryInput | None
     schedule: tuple[PromptPair, ...]
+    # The chain's first image once it exists, and why the color checks go without one (Milestone 09).
+    first_image: Path | None = None
+    first_image_notes: tuple[str, ...] = field(default=())
+    # The file a correcting job's first and blend anchors hold its colors to: the first image, or the input of the run
+    # that last re-anchored; a resume starts from the anchor of the run it continues after.
+    anchor: Path | None = None
 
     @property
     def total(self) -> int:
@@ -191,7 +203,7 @@ class JobExecutor:
         source = chain.job.input if chain.temporary_input is not None else run_input
         if source is None:
             return
-        self._report_check(run, checker.input(source, resized=chain.temporary_input is not None))
+        self._report_check(run, checker.input(source))
         plan = chain.job.input_copy
         if chain.temporary_input is not None and plan is not None:
             self._report_check(run, checker.resized_input(source, chain.temporary_input.path, plan))
@@ -223,10 +235,11 @@ class JobExecutor:
         plan = job.input_copy
         if job.input is None or plan is None:
             return None
-        # Imported here, so jobs that never resize do not load numpy and LittleCMS.
+        # Imported here, so a t2v job, which has no input, does not load numpy and LittleCMS.
         from draw_things_control.jobs.inputs.resize import TemporaryInput
 
-        return TemporaryInput(job.input, plan)
+        # ffmpeg reads a 16-bit RGB input with every bit; an image job, which does not need it, reads high bytes without it.
+        return TemporaryInput(job.input, plan, find_ffmpeg())
 
     def _run_with_records(self, job: JobDefinition, options: JobRunOptions, seed: int, seed_source: str, temporary_input: TemporaryInput | None, execution_id: str | None) -> JobOutcome:
         resume = options.resume
@@ -241,6 +254,7 @@ class JobExecutor:
 
     def _run_chain(self, chain: _Chain) -> JobOutcome:
         manifest = chain.records.manifest
+        self._keep_first_image(chain)
         self._emit(job_started_event(chain))
         try:
             return self._run_runs(chain)
@@ -302,13 +316,87 @@ class JobExecutor:
         self._emit(JobFinished(at=manifest.finished_at, status=manifest.status, exit_code=exit_code, completed_runs=completed, total_runs=total, signal=stopped_by.name if stopped_by is not None else None))
         return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=chain.records.manifest_path, log=chain.records.log_path)
 
+    def _keep_first_image(self, chain: _Chain) -> None:
+        """Keep the chain's first image for a video job (Milestone 09): run 1's copy of the input, named from the
+        manifest's stem; a t2v job's is run 1's last frame, written after run 1; a resume uses the resumed execution's."""
+        job, manifest, resume = chain.job, chain.records.manifest, chain.options.resume
+        if not job.mode.is_video:
+            return
+        if resume is not None:
+            chain.anchor = resume.anchor
+            if resume.first_image is not None and resume.first_image.is_file():
+                chain.first_image = resume.first_image
+                manifest.first_image = str(resume.first_image)
+            else:
+                chain.first_image_notes = ("The execution it resumes kept no first image, so drift since the first image is left out.",)
+            return
+        path = chain.records.first_image_path
+        if path is None:
+            chain.first_image_notes = ("The job writes no records, so no first image is kept, and drift since the first image is left out.",)
+            return
+        manifest.first_image = str(path)
+        if chain.temporary_input is None:
+            return
+        try:
+            shutil.copyfile(chain.temporary_input.path, path)
+        except OSError as error:
+            logger.warning("Could not keep the first image {}: {}", path.name, error)
+            manifest.first_image = None
+            chain.first_image_notes = (f"The first image could not be kept ({error}), so drift since it is left out.",)
+            return
+        chain.first_image = path
+
+    def _keep_t2v_first_image(self, chain: _Chain, run: PlannedRun) -> None:
+        """A t2v job's first image is run 1's last frame, the first frame any of its runs is given."""
+        manifest = chain.records.manifest
+        planned = manifest.first_image
+        if planned is None:
+            return
+        if run.last_frame is None or not run.last_frame.is_file():
+            # As the i2v branch does, the manifest names no first image that was never written.
+            manifest.first_image = None
+            chain.first_image_notes = ("Run 1 left no last frame, so no first image is kept, and drift since the first image is left out.",)
+            return
+        try:
+            shutil.copyfile(run.last_frame, planned)
+        except OSError as error:
+            logger.warning("Could not keep the first image {}: {}", Path(planned).name, error)
+            manifest.first_image = None
+            chain.first_image_notes = (f"The first image could not be kept ({error}), so drift since it is left out.",)
+            return
+        chain.first_image = Path(planned)
+
+    def _run_color(self, chain: _Chain, number: int, pair: PromptPair, run_input: Path | None) -> RunColor:
+        """What run ``number``'s colors are compared with, and, when its job corrects, held to."""
+        job = chain.job
+        notes = chain.first_image_notes
+        fresh_t2v = _fresh_t2v(chain, number)
+        if fresh_t2v:
+            notes = ("A t2v job's run 1 has no input: it is measured within itself, not corrected, and its last frame becomes the first image.",)
+        corrects = job.mode.is_video and job.color.corrects and not fresh_t2v and run_input is not None
+        anchor, reanchored = self._anchor(chain, number, pair, run_input) if corrects and job.color.holds_to_anchor else (None, False)
+        return RunColor(first_image=chain.first_image, anchor=anchor, reanchored=reanchored, notes=notes, corrects=corrects)
+
+    @staticmethod
+    def _anchor(chain: _Chain, number: int, pair: PromptPair, run_input: Path | None) -> tuple[Path | None, bool]:
+        """The anchor of run ``number``, and whether it re-anchored there. With ``reanchor: prompt_pair`` (the default,
+        owner decision), a run whose prompt pair differs from the previous run's makes its own input the anchor, at every
+        change, even when pairs alternate; ``never`` holds the chain to the first image."""
+        if chain.job.color.reanchor == "prompt_pair" and number > 1 and run_input is not None and chain.schedule[number - 2].name != pair.name:
+            chain.anchor = run_input
+            return run_input, True
+        if chain.anchor is None:
+            chain.anchor = chain.first_image
+        return chain.anchor, False
+
     def _run_step(self, chain: _Chain, number: int, pair: PromptPair, current_input: Path | None) -> tuple[PlannedRun, RunRecord, RunStatus, int]:
         """Plan, start, execute, and record one run; returns it with its status and exit code."""
         job = chain.job
         run = self._planner.plan_run(job, number, pair, current_input, chain.records.manifest.seed, chain.options.executable, set())
-        record = self._start_run(chain, run)
+        color = self._run_color(chain, number, pair, current_input)
+        record = self._start_run(chain, run, color.anchor)
         try:
-            status, exit_code = self._execute_run(chain, run, record)
+            status, exit_code = self._execute_run(chain, run, record, color)
         except BaseException:
             record.status = RunStatus.FAILED
             # The run raised, so a file counts as kept only if it exists; the record itself is left as the manifest has it.
@@ -318,6 +406,12 @@ class JobExecutor:
         record.exit_code = exit_code
         if status != RunStatus.SUCCEEDED and not run.output.exists():
             record.output = None
+        if _fresh_t2v(chain, number):
+            if status == RunStatus.SUCCEEDED:
+                self._keep_t2v_first_image(chain, run)
+            else:
+                # Run 1 never gave the first image the manifest names.
+                chain.records.manifest.first_image = None
         self._finish_run(number, record, exit_code, output=record.output)
         if number == 1 and chain.temporary_input is not None:
             chain.temporary_input.cleanup()
@@ -331,8 +425,8 @@ class JobExecutor:
         wait = chain.job.cooldown.wait_after(record.seconds or 0.0)
         return self._cool_down(chain, record, number + 1, wait, parks) if wait.seconds > 0 else None
 
-    def _start_run(self, chain: _Chain, run: PlannedRun) -> RunRecord:
-        """Record ``run`` in the manifest and announce it; return its record."""
+    def _start_run(self, chain: _Chain, run: PlannedRun, anchor: Path | None = None) -> RunRecord:
+        """Record ``run`` in the manifest and announce it, with the file its colors are held to; return its record."""
         pair, number, temporary_input = run.pair, run.number, chain.temporary_input
         record = RunRecord(
             pair=pair.name,
@@ -345,6 +439,7 @@ class JobExecutor:
             command=redact_command(run.arguments.command),
             started_at=self._timestamp(),
             resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
+            anchor=str(anchor) if anchor is not None else None,
         )
         chain.records.manifest.runs.append(record)
         chain.records.save()
@@ -400,7 +495,7 @@ class JobExecutor:
         return EXIT_PARKED
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
-        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames))
+        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames, corrected_output=record.corrected_output))
 
     def _output_callback(self, number: int) -> MessageCallback | None:
         """A callback that turns each child line of run ``number`` into a RunOutput, or None without an observer."""
@@ -412,8 +507,13 @@ class JobExecutor:
 
         return on_message
 
-    def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord) -> tuple[RunStatus, int]:
-        return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start)
+    def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, color: RunColor) -> tuple[RunStatus, int]:
+        return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, color=color)
+
+
+def _fresh_t2v(chain: _Chain, number: int) -> bool:
+    """Whether run ``number`` is a t2v job's run 1, not resumed: it has no input, and its last frame becomes the first image."""
+    return chain.job.mode is GenerationMode.T2V and number == 1 and chain.options.resume is None
 
 
 def job_started_event(chain: _Chain) -> JobStarted:
@@ -440,6 +540,7 @@ def job_started_event(chain: _Chain) -> JobStarted:
         execution_id=manifest.execution_id,
         first_run=manifest.first_run,
         resumes_execution=manifest.resumes_execution,
+        first_image=manifest.first_image,
     )
 
 
@@ -456,4 +557,5 @@ def run_started_event(record: RunRecord, run: PlannedRun, total: int) -> RunStar
         output=run.output.name,
         last_frame=run.last_frame.name if run.last_frame is not None else None,
         command=tuple(record.command),
+        anchor=record.anchor,
     )

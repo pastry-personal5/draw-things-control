@@ -159,7 +159,20 @@ CREATE TABLE media_checks (
 CREATE INDEX media_checks_execution ON media_checks (execution_id, run)
 """
 
+# Milestone 9: color preservation. Each run's anchor, the file its colors were held to (a full path; NULL when its job
+# does not correct toward one), and its corrected copy's file name; each execution's first image (a full path), which
+# the color checks compare with. A queued resume carries the resumed execution's first image and the anchor of the run
+# it continues after, as it carries the rest of its resume point. Rows written before stay NULL: their executions kept
+# no first image, and their snapshots have no color block.
+SCHEMA_V8 = """
+ALTER TABLE runs ADD COLUMN anchor TEXT;
+ALTER TABLE runs ADD COLUMN corrected_output TEXT;
+ALTER TABLE executions ADD COLUMN first_image TEXT;
+ALTER TABLE queue ADD COLUMN resume_first_image TEXT;
+ALTER TABLE queue ADD COLUMN resume_anchor TEXT
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8)
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -6,6 +6,11 @@ import shutil
 from pathlib import Path
 
 
+def find_ffmpeg() -> str | None:
+    """ffmpeg's path, or None; for what can do without it, such as reading a 16-bit input by its high bytes."""
+    return shutil.which("ffmpeg")
+
+
 def require_ffmpeg(executable: str = "ffmpeg") -> str:
     """Return ffmpeg's path, or explain how to get it."""
     path = shutil.which(executable)

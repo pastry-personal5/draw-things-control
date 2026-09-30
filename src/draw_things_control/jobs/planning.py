@@ -16,7 +16,7 @@ from draw_things_control.core.draw_things_config import build_config_json
 from draw_things_control.core.generation import require_executable
 from draw_things_control.jobs.definition import JobDefinition, PromptPair
 from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.jobs.output_naming import RandomNumber, last_frame_path, next_output_path, random_four_digits
+from draw_things_control.jobs.output_naming import RandomNumber, corrected_output_path, last_frame_path, next_output_path, random_four_digits, raw_last_frame_path
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,9 @@ class PlannedRun:
     output: Path
     last_frame: Path | None
     arguments: DrawThingsGenerateArguments
+    # A correcting job's uncorrected last frame and corrected copy (Milestone 09); None for any other.
+    raw_last_frame: Path | None = None
+    corrected_output: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -94,10 +97,11 @@ class JobPlanner:
         plan = job.input_copy
         if job.input is not None and plan is not None:
             width, height = plan.target_size
-            current_input = Path(f"<{job.input.name} resized to {width}x{height}>")
+            made = "copied as 8-bit sRGB at" if plan.fit in ("none", "rotate") else "resized to"
+            current_input = Path(f"<{job.input.name} {made} {width}x{height}>")
         for number, pair in enumerate(job.schedule(), start=1):
             run = self.plan_run(job, number, pair, current_input, seed, executable, reserved)
-            reserved.update(path for path in (run.output, run.last_frame) if path is not None)
+            reserved.update(path for path in (run.output, run.last_frame, run.raw_last_frame, run.corrected_output) if path is not None)
             runs.append(run)
             current_input = run.last_frame or run.output
         # The job's timeout was checked when it was loaded, so each command only needs its credentials redacted.
@@ -117,4 +121,6 @@ class JobPlanner:
         flags = {**override_arguments(override.as_dict()), "model": job.model, "width": width, "height": height, "seed": seed}
         # A job's output is captured, never shown, so the live sampling preview is only extra work.
         arguments = DrawThingsGenerateArguments(executable=executable, prompt=pair.positive, negative_prompt=pair.negative, config_json=json.dumps(config, separators=(",", ":")), image=run_input, output=output, video_format=job.video_format, disable_preview=True, **flags)
-        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments)
+        corrects = job.mode.is_video and job.color.corrects
+        raw, copy = (raw_last_frame_path(output), corrected_output_path(output)) if corrects else (None, None)
+        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments, raw_last_frame=raw, corrected_output=copy)

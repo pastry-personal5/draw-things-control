@@ -149,12 +149,63 @@ class JobDefinitionTests(JobTestCase):
             "seed": {"seed": -1},
             "refiner_start": {"refiner_start": 2},
             "model": {"model": ""},
+            "cfg_zero_star": {"cfg_zero_star": "yes"},
+            "cfg_zero_init_steps": {"cfg_zero_init_steps": -1},
+            "color_calibration": {"color_calibration": "wavelet"},
         }
         for field, override in cases.items():
             with self.subTest(field):
                 self.assert_invalid("sampler" if field == "unknown" else field, config_override=override)
         self.assert_invalid("frame_count", mode="i2i", config_override={"frame_count": 17})
         self.assert_invalid("config_override.seed", config_override={"seed": 2**32})
+
+    def test_generation_color_overrides(self) -> None:
+        job = self.load(config_override={"cfg_zero_star": True, "cfg_zero_init_steps": 1, "color_calibration": "lab"})
+        self.assertEqual((job.config_override.cfg_zero_star, job.config_override.cfg_zero_init_steps, job.config_override.color_calibration), (True, 1, "lab"))
+        self.assertEqual(self.load(config_override={"color_calibration": "none", "cfg_zero_init_steps": 0}).config_override.as_dict(), {"color_calibration": "none", "cfg_zero_init_steps": 0})
+        self.assert_invalid(r"'config_override\.cfg_zero_init_steps' must be an integer >= 0", config_override={"cfg_zero_init_steps": True})
+        self.assert_invalid(r"'config_override\.cfg_zero_star' must be true or false", config_override={"cfg_zero_star": 1})
+        self.assert_invalid(r"'config_override\.color_calibration' must be none or lab", config_override={"color_calibration": "LAB"})
+
+    def test_the_color_block(self) -> None:
+        self.assertFalse(self.load().color.corrects)
+        blend = self.load(color={"anchor": "blend", "strength": 0.5, "first_weight": 0.4, "reanchor": "never", "regions": False}).color
+        self.assertEqual((blend.anchor, blend.strength, blend.first_weight, blend.reanchor, blend.regions, blend.pull), ("blend", 0.5, 0.4, "never", False, 0.4))
+        first = self.load(color={"anchor": "first"}).color
+        self.assertEqual((first.pull, first.reanchor, first.regions, first.strength), (1.0, "prompt_pair", True, 1.0))
+        self.assertEqual(first.as_dict(), {"anchor": "first", "strength": 1.0, "regions": True, "reanchor": "prompt_pair"})
+        self.assertEqual(self.load(color={"anchor": "previous"}).color.pull, 0.0)
+        cases = {
+            r"'color\.anchor' must be none, previous, first, or blend": {"anchor": "last"},
+            r"'color\.strength' must be a number from 0 to 1": {"anchor": "first", "strength": 1.5},
+            r"'color\.first_weight' only with anchor: blend": {"anchor": "first", "first_weight": 0.3},
+            r"'color\.first_weight' must be a number above 0 and up to 1": {"anchor": "blend", "first_weight": 0},
+            r"'color\.reanchor' only with anchor: first or blend": {"anchor": "previous", "reanchor": "never"},
+            r"'color\.reanchor' must be prompt_pair or never": {"anchor": "blend", "reanchor": "always"},
+            r"'color\.regions' must be true or false": {"anchor": "first", "regions": "yes"},
+            r"'color\.skin' is not a known key": {"anchor": "first", "skin": True},
+        }
+        for message, color in cases.items():
+            with self.subTest(message):
+                self.assert_invalid(message, color=color)
+        self.assert_invalid("'color' must be a mapping", color="blend")
+        self.assert_invalid("'color' only in video jobs", mode="i2i", color={"anchor": "first"})
+
+    def test_a_correcting_job_names_its_raw_frame_and_copy_and_its_summary_shows_the_policy(self) -> None:
+        from draw_things_control.jobs.text import job_summary
+
+        job = self.load(color={"anchor": "blend"})
+        self.assertIn(("color", "blend, first 0.25, reanchor on prompt pair, regions"), job_summary(job))
+        self.assertNotIn("color", [label for label, _value in job_summary(self.load())])
+        self.assertEqual(dict(job_summary(self.load(color={"anchor": "previous", "strength": 0.5, "regions": False})))["color"], "previous, strength 0.5, whole frame")
+
+    def test_the_worst_case_adds_the_correction_limit_to_each_run(self) -> None:
+        from draw_things_control.jobs.definition import correction_limit
+
+        self.assertEqual(self.load().correction_seconds(), 0.0)
+        job = self.load(color={"anchor": "first"}, config_override={"frame_count": 17})
+        self.assertEqual(job.correction_seconds(), correction_limit(17))
+        self.assertEqual(correction_limit(17), 27.0)
 
     def test_model_and_refiner_requirements(self) -> None:
         self.write_base_config({"width": 832, "height": 448}, name="bare.yaml")
@@ -178,8 +229,9 @@ class JobDefinitionTests(JobTestCase):
         self.assertNotIn("batchCount", job.base_config)
         self.assertEqual(job.ignored_config, {"batchCount": 4})
         messages = ignored_config_lines(job)
-        self.assertEqual(len(messages), 1)
+        self.assertEqual(len(messages), 2)
         self.assertTrue(messages[0].startswith("Ignoring batchCount (4) from config_file batch.yaml"))
+        self.assertEqual(messages[1], "Input first-frame.png is already 832x448; copied as 8-bit sRGB for run 1")
 
     def test_other_modes_keep_run_count(self) -> None:
         self.write_base_config({**BASE_CONFIG, "batchCount": 4}, name="batch.yaml")
@@ -236,16 +288,14 @@ class JobDefinitionTests(JobTestCase):
             self.load(input="panorama.png", desired_input_width=1600)
         self.assertEqual(self.load(input="panorama.png", desired_input_width=1600, max_input_crop_percent=45).size, (1600, 64))
 
-    def test_undecodable_input_fails_only_when_a_copy_is_made(self) -> None:
+    def test_undecodable_input_fails_since_run_1_always_reads_a_copy(self) -> None:
         # A truncated JPEG still has a readable header, so only a full decode finds the damage.
         path = self.input_directory / "noise.jpg"
         Image.effect_noise((832, 448), 64).convert("RGB").save(path)
         path.write_bytes(path.read_bytes()[:2000])
-        self.load(input="noise.jpg")
-        # Already the target and upright: the original is used as-is, so it is not decoded.
-        with mock.patch("draw_things_control.jobs.parsing.decode_image") as decode:
-            self.assertIsNone(self.load(input="noise.jpg", desired_input_width=832).input_copy)
-        decode.assert_not_called()
+        # Already the target and upright, with or without a desired size: run 1 reads a scale-1 copy, so it is decoded.
+        self.assert_invalid("'input' could not be decoded", input="noise.jpg")
+        self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=832)
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640, desired_input_height=448)
         # A real run writes the copy right away, which decodes the input, so it skips this decode.

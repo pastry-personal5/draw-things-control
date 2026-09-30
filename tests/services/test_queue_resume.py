@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
@@ -54,6 +55,32 @@ class QueueResumeTests(JobTestCase):
         resumed = resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
         self.assertEqual((resumed.resumes, resumed.resumes_execution, resumed.resume_first_run, resumed.resume_input, resumed.resume_seed), (entry.queue_number, execution_number, 4, last_frame, 42))
         self.assertEqual(resumed.state, str(QueueState.QUEUED))
+
+    def test_a_resume_carries_the_first_image_and_the_anchor_of_the_run_it_continues_after(self) -> None:
+        entry = self.submit(run_count=7)
+        claimed = self.store.queue.claim_oldest(NOW)
+        assert claimed is not None
+        last_frame = self.output_directory / "last-frame-2.png"
+        last_frame.parent.mkdir(parents=True, exist_ok=True)
+        last_frame.write_bytes(b"png")
+        first_image, anchor = str(self.output_directory / "walk-job-first-image.png"), str(self.output_directory / "run-2-input.png")
+        execution_row = self.store.executions.start(NewExecution(job_name="sunset-walk", job_file="job.yaml", mode="i2v", started_at="2026-09-27T10:00:00+00:00", seed=42, settings=ExecutionSettings(output_directory=str(self.output_directory)), first_image=first_image))
+        for number in (1, 2):
+            self.store.executions.start_run(execution_row, number, NewRun(pair="only", positive="text", started_at="2026-09-27T10:00:00+00:00", status="succeeded", output=f"run-{number}.mov", last_frame=last_frame.name if number == 2 else None, anchor=first_image if number == 1 else anchor))
+        self.store.executions.finish(execution_row, status="interrupted", exit_code=None, signal=None, finished_at="2026-09-27T10:10:00+00:00")
+        execution_number = self.store.executions.number_of(execution_row)
+        assert execution_number is not None
+        self.store.queue.link_execution(entry.id, execution_number)
+        self.store.queue.finish(entry.id, state=QueueState.INTERRUPTED, finished_at="2026-09-27T10:10:00+00:00")
+        resumed = resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+        self.assertEqual((resumed.resume_first_run, resumed.resume_first_image, resumed.resume_anchor), (3, first_image, anchor))
+        stored = self.entry(resumed.id)
+        self.assertEqual((stored.resume_first_image, stored.resume_anchor), (first_image, anchor))
+        from draw_things_control.services.queue_worker import _resume_point_of
+
+        point = _resume_point_of(stored)
+        assert point is not None
+        self.assertEqual((point.first_image, point.anchor), (Path(first_image), Path(anchor)))
 
     def test_a_resume_is_refused_when_the_entry_is_not_in_a_resumable_state(self) -> None:
         entry = self.submit(run_count=1)

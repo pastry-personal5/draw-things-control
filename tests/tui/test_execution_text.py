@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from draw_things_control.tui.text.execution import execution_detail, execution_detail_text, execution_text
-from tests.fixtures import execution_row
+from tests.fixtures import execution_row, run_row
 
 
 class ExecutionTextResumeTests(unittest.TestCase):
@@ -26,3 +26,16 @@ class ExecutionTextResumeTests(unittest.TestCase):
         resumed = execution_detail(execution_row(resumes=3))
         self.assertEqual(resumed.resumes, "E0003")
         self.assertIn("resumes E0003", str(execution_detail_text(resumed, 40, None)[0]))
+
+
+class ExecutionTextColorTests(unittest.TestCase):
+    def test_the_first_image_and_each_runs_corrected_copy_and_anchor_are_shown_when_there_are_any(self) -> None:
+        plain = str(execution_text(execution_row(runs=(run_row(output="a.mov"),))))
+        self.assertNotIn("first image:", plain)
+        self.assertNotIn("corrected copy:", plain)
+        row = execution_row(first_image="/out/walk-job-first-image.png", runs=(run_row(output="a.mov", last_frame="a-last-frame.png", corrected_output="a-cc.mov", anchor="/out/walk-job-first-image.png"),))
+        text = str(execution_text(row))
+        self.assertIn("first image: /out/walk-job-first-image.png\n", text)
+        self.assertIn("corrected copy: ", text)
+        self.assertIn("a-cc.mov", text)
+        self.assertIn("anchor: /out/walk-job-first-image.png", text)

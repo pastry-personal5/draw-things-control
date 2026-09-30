@@ -216,9 +216,35 @@ bends blue toward purple), and its Euclidean distance works as a color differenc
 just-noticeable difference). Brightness, contrast, saturation, and hue, the owner's four drifts, are then its `L`
 median, `L` spread, `C`, and `h`.
 
+## Checked in Milestone 09's step 0
+
+Checked on 2026-09-30, before any code:
+
+- **The installed `draw-things-cli`** (`--version` prints `dev`) was built on 2026-09-23 from a local checkout of
+  `draw-things-community` at `da9b0c8` (2026-09-22), with no tracked file changed, not from `0e9c180`. Its
+  `pixelByte`, the PNG branch of `loadTrainingTensor`, and its `swift-png` pin (`075dfb2`) are the same as this note
+  read, so what this note says of them holds for the installed build.
+- **The generation settings.** The JSON override names are `cfgZeroStar` (a Bool), `cfgZeroInitSteps` (an Int32),
+  and `colorCalibration` (a string). `lab` turns calibration on, and any other value, `none` included, turns it off
+  (`Libraries/Scripting/Sources/ScriptModels.swift`). All three names are in the binary. Of the configuration files,
+  the `image-to-video-wan-2-2.example` pair writes all three; `image-to-video-wan-2-2-default-i8x.yaml` writes
+  `cfgZeroStar: false` and `colorCalibration: none`, and no `cfgZeroInitSteps`.
+- **The corrected copy's encoder.** ffmpeg 8.1.1's `prores_videotoolbox -profile:v 4444` takes `p416le` and writes
+  ProRes 4444 (`ap4h`, `yuv444p12le`). A 17-frame 832x448 test pattern went through it and came back, BT.709 limited
+  range, within 0.005 level on average (0.023 mean absolute). Its pixels measure BT.709 (0.047 against 0.202 for
+  BT.601). `prores_ks` from `yuv444p10le` came back within 0.030 (0.136 mean absolute). The encoder writes the
+  matrix and range into the frame header but not the primaries or the transfer, so the `colr` box states them.
+  `h264_videotoolbox` and `hevc_videotoolbox` both encode from `nv12`.
+- **Upstream reports** on `pixelByte` and the 16-bit read are drafted in
+  [draw-things-upstream-reports.md](draw-things-upstream-reports.md), for the owner to file.
+
+Step 1's measurement of the handoff on E0016 is deferred (owner decision): that chain's clips are no longer on disk.
+The `color_drift` check measures every run from Milestone 09 on.
+
 ## Not verified
 
-- That the installed `draw-things-cli` is built from the source read here.
+- That the installed `draw-things-cli` is built from the source read here. Checked: it is not, but the parts this
+  note reads are the same ([above](#checked-in-milestone-09s-step-0)).
 - How far Wan reproduces its conditioning frame's tone and color through the VAE; so, whether the handoff bias
   compounds.
 - What CoreGraphics does to a non-PNG input drawn into a `DeviceRGB` context.
@@ -226,4 +252,5 @@ median, `L` spread, `C`, and `h`.
 - The effect on drift of guidance 3.5, of CFG-Zero\*, and of `colorCalibration: lab`.
 - Vision's mask quality on generated frames, and its speed at 832x448.
 - That ffmpeg's `prores_videotoolbox` writes ProRes 4444 from 16-bit 4:4:4 (`p416le`); its help lists the pixel
-  format, not the profile it allows. `prores_ks` takes at most 10 bits (`yuv444p10le`, `yuva444p10le`).
+  format, not the profile it allows. `prores_ks` takes at most 10 bits (`yuv444p10le`, `yuva444p10le`). Checked: it
+  does ([above](#checked-in-milestone-09s-step-0)).

@@ -1,7 +1,7 @@
 # Milestone 09: Color preservation
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** in-progress (increments A to D built on 2026-09-30; Vision regions, and the constants the A/B chains set, to come; see [As built](#as-built))
 **Depends on:** [Milestone 08](milestone-08-video-format-and-color.md): the resolved decode of each video
 (`StreamColor`), its `colr` tag, the handoff, and the media checks kept per run in the state store.
 
@@ -15,6 +15,45 @@ never re-encoded and none of its pixels change; Milestone 08's `colr` tag stays 
 The evidence is in [the color drift research note](../research/color-drift.md). Its summary table lists each stage
 from the first image to the handoff, what it does to color, and whether that is read in code, simulated, or a
 hypothesis.
+
+## As built
+
+Built on 2026-09-30, in the increments the owner chose (see the [changelog](phase-3-changelog.md)): A, the
+`config_override` keys (layer 4); B, the rest of the exact handoff, the normalized first input, the first image,
+schema 8, and the `color_drift` check (layers 1 and 3); C, the gamut mapping (layer 2); and D, the correction over the
+whole frame (layer 5 without Vision). Everything below holds, with these as the built facts:
+
+- **Step 0.** The installed `draw-things-cli` is built from `da9b0c8`, not `0e9c180`; the code the research read is the
+  same in both ([research note](../research/color-drift.md#checked-in-milestone-09s-step-0)). The upstream reports are
+  drafted in [draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md). `prores_videotoolbox`
+  writes ProRes 4444 from `p416le`.
+- **Step 1 is deferred** (owner decision): E0016's clips are gone. Every run's `color_drift` check measures from now on.
+- **Schema 8** also adds `queue.resume_first_image` and `queue.resume_anchor`, since a queued resume carries its whole
+  resume point on its queue row.
+- **No records, no first image.** A job run without records (no manifest stem) keeps none, and its drift checks say so.
+- **The cast** is the mean `a` and `b` of the least chromatic tenth of the pixels, when that tenth is near-neutral
+  (chroma under 0.03), rather than of every pixel under 0.03: the same pixels stay neutral when saturation changes.
+- **The fit.** Each frame is fitted once, to a target between the run's input and the anchor, ramped by the smoothstep;
+  its chroma gain is then refined on a sample of the frame, for the chroma the tone curve and the sRGB edge take.
+- **The copy** holds the corrected values rounded to 8 bits as the handoff's are, so its pixels measure BT.709 and its
+  last frame is the handoff's values. A ProRes copy's frame header leaves the transfer unknown, since ProRes has no sRGB
+  transfer, and its `colr` box states it (owner decision).
+- **Tested**: the handoff's numpy twin equals the `geq` handoff, and `strength: 0` hands off exactly what the
+  extraction does; the simulated chain gives, averaged over four chains, `none` 0.207, `previous` 0.045, `blend`
+  0.012, and `first` 0.004 in `ΔE_OK` of the statistics from the first image; and a 2-run `blend` job through the
+  real media tools (a runner writing Draw Things-like ProRes) writes each run's copy, corrected handoff, and raw
+  frame, keeps every pixel of the original, and starts run 2 from run 1's corrected handoff.
+
+What is left:
+
+- **Increment E:** Apple Vision's regions (`media/regions.py`, `media/vision_segmenter.py`, `pyobjc-framework-Vision`),
+  once its masks are timed and inspected on generated frames. Until then `regions: true` corrects the whole frame, with
+  a note, and the drift is measured over the whole frame.
+- **Step 3, the A/B chains** (the owner's GPU time), measured by the `color_drift` check, and the anchor chains with the
+  correction. They set the caps, the drift check's limits, and the correction's time limit, all named constants now
+  (`jobs/media/correction.py`, `jobs/media/drift.py`, `jobs/definition.py`), and their results go into the research
+  note.
+- Filing the upstream reports, which is the owner's.
 
 ## The owner's answers
 

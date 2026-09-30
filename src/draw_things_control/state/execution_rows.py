@@ -63,6 +63,8 @@ class NewRun:
     output_width: int | None = None
     output_height: int | None = None
     output_frames: int | None = None
+    anchor: str | None = None
+    corrected_output: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,8 @@ class NewExecution:
     # own snapshot names the entry, not the execution, so this is the only place a resumed execution is linked.
     first_run: int = 1
     resumes: int | None = None
+    # The chain's first image, a full path (Milestone 09).
+    first_image: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,9 @@ class RunRow:
     output_width: int | None
     output_height: int | None
     output_frames: int | None
+    # The file the run's colors were held to (a full path), and its corrected copy's file name (Milestone 09).
+    anchor: str | None = None
+    corrected_output: str | None = None
     # The store's own row number and start time as an epoch, for ordering.
     id: int = 0
     started_epoch: float = 0.0
@@ -162,6 +169,8 @@ class RunRow:
             output_width=row["output_width"],
             output_height=row["output_height"],
             output_frames=row["output_frames"],
+            anchor=row["anchor"],
+            corrected_output=row["corrected_output"],
             id=row["id"],
             started_epoch=row["started_epoch"],
         )
@@ -200,6 +209,8 @@ class ExecutionRow:
     runs: tuple[RunRow, ...] = ()
     first_run: int = 1
     resumes: int | None = None
+    # The chain's first image, a full path; None for an execution recorded before Milestone 09, or without one.
+    first_image: str | None = None
     # Media checks of a run that never started (a stop during the input checks), which no run row can show; filled, like
     # ``runs``, only when the execution is read by itself.
     checks: tuple[MediaCheckRow, ...] = ()
@@ -236,6 +247,7 @@ class ExecutionRow:
             runs=runs,
             first_run=row["first_run"] if "first_run" in row.keys() and row["first_run"] is not None else 1,
             resumes=row["resumes"] if "resumes" in row.keys() else None,
+            first_image=row["first_image"] if "first_image" in row.keys() else None,
         )
 
     @property
@@ -273,7 +285,7 @@ class ExecutionRow:
         return next((run for run in self.runs if run.number == number), None)
 
 
-EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes")
-RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames")
+EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes", "first_image")
+RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "anchor", "corrected_output")
 # Each execution's count of successful runs, read with it.
 SUCCEEDED_COUNT = "(SELECT COUNT(*) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS succeeded"

@@ -16,7 +16,7 @@ from loguru import logger
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobStatus, RunStatus
-from draw_things_control.jobs.output_naming import RandomNumber, job_file_stem
+from draw_things_control.jobs.output_naming import RandomNumber, first_image_path, job_file_stem
 
 if TYPE_CHECKING:
     from loguru import Record
@@ -46,6 +46,9 @@ class RunRecord:
     output_width: int | None = None
     output_height: int | None = None
     output_frames: int | None = None
+    # The file the run's colors were held to, and the corrected copy of its video (Milestone 09); see RunStarted.
+    anchor: str | None = None
+    corrected_output: str | None = None
 
 
 @dataclass
@@ -78,6 +81,8 @@ class JobManifest:
     # The whole chain's run count, so import-history can tell "the whole job" from "this manifest's own runs" for a
     # resumed manifest (whose runs list holds only its own, from first_run on); 0 in a manifest written before this.
     total_runs: int = 0
+    # The chain's first image, a full path (see JobStarted); None without one.
+    first_image: str | None = None
 
 
 def write_manifest(path: Path, manifest: JobManifest) -> None:
@@ -127,6 +132,11 @@ class JobRecords:
         # Both None unless records are written beside the outputs.
         self.manifest_path = manifest_path
         self.log_path = log_path
+
+    @property
+    def first_image_path(self) -> Path | None:
+        """Where a new chain keeps its first image, named from the manifest's stem; None without records."""
+        return first_image_path(self.manifest_path) if self.manifest_path is not None else None
 
     def save(self) -> None:
         """Write the manifest, when records are written."""

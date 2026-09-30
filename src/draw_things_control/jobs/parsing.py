@@ -12,15 +12,16 @@ from draw_things_control.core.errors import InputError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.numbers import is_int, is_number
 from draw_things_control.core.yaml_files import parse_yaml_mapping, read_yaml_file
-from draw_things_control.jobs.definition import ConfigOverride, GenerationMode, JobDefinition
-from draw_things_control.jobs.inputs.size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, decode_image, read_image_info, resize_plan
+from draw_things_control.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, ConfigOverride, GenerationMode, JobDefinition
+from draw_things_control.jobs.inputs.size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, copy_plan, decode_image, read_image_info, resize_plan
 from draw_things_control.jobs.overrides import MAX_SEED, parse_config_override
 from draw_things_control.jobs.prompt_pairs import NAME_PATTERN, parse_prompt_pairs
 
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown"}
+JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown", "color"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs", "config_file")
 OUTPUT_KEYS = {"directory", "extension", "video_format"}
+COLOR_KEYS = {"anchor", "strength", "first_weight", "reanchor", "regions"}
 # Base configuration keys each mode drops, because the job itself decides them.
 IGNORED_CONFIG_KEYS = {"i2v": ("batchCount",)}
 # The desired_input_* keys and max_input_crop_percent, as (width, height, crop percent).
@@ -74,8 +75,9 @@ class JobParser:
         model = self._model(override, base_config, config_file)
         timeout = self._timeout(data.get("run_timeout_seconds"))
         cooldown, cooldown_source = self._cooldown(data)
+        color = self._color(data.get("color"), mode)
         desired = self._desired_size(data, mode)
-        plan, ignored_size = self._input_size(input_path, desired, override, base_config, config_file)
+        plan, copy, ignored_size = self._input_size(input_path, desired, override, base_config, config_file)
         return JobDefinition(
             path=self._path,
             name=name,
@@ -93,9 +95,11 @@ class JobParser:
             run_timeout_seconds=timeout,
             cooldown=cooldown,
             cooldown_source=cooldown_source,
+            color=color,
             ignored_config=ignored_config,
             size=plan.target_size if plan is not None else None,
             input_resize=plan,
+            copy_plan=copy,
             ignored_size=ignored_size,
             source_text=source_text,
         )
@@ -197,6 +201,38 @@ class JobParser:
             return self._global_config.cooldown, "global_config"
         return DEFAULT_COOLDOWN, "default"
 
+    def _color(self, value: Any, mode: GenerationMode) -> ColorPolicy:
+        """The ``color`` block (Milestone 09): each key checked and named as ``color.<key>`` on error."""
+        if value is None:
+            return ColorPolicy()
+        if not mode.is_video:
+            self._fail("color", "only in video jobs")
+        if not isinstance(value, dict):
+            self._fail("color", "must be a mapping")
+        self._check_keys(value, COLOR_KEYS, "color.")
+        anchor = value.get("anchor", "none")
+        if anchor not in COLOR_ANCHORS:
+            self._fail("color.anchor", f"must be {', '.join(COLOR_ANCHORS[:-1])}, or {COLOR_ANCHORS[-1]}")
+        strength = value.get("strength", 1.0)
+        if not is_number(strength) or not 0 <= strength <= 1:
+            self._fail("color.strength", "must be a number from 0 to 1")
+        first_weight = value.get("first_weight", ColorPolicy.first_weight)
+        if "first_weight" in value:
+            if anchor != "blend":
+                self._fail("color.first_weight", "only with anchor: blend")
+            if not is_number(first_weight) or not 0 < first_weight <= 1:
+                self._fail("color.first_weight", "must be a number above 0 and up to 1")
+        reanchor = value.get("reanchor", "prompt_pair")
+        if "reanchor" in value:
+            if anchor not in ("first", "blend"):
+                self._fail("color.reanchor", "only with anchor: first or blend")
+            if reanchor not in REANCHOR_RULES:
+                self._fail("color.reanchor", f"must be {' or '.join(REANCHOR_RULES)}")
+        regions = value.get("regions", True)
+        if not isinstance(regions, bool):
+            self._fail("color.regions", "must be true or false")
+        return ColorPolicy(anchor=anchor, strength=float(strength), first_weight=float(first_weight), reanchor=reanchor, regions=regions)
+
     def _desired_size(self, data: dict[str, Any], mode: GenerationMode) -> DesiredSize | None:
         """Validate the desired_input_* keys and max_input_crop_percent; None when no size key is set."""
         given = [key for key in SIZE_KEYS if key in data]
@@ -215,24 +251,28 @@ class JobParser:
             return None
         return data.get("desired_input_width"), data.get("desired_input_height"), max_crop
 
-    def _input_size(self, input_path: Path | None, desired: DesiredSize | None, override: ConfigOverride, base_config: dict[str, Any], config_file: str) -> tuple[ResizePlan | None, tuple[tuple[str, str, Any], ...]]:
+    def _input_size(self, input_path: Path | None, desired: DesiredSize | None, override: ConfigOverride, base_config: dict[str, Any], config_file: str) -> tuple[ResizePlan | None, ResizePlan | None, tuple[tuple[str, str, Any], ...]]:
         """Check the input image against the job's size, or plan its resize to the desired size.
 
-        Returns the resize plan (None without a desired size or input) and each width or height the desired size replaces.
+        Returns the resize plan (None without a desired size or input), the scale-1 copy plan of a job without a
+        desired size, and each width or height the desired size replaces. Run 1 reads a copy either way, so the input
+        is decoded fully to catch broken pixel data.
         """
         if input_path is None:
-            return None, ()
+            return None, None, ()
         image_size, orientation = read_image_info(input_path)
         if desired is None:
             job_size, source = self._job_size(override, base_config, config_file)
             check_input_size(input_path, image_size, job_size, source)
-            return None, ()
+            if self._decode_input:
+                decode_image(input_path)
+            return None, copy_plan(image_size, orientation), ()
         desired_width, desired_height, max_crop_percent = desired
         try:
             plan = resize_plan(input_path.name, image_size, orientation, desired_width, desired_height, max_crop_percent)
         except ValueError as error:
             raise self._wrap(error) from error
-        if self._decode_input and plan.needs_copy:
+        if self._decode_input:
             decode_image(input_path)
         ignored: list[tuple[str, str, Any]] = []
         for key in ("width", "height"):
@@ -240,7 +280,7 @@ class JobParser:
                 ignored.append(("config_override", key, getattr(override, key)))
             if key in base_config:
                 ignored.append(("config_file", key, base_config[key]))
-        return plan, tuple(ignored)
+        return plan, None, tuple(ignored)
 
     def _job_size(self, override: ConfigOverride, base_config: dict[str, Any], config_file: str) -> tuple[tuple[int, int], str]:
         sources = []

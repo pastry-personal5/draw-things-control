@@ -1,5 +1,6 @@
 """Tests for the media checks of an i2v job: what each file holds, and the events the executor makes of them."""
 
+import json
 import shutil
 import struct
 import subprocess
@@ -65,35 +66,33 @@ class ImageCheckTests(unittest.TestCase):
         image.save(path, **options)
         return path
 
-    def test_a_plain_srgb_input_is_ok_resized_or_not(self) -> None:
+    def test_a_plain_srgb_input_is_ok(self) -> None:
         path = self.save(Image.new("RGB", (32, 16), (10, 20, 30)), "in.png")
-        for resized in (True, False):
-            check = check_input(path, resized=resized)
-            self.assertEqual((check.stage, check.verdict), ("input", "ok"))
-            self.assertEqual(check.summary, "PNG 32x16, 8-bit RGB, no color profile (read as sRGB), no alpha")
+        check = check_input(path)
+        self.assertEqual((check.stage, check.verdict, check.notes), ("input", "ok", ()))
+        self.assertEqual(check.summary, "PNG 32x16, 8-bit RGB, no color profile (read as sRGB), no alpha")
 
-    def test_an_input_draw_things_cli_would_read_as_it_is_warns_only_without_a_copy(self) -> None:
+    def test_an_input_that_is_not_plain_8_bit_srgb_is_a_note_since_its_copy_is_read(self) -> None:
         path = self.save(Image.new("RGBA", (32, 16), (10, 20, 30, 128)), "alpha.png")
-        self.assertEqual(check_input(path, resized=True).verdict, "ok")
-        check = check_input(path, resized=False)
-        self.assertEqual(check.verdict, "warning")
-        self.assertIn("draw-things-cli reads it as it is", check.warnings[0])
+        check = check_input(path)
+        self.assertEqual(check.verdict, "ok")
+        self.assertEqual(check.notes, ("draw-things-cli reads its copy, upright 8-bit sRGB RGB, not the file itself.",))
 
     def test_cmyk_without_a_profile_and_gamma_chunks_only_warn(self) -> None:
         cmyk = self.save(Image.new("CMYK", (8, 8)), "cmyk.jpg")
-        self.assertIn("CMYK with no ICC profile", check_input(cmyk, resized=True).warnings[0])
+        self.assertIn("CMYK with no ICC profile", check_input(cmyk).warnings[0])
         info = PngImagePlugin.PngInfo()
         info.add(b"gAMA", (45455).to_bytes(4, "big"))
         gamma = self.save(Image.new("RGB", (8, 8)), "gamma.png", pnginfo=info)
-        self.assertIn("gAMA or cHRM only", check_input(gamma, resized=True).warnings[0])
+        self.assertIn("gAMA or cHRM only", check_input(gamma).warnings[0])
 
     @unittest.skipUnless(DISPLAY_P3.is_file(), "macOS Display P3 profile not available")
     def test_a_display_p3_input_is_named_and_its_copy_keeps_the_mean_color(self) -> None:
         pixels = np.random.default_rng(1).integers(0, 256, (128, 128, 3), dtype=np.uint8)
         source = self.save(Image.fromarray(pixels), "p3.jpg", icc_profile=DISPLAY_P3.read_bytes(), quality=95)
-        check = check_input(source, resized=True)
+        check = check_input(source)
         self.assertIn("ICC Display P3", check.summary)
-        self.assertEqual(check.notes, ("The resized copy converts it from Display P3 to sRGB.",))
+        self.assertEqual(check.notes, ("The copy converts it from Display P3 to sRGB.", "draw-things-cli reads its copy, upright 8-bit sRGB RGB, not the file itself."))
         # Down in linear light, then up in sRGB values.
         for size in ((64, 64), (256, 256)):
             plan = resize_plan("p3.jpg", (128, 128), None, *size)
@@ -101,8 +100,13 @@ class ImageCheckTests(unittest.TestCase):
             resize_image(source, plan, copy)
             resized = check_resized_input(source, copy, plan)
             self.assertEqual(resized.verdict, "ok", resized.warnings)
-            self.assertIn("converted from Display P3 to sRGB", resized.summary)
+            self.assertIn("converted from Display P3 to sRGB with gamut mapping", resized.summary)
             self.assertLessEqual(max(abs(value) for value in resized.facts["mean_color_drift_levels"]), 1.0)
+            source_facts = resized.facts["source"]
+            self.assertEqual((source_facts["profile"], source_facts["conversion"], source_facts["sixteen_bit"]), ("Display P3", "matrix", None))
+            # Random 8-bit P3 values reach beyond sRGB, so some are brought in, and the check says how many.
+            self.assertGreater(source_facts["gamut"]["beyond_knee"], 0)
+            self.assertTrue(any("brought in at constant lightness and hue" in note for note in resized.notes))
 
     def test_a_copy_whose_color_moved_or_whose_size_is_wrong_warns(self) -> None:
         source = self.save(Image.new("RGB", (128, 128), (100, 120, 140)), "in.png")
@@ -146,8 +150,8 @@ class ImageCheckTests(unittest.TestCase):
                 check = check_handoff(path)
                 self.assertEqual((check.stage, check.verdict), ("input", "ok"), check.warnings)
                 self.assertTrue(check.summary.endswith("; the chain's own last frame"), check.summary)
-        # A person's own 16-bit input still warns, since draw-things-cli reads only its high byte.
-        self.assertEqual(check_input(deep, resized=False).verdict, "warning")
+        # A person's own 16-bit input is a note: draw-things-cli reads its 8-bit copy.
+        self.assertEqual(check_input(deep).notes, ("draw-things-cli reads its copy, upright 8-bit sRGB RGB, not the file itself.",))
         rgba = check_handoff(self.save(Image.new("RGBA", (64, 48)), "rgba.png"))
         self.assertEqual(rgba.warnings, ("It is PNG RGBA, not an RGB PNG as a last frame is.", "It has alpha, which Draw Things reads as a mask."))
 
@@ -296,9 +300,11 @@ class FakeChecker:
 
     def __init__(self) -> None:
         self.asked: list[str] = []
+        # Each color_drift call's run input, first image, and notes.
+        self.drift_asked: list[tuple[Path | None, Path | None, tuple[str, ...]]] = []
 
-    def input(self, path: Path, *, resized: bool) -> MediaCheck:
-        self.asked.append(f"input {path.name} resized={resized}")
+    def input(self, path: Path) -> MediaCheck:
+        self.asked.append(f"input {path.name}")
         return MediaCheck("input", str(path), "an image")
 
     def handoff(self, path: Path) -> MediaCheck:
@@ -320,6 +326,11 @@ class FakeChecker:
     def last_frame(self, png: Path, video: object, color: StreamColor) -> MediaCheck:
         self.asked.append("last_frame")
         return MediaCheck("last_frame", png.name, "a frame")
+
+    def color_drift(self, video: Path, color: StreamColor, run_input: Path | None, first_image: Path | None, notes: tuple[str, ...] = ()) -> MediaCheck:
+        self.asked.append("color_drift")
+        self.drift_asked.append((run_input, first_image, notes))
+        return MediaCheck("color_drift", video.name, "a drift", notes=notes)
 
 
 def write_frame(video: Path, png: Path) -> None:
@@ -359,8 +370,17 @@ class ExecutorCheckTests(JobTestCase):
         self.write_image("photo.jpg", (1920, 1080))
         events = self.run_and_observe(input="photo.jpg", desired_input_width=850)
         kinds = [event.stage if isinstance(event, MediaChecked) else type(event).__name__ for event in events]
-        self.assertEqual(kinds, ["JobStarted", "input", "resized_input", "RunStarted", "output", "last_frame", "RunFinished", "JobFinished"])
-        self.assertEqual(self.checker.asked, ["input photo.jpg resized=True", "resized_input", "probe " + events[3].output, "tag", "output prores4444", "last_frame"])
+        self.assertEqual(kinds, ["JobStarted", "input", "resized_input", "RunStarted", "output", "last_frame", "color_drift", "RunFinished", "JobFinished"])
+        self.assertEqual(self.checker.asked, ["input photo.jpg", "resized_input", "probe " + events[3].output, "tag", "output prores4444", "last_frame", "color_drift"])
+        # The first image is run 1's copy, kept beside the manifest; run 1's drift compares with its copy and with it.
+        started = events[0]
+        assert isinstance(started, JobStarted) and started.manifest is not None and started.first_image is not None
+        first_image = Path(started.first_image)
+        self.assertEqual(first_image, Path(started.manifest).with_name(Path(started.manifest).stem + "-first-image.png"))
+        self.assertTrue(first_image.is_file())
+        [(run_input, compared_with, notes)] = self.checker.drift_asked
+        self.assertEqual((run_input.name if run_input else None, compared_with, notes), ("photo-832x448.png", first_image, ()))
+        self.assertEqual(json.loads(Path(started.manifest).read_text(encoding="utf-8"))["first_image"], str(first_image))
         output = next(event for event in events if isinstance(event, MediaChecked) and event.stage == "output")
         self.assertEqual((output.run, output.verdict, output.notes), (1, "warning", ("A warning.",)))
         # The job log file gets the same lines as dtc serve's console.
@@ -370,10 +390,10 @@ class ExecutorCheckTests(JobTestCase):
         self.assertIn(f"Output check (run 1): {events[3].output}: a video: warning. A warning.", log)
         self.assertIn("Last frame check (run 1): ", log)
 
-    def test_without_a_copy_the_input_is_checked_as_draw_things_cli_gets_it(self) -> None:
+    def test_without_a_desired_size_the_scale_1_copy_is_checked_too(self) -> None:
         events = self.run_and_observe()
-        self.assertEqual(self.checker.asked[0], "input first-frame.png resized=False")
-        self.assertNotIn("resized_input", [event.stage for event in events if isinstance(event, MediaChecked)])
+        self.assertEqual(self.checker.asked[:2], ["input first-frame.png", "resized_input"])
+        self.assertIn("resized_input", [event.stage for event in events if isinstance(event, MediaChecked)])
 
     def test_a_resume_checks_the_last_frame_it_continues_from_as_a_handoff(self) -> None:
         # Resized or not, run 1 is not run again: its input and copy are not checked, the frame it continues from is.
@@ -385,13 +405,44 @@ class ExecutorCheckTests(JobTestCase):
         self.assertEqual(self.checker.asked[0], "handoff walk-2-last-frame.png")
         [check] = [event for event in events if isinstance(event, MediaChecked) and event.stage == "input"]
         self.assertEqual((check.run, check.summary), (3, "a last frame"))
+        # The resumed execution kept no first image, so drift since it is left out, with a note.
+        [(_input, first_image, notes)] = self.checker.drift_asked
+        self.assertIsNone(first_image)
+        self.assertIn("kept no first image", notes[0])
+
+    def test_a_resume_compares_with_the_first_image_of_the_execution_it_resumes(self) -> None:
+        self.write_image("photo.jpg", (1920, 1080))
+        job = self.job(run_count=3, input="photo.jpg", desired_input_width=850, prompt_pairs=[{"name": "only", "positive": "walk"}])
+        kept = self.output_directory / "walk-job-first-image.png"
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        kept.write_bytes(b"png")
+        events: list = []
+        resume = ResumePoint(first_run=3, input=self.output_directory / "walk-2-last-frame.png", seed=7, resumes_execution="E0016", first_image=kept)
+        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, resume=resume)
+        self.assertEqual(self.checker.drift_asked[0][1:], (kept, ()))
+        self.assertEqual(events[0].first_image, str(kept))
+
+    def test_without_records_no_first_image_is_kept(self) -> None:
+        job = self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])
+        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=False)
+        [(_input, first_image, notes)] = self.checker.drift_asked
+        self.assertIsNone(first_image)
+        self.assertIn("writes no records", notes[0])
+        self.assertFalse(any(path.name.endswith("-first-image.png") for path in self.output_directory.iterdir()))
 
     def test_a_t2v_job_checks_its_video_and_last_frame_but_has_no_input(self) -> None:
         events = self.run_and_observe(mode="t2v", input=None)
         kinds = [event.stage if isinstance(event, MediaChecked) else type(event).__name__ for event in events]
-        self.assertEqual(kinds, ["JobStarted", "RunStarted", "output", "last_frame", "RunFinished", "JobFinished"])
-        self.assertEqual(self.checker.asked[1:], ["tag", "output prores4444", "last_frame"])
+        self.assertEqual(kinds, ["JobStarted", "RunStarted", "output", "last_frame", "color_drift", "RunFinished", "JobFinished"])
+        self.assertEqual(self.checker.asked[1:], ["tag", "output prores4444", "last_frame", "color_drift"])
         self.assertTrue(isinstance(events[0], JobStarted) and isinstance(events[1], RunStarted) and isinstance(events[-2], RunFinished))
+        # Run 1 has no input and no first image yet: it is measured within itself, and its last frame becomes the first image.
+        [(run_input, first_image, notes)] = self.checker.drift_asked
+        self.assertEqual((run_input, first_image), (None, None))
+        self.assertIn("measured within itself", notes[0])
+        started, run = events[0], events[1]
+        assert isinstance(started, JobStarted) and started.first_image is not None and isinstance(run, RunStarted) and run.last_frame is not None
+        self.assertEqual(Path(started.first_image).read_bytes(), (Path(started.output_directory) / run.last_frame).read_bytes())
 
 
 class StreamColorFlowTests(JobTestCase):

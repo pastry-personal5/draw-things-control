@@ -52,7 +52,8 @@ class JobOutputTests(JobTestCase):
         job_path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_file="noseed.yaml", cooldown={"mode": "off"}), name="noseed.yaml")
         output = self.invoke("validate-job", str(job_path))
         self.assertEqual(output.splitlines()[-7:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  output format: prores4444 (.mov)", "  config file: noseed.yaml", "  model: m.ckpt", "  seed: (random, drawn when the job starts) (random)"])
-        self.assertEqual(self.logged, [])
+        # Run 1 reads an 8-bit sRGB copy of every input, so its plan is logged even without a desired size.
+        self.assertEqual(self.logged, ["INFO Input first-frame.png is already 832x448; copied as 8-bit sRGB for run 1"])
 
     def test_auto_and_off_cooldown_lines(self) -> None:
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8").replace("cooldown: {mode: manual, seconds: 90}", "cooldown: {mode: auto, minimum_seconds: 300, maximum_seconds: 1800}"), encoding="utf-8")

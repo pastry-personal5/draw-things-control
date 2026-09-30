@@ -140,6 +140,12 @@ class JobRoutesTests(ReadRoutesTestCase):
         response = self.get("/v1/jobs/link.yaml")
         self.assertEqual(response.status_code, 422)
 
+    def test_a_jobs_detail_shows_its_color_policy(self) -> None:
+        self.write_job_in_catalog("plain.yaml")
+        self.assertEqual(self.get("/v1/jobs/plain.yaml").json()["color"], {"anchor": "none"})
+        self.write_job_in_catalog("blend.yaml", color={"anchor": "blend"})
+        self.assertEqual(self.get("/v1/jobs/blend.yaml").json()["color"], {"anchor": "blend", "strength": 1.0, "regions": True, "first_weight": 0.25, "reanchor": "prompt_pair"})
+
     def test_the_preview_lists_every_run_with_its_command(self) -> None:
         self.write_job_in_catalog("walk.yaml", run_count=1)
         preview = self.get("/v1/jobs/walk.yaml/preview").json()
@@ -186,6 +192,20 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
         number = self.store.executions.number_of(execution_id)
         detail = self.get(f"/v1/executions/E{number:04d}").json()
         self.assertEqual(detail["cooldown"], {"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 3600.0})
+
+    def test_execution_detail_shows_the_first_image_and_each_runs_anchor_and_corrected_copy(self) -> None:
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        first_image = str(self.output_directory / "walk-job-first-image.png")
+        (self.output_directory / "a-cc.mov").write_bytes(b"copy")
+        execution_id = self.store.executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at="2026-09-30T09:00:00+00:00", settings=ExecutionSettings(output_directory=str(self.output_directory)), first_image=first_image))
+        self.store.executions.start_run(execution_id, 1, NewRun(pair="p", positive="text", started_at="2026-09-30T09:00:00+00:00", output="a.mov", anchor=first_image))
+        self.store.executions.finish_run(execution_id, 1, status="succeeded", exit_code=0, seconds=1.0, output="a.mov", last_frame="a-last-frame.png", corrected_output="a-cc.mov")
+        number = self.store.executions.number_of(execution_id)
+        detail = self.get(f"/v1/executions/E{number:04d}").json()
+        self.assertEqual(detail["first_image"], first_image)
+        self.assertEqual((detail["runs"][0]["anchor"], detail["runs"][0]["corrected_output"]), (first_image, "a-cc.mov"))
+        [output] = self.get(f"/v1/executions/E{number:04d}/outputs").json()["outputs"]
+        self.assertEqual((output["corrected_output"], output["corrected_output_exists"]), (str(self.output_directory / "a-cc.mov"), True))
 
     def test_an_unknown_execution_id_is_not_found(self) -> None:
         self.assertEqual(self.get("/v1/executions/E9999").status_code, 404)

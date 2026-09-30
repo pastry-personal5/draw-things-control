@@ -17,7 +17,7 @@ from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import RunStatus
 from draw_things_control.jobs.planning import PlannedRun
 from draw_things_control.jobs.records import RunRecord
-from draw_things_control.jobs.run_finisher import RunFinisher
+from draw_things_control.jobs.run_finisher import RunColor, RunFinisher
 
 
 class RunLauncher:
@@ -29,7 +29,7 @@ class RunLauncher:
         self._token = token
         self._generation = GenerationService(runner_factory=self._create_runner, find_executable=find_executable, config_loader=load_config)
 
-    def launch(self, job: JobDefinition, run: PlannedRun, record: RunRecord, *, shutdown_grace: float, on_message: MessageCallback | None, on_start: ChildStartCallback | None) -> tuple[RunStatus, int]:
+    def launch(self, job: JobDefinition, run: PlannedRun, record: RunRecord, *, shutdown_grace: float, on_message: MessageCallback | None, on_start: ChildStartCallback | None, color: RunColor | None = None) -> tuple[RunStatus, int]:
         """Run ``run``, timing it into ``record``; return how it ended: its status and exit code."""
         started = time.monotonic()
         try:
@@ -46,7 +46,7 @@ class RunLauncher:
         if not run.output.is_file():
             logger.error("draw-things-cli exited with 0 but did not write {}", run.output)
             return RunStatus.FAILED, 1
-        failed = self._finisher.finish(job, run, record, lambda: self._token.requested)
+        failed = self._finisher.finish(job, run, record, lambda: self._token.requested, color)
         return failed if failed is not None else (RunStatus.SUCCEEDED, 0)
 
     def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> StoppableRunner:

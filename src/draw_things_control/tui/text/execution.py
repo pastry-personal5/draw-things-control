@@ -68,6 +68,7 @@ def _execution_fields(execution: ExecutionRow) -> tuple[tuple[str, str | None], 
         ("finished", execution.finished_at or "-"),
         ("manifest", execution.manifest_path or "-"),
         ("log", execution.log_path or "-"),
+        ("first image", execution.first_image),
     )
 
 
@@ -86,7 +87,7 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     prompt_block(text, "positive", "green", run.positive)
     prompt_block(text, "negative", "red", run.negative)
     text.append("\n")
-    _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None)))
+    _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None), ("corrected copy", file_text(execution, run.corrected_output) if run.corrected_output else None), ("anchor", run.anchor)))
     if run.cooldown_after_seconds is not None:
         _fields(text, (("cooldown after", seconds_text(run.cooldown_after_seconds)),))
     _check_lines(text, run.checks)

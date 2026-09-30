@@ -423,3 +423,40 @@ class MilestoneTenDatabaseTests(StoreCase):
             self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         recorded = store.executions.start(NewExecution(job_name="next", job_file="next.yaml", mode="i2v", started_at=iso(0)))
         self.assertEqual(store.executions.number_of(recorded), 8)
+
+
+class SchemaEightTests(StoreCase):
+    """Milestone 09's columns: each run's anchor and corrected copy, the execution's first image, and a queued resume's."""
+
+    def test_a_version_7_database_gains_the_color_columns_with_its_rows_kept(self) -> None:
+        from draw_things_control.state.schema import MIGRATIONS
+
+        path = self.path.with_name("v7.db")
+        connection = sqlite3.connect(path)
+        for schema in MIGRATIONS[:7]:
+            for statement in schema.split(";\n"):
+                if statement.strip():
+                    connection.execute(statement)
+        connection.execute("PRAGMA user_version = 7")
+        connection.execute("INSERT INTO executions (job_name, job_file, mode, status, started_at, started_epoch, execution_number) VALUES ('old', 'old.yaml', 'i2v', 'succeeded', '2026-09-01T09:00:00+00:00', 0, 1)")
+        connection.execute("INSERT INTO runs (execution_id, number, pair, positive, started_at, started_epoch, status, output) VALUES (1, 1, 'p', 'text', '2026-09-01T09:00:00+00:00', 0, 'succeeded', 'a.mov')")
+        connection.commit()
+        connection.close()
+        store = self.open(path=path)
+        self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+        execution = store.executions.get(1)
+        assert execution is not None
+        self.assertIsNone(execution.first_image)
+        self.assertEqual([(run.output, run.anchor, run.corrected_output) for run in execution.runs], [("a.mov", None, None)])
+        columns = {row[1] for row in store._database.connection().execute("PRAGMA table_info(queue)")}
+        self.assertTrue({"resume_first_image", "resume_anchor"} <= columns)
+
+    def test_the_color_columns_round_trip(self) -> None:
+        store = self.open()
+        execution_id = store.executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at="2026-09-30T09:00:00+00:00", first_image="/out/walk-job-first-image.png"))
+        store.executions.start_run(execution_id, 1, NewRun(pair="p", positive="text", started_at="2026-09-30T09:00:00+00:00", output="a.mov", anchor="/out/walk-job-first-image.png"))
+        store.executions.finish_run(execution_id, 1, status="succeeded", exit_code=0, seconds=1.0, output="a.mov", last_frame="a-last-frame.png", corrected_output="a-cc.mov")
+        execution = store.executions.get(execution_id)
+        assert execution is not None
+        self.assertEqual(execution.first_image, "/out/walk-job-first-image.png")
+        self.assertEqual([(run.anchor, run.corrected_output) for run in execution.runs], [("/out/walk-job-first-image.png", "a-cc.mov")])

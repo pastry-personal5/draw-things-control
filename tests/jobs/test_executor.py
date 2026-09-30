@@ -158,7 +158,8 @@ class JobExecutorTests(JobTestCase):
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 4))
         prompts = [arguments.prompt for arguments, _timeout, _grace in self.calls]
         self.assertEqual(prompts, ["walk", "wave", "walk", "wave"])
-        self.assertEqual(self.calls[0][0].image, job.input)
+        # Run 1 reads its 8-bit sRGB copy of the input, at scale 1.
+        self.assertEqual(image_of(self.calls[0][0]).name, "first-frame-832x448.png")
         for (previous, _t, _g), (current, _t2, _g2), (_video, frame) in zip(self.calls, self.calls[1:], self.extracted, strict=False):
             self.assertEqual(current.image, frame)
             self.assertEqual(frame.name, output_of(previous).stem + "-last-frame.png")
@@ -191,6 +192,13 @@ class JobExecutorTests(JobTestCase):
         config = json.loads(arguments.config_json or "{}")
         self.assertEqual((config["refinerModel"], config["refinerStart"], config["shift"], config["model"]), ("job-refiner.ckpt", 0.1, 3.99, "base.ckpt"))
         self.assertNotIn("--config-file", arguments.command)
+
+    def test_generation_color_overrides_reach_the_config_json(self) -> None:
+        self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_override={"cfg_zero_star": True, "cfg_zero_init_steps": 2, "color_calibration": "lab"}))
+        arguments = self.calls[0][0]
+        config = json.loads(arguments.config_json or "{}")
+        self.assertEqual((config["cfgZeroStar"], config["cfgZeroInitSteps"], config["colorCalibration"]), (True, 2, "lab"))
+        self.assertFalse(any(token.startswith("--cfg-zero") or token == "--color-calibration" for token in arguments.command))
 
     def test_random_seed_is_drawn_once_and_recorded(self) -> None:
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
@@ -476,24 +484,30 @@ class JobExecutorTests(JobTestCase):
             self.run_job(self.resize_job())
         self.assertFalse(image_of(self.calls[0][0]).parent.exists())
 
-    def test_upright_input_at_the_target_is_used_as_is(self) -> None:
-        # The 832x448 input already has the calculated size, however the keys reach it (850 floors to 832).
-        for keys in ({"desired_input_width": 832}, {"desired_input_width": 850}, {"desired_input_height": 470}, {"desired_input_width": 832, "desired_input_height": 448}, {"desired_input_width": 832, "max_input_crop_percent": 0}):
+    def test_upright_input_at_the_target_is_copied_at_scale_1(self) -> None:
+        # The 832x448 input already has the calculated size, however the keys reach it (850 floors to 832), or no key
+        # at all: run 1 still reads an 8-bit sRGB copy (owner decision, Milestone 09).
+        for keys in ({}, {"desired_input_width": 832}, {"desired_input_width": 850}, {"desired_input_height": 470}, {"desired_input_width": 832, "desired_input_height": 448}, {"desired_input_width": 832, "max_input_crop_percent": 0}):
             with self.subTest(keys=keys):
                 self.calls.clear()
                 job = self.job(**keys)
-                self.assertIsNone(job.input_copy)
-                with mock.patch("draw_things_control.jobs.inputs.resize.resize_image") as resize, mock.patch("draw_things_control.jobs.inputs.resize.tempfile.mkdtemp") as mkdtemp:
-                    outcome = self.run_job(job)
-                resize.assert_not_called()
-                mkdtemp.assert_not_called()
-                self.assertEqual(self.calls[0][0].image, job.input)
+                plan = job.input_copy
+                assert plan is not None
+                self.assertEqual((plan.fit, plan.target_size), ("none", (832, 448)))
+                outcome = self.run_job(job)
+                copy = image_of(self.calls[0][0])
+                self.assertEqual(copy.name, "first-frame-832x448.png")
+                self.assertFalse(copy.exists())
                 manifest = self.manifest(outcome)
-                self.assertEqual((manifest["input_resize"]["fit"], manifest["input_resize"]["target_size"]), ("none", [832, 448]))
-                self.assertIsNone(manifest["runs"][0]["resized_input"])
-                self.assertIn("Input first-frame.png is already 832x448; no resize needed", saved_log(outcome).read_text(encoding="utf-8"))
+                if keys:
+                    self.assertEqual((manifest["input_resize"]["fit"], manifest["input_resize"]["target_size"]), ("none", [832, 448]))
+                else:
+                    self.assertIsNone(manifest["input_resize"])
+                self.assertEqual(manifest["runs"][0]["resized_input"], str(copy))
+                self.assertEqual(manifest["runs"][0]["input"], str(job.input))
+                self.assertIn("Input first-frame.png is already 832x448; copied as 8-bit sRGB for run 1", saved_log(outcome).read_text(encoding="utf-8"))
                 preview = self.service.preview(job, executable="draw-things-cli")
-                self.assertEqual(preview.runs[0].input, job.input)
+                self.assertEqual(preview.runs[0].input, Path("<first-frame.png copied as 8-bit sRGB at 832x448>"))
 
     def test_rotated_input_at_the_target_gets_an_upright_copy(self) -> None:
         self.write_image("rotated.jpg", (448, 832), orientation=6)

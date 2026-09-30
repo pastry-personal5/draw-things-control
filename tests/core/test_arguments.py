@@ -104,9 +104,9 @@ class OverrideTableTests(unittest.TestCase):
     def test_each_override_key_has_one_target(self) -> None:
         self.assertEqual(
             {key: target for key, target in OVERRIDE_TARGETS.items() if target[0] is None},
-            {"refiner_model": (None, "refinerModel"), "refiner_start": (None, "refinerStart"), "shift": (None, "shift")},
+            {"refiner_model": (None, "refinerModel"), "refiner_start": (None, "refinerStart"), "shift": (None, "shift"), "cfg_zero_star": (None, "cfgZeroStar"), "cfg_zero_init_steps": (None, "cfgZeroInitSteps"), "color_calibration": (None, "colorCalibration")},
         )
-        self.assertEqual(CONFIG_ONLY_KEYS, {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift"})
+        self.assertEqual(CONFIG_ONLY_KEYS, {"refiner_model": "refinerModel", "refiner_start": "refinerStart", "shift": "shift", "cfg_zero_star": "cfgZeroStar", "cfg_zero_init_steps": "cfgZeroInitSteps", "color_calibration": "colorCalibration"})
         self.assertEqual(FLAG_CONFIG_KEYS["--cfg"], "guidanceScale")
         self.assertEqual(OVERRIDE_ARGUMENTS["frame_count"], "--frames")
         self.assertEqual(OVERRIDE_ARGUMENTS["shift"], "shift")
