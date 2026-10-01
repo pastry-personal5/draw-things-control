@@ -316,15 +316,11 @@ def _channel_mean(channel: Any, linear: bool) -> float:
     """A channel's mean in 8-bit sRGB levels, averaged in linear light when ``linear``."""
     import numpy as np
 
+    from draw_things_control.jobs.media import oklab
+
     if not linear:
         return float(np.mean(channel, dtype=np.float64)) * 255
-    return float(_srgb_level(np.mean(_srgb_to_linear(channel), dtype=np.float64)))
-
-
-def _srgb_to_linear(values: Any) -> Any:
-    import numpy as np
-
-    return np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
+    return float(_srgb_level(np.mean(oklab.srgb_to_linear(channel, channel.dtype), dtype=np.float64)))
 
 
 def _source_facts(report: Any) -> dict[str, Any]:
@@ -361,7 +357,11 @@ def _conversion_text(original: dict[str, Any], report: Any) -> str:
     """What the copy did to the source's color."""
     steps: list[str] = []
     profile = original.get("icc_profile")
-    if report.conversion == "matrix":
+    if original.get("mode") in ("YCbCr", "HSV"):
+        steps.append(f"{original['mode']} converted to RGB")
+    if report.conversion == "lab":
+        steps.append("Lab converted to sRGB" + (f", {profile} not needed" if profile else ""))
+    elif report.conversion == "matrix":
         steps.append(f"converted from {profile} to sRGB with gamut mapping")
     elif report.conversion == "littlecms":
         steps.append(f"converted from {profile} to sRGB by LittleCMS")

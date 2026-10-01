@@ -23,6 +23,7 @@ from PIL import Image, ImageCms, ImageOps
 
 from draw_things_control.jobs.inputs.gamut import GamutMapper, GamutReport, read_matrix_profile
 from draw_things_control.jobs.inputs.size import EXIF_ORIENTATION, IMAGE_ERRORS, Box, ResizePlan
+from draw_things_control.jobs.media import oklab
 
 BLACK = (0, 0, 0)
 SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
@@ -46,7 +47,9 @@ class SourceReport:
 
     ``conversion`` is ``none`` (no profile, or sRGB), ``matrix`` (a matrix-and-curves profile, applied in floating
     point with gamut mapping), ``littlecms`` (any other profile, LittleCMS's perceptual intent, 8-bit, what is still
-    outside sRGB clipped), or ``failed`` (the profile could not be used; the values were taken as sRGB).
+    outside sRGB clipped), ``lab`` (Lab values, converted by LittleCMS's Lab transform, what is outside sRGB clipped,
+    any profile unused), or ``failed`` (the profile could not be used; the values were taken as sRGB). A YCbCr or HSV
+    source is converted to RGB first, and its profile then applies as an RGB source's.
     ``sixteen_bit`` is ``ffmpeg`` for a 16-bit RGB PNG read with rounding, ``high_bytes`` for one Pillow read by its high
     bytes because ffmpeg was not found, and None for any other source.
     """
@@ -96,6 +99,14 @@ def read_srgb(source: Path, ffmpeg: str | None = None) -> tuple[np.ndarray, Sour
             image = ImageOps.exif_transpose(opened)
             values = _float_rgb(image) if image.mode in DIRECT_MODES else None
     sixteen_bit = ("ffmpeg" if ffmpeg is not None else "high_bytes") if deep else None
+    if image is not None and image.mode == "LAB":
+        # Lab values name their colors: Pillow converts them with LittleCMS's Lab (D50) transform, and a profile
+        # beside them is not needed (owner decision).
+        return _float_rgb(image.convert("RGB")), SourceReport(_profile_name(profile) if profile else None, "lab", sixteen_bit)
+    if image is not None and image.mode in ("YCbCr", "HSV"):
+        # Encodings of RGB, whose values the profile then describes (owner decision).
+        image = image.convert("RGB")
+        values = _float_rgb(image)
     if not profile or _is_srgb(profile):
         if values is None:
             assert image is not None
@@ -110,7 +121,7 @@ def read_srgb(source: Path, ffmpeg: str | None = None) -> tuple[np.ndarray, Sour
     # LittleCMS converts 8-bit images only, so a floating-point source is rounded for it; gray stays gray, for a gray profile.
     if image is None or image.mode not in ("RGB", "L", "CMYK"):
         if values is None:
-            # Such as LAB: neither read here nor taken by LittleCMS from an 8-bit copy. TemporaryInput reports it.
+            # No mode Pillow opens today: every other one was read as floating point above. TemporaryInput reports it.
             raise ValueError(f"its mode {image.mode if image is not None else 'unknown'} with the profile {name} cannot be converted to sRGB")
         gray = image is not None and image.mode in HIGH_BIT_DEPTH_MODES | {"LA", "La"}
         image = Image.fromarray(to_8_bit(values[..., 0]), "L") if gray else Image.fromarray(to_8_bit(values), "RGB")
@@ -234,7 +245,7 @@ def resample(values: np.ndarray, size: tuple[int, int], box: Box | None = None) 
     for index in range(3):
         channel = np.ascontiguousarray(values[..., index], dtype=np.float32)
         if downscaling:
-            channel = _srgb_to_linear(channel)
+            channel = oklab.srgb_to_linear(channel, np.float32)
         resampled = np.array(Image.fromarray(channel, "F").resize(size, Image.Resampling.LANCZOS, box=(left, top, right, bottom)), dtype=np.float32)
         if downscaling:
             radius = math.ceil(factor)
@@ -265,10 +276,6 @@ def _window_at(channel: np.ndarray, rows: np.ndarray, columns: np.ndarray, radiu
         if offset:
             result = combine(result, across[np.clip(rows + offset, 0, height - 1)])
     return result
-
-
-def _srgb_to_linear(values: np.ndarray) -> np.ndarray:
-    return np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4).astype(np.float32)
 
 
 def _linear_to_srgb(values: np.ndarray) -> np.ndarray:

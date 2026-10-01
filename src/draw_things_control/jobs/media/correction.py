@@ -41,6 +41,7 @@ SAMPLE_STRIDE = 4
 # A decoded frame is raised by the half level Draw Things truncated, so white reads up to 255.5 levels: inside the
 # gamut for the check before the correction returns to sRGB, since the handoff clips at 255 anyway.
 HEADROOM = 255.5 / 255
+HEADROOM_LINEAR = float(oklab.srgb_to_linear(np.array(HEADROOM)))
 
 
 @dataclass(frozen=True)
@@ -250,7 +251,7 @@ def apply(frame: np.ndarray, transform: Transform) -> tuple[np.ndarray, int]:
     lab[:, 1] = transform.gain * (cosine * a - sine * b) + transform.shift[0]
     lab[:, 2] = transform.gain * (sine * a + cosine * b) + transform.shift[1]
     linear = oklab.oklab_to_linear_srgb(lab)
-    outside = np.any((linear < -oklab.INSIDE) | (linear > oklab.srgb_to_linear(np.array(HEADROOM)) + oklab.INSIDE), axis=-1)
+    outside = np.any((linear < -oklab.INSIDE) | (linear > HEADROOM_LINEAR + oklab.INSIDE), axis=-1)
     moved = int(np.count_nonzero(outside))
     if moved:
         # Only the colors the transform pushed outside, onto the edge at constant lightness and hue.

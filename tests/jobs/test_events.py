@@ -8,7 +8,7 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
+from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
 from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.planning import PlannedRun
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
@@ -54,6 +54,7 @@ class EventJsonTests(unittest.TestCase):
             CooldownStarted(at=self.AT, after_run=1, seconds=90.0, until="10:01:30", mode="manual"),
             CooldownEnded(at=self.AT, waited_seconds=90.0, cut_short=False),
             MediaChecked(at=self.AT, run=1, stage="output", file="o.mov", summary="ProRes 4444 (ap4h)", verdict="warning", notes=("A note.",), facts={"matrix_scores": {"bt709": 0.216}, "colr": None}),
+            FirstImageDropped(at=self.AT, reason="Run 1 failed, so no first image is kept."),
             JobFinished(at=self.AT, status=JobStatus.INTERRUPTED, exit_code=130, completed_runs=1, total_runs=2, signal="SIGINT"),
         ]
 
@@ -65,10 +66,10 @@ class EventJsonTests(unittest.TestCase):
             data = event_to_dict(event)
             self.assertEqual(json.loads(json.dumps(data)), data)
             kinds.append(data["kind"])
-        self.assertEqual(kinds, ["job_started", "run_started", "run_output", "run_finished", "cooldown_started", "cooldown_ended", "media_checked", "job_finished"])
+        self.assertEqual(kinds, ["job_started", "run_started", "run_output", "run_finished", "cooldown_started", "cooldown_ended", "media_checked", "first_image_dropped", "job_finished"])
 
     def test_statuses_policies_and_tuples_become_plain_values(self) -> None:
-        started, run_started, output, finished, _cooldown, _ended, _checked, job_finished = (event_to_dict(event) for event in self.every_event())
+        started, run_started, output, finished, _cooldown, _ended, _checked, _dropped, job_finished = (event_to_dict(event) for event in self.every_event())
         self.assertEqual(started["cooldown"], {"mode": "manual", "seconds": 90.0})
         self.assertEqual((run_started["command"], output["progress"]), (["draw-things-cli", "generate", "--api-key", "[redacted]"], [3, 8]))
         self.assertEqual((finished["status"], job_finished["status"]), ("succeeded", "interrupted"))

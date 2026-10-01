@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -127,7 +127,8 @@ def read_tool_png(path: Path) -> np.ndarray:
 
 
 # The corrected copy is encoded in the original's format (owner decision, Milestone 09). Each format's encoder, the
-# pixel format it is fed, and its options: VideoToolbox first, and for ProRes, prores_ks when VideoToolbox is missing.
+# pixel format it is fed, and its options: VideoToolbox first, and for ProRes, prores_ks when VideoToolbox is missing
+# or cannot encode here (``encoder_works``).
 # The frame headers are then set by a bitstream filter, since VideoToolbox drops the primaries and the transfer: BT.709
 # primaries and matrix and limited range, and the sRGB transfer where the format has one; ProRes has none (only
 # unknown, BT.709, PQ, and HLG), so its header leaves the transfer unknown and the colr box states it (owner decision).
@@ -151,6 +152,8 @@ class EncoderChoice:
     pixel_format: str
     options: tuple[str, ...]
     header: str
+    # Encoders this ffmpeg lists that were passed over, since they could not encode here.
+    skipped: tuple[str, ...] = ()
 
 
 def available_encoders(ffmpeg: str) -> set[str]:
@@ -167,17 +170,29 @@ def available_encoders(ffmpeg: str) -> set[str]:
     return names
 
 
-def choose_encoder(original: ClipInfo, available: set[str]) -> EncoderChoice:
-    """The encoder for a copy of ``original``, in its format; raises ValueError when this ffmpeg has none for it."""
+def choose_encoder(original: ClipInfo, available: set[str], works: Callable[[EncoderChoice], bool] | None = None) -> EncoderChoice:
+    """The encoder for a copy of ``original``, in its format; raises ValueError when this ffmpeg has none for it.
+    ``works`` is asked about each listed encoder that has another after it: VideoToolbox is listed where it cannot open
+    a hardware session (headless, or in a virtual machine), so listed is not enough (owner decision)."""
     key = original.tag if original.tag in ENCODERS else original.codec
     candidates = ENCODERS.get(key or "")
     if candidates is None:
         raise ValueError(f"no encoder is set for {original.tag or original.codec or 'its format'}")
-    for encoder, pixel_format, options, header in candidates:
-        if encoder in available:
-            bit_rate = ("-b:v", str(original.bit_rate)) if encoder.endswith("_videotoolbox") and not encoder.startswith("prores") and original.bit_rate else ()
-            return EncoderChoice(encoder, pixel_format, options + bit_rate, header)
-    raise ValueError(f"ffmpeg has none of {', '.join(candidate[0] for candidate in candidates)}")
+    listed = [candidate for candidate in candidates if candidate[0] in available]
+    if not listed:
+        raise ValueError(f"ffmpeg has none of {', '.join(candidate[0] for candidate in candidates)}")
+    skipped: tuple[str, ...] = ()
+    for encoder, pixel_format, options, header in listed[:-1]:
+        choice = _encoder_choice(original, encoder, pixel_format, options, header, skipped)
+        if works is None or works(choice):
+            return choice
+        skipped += (encoder,)
+    return _encoder_choice(original, *listed[-1], skipped)
+
+
+def _encoder_choice(original: ClipInfo, encoder: str, pixel_format: str, options: tuple[str, ...], header: str, skipped: tuple[str, ...]) -> EncoderChoice:
+    bit_rate = ("-b:v", str(original.bit_rate)) if encoder.endswith("_videotoolbox") and not encoder.startswith("prores") and original.bit_rate else ()
+    return EncoderChoice(encoder, pixel_format, options + bit_rate, header, skipped)
 
 
 class ClipEncoder:
@@ -187,9 +202,10 @@ class ClipEncoder:
     is always named. Rounded to 8 bits, the copy holds what Draw Things' own files hold, 8-bit values in 12-bit ProRes:
     its last frame is the handoff's values, and its pixels keep the 8-bit structure that measures its matrix (measured:
     times 256 scores BT.709 0.134 against 0.250; times 257, or unrounded values, show no matrix). ``abort`` stops it and
-    deletes what it wrote."""
+    deletes what it wrote. ``deadline`` (a ``time.monotonic`` value) stops ffmpeg when it passes, so a write it never
+    reads cannot wait past it."""
 
-    def __init__(self, ffmpeg: str, output: Path, original: ClipInfo, choice: EncoderChoice) -> None:
+    def __init__(self, ffmpeg: str, output: Path, original: ClipInfo, choice: EncoderChoice, *, deadline: float | None = None) -> None:
         if output.exists():
             raise ValueError(f"{output.name} already exists")
         self.output = output
@@ -197,8 +213,23 @@ class ClipEncoder:
         size = f"{original.width}x{original.height}"
         convert = f"scale=out_color_matrix=bt709:out_range=tv:flags={ENCODE_FLAGS},format={choice.pixel_format}"
         command = [ffmpeg, "-v", "error", "-nostdin", "-n", "-f", "rawvideo", "-pix_fmt", "rgb48le", "-s", size, "-r", original.rate, "-i", "-", "-vf", convert, "-c:v", choice.encoder, *choice.options, "-bsf:v", choice.header, str(output)]
-        self._process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # ffmpeg's errors go to a file, as iter_frames' do, since a pipe read only at the end fills and stalls it.
+        self._errors_file = tempfile.TemporaryFile()
+        try:
+            self._process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self._errors_file)
+        except BaseException:
+            self._errors_file.close()
+            raise
+        self._timed_out = False
+        self._timer = threading.Timer(max(deadline - time.monotonic(), 0.0), self._time_out) if deadline is not None else None
+        if self._timer is not None:
+            self._timer.daemon = True
+            self._timer.start()
         self.frames = 0
+
+    def _time_out(self) -> None:
+        self._timed_out = True
+        self._process.kill()
 
     def write(self, frame: np.ndarray) -> None:
         assert self._process.stdin is not None
@@ -206,6 +237,8 @@ class ClipEncoder:
         try:
             self._process.stdin.write(samples.tobytes())
         except BrokenPipeError as error:
+            if self._timed_out:
+                raise ValueError(f"encoding {self.output.name} ran out of time") from error
             raise ValueError(f"ffmpeg stopped encoding {self.output.name}: {self._errors()}") from error
         self.frames += 1
 
@@ -213,31 +246,79 @@ class ClipEncoder:
         """Finish the file; raises ValueError, deleting it, when ffmpeg fails or runs past ``deadline``."""
         assert self._process.stdin is not None
         try:
-            self._process.stdin.close()
+            try:
+                self._process.stdin.close()
+            except BrokenPipeError:
+                # ffmpeg is gone; its exit code says why, below.
+                pass
             timeout = max(deadline - time.monotonic(), 0.1) if deadline is not None else None
             self._process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as error:
             self.abort()
             raise ValueError(f"encoding {self.output.name} ran out of time") from error
+        if self._timer is not None:
+            self._timer.cancel()
+        if self._timed_out:
+            self.abort()
+            raise ValueError(f"encoding {self.output.name} ran out of time")
         if self._process.returncode != 0 or not self.output.is_file():
             errors = self._errors()
             self.abort()
             raise ValueError(f"ffmpeg could not encode {self.output.name}: {errors or f'exit code {self._process.returncode}'}")
+        self._errors_file.close()
 
     def abort(self) -> None:
         """Stop ffmpeg and delete a partial file; safe to call more than once."""
+        if self._timer is not None:
+            self._timer.cancel()
         if self._process.poll() is None:
             self._process.kill()
             self._process.wait()
-        for stream in (self._process.stdin, self._process.stderr):
-            if stream is not None and not stream.closed:
-                stream.close()
+        stdin = self._process.stdin
+        if stdin is not None and not stdin.closed:
+            try:
+                stdin.close()
+            except BrokenPipeError:
+                # Data still buffered for the killed ffmpeg; the file is deleted all the same.
+                pass
+        self._errors_file.close()
         self.output.unlink(missing_ok=True)
 
     def _errors(self) -> str:
-        stderr = self._process.stderr
-        if stderr is None or stderr.closed:
+        if self._errors_file.closed or self._process.poll() is None:
             return ""
-        if self._process.poll() is None:
-            return ""
-        return stderr.read().decode(errors="replace").strip()
+        self._errors_file.seek(0)
+        return self._errors_file.read().decode(errors="replace").strip()
+
+
+# What each probe found, for this process: by ffmpeg, encoder, pixel format, options, and size.
+_ENCODER_WORKS: dict[tuple[str, str, str, tuple[str, ...], int, int], bool] = {}
+
+
+def encoder_works(ffmpeg: str, original: ClipInfo, choice: EncoderChoice, suffix: str, deadline: float | None = None) -> bool:
+    """Whether ``choice`` encodes one black frame of ``original``'s size into a ``suffix`` file, as ``ClipEncoder``
+    encodes the copy. Kept for the process; a probe that runs out of time (``PROBE_TIMEOUT_SECONDS``, or ``deadline``
+    first, so the correction's own limit holds) or cannot start ffmpeg counts as not working this once, and is not kept."""
+    key = (ffmpeg, choice.encoder, choice.pixel_format, choice.options, original.width, original.height)
+    known = _ENCODER_WORKS.get(key)
+    if known is not None:
+        return known
+    limit = time.monotonic() + PROBE_TIMEOUT_SECONDS
+    if deadline is not None:
+        limit = min(limit, deadline)
+    with tempfile.TemporaryDirectory(prefix="draw-things-control-") as directory:
+        try:
+            encoder = ClipEncoder(ffmpeg, Path(directory) / f"probe{suffix}", original, choice, deadline=limit)
+        except OSError:
+            return False
+        try:
+            encoder.write(np.zeros((original.height, original.width, 3), dtype=np.float32))
+            encoder.close(limit)
+        except ValueError:
+            encoder.abort()
+            if time.monotonic() >= limit:
+                return False
+            _ENCODER_WORKS[key] = False
+            return False
+    _ENCODER_WORKS[key] = True
+    return True

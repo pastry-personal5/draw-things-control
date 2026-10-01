@@ -7,11 +7,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
 
-from draw_things_control.jobs.media.clip_frames import iter_frames, probe_clip, read_tool_png
+from draw_things_control.jobs.media import clip_frames
+from draw_things_control.jobs.media.clip_frames import PRORES_HEADER, ClipEncoder, ClipInfo, EncoderChoice, choose_encoder, encoder_works, iter_frames, probe_clip, read_tool_png
 from draw_things_control.jobs.media.frames import decode_filter, extract_last_frame, handoff_samples, write_handoff_png
 from draw_things_control.jobs.media.stream_color import StreamColor
 
@@ -103,6 +105,58 @@ class ClipFramesTests(unittest.TestCase):
             list(iter_frames(broken, BT709, str(FFMPEG), (128, 128)))
         with self.assertRaisesRegex(ValueError, "ran out of time"):
             list(iter_frames(self.root / "prores.mov", BT709, str(FFMPEG), (128, 128), deadline=0.0))
+
+    def test_an_encoder_past_its_deadline_is_stopped_and_its_file_deleted(self) -> None:
+        info = probe_clip(self.truncated_levels("prores.mov", PRORES, frames=2), str(FFPROBE))
+        copy = self.root / "copy-cc.mov"
+        # A deadline already passed stops ffmpeg at once, so no write can wait on an encoder that never reads.
+        encoder = ClipEncoder(str(FFMPEG), copy, info, EncoderChoice("prores_ks", "yuv444p10le", ("-profile:v", "4444"), PRORES_HEADER), deadline=0.0)
+        frame = np.zeros((128, 128, 3), dtype=np.float32)
+        try:
+            with self.assertRaisesRegex(ValueError, "ran out of time"):
+                for _ in range(50):
+                    encoder.write(frame)
+                encoder.close()
+        finally:
+            encoder.abort()
+        self.assertFalse(copy.exists())
+
+    def test_an_encoder_is_probed_once_and_one_that_cannot_encode_or_runs_out_of_time_is_not_working(self) -> None:
+        info = ClipInfo(64, 64, 1, "16/1", None, "prores", "ap4h")
+        works = EncoderChoice("prores_ks", "yuv444p10le", ("-profile:v", "4444"), PRORES_HEADER)
+        broken = EncoderChoice("prores_ks", "yuv444p10le", ("-profile:v", "no-such-profile"), PRORES_HEADER)
+        with mock.patch.dict(clip_frames._ENCODER_WORKS, clear=True):
+            self.assertFalse(encoder_works(str(FFMPEG), info, works, ".mov", deadline=0.0))
+            # Out of time says nothing about the encoder, so it is probed again.
+            self.assertEqual(clip_frames._ENCODER_WORKS, {})
+            self.assertTrue(encoder_works(str(FFMPEG), info, works, ".mov"))
+            self.assertFalse(encoder_works(str(FFMPEG), info, broken, ".mov"))
+            self.assertEqual(sorted(clip_frames._ENCODER_WORKS.values()), [False, True])
+            with mock.patch.object(clip_frames, "ClipEncoder", side_effect=AssertionError("probed again")):
+                self.assertTrue(encoder_works(str(FFMPEG), info, works, ".mov"))
+
+
+class EncoderChoiceTests(unittest.TestCase):
+    PRORES_4444 = ClipInfo(64, 64, 1, "16/1", None, "prores", "ap4h")
+
+    def test_a_listed_encoder_that_cannot_encode_falls_back_to_the_next(self) -> None:
+        both = {"prores_videotoolbox", "prores_ks"}
+        self.assertEqual(choose_encoder(self.PRORES_4444, both).encoder, "prores_videotoolbox")
+        asked: list[str] = []
+
+        def cannot_encode(choice: EncoderChoice) -> bool:
+            asked.append(choice.encoder)
+            return False
+
+        fallback = choose_encoder(self.PRORES_4444, both, cannot_encode)
+        self.assertEqual((fallback.encoder, fallback.pixel_format, fallback.skipped), ("prores_ks", "yuv444p10le", ("prores_videotoolbox",)))
+        # The last listed encoder has nothing after it, so it is never probed.
+        self.assertEqual(asked, ["prores_videotoolbox"])
+        self.assertEqual(choose_encoder(self.PRORES_4444, {"prores_ks"}, lambda choice: self.fail("probed")).encoder, "prores_ks")
+        h264 = choose_encoder(ClipInfo(64, 64, 1, "16/1", 1000, "h264", "avc1"), {"h264_videotoolbox"}, lambda choice: self.fail("probed"))
+        self.assertEqual((h264.encoder, h264.skipped), ("h264_videotoolbox", ()))
+        with self.assertRaisesRegex(ValueError, "ffmpeg has none of prores_videotoolbox, prores_ks"):
+            choose_encoder(self.PRORES_4444, set())
 
 
 if __name__ == "__main__":

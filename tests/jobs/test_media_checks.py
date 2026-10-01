@@ -13,7 +13,7 @@ from unittest import mock
 
 import numpy as np
 from loguru import logger
-from PIL import Image, PngImagePlugin
+from PIL import Image, ImageCms, PngImagePlugin
 
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted, event_from_dict, event_to_dict
@@ -107,6 +107,16 @@ class ImageCheckTests(unittest.TestCase):
             # Random 8-bit P3 values reach beyond sRGB, so some are brought in, and the check says how many.
             self.assertGreater(source_facts["gamut"]["beyond_knee"], 0)
             self.assertTrue(any("brought in at constant lightness and hue" in note for note in resized.notes))
+
+    def test_a_lab_inputs_copy_says_its_lab_values_were_converted(self) -> None:
+        lab_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("LAB")).tobytes()
+        source = self.save(Image.new("LAB", (64, 64), (138, 209, 198)), "in.tif", icc_profile=lab_profile)
+        plan = resize_plan("in.tif", (64, 64), None, 64, 64)
+        copy = self.root / "copy.png"
+        resize_image(source, plan, copy)
+        check = check_resized_input(source, copy, plan)
+        self.assertIn("Lab converted to sRGB, Lab identity built-in not needed", check.summary)
+        self.assertEqual(check.facts["source"]["conversion"], "lab")
 
     def test_a_copy_whose_color_moved_or_whose_size_is_wrong_warns(self) -> None:
         source = self.save(Image.new("RGB", (128, 128), (100, 120, 140)), "in.png")

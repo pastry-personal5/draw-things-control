@@ -182,6 +182,16 @@ class MediaChecked:
 
 
 @dataclass(frozen=True)
+class FirstImageDropped:
+    """A t2v job's first image, which ``JobStarted`` names before run 1 writes it, is not kept after all (Milestone 09):
+    run 1 did not succeed, left no last frame, or the copy failed. The execution names no first image from here on."""
+
+    at: str
+    # Why, in one sentence.
+    reason: str
+
+
+@dataclass(frozen=True)
 class JobFinished:
     """The job ended: succeeded, failed, interrupted, or parked. Always the last event of a started job."""
 
@@ -195,7 +205,7 @@ class JobFinished:
     signal: str | None
 
 
-JobEvent = JobStarted | RunStarted | RunOutput | RunFinished | CooldownStarted | CooldownEnded | MediaChecked | JobFinished
+JobEvent = JobStarted | RunStarted | RunOutput | RunFinished | CooldownStarted | CooldownEnded | MediaChecked | FirstImageDropped | JobFinished
 JobObserver = Callable[[JobEvent], None]
 
 
@@ -226,6 +236,7 @@ EVENT_KINDS: dict[type, str] = {
     CooldownStarted: "cooldown_started",
     CooldownEnded: "cooldown_ended",
     MediaChecked: "media_checked",
+    FirstImageDropped: "first_image_dropped",
     JobFinished: "job_finished",
 }
 

@@ -29,7 +29,7 @@ message WatchEventsRequest {
 message Event {
   int64 id = 1;
   // One of jobs/events.py's EVENT_KINDS (job_started, run_started, run_output, run_finished, cooldown_started,
-  // cooldown_ended, media_checked, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended, and,
+  // cooldown_ended, media_checked, first_image_dropped, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended, and,
   // from Milestone 05, queue_park_changed, queue_held, queue_released), or "reset" (data_json empty: the client's
   // last_event_id is unusable, and it should re-sync over HTTP).
   string kind = 2;

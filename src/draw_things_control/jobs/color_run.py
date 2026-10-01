@@ -24,7 +24,7 @@ import numpy as np
 
 from draw_things_control.jobs.definition import ASSUMED_FRAME_COUNT, ColorPolicy, correction_limit
 from draw_things_control.jobs.media.checks import MediaCheck, MediaChecker
-from draw_things_control.jobs.media.clip_frames import ClipEncoder, available_encoders, choose_encoder, iter_frames, probe_clip, read_tool_png
+from draw_things_control.jobs.media.clip_frames import ClipEncoder, EncoderChoice, available_encoders, choose_encoder, encoder_works, iter_frames, probe_clip, read_tool_png
 from draw_things_control.jobs.media.color_stats import ColorStats, compare, measure
 from draw_things_control.jobs.media.correction import Params, apply, plan_run, sample_pixels, transform_for
 from draw_things_control.jobs.media.drift import COMPARISONS, FrameSamples, drift_check, samples_from_stats
@@ -115,8 +115,8 @@ class ColorCorrector:
         drift[0] = drift_check(request.video.name, samples_from_stats(stats), input_stats, first_stats, request.drift_notes)
         params = plan_run(stats, input_stats, anchor_stats, request.policy.pull, request.policy.strength, samples)
         del samples
-        choice = choose_encoder(info, available_encoders(ffmpeg))
-        encoder = ClipEncoder(ffmpeg, request.copy, info, choice)
+        choice = choose_encoder(info, available_encoders(ffmpeg), lambda candidate: encoder_works(ffmpeg, info, candidate, request.copy.suffix, deadline))
+        encoder = ClipEncoder(ffmpeg, request.copy, info, choice, deadline=deadline)
         created.append(request.copy)
         corrected = FrameSamples()
         last: np.ndarray | None = None
@@ -137,19 +137,20 @@ class ColorCorrector:
             encoder.abort()
             raise
         corrected.finish()
+        # Read before the tagger, which adds a colr box, as the run's own video is read (``MediaChecker.probe``).
+        written = self._checker.probe(request.copy) if self._checker is not None else None
         self._tagger(request.copy, COPY_COLOR)
         created.append(request.handoff)
-        write_handoff_png(handoff_samples(last.astype(np.float64) * 255), request.handoff)
+        write_handoff_png(handoff_samples(last.astype(np.float64) * 255), request.handoff, executable=ffmpeg)
         checks: list[MediaCheck] = []
-        if self._checker is not None:
-            written = self._checker.probe(request.copy)
+        if self._checker is not None and written is not None:
             output, _probe = self._checker.output(request.copy, None, written, COPY_COLOR)
             checks.append(output)
-        checks.append(correction_check(request, params, corrected, input_stats, first_stats, onto_edge / (len(params) * info.width * info.height), choice.encoder, round(time.monotonic() - started, 1), limit))
+        checks.append(correction_check(request, params, corrected, input_stats, first_stats, onto_edge / (len(params) * info.width * info.height), choice, round(time.monotonic() - started, 1), limit))
         return CorrectionResult(True, drift[0], tuple(checks))
 
 
-def correction_check(request: CorrectionRequest, params: list[Params], corrected: FrameSamples, input_stats: ColorStats, first_stats: ColorStats | None, onto_edge: float, encoder: str, seconds: float, limit_seconds: float) -> MediaCheck:
+def correction_check(request: CorrectionRequest, params: list[Params], corrected: FrameSamples, input_stats: ColorStats, first_stats: ColorStats | None, onto_edge: float, choice: EncoderChoice, seconds: float, limit_seconds: float) -> MediaCheck:
     """The ``color_correction`` check: what was done, the caps that bound, and the drift left, measured on the
     corrected frames."""
     policy = request.policy
@@ -168,13 +169,15 @@ def correction_check(request: CorrectionRequest, params: list[Params], corrected
         notes.append(f"{onto_edge:.1%} of the pixels were pushed outside sRGB and brought onto its edge at constant lightness and hue.")
     if policy.regions:
         notes.append(REGIONS_NOTE)
+    if choice.skipped:
+        notes.append(f"{', '.join(choice.skipped)} is listed by ffmpeg but could not encode here, so {choice.encoder} wrote the copy.")
     summary = f"{_what(request)}; left after correction: " + "; ".join(f"{COMPARISONS[name]}: {drift.text()}" for name, drift in left.items())
     facts: dict[str, Any] = {
         "policy": policy.as_dict(),
         "anchor": str(request.anchor) if request.anchor is not None else None,
         "reanchored": request.reanchored,
         "regions": ["frame"],
-        "encoder": encoder,
+        "encoder": choice.encoder,
         "frames": len(params),
         "seconds": seconds,
         "limit_seconds": limit_seconds,

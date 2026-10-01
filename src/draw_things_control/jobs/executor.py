@@ -22,7 +22,7 @@ from draw_things_control.core.process.output import MessageCallback, ProcessMess
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
 from draw_things_control.jobs.definition import GenerationMode, JobDefinition, PromptPair
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, notify
+from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, notify
 from draw_things_control.jobs.launcher import RunLauncher
 from draw_things_control.jobs.log_writer import JobLogWriter
 from draw_things_control.jobs.media.checks import MediaCheck
@@ -323,7 +323,11 @@ class JobExecutor:
         if not job.mode.is_video:
             return
         if resume is not None:
-            chain.anchor = resume.anchor
+            if resume.anchor is not None and resume.anchor.is_file():
+                chain.anchor = resume.anchor
+            elif resume.anchor is not None:
+                # As an anchor that was never recorded: the chain is held to the first image, when it is kept.
+                logger.warning("The anchor {} of the run this resume continues after is gone; the chain is held to the first image", resume.anchor)
             if resume.first_image is not None and resume.first_image.is_file():
                 chain.first_image = resume.first_image
                 manifest.first_image = str(resume.first_image)
@@ -334,37 +338,32 @@ class JobExecutor:
         if path is None:
             chain.first_image_notes = ("The job writes no records, so no first image is kept, and drift since the first image is left out.",)
             return
-        manifest.first_image = str(path)
         if chain.temporary_input is None:
+            # A t2v job's, which JobStarted names before run 1 writes it.
+            manifest.first_image = str(path)
             return
-        try:
-            shutil.copyfile(chain.temporary_input.path, path)
-        except OSError as error:
-            logger.warning("Could not keep the first image {}: {}", path.name, error)
-            manifest.first_image = None
-            chain.first_image_notes = (f"The first image could not be kept ({error}), so drift since it is left out.",)
-            return
-        chain.first_image = path
+        if _copy_first_image(chain, chain.temporary_input.path, path):
+            manifest.first_image = str(path)
 
     def _keep_t2v_first_image(self, chain: _Chain, run: PlannedRun) -> None:
         """A t2v job's first image is run 1's last frame, the first frame any of its runs is given."""
-        manifest = chain.records.manifest
-        planned = manifest.first_image
+        planned = chain.records.manifest.first_image
         if planned is None:
             return
         if run.last_frame is None or not run.last_frame.is_file():
-            # As the i2v branch does, the manifest names no first image that was never written.
-            manifest.first_image = None
             chain.first_image_notes = ("Run 1 left no last frame, so no first image is kept, and drift since the first image is left out.",)
+            self._drop_t2v_first_image(chain, chain.first_image_notes[0])
+        elif not _copy_first_image(chain, run.last_frame, Path(planned)):
+            self._drop_t2v_first_image(chain, chain.first_image_notes[0])
+
+    def _drop_t2v_first_image(self, chain: _Chain, reason: str) -> None:
+        """Name no first image once a t2v job's is not kept after all, in the manifest and, through FirstImageDropped,
+        in the state store, as the i2v branch names none that was never written; nothing when none is named."""
+        manifest = chain.records.manifest
+        if manifest.first_image is None:
             return
-        try:
-            shutil.copyfile(run.last_frame, planned)
-        except OSError as error:
-            logger.warning("Could not keep the first image {}: {}", Path(planned).name, error)
-            manifest.first_image = None
-            chain.first_image_notes = (f"The first image could not be kept ({error}), so drift since it is left out.",)
-            return
-        chain.first_image = Path(planned)
+        manifest.first_image = None
+        self._emit(FirstImageDropped(at=self._timestamp(), reason=reason))
 
     def _run_color(self, chain: _Chain, number: int, pair: PromptPair, run_input: Path | None) -> RunColor:
         """What run ``number``'s colors are compared with, and, when its job corrects, held to."""
@@ -399,6 +398,8 @@ class JobExecutor:
             status, exit_code = self._execute_run(chain, run, record, color)
         except BaseException:
             record.status = RunStatus.FAILED
+            if _fresh_t2v(chain, number):
+                self._drop_t2v_first_image(chain, "Run 1 failed, so no first image is kept.")
             # The run raised, so a file counts as kept only if it exists; the record itself is left as the manifest has it.
             self._finish_run(number, record, None, output=record.output if run.output.exists() else None)
             raise
@@ -410,8 +411,7 @@ class JobExecutor:
             if status == RunStatus.SUCCEEDED:
                 self._keep_t2v_first_image(chain, run)
             else:
-                # Run 1 never gave the first image the manifest names.
-                chain.records.manifest.first_image = None
+                self._drop_t2v_first_image(chain, f"Run 1 {status.replace('_', ' ')}, so no first image is kept.")
         self._finish_run(number, record, exit_code, output=record.output)
         if number == 1 and chain.temporary_input is not None:
             chain.temporary_input.cleanup()
@@ -509,6 +509,18 @@ class JobExecutor:
 
     def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, color: RunColor) -> tuple[RunStatus, int]:
         return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, color=color)
+
+
+def _copy_first_image(chain: _Chain, source: Path, path: Path) -> bool:
+    """Copy ``source`` to the first image ``path``; False, saying why for the color checks, when the copy fails."""
+    try:
+        shutil.copyfile(source, path)
+    except OSError as error:
+        logger.warning("Could not keep the first image {}: {}", path.name, error)
+        chain.first_image_notes = (f"The first image could not be kept ({error}), so drift since it is left out.",)
+        return False
+    chain.first_image = path
+    return True
 
 
 def _fresh_t2v(chain: _Chain, number: int) -> bool:

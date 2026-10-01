@@ -213,6 +213,11 @@ class JobParser:
         anchor = value.get("anchor", "none")
         if anchor not in COLOR_ANCHORS:
             self._fail("color.anchor", f"must be {', '.join(COLOR_ANCHORS[:-1])}, or {COLOR_ANCHORS[-1]}")
+        # strength and regions shape a correction, which anchor: none never makes (owner decision).
+        correcting = COLOR_ANCHORS[1:]
+        for key in ("strength", "regions"):
+            if key in value and anchor == "none":
+                self._fail(f"color.{key}", f"only with anchor: {', '.join(correcting[:-1])}, or {correcting[-1]}")
         strength = value.get("strength", 1.0)
         if not is_number(strength) or not 0 <= strength <= 1:
             self._fail("color.strength", "must be a number from 0 to 1")

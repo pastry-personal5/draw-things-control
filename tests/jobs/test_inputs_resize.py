@@ -154,6 +154,29 @@ class InputResizeTests(unittest.TestCase):
         for channel in self.resized(gray, resize_plan("p3-gray.png", (128, 64), None, 128, 64)).getpixel((64, 32)):
             self.assertAlmostEqual(channel, 128, delta=1)
 
+    def test_lab_is_converted_from_its_values_with_or_without_a_profile(self) -> None:
+        # sRGB red in Lab (D50): 54.3, 80.8, 69.9, as Pillow stores it.
+        red = Image.new("LAB", (32, 16), (138, 209, 198))
+        lab_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("LAB")).tobytes()
+        for name, options in (("lab-profile.tif", {"icc_profile": lab_profile}), ("lab.tif", {})):
+            with self.subTest(name):
+                values, report = read_srgb(self.save(red, name, **options))
+                self.assertEqual((report.profile, report.conversion), ("Lab identity built-in" if options else None, "lab"))
+                np.testing.assert_allclose(values[8, 16] * 255, (255, 0, 0), atol=6)
+
+    def test_ycbcr_is_converted_to_rgb_and_then_by_its_profile(self) -> None:
+        if not DISPLAY_P3.is_file():
+            self.skipTest("macOS Display P3 profile not available")
+        profile = DISPLAY_P3.read_bytes()
+        rgb = self.save(Image.new("RGB", (32, 16), (200, 100, 50)), "p3.png", icc_profile=profile)
+        # Pillow opens a YCbCr TIFF or JPEG as RGB, so the YCbCr image is handed over as a format that keeps it would.
+        ycbcr = Image.new("RGB", (32, 16), (200, 100, 50)).convert("YCbCr")
+        ycbcr.info["icc_profile"] = profile
+        with mock.patch("draw_things_control.jobs.inputs.resize.Image.open", return_value=ycbcr):
+            values, report = read_srgb(self.root / "ycbcr.jpg")
+        self.assertEqual((report.profile, report.conversion), ("Display P3", "matrix"))
+        np.testing.assert_allclose(values[8, 16] * 255, read_srgb(rgb)[0][8, 16] * 255, atol=2)
+
     def test_srgb_profile_leaves_colors_alone(self) -> None:
         profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
         source = self.save(Image.new("RGB", (128, 64), (200, 100, 50)), "srgb.png", icc_profile=profile)

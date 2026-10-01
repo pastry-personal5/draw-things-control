@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from draw_things_control.jobs.definition import DRIFT_SECONDS
 from draw_things_control.jobs.media.checks import MediaCheck
 from draw_things_control.jobs.media.clip_frames import iter_frames, read_tool_png
 from draw_things_control.jobs.media.color_stats import ColorStats, Drift, compare, measure
@@ -33,9 +34,6 @@ RATIO_LIMIT = 0.10
 HUE_LIMIT = 5.0
 # Every fourth frame is measured for the curve over the run, with frame 0 and the last frame.
 SAMPLE_EVERY = 4
-# How long decoding a run's frames may take, as every ffmpeg call of a check has a limit; an 81-frame 832x448 ProRes
-# clip takes a few seconds.
-TIMEOUT_SECONDS = 300
 # The comparisons, in the order the summary gives them, and their labels.
 COMPARISONS = {"first_image_to_last": "since the first image", "frame_0_to_last": "within the run", "input_to_frame_0": "frame 0 from its input"}
 
@@ -82,7 +80,7 @@ def sample_frames(frames: Iterable[np.ndarray]) -> FrameSamples:
 
 def check_color_drift(video: Path, color: StreamColor, ffmpeg: str, size: tuple[int, int], *, run_input: Path | None, first_image: Path | None, notes: tuple[str, ...] = ()) -> MediaCheck:
     """Decode ``video`` and compare its frames with its input and the chain's first image."""
-    samples = sample_frames(iter_frames(video, color, ffmpeg, size, deadline=time.monotonic() + TIMEOUT_SECONDS))
+    samples = sample_frames(iter_frames(video, color, ffmpeg, size, deadline=time.monotonic() + DRIFT_SECONDS))
     input_stats = measure(read_tool_png(run_input)) if run_input is not None else None
     first_stats = measure(read_tool_png(first_image)) if first_image is not None else None
     return drift_check(video.name, samples, input_stats, first_stats, notes)

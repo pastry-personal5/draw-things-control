@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from draw_things_control.jobs.color_run import CorrectionRequest, CorrectionResult
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted
+from draw_things_control.jobs.events import FirstImageDropped, JobStarted, MediaChecked, RunFinished, RunStarted, RunStatus
 from draw_things_control.jobs.executor import ResumePoint
 from draw_things_control.jobs.media.checks import MediaCheck
 from draw_things_control.jobs.parsing import load_job
@@ -63,6 +65,8 @@ class CorrectingJobTests(JobTestCase):
 
     def run_job(self, job: JobDefinition, **options: Any) -> list:
         events: list = []
+        # Kept here too, for a job that raises before run_job returns them.
+        self.events = events
         self.outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, **options)
         return events
 
@@ -150,6 +154,33 @@ class CorrectingJobTests(JobTestCase):
         runs = [event for event in events if isinstance(event, RunStarted)]
         self.assertEqual([run.anchor for run in runs], [None, started.first_image])
 
+    def test_a_t2v_first_image_that_is_not_kept_is_dropped_with_an_event(self) -> None:
+        t2v = {"mode": "t2v", "input": None, "run_count": 2, "prompt_pairs": [{"name": "only", "positive": "walk"}], "color": {"anchor": "first"}}
+        cases: dict[str, tuple[Callable[[], Any], str]] = {
+            "run 1 fails": (lambda: mock.patch.object(self.service._launcher, "launch", return_value=(RunStatus.FAILED, 1)), "Run 1 failed, so no first image is kept."),
+            "run 1 raises": (lambda: mock.patch.object(self.service._launcher, "launch", side_effect=RuntimeError("broken")), "Run 1 failed, so no first image is kept."),
+            "the copy fails": (lambda: mock.patch("draw_things_control.jobs.executor.shutil.copyfile", side_effect=OSError("disk full")), "The first image could not be kept (disk full), so drift since it is left out."),
+        }
+        for name, (patch, reason) in cases.items():
+            with self.subTest(name):
+                with patch(), contextlib.suppress(RuntimeError):
+                    self.run_job(self.job(**t2v))
+                events = self.events
+                started = events[0]
+                assert isinstance(started, JobStarted) and started.first_image is not None and started.manifest is not None
+                [dropped] = [event for event in events if isinstance(event, FirstImageDropped)]
+                self.assertEqual(dropped.reason, reason)
+                # Before run 1's RunFinished, as the kept copy is.
+                self.assertLess(events.index(dropped), next(index for index, event in enumerate(events) if isinstance(event, RunFinished)))
+                self.assertIsNone(json.loads(Path(started.manifest).read_text(encoding="utf-8"))["first_image"])
+                self.assertFalse(Path(started.first_image).exists())
+
+    def test_a_kept_t2v_first_image_and_an_i2v_one_drop_nothing(self) -> None:
+        for changes in ({"mode": "t2v", "input": None}, {}):
+            with self.subTest(changes.get("mode", "i2v")):
+                events = self.run_job(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], color={"anchor": "first"}, **changes))
+                self.assertFalse([event for event in events if isinstance(event, FirstImageDropped)])
+
     def test_a_resume_is_held_to_the_anchor_of_the_run_it_continues_after(self) -> None:
         job = self.job(run_count=4, prompt_pairs=[{"name": "only", "positive": "walk"}], color={"anchor": "blend"})
         self.output_directory.mkdir(parents=True, exist_ok=True)
@@ -158,3 +189,13 @@ class CorrectingJobTests(JobTestCase):
             path.write_bytes(b"png")
         self.run_job(job, resume=ResumePoint(first_run=3, input=last_frame, seed=7, resumes_execution="E0001", first_image=first_image, anchor=anchor))
         self.assertEqual([(request.anchor, request.first_image) for request in self.corrector.requests], [(anchor, first_image)] * 2)
+
+    def test_a_resume_whose_anchor_is_gone_is_held_to_the_first_image(self) -> None:
+        job = self.job(run_count=4, prompt_pairs=[{"name": "only", "positive": "walk"}], color={"anchor": "blend"})
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        first_image, last_frame = (self.output_directory / name for name in ("old-job-first-image.png", "run-2-last-frame.png"))
+        for path in (first_image, last_frame):
+            path.write_bytes(b"png")
+        gone = self.output_directory / "run-2-input.png"
+        self.run_job(job, resume=ResumePoint(first_run=3, input=last_frame, seed=7, resumes_execution="E0001", first_image=first_image, anchor=gone))
+        self.assertEqual([(request.anchor, request.first_image) for request in self.corrector.requests], [(first_image, first_image)] * 2)

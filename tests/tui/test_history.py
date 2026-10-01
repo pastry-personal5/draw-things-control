@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.content import Content
 
 from draw_things_control.core.run_lock import RunLock, ensure_state_directory
-from draw_things_control.jobs.events import CooldownStarted, RunStarted
+from draw_things_control.jobs.events import CooldownStarted, FirstImageDropped, RunStarted
 from draw_things_control.services.history import HistoryFilter, HistoryPage
 from draw_things_control.services.store_provider import StoreProvider
 from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
@@ -223,6 +223,11 @@ class HistoryTests(HistoryCase):
         self.assertEqual(started(mode="auto", ratio=0.4, seconds=576.0), "Cooldown 9 min 36 s (40% of run 1's 24 min) before run 2, until 14:05:00")
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=300.0, run_seconds=180.0, bound="minimum"), "Cooldown 5 min (the minimum; half of run 1's 3 min is less) before run 2, until 14:05:00")
         self.assertEqual(started(mode="auto", ratio=0.5, seconds=1800.0, run_seconds=4800.0, bound="maximum"), "Cooldown 30 min (the maximum; half of run 1's 1 h 20 min is more) before run 2, until 14:05:00")
+
+    def test_a_dropped_first_image_is_a_warning_line(self) -> None:
+        text = event_text(FirstImageDropped(at=at(0), reason="Run 1 failed, so no first image is kept."))
+        assert text is not None
+        self.assertEqual((str(text), str(text.style)), ("Run 1 failed, so no first image is kept.", "yellow"))
 
     async def test_an_imported_execution_is_marked_and_its_outputs_are_beside_its_manifest(self) -> None:
         (self.outputs / "old-1.mov").write_bytes(b"video")

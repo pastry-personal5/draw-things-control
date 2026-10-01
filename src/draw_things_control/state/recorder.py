@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from draw_things_control.jobs.events import CooldownEnded, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted
+from draw_things_control.jobs.events import CooldownEnded, FirstImageDropped, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted
 from draw_things_control.state.database import StateError
 from draw_things_control.state.executions import ExecutionSettings, MediaCheckRow, NewExecution, NewRun
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
@@ -72,6 +72,8 @@ class ExecutionRecorder:
             self._cooldown_ended(self._execution_id, event)
         elif isinstance(event, MediaChecked):
             self._media_checked(self._execution_id, event)
+        elif isinstance(event, FirstImageDropped):
+            self._executions.set_first_image(self._execution_id, None)
         elif isinstance(event, JobFinished):
             self._executions.finish(self._execution_id, status=event.status, exit_code=event.exit_code, signal=event.signal, finished_at=event.at)
 

@@ -80,6 +80,18 @@ class RecorderTests(JobTestCase):
         self.assertEqual([run.cooldown_after_seconds for run in execution.runs], [30.0, 30.0, None])
         self.assertEqual((execution.settings.cooldown, manifest["cooldown"]), ({"mode": "manual", "seconds": 30.0}, {"mode": "manual", "seconds": 30.0}))
 
+    def test_a_t2v_first_image_is_named_until_run_1_fails_and_then_none(self) -> None:
+        t2v = {"mode": "t2v", "input": None, "run_count": 2, "prompt_pairs": [{"name": "only", "positive": "text"}]}
+        self.run_recorded(self.job(**t2v), write_records=True)
+        kept = self.stored(self.store.executions.page()[0].id)
+        assert kept.first_image is not None
+        self.assertTrue(Path(kept.first_image).is_file())
+        self.results[self.calls + 1] = FakeResult(return_code=1)
+        self.run_recorded(self.job(**t2v), write_records=True)
+        failed = self.stored(self.store.executions.page()[0].id)
+        self.assertEqual(failed.status, "failed")
+        self.assertIsNone(failed.first_image)
+
     def test_each_runs_media_checks_are_kept_with_it_shown_and_deleted_with_the_execution(self) -> None:
         from draw_things_control.server.serializers import run_summary
         from draw_things_control.tui.text.execution import execution_text

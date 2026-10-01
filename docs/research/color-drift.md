@@ -5,7 +5,8 @@ and what can be done about each, for [Phase 3, Milestone 09](../phase-3/mileston
 Researched 2026-09-30.
 
 Nothing was run or measured for this note (owner decision: plan only, no experiments); the measurements it calls for
-are the milestone's first step. It rests on:
+are the milestone's first step. The owner's E0017 chain was measured from its files on 2026-10-01
+([Measured on E0017](#measured-on-e0017)). It rests on:
 
 - This repository's code, as of 2026-09-30.
 - The source of Draw Things, [`drawthingsai/draw-things-community`](https://github.com/drawthingsai/draw-things-community)
@@ -16,7 +17,8 @@ are the milestone's first step. It rests on:
 - Wan 2.2's reference configuration and published work on guidance and color transfer (linked where used).
 
 Each claim is marked by what backs it: **source** (read in code), **simulated** (numbers from a model of the code,
-with its assumptions), **measured** (from [the ProRes note](prores-color-matrix.md)), or **hypothesis** (not tested).
+with its assumptions), **measured** (from [the ProRes note](prores-color-matrix.md) or [E0017](#measured-on-e0017)),
+or **hypothesis** (not tested).
 
 ## Summary
 
@@ -26,13 +28,13 @@ with its assumptions), **measured** (from [the ProRes note](prores-color-matrix.
 | 2 | Resize | Linear-light Lanczos when downscaling, sRGB values when upscaling, rounded once; the mean color is checked within 1 level | source, and the resize check |
 | 3 | No resize | The input goes to `draw-things-cli` as it is: a PNG is read with no color management at all, anything else through CoreGraphics | source |
 | 4 | `draw-things-cli` reads a PNG | swift-png, which ignores `iCCP`, `sRGB`, `gAMA`, and `cHRM`: the values are taken as sRGB. 8-bit samples are exact (`v / 127.5 - 1`); 16-bit samples are cut to 8 bits by `>> 8`. A PNG of another size is resampled nearest-neighbour | source |
-| 5 | The model | VAE encode, 40 steps of the two Wan 2.2 experts, VAE decode. Chained i2v is known to drift in contrast, saturation, and hue; this project's configuration uses a higher guidance scale than Wan's reference | literature; the configuration |
+| 5 | The model | VAE encode, 40 steps of the two Wan 2.2 experts, VAE decode. Chained i2v is known to drift in contrast, saturation, and hue; this project's configuration uses a higher guidance scale than Wan's reference. In E0017, chroma x1.16 and hue +5° toward yellow after 3 runs, contrast held ([measured](#measured-on-e0017)) | literature; the configuration; measured |
 | 6 | Draw Things' `colorCalibration` | Off in the configuration (`none`). When `lab`, every frame is matched to the input image, see [below](#draw-things-colorcalibration) | source |
 | 7 | `draw-things-cli` quantizes each frame | `Int((v + 1) * 127.5)`: truncated, not rounded, so every frame of every run is 0.5 level dark on average | source |
 | 8 | `draw-things-cli` encodes | AVAssetWriter, from 8-bit BGRA pixel buffers with no color attachments and no `AVVideoColorPropertiesKey`: VideoToolbox encodes BT.709 and labels the matrix by frame size | source; measured |
 | 9 | `dtc` decodes the last frame | The measured matrix, limited to full range, 16-bit RGB rescaled by 257/256: within 0.01 level of an exact decode of the file, until the change built the same day ([the handoff](#the-handoff)) | measured |
 | 10 | The handoff | The 16-bit last frame is read back by stage 4's `>> 8`. With stage 7, each handoff was 0.89 level dark in the shadows, 0.50 in the midtones, and 0.10 in the highlights, until the change built the same day ([the handoff](#the-handoff)) | simulated |
-| 11 | Chain | If the model reproduces its conditioning frame's tone, stage 10 compounds: about 9 levels darker in the shadows and 5 in the midtones after 10 runs, before any drift of the model's own | hypothesis |
+| 11 | Chain | If the model reproduces its conditioning frame's tone, stage 10 compounds: about 9 levels darker in the shadows and 5 in the midtones after 10 runs, before any drift of the model's own. Not measured for that handoff; with the one built since, E0017's handoffs added nothing and the model's own drift compounded ([measured](#measured-on-e0017)) | hypothesis; measured |
 
 Stages 7 and 10 are cheap to fix and need no correction of the picture: decode Draw Things' frames half a level up,
 and hand off a value `draw-things-cli` reads exactly, rounded so flat areas are unbiased too; that was built the same
@@ -125,10 +127,10 @@ are unbiased either way.
 decoded level plus the tapered half level, rounded against the ordered dither, decoded with accurate rounding; see
 [Milestone 08](../phase-3/milestone-08-video-format-and-color.md#the-handoff).
 
-Whether the bias compounds depends on how faithfully Wan reproduces its conditioning frame's tone through the VAE,
-which is not measured. Run 2 of the owner's `duo` chain (execution E0016) can tell without a GPU: its frame 0,
-banded by tone, against run 1's 16-bit last frame, which was its input. The model above predicts -0.9 in the shadows
-to -0.1 in the highlights, plus whatever the VAE adds.
+Whether the bias compounds depends on how faithfully Wan reproduces its conditioning frame's tone through the VAE.
+Run 2 of the owner's `duo` chain (execution E0016) could have told for the handoff before 2026-09-30, but its clips
+are gone. E0017, made with the handoff built, measures what Wan does to its conditioning frame
+([Measured on E0017](#measured-on-e0017)).
 
 ## The model's own drift
 
@@ -239,14 +241,135 @@ Checked on 2026-09-30, before any code:
   [draw-things-upstream-reports.md](draw-things-upstream-reports.md), for the owner to file.
 
 Step 1's measurement of the handoff on E0016 is deferred (owner decision): that chain's clips are no longer on disk.
-The `color_drift` check measures every run from Milestone 09 on.
+The `color_drift` check measures every run from Milestone 09 on. E0017, made before the check was built, is measured
+[below](#measured-on-e0017).
+
+## Measured on E0017
+
+Measured on 2026-10-01 from the files on disk, with no GPU run. The owner's `duo` job, execution E0017 (2026-09-30):
+3 runs of 81 frames at 832x448, ProRes 4444, `image-to-video-wan-2-2-default-i8x.yaml`, seed 720708700, no resize.
+Run 1 starts from `duo.png` (8-bit sRGB), runs 2 and 3 from the previous run's last frame. The runs used
+[the handoff](#the-handoff) built on 2026-09-30. They finished before the correction was committed (`58ce65c`), so
+nothing was corrected and the state store has no `color_drift` check for them.
+
+Frames are decoded as `dtc` decodes them: `decode_filter` with the matrix `resolve_video_color` measures (BT.709,
+limited range, in all three), plus the tapered half level (`decoded_levels`). Inputs are read as `draw-things-cli`
+reads them: `duo.png`'s 8-bit values, a 16-bit PNG's high bytes. Statistics are `color_stats.measure` and `compare`,
+as the `color_drift` check computes them; the check itself, run over these files, gives the same numbers. `L`, `a`,
+and `b` are in hundredths of Oklab's, and levels are 8-bit.
+
+### The files and the handoff
+
+- **The handoff is exact.** Each last-frame PNG equals, sample for sample, the handoff rebuilt from frame 80 with
+  `srgb_filter` (frame 79 matches 21 to 22% of the samples), and every sample's low byte is 128. What
+  `draw-things-cli` read at each handoff was the decoded last frame, rounded as designed.
+- **The frame header states another matrix.** Every frame states `smpte170m`. The pixels measure BT.709 (0.225
+  against 0.246 to 0.249), and the `colr` box states BT.709 primaries and matrix and the sRGB transfer, as
+  [the ProRes note](prores-color-matrix.md#the-owners-chain-and-the-frame-size) found at 832x448. `dtc` decodes with
+  the measured matrix, so the chain is not affected. Decoding the last frame as its header states, which ffmpeg does
+  when not told otherwise, moves it by ΔE_OK 0.005 on average (0.012 at the 95th percentile, 0.030 at most): red
+  -1.2, green -0.5, blue +0.6 levels, chroma x0.985. That is about one run's drift, so a comparison made with such a
+  decode can pass for drift.
+- **Nothing else is off.** Alpha is 4080 in every frame. Luma spans 247 to 3770 at 12 bits, under a level past
+  limited range's 256 to 3760, which the decode clips. The 81 frames last 37 or 38 units of a 600 timescale, 16.003
+  frames a second on average.
+
+### Frame 0 against its input
+
+Frame 0 is the model's regeneration of its input, in place, so the two are compared pixel for pixel. Banding single
+pixels by the input's value pulls the outer bands toward the mean by frame 0's texture error alone (3.2 levels mean
+absolute per pixel), so the tone bands are of 16x16 block means (1.6 to 1.7 levels mean absolute). The bands hold
+about 5, 13, 26, 34, and 23% of the pixels. Frame 0 minus its input, red / green / blue, in levels:
+
+| Run | Whole frame | 0-31 | 32-95 | 96-159 | 160-223 | 224-255 |
+|-----|-------------|------|-------|--------|---------|---------|
+| 1 | +0.75 / +0.19 / -0.24 | +2.2 / +1.4 / +1.6 | +2.0 / +1.5 / +1.3 | +1.7 / +0.7 / +0.1 | +0.4 / -0.2 / -0.9 | -0.2 / -1.0 / -1.8 |
+| 2 | -0.11 / -0.67 / -1.03 | +0.7 / +0.2 / +0.1 | +0.9 / +0.2 / +0.1 | +0.0 / -0.5 / -0.8 | -0.3 / -1.0 / -1.6 | -0.2 / -1.1 / -1.8 |
+| 3 | +0.05 / -0.76 / -1.28 | -0.4 / -0.8 / -0.4 | +0.2 / -0.4 / -0.8 | -0.3 / -1.2 / -1.7 | +0.0 / -0.7 / -1.1 | +0.4 / -0.5 / -1.5 |
+
+Without the half level, each value is 0.45 to 0.5 lower. Per pixel, frame 0 is ΔE_OK 0.011 from its input on average
+(0.032 to 0.033 at the 95th percentile), mostly lost detail. Its statistics against its input: `L` -0.0, -0.3, and
+-0.4; contrast x0.99 to x1.00; chroma x1.04, x1.02, and x1.02; hue +0°.
+
+So Draw Things' regeneration of its input (the VAE and the model, which the files cannot tell apart) takes 0.9 to 1.8
+levels of blue and up to 1.1 of green from the upper midtones and highlights in every run, a shift toward yellow, and
+raises chroma 2 to 4%. The shadows were lifted in runs 1 and 2, not in run 3. The -0.9 to -0.1 that
+[the handoff](#the-handoff)'s model predicted was for the handoff before 2026-09-30, which E0017 did not use.
+
+### Within each run
+
+Frame 0 to frame 80, over the whole frame:
+
+| Run | `L` | Contrast | Chroma | Hue |
+|-----|-----|----------|--------|-----|
+| 1 | +3.7 | x0.98 | x1.01 | +1° |
+| 2 | +1.1 | x1.01 | x1.03 | +1° |
+| 3 | +0.9 | x1.01 | x1.03 | +2° |
+
+The `L` median does not move steadily within a run (run 1's is +4.7 at frame 60), and much of it is motion
+([a still region](#a-still-region)).
+
+### Over the chain
+
+From `duo.png` (`L` median 0.729, chroma median 0.0214, hue 51.1°, mean RGB 174.6 / 161.5 / 150.1), over the whole
+frame:
+
+| Frame | `L` | Contrast | Chroma | Hue |
+|-------|-----|----------|--------|-----|
+| Run 1, frame 0 | -0.0 | x0.99 | x1.04 | +0° |
+| Run 1, frame 80 | +3.7 | x0.97 | x1.05 | +2° |
+| Run 2, frame 0 | +3.4 | x0.96 | x1.08 | +2° |
+| Run 2, frame 80 | +4.5 | x0.97 | x1.10 | +3° |
+| Run 3, frame 0 | +4.1 | x0.98 | x1.12 | +3° |
+| Run 3, frame 80 | +5.0 | x0.99 | x1.16 | +5° |
+
+Run 3's frame 80 has a mean RGB of 178.8 / 166.7 / 153.7. The last-frame PNGs, read by their high bytes, measure as
+their frame 80 does. Samples clipped at 255 grow from 0.02% in `duo.png` to 0.04 to 0.08% in run 1, 0.11 to 0.18% in
+run 2, and 0.37 to 0.38% in run 3; samples clipped at 0 stay between 0.1 and 0.45%, with no trend. The `color_drift` check, with its proposed limits (`L` 3, ratios
+0.10, hue 5°), warns on all three runs since the first image (`L` +3.7, +4.5, and +5.0), and on run 1 within the run
+(`L` +3.7).
+
+### A still region
+
+The camera is locked, so the pixels that change least over all 243 frames can be compared in place, free of motion:
+the tenth of the pixels with the lowest temporal standard deviation (under 4.3 levels). They are one bright,
+near-neutral area (`L` 0.90, chroma 0.016), not skin. Pixels that drift more vary more and are left out, so this is a
+lower bound. Hue means little at that chroma, so `b` stands for it. The region's mean color, from `duo.png`'s:
+
+| Frame | ΔE_OK | `L` | `a` | `b` | Chroma | RGB, levels |
+|-------|-------|-----|-----|-----|--------|-------------|
+| Run 1, frame 0 | 0.0015 | -0.12 | +0.05 | +0.08 | x1.01 | +0.2 / -0.5 / -1.0 |
+| Run 1, frame 80 | 0.0065 | +0.63 | -0.03 | +0.15 | x1.06 | +2.3 / +2.1 / +1.0 |
+| Run 2, frame 0 | 0.0048 | +0.44 | +0.02 | +0.19 | x1.07 | +2.1 / +1.4 / +0.0 |
+| Run 2, frame 80 | 0.0098 | +0.94 | -0.08 | +0.25 | x1.12 | +3.2 / +3.3 / +1.3 |
+| Run 3, frame 0 | 0.0103 | +0.98 | -0.02 | +0.32 | x1.15 | +4.0 / +3.2 / +0.9 |
+| Run 3, frame 80 | 0.0134 | +1.28 | -0.19 | +0.35 | x1.19 | +3.9 / +4.6 / +1.7 |
+
+Per pixel, detail and noise add a floor: the same region is ΔE_OK 0.007 from `duo.png` on average at run 1's frame 0,
+and 0.020 at run 3's frame 80.
+
+### What E0017 shows
+
+- **The handoff adds nothing of its own.** `draw-things-cli` read exactly the handoff as designed; what changes at
+  frame 0 is Draw Things' own.
+- **The model's drift compounds, in one direction.** Chroma rises about 5% a run (x1.04, x1.08, and x1.12 at frame 0;
+  x1.16 at the end), hue turns about 1.7° a run toward yellow (51.1° to 56.2°), and blue falls behind red and green.
+  Contrast holds (x0.96 to x0.99); white clipping grows, still under 0.4%.
+- **Where it comes from.** Chroma grows at the handoffs and within the runs about equally. Lightness rises within the
+  runs (the still region: +0.75, +0.50, and +0.30) and not at the handoffs (-0.19 and +0.04). Yellowing comes from
+  both (`b` +0.04 and +0.07 at the handoffs; +0.07, +0.06, and +0.03 within the runs).
+- **Whole-frame lightness is mostly motion.** Over the chain, the whole frame's `L` rose 5.0 and the still region's
+  1.3. Run 1's +3.7 within the run, on which the check warns, is +0.75 in the still region.
+- **Size.** After three runs the still region's mean color is ΔE_OK 0.013 from the first image, about two thirds of a
+  just-noticeable difference. Chroma, +16% over the frame, is the largest change.
 
 ## Not verified
 
 - That the installed `draw-things-cli` is built from the source read here. Checked: it is not, but the parts this
   note reads are the same ([above](#checked-in-milestone-09s-step-0)).
 - How far Wan reproduces its conditioning frame's tone and color through the VAE; so, whether the handoff bias
-  compounds.
+  compounds. Checked on one chain and seed, with the handoff built on 2026-09-30: the handoff adds nothing, and the
+  model's own drift compounds ([E0017](#measured-on-e0017)). The bias of the handoff before it was not measured.
 - What CoreGraphics does to a non-PNG input drawn into a `DeviceRGB` context.
 - That the Wan 2.2 i2v path reaches `ColorCalibrator`, and how strong the ghost of `lab` is with motion.
 - The effect on drift of guidance 3.5, of CFG-Zero\*, and of `colorCalibration: lab`.

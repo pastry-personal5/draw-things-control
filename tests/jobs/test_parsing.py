@@ -183,6 +183,8 @@ class JobDefinitionTests(JobTestCase):
             r"'color\.reanchor' only with anchor: first or blend": {"anchor": "previous", "reanchor": "never"},
             r"'color\.reanchor' must be prompt_pair or never": {"anchor": "blend", "reanchor": "always"},
             r"'color\.regions' must be true or false": {"anchor": "first", "regions": "yes"},
+            r"'color\.strength' only with anchor: previous, first, or blend": {"strength": 0.5},
+            r"'color\.regions' only with anchor: previous, first, or blend": {"anchor": "none", "regions": False},
             r"'color\.skin' is not a known key": {"anchor": "first", "skin": True},
         }
         for message, color in cases.items():
@@ -206,6 +208,12 @@ class JobDefinitionTests(JobTestCase):
         job = self.load(color={"anchor": "first"}, config_override={"frame_count": 17})
         self.assertEqual(job.correction_seconds(), correction_limit(17))
         self.assertEqual(correction_limit(17), 27.0)
+
+    def test_the_worst_case_adds_the_drift_check_limit_to_each_video_run(self) -> None:
+        from draw_things_control.jobs.definition import DRIFT_SECONDS
+
+        self.assertEqual(self.load().drift_seconds(), DRIFT_SECONDS)
+        self.assertEqual(self.load(mode="i2i").drift_seconds(), 0.0)
 
     def test_model_and_refiner_requirements(self) -> None:
         self.write_base_config({"width": 832, "height": 448}, name="bare.yaml")

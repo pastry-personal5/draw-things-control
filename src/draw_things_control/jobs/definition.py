@@ -83,6 +83,10 @@ CORRECTION_BASE_SECONDS = 10.0
 CORRECTION_SECONDS_PER_FRAME = 1.0
 # The frames assumed for the worst case when neither the job nor its configuration states a count.
 ASSUMED_FRAME_COUNT = 257
+# How long a run's color_drift check may decode its frames (media/drift.py), as every ffmpeg call of a check has a
+# limit; an 81-frame 832x448 ProRes clip takes a few seconds. The API's max_job_seconds worst case adds it to each video
+# run, correcting ones too: a correction that stops before its first pass is done leaves the check to run after it.
+DRIFT_SECONDS = 300.0
 
 
 def correction_limit(frames: int) -> float:
@@ -189,6 +193,10 @@ class JobDefinition:
             return 0.0
         frames = self.config_override.frame_count if self.config_override.frame_count is not None else self.base_config.get("numFrames")
         return correction_limit(frames if is_int(frames) and frames > 0 else ASSUMED_FRAME_COUNT)
+
+    def drift_seconds(self) -> float:
+        """The longest one run's ``color_drift`` check may take when it runs on its own; 0 for an image job."""
+        return DRIFT_SECONDS if self.mode.is_video else 0.0
 
     def configured_seed(self) -> tuple[int | None, str]:
         """Return the seed from the job or base configuration and where it came from."""

@@ -28,6 +28,8 @@ whole frame (layer 5 without Vision). Everything below holds, with these as the 
   drafted in [draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md). `prores_videotoolbox`
   writes ProRes 4444 from `p416le`.
 - **Step 1 is deferred** (owner decision): E0016's clips are gone. Every run's `color_drift` check measures from now on.
+  The handoff was measured on E0017 instead on 2026-10-01
+  ([research note](../research/color-drift.md#measured-on-e0017)); Vision's masks are still to be timed.
 - **Schema 8** also adds `queue.resume_first_image` and `queue.resume_anchor`, since a queued resume carries its whole
   resume point on its queue row.
 - **No records, no first image.** A job run without records (no manifest stem) keeps none, and its drift checks say so.
@@ -81,6 +83,18 @@ From the plan's review, the same day:
 - **Gamut compression** starts at 90% of the sRGB edge's chroma, and goes only as far as the source profile reaches.
 - **Upstream reports** are drafted for the owner once step 0 confirms the installed build. Nothing is sent without
   the owner.
+
+From the code review of increment D, 2026-10-01:
+
+- **The API's worst case** also adds the `color_drift` check's 300 s to each video run, correcting ones included.
+- **Lab, YCbCr, and HSV inputs** are converted, not refused: Lab from its values, YCbCr and HSV to RGB and then by
+  their profile.
+- **`strength` and `regions`** are refused with `anchor: none`.
+- **A `t2v` job's first image** that is not kept is dropped by a `first_image_dropped` event.
+- **A VideoToolbox that cannot encode** is found by a one-frame test encode, once per process, and `prores_ks` writes
+  the copy.
+- **The resized input check** keeps reading the source again.
+- **The sRGB curve** has one copy, `oklab.srgb_to_linear`.
 
 ## How colors are preserved
 

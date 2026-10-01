@@ -103,6 +103,18 @@ class ColorCorrectorTests(unittest.TestCase):
 
         self.assertLessEqual(distance(request.copy), distance(video) + 0.005)
 
+    def test_a_listed_videotoolbox_that_cannot_encode_leaves_the_copy_to_prores_ks_with_a_note(self) -> None:
+        video = self.drifting_clip("run.mov", PRORES)
+        request = self.request(video, ColorPolicy(anchor="previous"))
+        with mock.patch("draw_things_control.jobs.color_run.available_encoders", return_value={"prores_videotoolbox", "prores_ks"}), mock.patch("draw_things_control.jobs.color_run.encoder_works", return_value=False) as works:
+            result = ColorCorrector(lambda: FFMPEG, self.checker)(request)
+        self.assertTrue(result.succeeded, result.checks)
+        self.assertEqual(works.call_args.args[2].encoder, "prores_videotoolbox")
+        correction = result.checks[-1]
+        self.assertEqual(correction.facts["encoder"], "prores_ks")
+        self.assertIn("prores_videotoolbox is listed by ffmpeg but could not encode here, so prores_ks wrote the copy.", correction.notes)
+        self.assertEqual(probe_clip(request.copy, str(FFPROBE)).tag, "ap4h")
+
     def test_an_h264_run_gets_an_h264_copy(self) -> None:
         video = self.drifting_clip("run.mp4", H264)
         request = self.request(video, ColorPolicy(anchor="blend"), anchor=self.input)

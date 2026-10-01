@@ -31,16 +31,16 @@ def check_job_rules(job: JobDefinition, global_config: GlobalConfig) -> None:
 
 
 def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: int | None = None) -> None:
-    """``max_job_runs`` and ``max_job_seconds``, the job's worst case: its runs times ``run_timeout_seconds`` and, for a
-    job that corrects its colors, the correction's time limit (Milestone 09), plus the longest wait between runs (the
-    job's cooldown applied to ``run_timeout_seconds``, since a wait follows only a run that succeeded within it) times
-    one less than its runs. A job exactly at a limit is accepted.
+    """``max_job_runs`` and ``max_job_seconds``, the job's worst case: its runs times ``run_timeout_seconds``, for a
+    video job the ``color_drift`` check's time limit, and for a job that corrects its colors the correction's (Milestone
+    09), plus the longest wait between runs (the job's cooldown applied to ``run_timeout_seconds``, since a wait follows
+    only a run that succeeded within it) times one less than its runs. A job exactly at a limit is accepted.
     ``remaining_runs``, for a resume, is the runs it has left, not the whole chain's (owner decision)."""
     runs = remaining_runs if remaining_runs is not None else job.run_count
     if runs > limits.max_job_runs:
         raise LimitExceededError(f"{runs} runs is over the max_job_runs limit of {limits.max_job_runs}", key="max_job_runs", limit=limits.max_job_runs, value=runs)
     assert job.run_timeout_seconds is not None  # check_job_rules already required it
-    worst_case = _worst_case_seconds(job.run_timeout_seconds, job.cooldown, runs) + runs * job.correction_seconds()
+    worst_case = _worst_case_seconds(job.run_timeout_seconds, job.cooldown, runs) + runs * (job.drift_seconds() + job.correction_seconds())
     if worst_case > limits.max_job_seconds:
         raise LimitExceededError(f"a worst case of {worst_case:g} seconds is over the max_job_seconds limit of {limits.max_job_seconds:g}", key="max_job_seconds", limit=limits.max_job_seconds, value=worst_case)
 

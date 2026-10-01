@@ -84,6 +84,11 @@ class ExecutionRepository:
         with self._database.transaction() as connection:
             connection.execute("UPDATE runs SET cooldown_after_seconds = ? WHERE execution_id = ? AND number = ?", (seconds, execution_id, number))
 
+    def set_first_image(self, execution_id: int, first_image: str | None) -> None:
+        """Name the execution's first image, or none, once its job has dropped the one it started with (Milestone 09)."""
+        with self._database.transaction() as connection:
+            connection.execute("UPDATE executions SET first_image = ? WHERE id = ?", (first_image, execution_id))
+
     def finish(self, execution_id: int, *, status: str, exit_code: int | None, signal: str | None, finished_at: str) -> None:
         with self._database.transaction() as connection:
             connection.execute("UPDATE executions SET status = ?, exit_code = ?, signal = ?, finished_at = ?, finished_epoch = ? WHERE id = ?", (status, exit_code, signal, finished_at, epoch(finished_at), execution_id))

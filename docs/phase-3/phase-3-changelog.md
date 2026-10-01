@@ -3,6 +3,38 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-10-01
+
+- **Owner decision** [M09]: From an interview on the code review of increment D (`58ce65c`):
+  - The `max_job_seconds` worst case adds the `color_drift` check's time limit (300 s) to each video run, so the
+    limit stays the bound the milestone planned. Correcting runs get it too, since a correction that stops before its
+    first pass ends leaves the check to run after it. With 3600 s runs and the `auto` cooldown, a video job can now have
+    30 runs under the 48 h default instead of 32, and a correcting one at 81 frames 30 instead of 31. The other media
+    checks (the probes, the matrix measurement, the tag, the handoff) are still not counted.
+  - A Lab, YCbCr, or HSV input with a profile that is not sRGB is converted, not refused. Lab is converted from its
+    values by LittleCMS's Lab transform (Pillow's own conversion is that transform), with or without a profile. YCbCr
+    and HSV are converted to RGB first, and their profile then applies as an RGB source's.
+  - `color.strength` and `color.regions` are refused unless `anchor` is `previous`, `first`, or `blend`, as
+    `first_weight` and `reanchor` are outside theirs: with `none` they would correct nothing.
+  - A `t2v` job's first image that is not kept is dropped by a new event, `first_image_dropped`, so the state store
+    stops naming it at once, not when the job ends. Carrying it on `JobFinished` was the alternative.
+  - A `prores_videotoolbox` that ffmpeg lists is tried with a one-frame test encode before the first correction that
+    would use it, once per process, and `prores_ks` writes the copy when it fails. Retrying the whole correction on
+    `prores_ks` within its deadline was the alternative.
+  - The resized input check keeps reading the source again: once per job, a few seconds, where reusing
+    `TemporaryInput`'s values would hold a 24 MP float image (about 290 MB) until the check.
+  - The three copies of the sRGB curve become one, `oklab.srgb_to_linear`, which takes a `dtype`.
+- **Design decision** [M09]: `FirstImageDropped` (`at`, `reason`) is emitted only for a `t2v` job: an i2v job copies
+  its first image before `JobStarted`, which then names none it failed to keep. It is emitted when run 1 does not
+  succeed or raises, leaves no last frame, or its copy fails, before run 1's `RunFinished`, as the kept copy is made.
+  The recorder clears `executions.first_image`, the TUI shows the reason in yellow, and the job log adds nothing, since
+  the executor already warns when the copy fails. The encoder test is kept per ffmpeg, encoder, pixel format, options,
+  and size; one that runs out of time (30 s, or the correction's deadline first) is not kept.
+- **Change** [M09]: The same review's fixes. A resume whose recorded anchor is gone is held to the first image, with a
+  warning. The corrected copy's encoder stops at the correction's deadline, writes its errors to a file rather than a
+  pipe, and, when it fails, deletes the partial copy and keeps ffmpeg's own error. The copy's output check reads it
+  before the `colr` tag, and the handoff is written with the ffmpeg the correction found.
+
 ## 2026-09-30
 
 - **Change** [M09]: Built increment D, the whole-frame correction. A video job's `color` block (`anchor`, `strength`,

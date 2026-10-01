@@ -61,19 +61,28 @@ class ApiRulesTests(JobTestCase):
         check_job_limits(job, ApiLimits(max_job_runs=3, max_job_seconds=10_000_000), remaining_runs=2)
 
     def test_the_worst_case_seconds_match_the_milestone_documents_worked_example(self) -> None:
-        # 7 runs, run_timeout_seconds 3600, the default auto cooldown: 7*3600 + 6*1800 = 36,000s.
-        job = self.job(run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"})
+        # 7 runs, run_timeout_seconds 3600, the default auto cooldown: 7*3600 + 6*1800 = 36,000s, for an image job,
+        # which has no color_drift check.
+        job = self.job(mode="i2i", run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"}, config_override=None)
         check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=36_000))
         with self.assertRaises(LimitExceededError) as context:
             check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=35_999))
         self.assertEqual(context.exception.key, "max_job_seconds")
 
-    def test_a_correcting_jobs_worst_case_adds_the_correction_limit_to_each_run(self) -> None:
-        # 7*3600 + 6*1800 = 36,000s, and 7 corrections of 17 frames at 10 + 17 seconds each: 36,189s (Milestone 09).
-        job = self.job(run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"}, color={"anchor": "blend"}, config_override={"frame_count": 17})
-        check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=36_189))
+    def test_a_video_jobs_worst_case_adds_the_drift_check_limit_to_each_run(self) -> None:
+        # 7*3600 + 6*1800 = 36,000s, and 7 color_drift checks of 300 seconds each: 38,100s (Milestone 09).
+        job = self.job(run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"})
+        check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_100))
         with self.assertRaises(LimitExceededError):
-            check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=36_188))
+            check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_099))
+
+    def test_a_correcting_jobs_worst_case_adds_the_correction_limit_to_each_run(self) -> None:
+        # 38,100s as above, and 7 corrections of 17 frames at 10 + 17 seconds each: 38,289s (Milestone 09). The drift
+        # check counts too, since a correction stopped before its first pass is done leaves it to run afterward.
+        job = self.job(run_count=7, run_timeout_seconds=3600, cooldown={"mode": "auto"}, color={"anchor": "blend"}, config_override={"frame_count": 17})
+        check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_289))
+        with self.assertRaises(LimitExceededError):
+            check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_288))
 
     def test_queue_not_full_at_the_limit_is_accepted_and_one_over_is_refused(self) -> None:
         check_queue_not_full(19, ApiLimits(max_queued_jobs=20))

@@ -10,6 +10,7 @@ by symmetry, so a conversion round trips.
 from __future__ import annotations
 
 import numpy as np
+import numpy.typing as npt
 
 # Linear sRGB to cone responses, and the cube-rooted responses to Lab (Ottosson's matrices for linear sRGB).
 LINEAR_SRGB_TO_LMS = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566], [0.0883024619, 0.2817188376, 0.6299787005]])
@@ -22,9 +23,13 @@ INSIDE = 1e-6
 BISECTION_STEPS = 26
 
 
-def srgb_to_linear(values: np.ndarray) -> np.ndarray:
-    """The sRGB curve undone, extended to negative values by symmetry."""
-    values = np.asarray(values, dtype=np.float64)
+def srgb_to_linear(values: np.ndarray, dtype: npt.DTypeLike = np.float64) -> np.ndarray:
+    """The sRGB curve undone, extended to negative values by symmetry, computed in ``dtype`` (float32 for a whole
+    image, which halves its memory)."""
+    values = np.asarray(values, dtype=dtype)
+    if values.size and values.min() >= 0:
+        # An image's values: no sign to carry, so no copies of the array for it.
+        return np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
     magnitude = np.abs(values)
     return np.sign(values) * np.where(magnitude <= 0.04045, magnitude / 12.92, ((magnitude + 0.055) / 1.055) ** 2.4)
 

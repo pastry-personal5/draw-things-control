@@ -292,6 +292,11 @@ How the copy's values are made:
 - **Any other profile** (lookup tables, CMYK) goes through LittleCMS with the
   perceptual intent. What is still outside sRGB is clipped, and the resized
   input check says so.
+- **Lab** values (a Lab TIFF) name their colors, so they are converted to sRGB
+  directly, by LittleCMS's Lab transform, with or without a profile; what is
+  outside sRGB is clipped. **YCbCr and HSV** are converted to RGB first, and a
+  profile then applies as for any RGB source. The resized input check says
+  which.
 
 ### Cooldown
 
@@ -371,7 +376,8 @@ color:
 
 Each key is checked and named as `color.<key>` on error; `first_weight` is
 refused unless `anchor` is `blend`, `reanchor` unless it is `first` or
-`blend`, and an image job refuses the block. `validate-job` shows a
+`blend`, `strength` and `regions` unless it is `previous`, `first`, or `blend`
+(with `none` they would correct nothing), and an image job refuses the block. `validate-job` shows a
 correcting job's policy as a `color` row, and `GET /v1/jobs/{job}` as `color`.
 
 **Anchors.** Each run is first corrected back to its own input, which removes
@@ -390,7 +396,7 @@ change of scene is not pulled back past it. Every change counts: a job whose
 pairs alternate, as `example-job.yaml`'s walk and wave do, re-anchors at every
 run, and `first` and `blend` then act as `previous`. `reanchor: never` holds
 such a job to the first image. A resume takes the anchor of the run it
-continues after.
+continues after, or the first image, with a warning, when that file is gone.
 
 **What it does**, in Oklab, from statistics only (pixels cannot be matched
 across motion): a tone curve through black, white, and the 10th, 50th, and
@@ -414,8 +420,11 @@ frame is corrected as one region, with a note.
 - `<name>-…-last-frame-raw.png` is the uncorrected last frame.
 - `<name>-…-cc.<ext>` is the corrected copy, in the original's format and
   container, with its frame rate and frame count: ProRes by
-  `prores_videotoolbox` (or `prores_ks` without VideoToolbox), H.264 and HEVC by
-  their VideoToolbox encoders at no less than the original's bit rate. Its
+  `prores_videotoolbox`, or by `prores_ks` without VideoToolbox or where it
+  cannot encode (headless, or in a virtual machine: a one-frame test encode,
+  once per process, finds out, and the `Color correction check` says so);
+  H.264 and HEVC by their VideoToolbox encoders at no less than the original's
+  bit rate. Its
   values are rounded to 8 bits as the handoff's are, so its last frame is the
   handoff's values and its pixels measure BT.709. Its frame header and `colr`
   box state BT.709 primaries and matrix, limited range, and the sRGB transfer;
@@ -429,7 +438,8 @@ copy is kept. The next run corrects back to its own input as every run does. A
 stop or a park during the correction takes effect when it ends. The API's
 `max_job_seconds` worst case adds the correction's time limit to each run of
 a job that corrects (assuming 257 frames when neither the job nor its
-configuration states a count).
+configuration states a count), besides the color drift check's 300 seconds it
+adds to each run of every video job.
 
 ## Where outputs go
 
@@ -469,7 +479,10 @@ configuration states a count).
 - A video job that writes records also keeps its **first image**,
   `<name>-<timestamp>-job-first-image.png`: a copy of run 1's 8-bit sRGB
   input (for a `t2v` job, which has no input, run 1's last frame). The color
-  drift check compares every run with it. A resumed execution uses the first
+  drift check compares every run with it. When a `t2v` job's run 1 does not
+  succeed, or its last frame cannot be copied, no first image is kept: a
+  `first_image_dropped` event (in the TUI's Messages, in yellow) says why, and
+  the execution names none from then on. A resumed execution uses the first
   image of the execution it resumes, and deleting an execution leaves the file,
   as it leaves the outputs. An execution recorded before this has none.
 - After each successful run, its output is measured: a video's displayed
@@ -1061,7 +1074,7 @@ configurable under `api_limits:` in `config/global-config.yaml` (see
 |-----|---------|---------|
 | `max_queued_jobs` | Entries `queued` at once | 20 |
 | `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
-| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them | 172800 (48 h) |
+| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; a video job adds its color drift check's 300 s to each run, and a correcting one the correction's time limit (10 s plus 1 s per frame). The other media checks are not counted | 172800 (48 h) |
 | `max_job_file_bytes` | Size of job text the API accepts (from Milestone 07) | 65536 |
 
 A refusal names the `code` (`timeout_required`, `outside_directory`,
