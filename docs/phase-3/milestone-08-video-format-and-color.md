@@ -1,8 +1,8 @@
 # Milestone 08: Video format and color
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** in-progress (built; the owner's 2-run chain passed on 2026-09-30, with the decode rule and the handoff then
-changed)
+**Status:** done (2026-10-01, owner decision; the owner's 2-run chain passed on 2026-09-30, and the decode rule and
+the handoff changed since were measured exact on E0017's chain)
 **Depends on:** [Phase 2](../archive/phase-2/README.md)'s color tagging and sRGB last frames (`jobs/media/`), and
 [Milestone 01](milestone-01-queue-run-manager.md)'s queue snapshots, which are parsed again when an entry runs.
 

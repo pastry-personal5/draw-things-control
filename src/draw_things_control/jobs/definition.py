@@ -77,7 +77,7 @@ OVERRIDE_KEYS = {field.name for field in fields(ConfigOverride)}
 # What a correcting job's colors are held to, and when the anchor moves (Milestone 09).
 COLOR_ANCHORS = ("none", "previous", "first", "blend")
 REANCHOR_RULES = ("prompt_pair", "never")
-# The correction's time limit per run (proposed, Milestone 09; set from the first measurements): 10 seconds plus 1 per
+# The correction's time limit per run (Milestone 09, as proposed; accepted, owner decision, 2026-10-01): 10 seconds plus 1 per
 # frame. Running out of it is a failed correction; the API's max_job_seconds worst case adds it to each run.
 CORRECTION_BASE_SECONDS = 10.0
 CORRECTION_SECONDS_PER_FRAME = 1.0
@@ -108,7 +108,7 @@ class ColorPolicy:
     strength: float = 1.0
     first_weight: float = 0.25
     reanchor: str = "prompt_pair"
-    # People and skin corrected apart from the background (Apple Vision); false: the whole frame as one.
+    # People, their skin, and the background corrected apart (Apple Vision); false: the whole frame as one.
     regions: bool = True
 
     @property

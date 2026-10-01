@@ -5,6 +5,47 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-01
 
+- **Owner decision** [M09]: Step 3, the A/B chains, is dropped, and with it filing the upstream reports as part of the
+  milestone. The constants keep the values the plan proposed, accepted as they are: the caps per run, the drift check's
+  limits, and the correction's time limit. No generation setting is recommended. The job files `data/jobs/ab-*.yaml`
+  stay for the owner to run whenever, and the report drafts stay in the research folder. Milestone 09 is done.
+- **Owner decision** [M08]: Milestone 08 is done. Its 2-run chain (E0016) passed on 2026-09-30; the decode rule and
+  the handoff changed after it were measured exact on E0017's chain.
+- **Change** [M09]: Built increment E, Apple Vision's regions. `pyobjc-framework-Vision` (12.2.2, macOS only) is a
+  dependency. `jobs/media/regions.py` finds people, their skin, and the background from a `Segmenter`;
+  `jobs/media/vision_segmenter.py` is Apple Vision's. Every video run's `color_drift` check measures each region where
+  Vision is available, and adds `skin hue` to its summary; a job with `color.regions` corrects people, skin, and the
+  background apart. Vision's masks were timed and inspected first, on E0017's and E0021's frames (research note,
+  "Vision on generated frames").
+- **Owner decision** [M09]: With people corrected apart, the background gets its own transform, fitted to its own
+  statistics, rather than the whole frame's, which the plan gave it. On E0017's run 3 the drift sat mostly in the
+  background (chroma x1.20, hue +11° since the first image; people x0.99, +3°), and the whole frame's correction took
+  people too far (chroma x0.93, skin `L` -3.4 left within the run; with regions, x0.99 and -0.2).
+- **Design decision** [M09]: Increment E's details:
+  - The skin Gaussian is over Oklab's `a` and `b` only, not lightness too: on the owner's frames, the face's narrow
+    range of light dropped lit and shaded body skin. `a/L` and `b/L` took in more hair. It is fitted, then fitted again
+    within 3 standard deviations; a pixel is all skin within 2, none beyond 3.
+  - A region is corrected apart only when the run's input, its anchor, and half of its frames have enough of it, so
+    frames near the 2% threshold do not switch transforms; a frame with too little takes its parent's fit before the
+    smoothing.
+  - The skin residual is fitted after people's unscaled transform, and `strength` scales both, so it acts alike on
+    them.
+  - Masks are averaged over three frames at Vision's resolution, stretched to the frame, then feathered there (the
+    stretch is 1.63 times across and 1.17 down at 832x448, so feathering before it would not be round).
+  - The drift check uses Vision for every video run where it is available, whatever `color.regions` says, as the plan
+    reads; `dtc serve`'s worker so loads pyobjc at its first check. A Vision that cannot be loaded is no Vision. One
+    that fails mid-run is a note in the drift and correction checks; the drift check measures the whole frame from
+    then on, and the correction corrects the whole run as one region, so no clip switches transforms mid-way. Failing
+    the correction was the alternative.
+  - The segmenter is given to `MediaChecker` and `ColorCorrector`, made once per process by `services/toolkit.py`, not
+    carried on `MediaTools` as planned: those two are what use it, and the corrector is already built there.
+  - Each Vision call runs in an autorelease pool: without one, a thread's memory grew about 1 MB a call.
+  - `ColorStats` gains `mean`, the mean `a` and `b`, which the skin residual moves.
+- **Owner decision** [M09]: A video job keeps its first image with or without records,
+  `<name>-<timestamp>-job-first-image.png`, named from the stem its manifest would have. The owner's 6-run
+  `duo-blend-i8x` chain (E0021) ran with records off, so it kept none, and its `blend` correction, with no anchor,
+  acted as `previous`; every check still read `ok`. Refusing `first` and `blend` without records, or only warning, were
+  the alternatives. This replaces the 2026-09-30 design decision that a job without records keeps no first image.
 - **Owner decision** [M09]: From an interview on the code review of increment D (`58ce65c`):
   - The `max_job_seconds` worst case adds the `color_drift` check's time limit (300 s) to each video run, so the
     limit stays the bound the milestone planned. Correcting runs get it too, since a correction that stops before its

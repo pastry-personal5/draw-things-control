@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from draw_things_control.jobs.media.video_color import tag_video_colors
 
 if TYPE_CHECKING:
     from draw_things_control.jobs.color_run import CorrectionRequest, CorrectionResult, Corrector
+    from draw_things_control.jobs.media.regions import Segmenter
 
 
 def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, *, handle_signals: bool = True) -> DrawThingsProcessRunner:
@@ -40,8 +42,10 @@ def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | N
 
 
 def default_media_tools() -> MediaTools:
-    """The media tools of this machine: ffmpeg and ffprobe, found when each is used, and the color correction."""
-    checker = MediaChecker(lambda: shutil.which("ffmpeg"))
+    """The media tools of this machine: ffmpeg and ffprobe, found when each is used, the color correction, and Apple
+    Vision's segmenter, which both the drift check and the correction use, made once when a check first needs it."""
+    segmenter = _lazy_segmenter()
+    checker = MediaChecker(lambda: shutil.which("ffmpeg"), segmenter=segmenter)
     return MediaTools(
         require_ffmpeg=require_ffmpeg,
         frame_extractor=extract_last_frame,
@@ -50,11 +54,28 @@ def default_media_tools() -> MediaTools:
         video_tagger=tag_video_colors,
         output_measurer=measure_output,
         checker=checker,
-        corrector=_lazy_corrector(checker),
+        corrector=_lazy_corrector(checker, segmenter),
     )
 
 
-def _lazy_corrector(checker: MediaChecker) -> Corrector:
+def _lazy_segmenter() -> Callable[[], Segmenter | None]:
+    """Apple Vision's segmenter, made (loading pyobjc) the first time a check asks, once for the process; None where it
+    is not available."""
+    loaded: list[Segmenter | None] = []
+    lock = threading.Lock()
+
+    def segmenter() -> Segmenter | None:
+        with lock:
+            if not loaded:
+                from draw_things_control.jobs.media.vision_segmenter import vision_segmenter
+
+                loaded.append(vision_segmenter())
+        return loaded[0]
+
+    return segmenter
+
+
+def _lazy_corrector(checker: MediaChecker, segmenter: Callable[[], Segmenter | None]) -> Corrector:
     """The color correction, loaded (with numpy) only when a job first corrects, so a front end starts without it."""
     loaded: list[Corrector] = []
 
@@ -62,7 +83,7 @@ def _lazy_corrector(checker: MediaChecker) -> Corrector:
         if not loaded:
             from draw_things_control.jobs.color_run import ColorCorrector
 
-            loaded.append(ColorCorrector(lambda: shutil.which("ffmpeg"), checker))
+            loaded.append(ColorCorrector(lambda: shutil.which("ffmpeg"), checker, segmenter=segmenter))
         return loaded[0](request)
 
     return correct

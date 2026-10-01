@@ -432,13 +432,19 @@ class ExecutorCheckTests(JobTestCase):
         self.assertEqual(self.checker.drift_asked[0][1:], (kept, ()))
         self.assertEqual(events[0].first_image, str(kept))
 
-    def test_without_records_no_first_image_is_kept(self) -> None:
+    def test_without_records_the_first_image_is_kept_all_the_same(self) -> None:
+        # Owner decision, 2026-10-01: first and blend need it, so it is kept with or without records.
         job = self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])
-        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=False)
+        events: list = []
+        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=False, observer=events.append)
         [(_input, first_image, notes)] = self.checker.drift_asked
-        self.assertIsNone(first_image)
-        self.assertIn("writes no records", notes[0])
-        self.assertFalse(any(path.name.endswith("-first-image.png") for path in self.output_directory.iterdir()))
+        self.assertIsNotNone(first_image)
+        assert first_image is not None
+        self.assertTrue(first_image.is_file())
+        self.assertTrue(first_image.name.endswith("-job-first-image.png"))
+        self.assertEqual(notes, ())
+        self.assertEqual(events[0].first_image, str(first_image))
+        self.assertFalse([path for path in self.output_directory.iterdir() if path.suffix in (".json", ".log")])
 
     def test_a_t2v_job_checks_its_video_and_last_frame_but_has_no_input(self) -> None:
         events = self.run_and_observe(mode="t2v", input=None)

@@ -25,6 +25,7 @@ from draw_things_control.jobs.media.video_color import ColrTag, read_colr
 
 if TYPE_CHECKING:
     from draw_things_control.jobs.inputs.size import ResizePlan
+    from draw_things_control.jobs.media.regions import Segmenter
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_COLOR_TYPES = {0: "gray", 2: "RGB", 3: "palette", 4: "gray and alpha", 6: "RGBA"}
@@ -85,11 +86,13 @@ class VideoProbe:
 
 class MediaChecker:
     """Runs the checks with ffmpeg and ffprobe, found when each check runs, so a server started before they were installed
-    finds them once they are; a test gives it a fake ``run`` so neither tool starts."""
+    finds them once they are; a test gives it a fake ``run`` so neither tool starts. ``segmenter`` gives the segmenter
+    the color drift check measures regions with (Apple Vision), or None for the whole frame only."""
 
-    def __init__(self, find_ffmpeg: Callable[[], str | None], *, run: CommandRunner = subprocess.run) -> None:
+    def __init__(self, find_ffmpeg: Callable[[], str | None], *, run: CommandRunner = subprocess.run, segmenter: Callable[[], Segmenter | None] | None = None) -> None:
         self._find_ffmpeg = find_ffmpeg
         self._run = run
+        self._segmenter = segmenter
 
     def _tools(self) -> tuple[str | None, str | None]:
         """ffmpeg, and the ffprobe beside it (else on PATH), as they are now."""
@@ -134,18 +137,20 @@ class MediaChecker:
         return _guarded("last_frame", png.name, lambda: check_last_frame(png, video, color))
 
     def color_drift(self, video: Path, color: StreamColor, run_input: Path | None, first_image: Path | None, notes: tuple[str, ...] = ()) -> MediaCheck:
-        """The run's color drift (Milestone 09): its frames decoded with ``color``, against its input and the first image."""
+        """The run's color drift (Milestone 09): its frames decoded with ``color``, against its input and the first image;
+        region by region, with a segmenter."""
 
         def check() -> MediaCheck:
             # Imported here, as LittleCMS is, so a process that never checks a run does not load them.
             from draw_things_control.jobs.media.clip_frames import probe_clip
             from draw_things_control.jobs.media.drift import check_color_drift
+            from draw_things_control.jobs.media.regions import make_segmenter
 
             ffmpeg, ffprobe = self._tools()
             if ffmpeg is None or ffprobe is None:
                 raise ValueError("ffmpeg or ffprobe was not found")
             info = probe_clip(video, ffprobe)
-            return check_color_drift(video, color, ffmpeg, (info.width, info.height), run_input=run_input, first_image=first_image, notes=notes)
+            return check_color_drift(video, color, ffmpeg, (info.width, info.height), run_input=run_input, first_image=first_image, notes=notes, segmenter=make_segmenter(self._segmenter))
 
         return _guarded("color_drift", video.name, check)
 

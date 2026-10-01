@@ -209,6 +209,37 @@ left ([`VNFaceLandmarks2D`](https://developer.apple.com/documentation/vision/vnf
 rather than a fixed skin-color range. Draw Things itself runs only on Apple platforms, so a macOS-only dependency
 costs this project nothing.
 
+## Vision on generated frames
+
+Measured on 2026-10-01, with no GPU run, on E0017's run 3 and E0021's run 2 (`duo`, 81 frames each at 832x448, two
+people, both faces toward the camera), with pyobjc 12.2.2 on macOS 26.7.1.
+
+- **Speed.** Person segmentation (`balanced`) and face landmarks together, from PNG bytes: about 0.95 s for the first
+  request of a process, then 16 to 17 ms a frame (20 ms at most), 1.3 to 1.4 s for a clip. With the PNG encode, the
+  Oklab conversion, the skin model, and the region statistics, 64 ms a frame (178 ms at most), 5.3 s for a clip. The
+  correction of E0017's run 3 with regions took 15.4 s in all, against 10.5 s without, under its limit of 91 s.
+- **The mask** comes back 8-bit (`kCVPixelFormatType_OneComponent8`, `L008`) at 512x384 whatever the frame's shape,
+  stretched over the whole frame: 1.63 times across and 1.17 times down for 832x448. Rows are read past their padding
+  (`bytesPerRow`). Stretched back, it follows both people closely; a small dark object behind them is taken in.
+- **Faces.** Both faces in all 81 frames of both clips, every landmark region present (contour, eyes, brows, nose,
+  outer lips), the lower face turned about 90°. `pointsInImageOfSize_` gives image pixels with the origin at the lower
+  left, so y is turned over for the frame's rows; drawn over the frames, the points then sit on the faces.
+- **pyobjc.** The requests' `init` is unavailable (`NS_UNAVAILABLE`) in 12.2.2; `initWithCompletionHandler_(None)`
+  makes them. Without an autorelease pool around each call, a thread's memory grew about 1 MB a call (2 GB after 2000
+  calls); with one, 122 MB to 155 MB over 2000 calls, slowing (+5, +8, +1, and +3.6 MB in the last four steps of 400
+  calls), on a thread as `dtc serve`'s worker runs jobs.
+- **Skin.** A Gaussian of the face's skin over Oklab's `L`, `a`, and `b` kept the faces but dropped lit and shaded
+  body skin, since a face spans a narrow range of light. Over `a` and `b` only, it covers the faces and the body's
+  skin, leaves the clothes and most hair out, and drops only some highlight edges, which the feathering softens.
+  Divided by `L` (`a/L`, `b/L`), it took in more hair. Skin was 16 to 23% of the frame with `L`, 24 to 29% without.
+- **What regions do on E0017's run 3** (`blend` 0.25 toward `duo.png`). Its drift sits mostly in the background:
+  since the first image, the background's chroma x1.20 and hue +11°, people's x0.99 and +3°, skin's +2°. Corrected
+  over the whole frame, people were taken too far: left within the run, people's chroma x0.93 and hue -1.8°, skin's
+  `L` -3.4 and hue -3.2°. With regions, people's chroma x0.99 and hue +0.5°, skin's `L` -0.2 and hue -0.7°. The
+  background, corrected by the whole frame's transform as planned, kept its hue +6.6° within the run; by its own
+  (owner decision, 2026-10-01), +6.1°, its hue cap (6° a run) binding in 71 of 81 frames. Its chroma is about 0.015,
+  so that turn is a small change of color.
+
 ## Color space for measuring and correcting
 
 [Oklab](https://bottosson.github.io/posts/oklab/) (Ottosson, 2020): lightness `L`, and `a`, `b`, from linear sRGB
@@ -373,7 +404,8 @@ and 0.020 at run 3's frame 80.
 - What CoreGraphics does to a non-PNG input drawn into a `DeviceRGB` context.
 - That the Wan 2.2 i2v path reaches `ColorCalibrator`, and how strong the ghost of `lab` is with motion.
 - The effect on drift of guidance 3.5, of CFG-Zero\*, and of `colorCalibration: lab`.
-- Vision's mask quality on generated frames, and its speed at 832x448.
+- Vision's mask quality on generated frames, and its speed at 832x448. Checked on two clips of one scene
+  ([above](#vision-on-generated-frames)); not on other scenes, a single person, faces turned away, or other sizes.
 - That ffmpeg's `prores_videotoolbox` writes ProRes 4444 from 16-bit 4:4:4 (`p416le`); its help lists the pixel
   format, not the profile it allows. `prores_ks` takes at most 10 bits (`yuv444p10le`, `yuva444p10le`). Checked: it
   does ([above](#checked-in-milestone-09s-step-0)).

@@ -21,7 +21,8 @@ output_directory: ~/draw-things/output
 
 # Optional. true: each run-job also saves <name>-<timestamp>-job.json (a record
 # of every run) and <name>-<timestamp>-job.log (the full log) beside its
-# outputs. Default: false (nothing but the generated files is written).
+# outputs. Default: false (nothing but the generated files is written, and a
+# video job's <name>-<timestamp>-job-first-image.png, which it keeps either way).
 write_job_records: false
 
 # Optional. How long every job waits after each successful run but the last,

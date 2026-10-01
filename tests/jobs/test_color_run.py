@@ -21,6 +21,7 @@ from draw_things_control.jobs.media.color_stats import compare, measure
 from draw_things_control.jobs.media.frames import decode_filter, extract_last_frame
 from draw_things_control.jobs.media.stream_color import StreamColor
 from tests.jobs.test_media_correction import drifted, scene
+from tests.jobs.test_media_regions import PERSON, FakeSegmenter, drift_people, person_frame
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
@@ -147,6 +148,100 @@ class ColorCorrectorTests(unittest.TestCase):
         # The first pass finished, so the run's drift is still measured.
         assert result.drift is not None
         self.assertEqual(result.drift.stage, "color_drift")
+
+    def people_clip(self) -> Path:
+        """A clip in which only the person drifts, from an input of the person's frame."""
+        self.base = person_frame()
+        Image.fromarray(np.clip(np.rint(self.base * 255), 0, 255).astype(np.uint8), "RGB").save(self.input)
+        frames = [drift_people(self.base, hue_degrees=5 * share, chroma=1 + 0.08 * share) for share in np.linspace(0, 1, FRAMES)]
+        raw = b"".join(np.floor(frame * 255 + 1e-9).clip(0, 255).astype(np.uint8).tobytes() for frame in frames)
+        video = self.root / "people.mov"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "96x64", "-r", "16", "-i", "-", "-vf", "scale=out_color_matrix=bt709:out_range=tv", *PRORES, str(video)], input=raw, check=True)
+        return video
+
+    def test_with_regions_people_are_corrected_apart_and_the_background_is_left_as_it_was(self) -> None:
+        video = self.people_clip()
+        segmenter = FakeSegmenter()
+        request = self.request(video, ColorPolicy(anchor="previous", regions=True))
+        result = ColorCorrector(lambda: FFMPEG, self.checker, segmenter=lambda: segmenter)(request)
+        self.assertTrue(result.succeeded, result.checks)
+        correction = result.checks[-1]
+        self.assertEqual(correction.facts["regions"], ["frame", "people", "skin", "background"])
+        self.assertIn("people, skin and background apart", correction.summary)
+        # Vision ran once on each frame and on the input and the first image, never in the second pass.
+        self.assertEqual(segmenter.calls, FRAMES + 2)
+        # The drift the model added to the person is gone from the handoff, and the background did not move.
+        handoff = (samples_of(request.handoff) >> 8).astype(np.float64) / 255
+        people = compare(measure(self.base[PERSON]), measure(handoff[PERSON]))
+        self.assertLess(abs(people.hue or 0), 1.0)
+        self.assertAlmostEqual(people.chroma, 1.0, delta=0.02)
+        extracted = self.root / "extracted.png"
+        extract_last_frame(video, extracted, BT709)
+        raw = (samples_of(extracted) >> 8).astype(np.float64) / 255
+        # The background is within a quarter of a level of the uncorrected frame's distance from the input (the codec's
+        # error alone), and its statistics are the input's.
+        self.assertLessEqual(float(np.abs(handoff[:, :36] - self.base[:, :36]).mean()), float(np.abs(raw[:, :36] - self.base[:, :36]).mean()) + 0.25 / 255)
+        background = compare(measure(self.base[:, :36]), measure(handoff[:, :36]))
+        self.assertLess(abs(background.lightness), 0.3)
+        self.assertAlmostEqual(background.chroma, 1.0, delta=0.02)
+        # The drift check measured each region too.
+        assert result.drift is not None
+        self.assertIn("skin hue", result.drift.summary)
+        self.assertIn("people", correction.facts["left_regions"]["frame_0_to_last"])
+
+    def test_the_drift_check_of_a_run_that_does_not_correct_measures_regions_too(self) -> None:
+        video = self.people_clip()
+        segmenter = FakeSegmenter()
+        check = MediaChecker(lambda: FFMPEG, segmenter=lambda: segmenter).color_drift(video, BT709, self.input, None)
+        self.assertEqual(check.facts["regions"], ["frame", "people", "skin", "background"])
+        self.assertAlmostEqual(check.facts["region_comparisons"]["frame_0_to_last"]["people"]["hue_degrees"], 5, delta=1)
+        self.assertAlmostEqual(check.facts["region_comparisons"]["frame_0_to_last"]["background"]["hue_degrees"], 0, delta=1)
+        # Vision ran on the frames compared only: every fourth, the last, and the input.
+        self.assertEqual(segmenter.calls, len(range(0, FRAMES, 4)) + (1 if (FRAMES - 1) % 4 else 0) + 1)
+
+    def test_regions_without_vision_correct_the_whole_frame_with_a_note(self) -> None:
+        video = self.people_clip()
+        result = ColorCorrector(lambda: FFMPEG, self.checker, segmenter=lambda: None)(self.request(video, ColorPolicy(anchor="previous", regions=True)))
+        self.assertTrue(result.succeeded, result.checks)
+        correction = result.checks[-1]
+        self.assertEqual(correction.facts["regions"], ["frame"])
+        self.assertIn("Apple Vision is not available here, so the whole frame is corrected as one region.", correction.notes)
+
+    def test_a_vision_that_fails_mid_run_is_a_note_and_the_run_is_still_corrected(self) -> None:
+        video = self.people_clip()
+        segmenter = FakeSegmenter(fail_after=4)
+        result = ColorCorrector(lambda: FFMPEG, self.checker, segmenter=lambda: segmenter)(self.request(video, ColorPolicy(anchor="previous", regions=True)))
+        self.assertTrue(result.succeeded, result.checks)
+        correction = result.checks[-1]
+        self.assertTrue(any("Apple Vision failed (Vision is gone)" in note for note in correction.notes))
+        assert result.drift is not None
+        self.assertTrue(any("Apple Vision failed" in note for note in result.drift.notes))
+        # Too few frames had regions, so the whole frame was corrected as one.
+        self.assertEqual(correction.facts["regions"], ["frame"])
+
+    def test_a_vision_that_fails_after_most_frames_leaves_the_whole_run_to_the_whole_frame(self) -> None:
+        video = self.people_clip()
+        # The input, the first image, and frames 0 to 5 have regions: enough to count, then none.
+        segmenter = FakeSegmenter(fail_after=8)
+        result = ColorCorrector(lambda: FFMPEG, self.checker, segmenter=lambda: segmenter)(self.request(video, ColorPolicy(anchor="previous", regions=True)))
+        self.assertTrue(result.succeeded, result.checks)
+        correction = result.checks[-1]
+        self.assertEqual(correction.facts["regions"], ["frame"])
+        self.assertIn("Apple Vision failed during the run, so the whole run is corrected as one region.", correction.notes)
+
+    def test_a_segmenter_that_cannot_be_made_is_no_vision_and_nothing_fails(self) -> None:
+        video = self.people_clip()
+
+        def broken() -> None:
+            raise RuntimeError("pyobjc is broken")
+
+        result = ColorCorrector(lambda: FFMPEG, self.checker, segmenter=broken)(self.request(video, ColorPolicy(anchor="previous", regions=True)))
+        self.assertTrue(result.succeeded, result.checks)
+        self.assertIn("Apple Vision is not available here, so the whole frame is corrected as one region.", result.checks[-1].notes)
+        check = MediaChecker(lambda: FFMPEG, segmenter=broken).color_drift(video, BT709, self.input, None)
+        self.assertEqual(check.verdict, "ok")
+        self.assertEqual(check.facts["regions"], ["frame"])
+        self.assertIn("frame_0_to_last", check.facts["comparisons"])
 
     def test_without_ffmpeg_the_correction_fails_before_reading_anything(self) -> None:
         video = self.drifting_clip("run.mov", PRORES)

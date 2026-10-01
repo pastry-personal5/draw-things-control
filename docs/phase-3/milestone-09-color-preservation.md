@@ -1,7 +1,7 @@
 # Milestone 09: Color preservation
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** in-progress (increments A to D built on 2026-09-30; Vision regions, and the constants the A/B chains set, to come; see [As built](#as-built))
+**Status:** done (2026-10-01; increments A to D built on 2026-09-30, E on 2026-10-01; the A/B chains dropped and the constants accepted as they are, owner decision; see [As built](#as-built))
 **Depends on:** [Milestone 08](milestone-08-video-format-and-color.md): the resolved decode of each video
 (`StreamColor`), its `colr` tag, the handoff, and the media checks kept per run in the state store.
 
@@ -18,10 +18,11 @@ hypothesis.
 
 ## As built
 
-Built on 2026-09-30, in the increments the owner chose (see the [changelog](phase-3-changelog.md)): A, the
-`config_override` keys (layer 4); B, the rest of the exact handoff, the normalized first input, the first image,
-schema 8, and the `color_drift` check (layers 1 and 3); C, the gamut mapping (layer 2); and D, the correction over the
-whole frame (layer 5 without Vision). Everything below holds, with these as the built facts:
+Built on 2026-09-30 and 2026-10-01, in the increments the owner chose (see the [changelog](phase-3-changelog.md)): A,
+the `config_override` keys (layer 4); B, the rest of the exact handoff, the normalized first input, the first image,
+schema 8, and the `color_drift` check (layers 1 and 3); C, the gamut mapping (layer 2); D, the correction over the
+whole frame (layer 5 without Vision); and E, Apple Vision's regions, in the drift check and the correction. Everything
+below holds, with these as the built facts:
 
 - **Step 0.** The installed `draw-things-cli` is built from `da9b0c8`, not `0e9c180`; the code the research read is the
   same in both ([research note](../research/color-drift.md#checked-in-milestone-09s-step-0)). The upstream reports are
@@ -29,10 +30,13 @@ whole frame (layer 5 without Vision). Everything below holds, with these as the 
   writes ProRes 4444 from `p416le`.
 - **Step 1 is deferred** (owner decision): E0016's clips are gone. Every run's `color_drift` check measures from now on.
   The handoff was measured on E0017 instead on 2026-10-01
-  ([research note](../research/color-drift.md#measured-on-e0017)); Vision's masks are still to be timed.
+  ([research note](../research/color-drift.md#measured-on-e0017)), and Vision's masks were timed and inspected on its
+  frames and E0021's ([research note](../research/color-drift.md#vision-on-generated-frames)).
 - **Schema 8** also adds `queue.resume_first_image` and `queue.resume_anchor`, since a queued resume carries its whole
   resume point on its queue row.
-- **No records, no first image.** A job run without records (no manifest stem) keeps none, and its drift checks say so.
+- **The first image without records.** A video job keeps it whether or not it writes records, named from the stem its
+  manifest would have (owner decision, 2026-10-01). Until then a job without records kept none, and E0021's `blend`
+  chain ran as `previous`.
 - **The cast** is the mean `a` and `b` of the least chromatic tenth of the pixels, when that tenth is near-neutral
   (chroma under 0.03), rather than of every pixel under 0.03: the same pixels stay neutral when saturation changes.
 - **The fit.** Each frame is fitted once, to a target between the run's input and the anchor, ramped by the smoothstep;
@@ -46,16 +50,42 @@ whole frame (layer 5 without Vision). Everything below holds, with these as the 
   real media tools (a runner writing Draw Things-like ProRes) writes each run's copy, corrected handoff, and raw
   frame, keeps every pixel of the original, and starts run 2 from run 1's corrected handoff.
 
-What is left:
+- **The background's own transform** (owner decision, 2026-10-01). With people corrected apart, the background is
+  fitted to its own statistics, not corrected by the whole frame's transform: on E0017 the drift sat mostly in the
+  background, and the whole frame's transform took people too far. The whole frame's applies where people do not
+  count, and to a frame's region that has too little of it.
+- **Skin** is set by a Gaussian over Oklab's `a` and `b` of each frame's face skin, fitted, then fitted again within 3
+  standard deviations; a pixel is all skin within 2 and none beyond 3, times the person mask. With lightness in it, lit
+  and shaded body skin fell out.
+- **Blending.** The background's (or the whole frame's) transform, then people's blended by the person weight, then
+  skin's residual on people's result, blended by skin's share of the person weight, so a pixel's share of skin is its
+  skin weight. Masks are averaged over three frames at the segmenter's resolution, stretched to the frame, then
+  feathered there, since the stretch differs across and down.
+- **A region is corrected apart for a run** only when the input, the anchor, and half of the frames have enough of
+  it; a frame with too little takes its parent's fit before the smoothing. The skin residual is fitted after people's
+  unscaled transform, and `strength` scales both.
+- **Vision in every drift check.** Where Vision is available, every video run's `color_drift` check measures regions,
+  whatever `color.regions` says, so `dtc serve`'s worker loads pyobjc at its first check. A Vision that is missing,
+  or cannot be loaded, is silent there. One that fails mid-run is a note in both checks: the drift check measures the
+  whole frame from then on, and the correction corrects the whole run as one region, so no clip switches mid-way.
+- **The segmenter** is given to `MediaChecker` and `ColorCorrector`, made once per process by `services/toolkit.py`,
+  rather than carried on `MediaTools`. Each call runs in an autorelease pool.
+- **`ColorStats.mean`**, the mean `a` and `b`, is added for the skin residual.
+- **Tested** with a fake segmenter: regions found and measured, a drift of people only measured on people and skin
+  and not the background, removed by the correction with the background left as it was, and Vision missing or
+  failing mid-run leaving the whole frame corrected with a note; the landmark y-flip; one real Vision call; and that
+  starting the CLI loads no pyobjc.
 
-- **Increment E:** Apple Vision's regions (`media/regions.py`, `media/vision_segmenter.py`, `pyobjc-framework-Vision`),
-  once its masks are timed and inspected on generated frames. Until then `regions: true` corrects the whole frame, with
-  a note, and the drift is measured over the whole frame.
-- **Step 3, the A/B chains** (the owner's GPU time), measured by the `color_drift` check, and the anchor chains with the
-  correction. They set the caps, the drift check's limits, and the correction's time limit, all named constants now
-  (`jobs/media/correction.py`, `jobs/media/drift.py`, `jobs/definition.py`), and their results go into the research
-  note.
-- Filing the upstream reports, which is the owner's.
+Dropped (owner decision, 2026-10-01):
+
+- **Step 3, the A/B chains.** Not run. The caps, the drift check's limits, and the correction's time limit keep the
+  values proposed in the plan, accepted as they are: caps of lightness median ±4 hundredths, spread ×0.92 to 1.08,
+  chroma ×0.88 to 1.12, hue ±6°, cast 0.015, and skin residual 0.02 (`jobs/media/correction.py`); limits of 3 in `L`,
+  10% in contrast or chroma, and 5° in hue (`jobs/media/drift.py`); and 10 seconds plus 1 a frame
+  (`jobs/definition.py`). No generation setting is recommended over the configuration's. The job files
+  `data/jobs/ab-*.yaml` stay, for the owner to run whenever.
+- **Filing the upstream reports** is no longer part of this milestone; the drafts stay in
+  [draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md).
 
 ## The owner's answers
 
@@ -90,6 +120,8 @@ From the code review of increment D, 2026-10-01:
 - **Lab, YCbCr, and HSV inputs** are converted, not refused: Lab from its values, YCbCr and HSV to RGB and then by
   their profile.
 - **`strength` and `regions`** are refused with `anchor: none`.
+- **The first image** is kept for every video job, with or without records: E0021 (`duo-blend-i8x`, 6 runs) wrote
+  none, so its `blend` had no anchor and acted as `previous`.
 - **A `t2v` job's first image** that is not kept is dropped by a `first_image_dropped` event.
 - **A VideoToolbox that cannot encode** is found by a one-frame test encode, once per process, and `prores_ks` writes
   the copy.
@@ -366,7 +398,8 @@ Out of scope:
    input, the first image, and the metrics. They are cheap and change no picture the model makes, and from then on
    every run measures itself.
 3. **A/B chains** (the owner's GPU time), measured by layer 3: the chains of [layer 4](#4-generation-side-settings).
-   They set layer 5's caps and thresholds and say which settings to recommend.
+   They set layer 5's caps and thresholds and say which settings to recommend. (Dropped, owner decision, 2026-10-01:
+   the proposed values stand.)
 4. **Layer 2:** the first image's gamut.
 5. **Layer 5:** the correction and its copies, tuned on step 3's chains.
 
@@ -517,6 +550,7 @@ Out of scope:
   Draw Things wrote is re-encoded or has a pixel changed.
 - A failed correction leaves the run succeeded, handing off the uncorrected frame, with a warning.
 - The simulated chain meets its bounds for each anchor, with and without re-anchoring.
-- The A/B chains' results are in the research note.
+- ~~The A/B chains' results are in the research note.~~ Dropped (owner decision, 2026-10-01): the chains are not run,
+  and the proposed constants stand.
 - No file under `data/params/` changes.
 - `make check` passes.

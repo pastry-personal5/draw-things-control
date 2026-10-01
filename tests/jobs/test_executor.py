@@ -417,7 +417,9 @@ class JobExecutorTests(JobTestCase):
         outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.manifest, outcome.log), (0, None, None))
         names = sorted(path.name for path in job.output_directory.iterdir())
-        self.assertEqual(len(names), 4)
+        # Two videos, their last frames, and the first image, which a video job keeps with or without records.
+        self.assertEqual(len(names), 5)
+        self.assertEqual(len([name for name in names if name.endswith("-job-first-image.png")]), 1)
         self.assertFalse([name for name in names if name.endswith(("-job.json", "-job.log"))])
 
     def test_failed_job_without_records_writes_no_manifest(self) -> None:
@@ -426,7 +428,8 @@ class JobExecutorTests(JobTestCase):
         job = self.job()
         outcome = self.run_job(job, write_records=False)
         self.assertEqual(outcome.exit_code, 3)
-        self.assertEqual(list(job.output_directory.iterdir()), [])
+        # Only the first image, kept before run 1, with or without records.
+        self.assertEqual([path.name for path in job.output_directory.iterdir() if not path.name.endswith("-job-first-image.png")], [])
 
     def resize_job(self, **changes: object) -> JobDefinition:
         self.write_image("photo.jpg", (1920, 1080))

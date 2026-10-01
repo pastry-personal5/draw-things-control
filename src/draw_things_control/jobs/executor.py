@@ -318,7 +318,8 @@ class JobExecutor:
 
     def _keep_first_image(self, chain: _Chain) -> None:
         """Keep the chain's first image for a video job (Milestone 09): run 1's copy of the input, named from the
-        manifest's stem; a t2v job's is run 1's last frame, written after run 1; a resume uses the resumed execution's."""
+        manifest's stem, with or without records; a t2v job's is run 1's last frame, written after run 1; a resume uses
+        the resumed execution's."""
         job, manifest, resume = chain.job, chain.records.manifest, chain.options.resume
         if not job.mode.is_video:
             return
@@ -336,7 +337,6 @@ class JobExecutor:
             return
         path = chain.records.first_image_path
         if path is None:
-            chain.first_image_notes = ("The job writes no records, so no first image is kept, and drift since the first image is left out.",)
             return
         if chain.temporary_input is None:
             # A t2v job's, which JobStarted names before run 1 writes it.

@@ -371,7 +371,7 @@ color:
   strength: 1.0          # 0 to 1: how much of the estimated correction is applied
   first_weight: 0.25     # blend only: the share of the remaining gap to the anchor each run closes
   reanchor: prompt_pair  # first and blend: prompt_pair (the default) or never
-  regions: true          # people and skin apart from the background (Apple Vision, to come); false: the whole frame
+  regions: true          # people, their skin, and the background apart (Apple Vision); false: the whole frame
 ```
 
 Each key is checked and named as `color.<key>` on error; `first_weight` is
@@ -408,10 +408,26 @@ frame. The parameters are smoothed over frames, and each run's are capped
 (lightness median ±4 hundredths, spread ×0.92 to 1.08, chroma ×0.88 to 1.12,
 hue ±6°, cast 0.015); a cap that binds is reported, never exceeded, since a
 large difference is more likely a change of scene than drift. These caps are
-proposed, to be set from measured chains. A color the correction leaves inside
+the values the plan proposed, accepted without measured chains. A color the correction leaves inside
 sRGB passes through; one it pushes outside is brought onto the edge at
-constant lightness and hue. Until Apple Vision's regions are built, the whole
-frame is corrected as one region, with a note.
+constant lightness and hue.
+
+**Regions** (`regions: true`, macOS only). Apple Vision finds each frame's
+people and faces (`pyobjc-framework-Vision`, installed by `uv sync` on macOS).
+Each face's own skin (its outline, less its eyes, brows, and lips) sets the
+skin color, by Oklab's `a` and `b` only, so lit and shaded skin both count; a
+person's pixels of that color are their skin. People and the background then
+each get their own correction, fitted as above to their own statistics, and
+skin a residual on top of people's: its lightness median and mean color
+moved to skin's own target, within 0.02. Soft masks, smoothed over three
+frames and feathered by 1% of the frame's shorter side, blend them, so no edge
+shows. A region is corrected apart only when the run's input, its anchor, and
+half of its frames have enough of it (people 2% of the frame, skin 0.5%);
+otherwise the whole frame's (or people's, for skin) correction applies, with a
+note. Where Vision is not available, or fails during the run, the whole frame
+is corrected as one region, with a note, and the run is still corrected. On an
+81-frame 832x448 run, regions add about 5 seconds to a correction (15 s in all,
+against 10 s), and Vision about 1.5 seconds to a drift check.
 
 **What it writes**, beside each run's video:
 
@@ -476,10 +492,11 @@ adds to each run of every video job.
 - With `write_job_records: true`, each `run-job` also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
-- A video job that writes records also keeps its **first image**,
+- Every video job keeps its **first image**, with or without records,
   `<name>-<timestamp>-job-first-image.png`: a copy of run 1's 8-bit sRGB
   input (for a `t2v` job, which has no input, run 1's last frame). The color
-  drift check compares every run with it. When a `t2v` job's run 1 does not
+  drift check compares every run with it, and `color.anchor: first` or
+  `blend` holds the chain to it. When a `t2v` job's run 1 does not
   succeed, or its last frame cannot be copied, no first image is kept: a
   `first_image_dropped` event (in the TUI's Messages, in yellow) says why, and
   the execution names none from then on. A resumed execution uses the first
@@ -516,8 +533,8 @@ adds to each run of every video job.
   | `Resized input check` | After run 1's copy is made, resized or at scale 1 | The copy as above, and how the source's values became sRGB (`converted from Display P3 to sRGB with gamut mapping`, `16-bit read by ffmpeg and rounded to 8`, transparency flattened, turned upright). Its mean color is compared with the source's, in the space the resize worked in, over the picture only (`mean color kept within 0.4 levels`, or `moved 3.2 levels`); a warning when it moved more than 1 level, when the copy is not 8-bit RGB PNG, not the planned size, or when the source's profile could not be used. Notes say how many pixels the gamut mapping brought in and by how much, that LittleCMS clipped a profile it converted, or that a 16-bit source was read by its high bytes |
   | `Output check` | After each run, around the color tagging | The codec (against `output.video_format`), size, frames, pixel format, the matrix, range, primaries, and transfer the stream itself states (read from its first frame before tagging), the `colr` box after tagging, and the matrix and range the video is decoded with. For ProRes 4444 (4:4:4 at 10 bits or more), the first 5 frames are measured to tell which matrix the pixels were really encoded with ([research note](research/prores-color-matrix.md)). A warning for a different codec, a missing `colr` box, a box whose matrix differs from the stream's, a stated matrix the pixels contradict, or pixels with no 8-bit structure (noise) |
   | `Last frame check` | After the last frame is extracted | Format, size, bit depth, alpha, color chunks, and the matrix and range it was decoded from. A warning for alpha (Draw Things reads it as a mask), a missing sRGB label, a size that differs from the video's, or a depth other than 16-bit |
-  | `Color correction check` | After the correction of a job with `color.anchor` set | The anchor and whether the run re-anchored, the caps that bound and in how many frames, and the drift left after correction, measured on the corrected frames with the same three comparisons. A warning when the correction failed. The corrected copy also gets its own `Output check` |
-  | `Color drift check` | After the last frame check, for every video run | The run's frames, decoded as the last frame is and raised by the half level Draw Things truncated, measured in Oklab over the whole frame: the lightness median (brightness, `L` in hundredths), the 10th-to-90th-percentile lightness spread (contrast), the chroma median (saturation), the chroma-weighted mean hue, and the cast of near-neutral pixels. Three comparisons: `since the first image` (the chain's drift so far), `within the run` (the last frame against frame 0, the model's own drift), and `frame 0 from its input` (a nonzero mean here is a pipeline bias). A warning beyond 3 in `L`, 10% in contrast or chroma, or 5° in hue; these limits are proposed, to be set from the first measurements. `facts` keep every number and the curve over every fourth frame. A `t2v` job's run 1 has no input and is measured within itself |
+  | `Color correction check` | After the correction of a job with `color.anchor` set | The anchor and whether the run re-anchored, the regions corrected apart (`people, skin and background apart`), the caps that bound and in how many frames (a region's named, as `people contrast`), and the drift left after correction, measured on the corrected frames with the same three comparisons, region by region with Vision. A warning when the correction failed. The corrected copy also gets its own `Output check` |
+  | `Color drift check` | After the last frame check, for every video run | The run's frames, decoded as the last frame is and raised by the half level Draw Things truncated, measured in Oklab over the whole frame: the lightness median (brightness, `L` in hundredths), the 10th-to-90th-percentile lightness spread (contrast), the chroma median (saturation), the chroma-weighted mean hue, and the cast of near-neutral pixels. Three comparisons: `since the first image` (the chain's drift so far), `within the run` (the last frame against frame 0, the model's own drift), and `frame 0 from its input` (a nonzero mean here is a pipeline bias). Where Apple Vision is available (macOS), whatever `color.regions` says, each comparison is also made for people, their skin, and the background, where both sides have enough of them; the summary adds `skin hue`, and `facts` keep each region's numbers (`region_comparisons`, `region_stats`). A warning beyond 3 in `L`, 10% in contrast or chroma, or 5° in hue (the whole frame's, or skin's hue); these limits are the ones the plan proposed, accepted without measured chains. `facts` keep every number and the curve over every fourth frame. A `t2v` job's run 1 has no input and is measured within itself |
 
   For example, a ProRes 4444 run of a Display P3 photo:
 

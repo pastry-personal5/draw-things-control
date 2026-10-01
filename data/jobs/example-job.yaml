@@ -79,7 +79,7 @@ config_override:
 #   strength: 1.0                      # 0 to 1: how much of the correction is applied
 #   first_weight: 0.25                 # blend only: the share of the gap to the anchor each run closes
 #   reanchor: prompt_pair              # first and blend: prompt_pair (the default) or never
-#   regions: true                      # people and skin apart (Apple Vision, to come); false: the whole frame
+#   regions: true                      # people, skin, and background apart (Apple Vision, macOS); false: the whole frame
 
 run_timeout_seconds: 3600              # limit for each run
 # cooldown:                            # optional; the wait after each run but the last; replaces the global cooldown as a whole

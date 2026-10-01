@@ -40,6 +40,8 @@ class ColorStats:
     hue: float | None
     # The mean a and b of the least chromatic tenth of the pixels; None when that tenth is not near-neutral.
     cast: tuple[float, float] | None
+    # The mean a and b of every pixel: the skin residual moves skin's (Milestone 09's increment E).
+    mean: tuple[float, float] = (0.0, 0.0)
 
     @property
     def median(self) -> float:
@@ -56,6 +58,7 @@ class ColorStats:
             "chroma": round(self.chroma, 4),
             "hue_degrees": None if self.hue is None else round(float(np.degrees(self.hue)), 2),
             "cast": None if self.cast is None else [round(value, 4) for value in self.cast],
+            "mean": [round(value, 4) for value in self.mean],
         }
 
 
@@ -85,7 +88,8 @@ def measure_lab(lab: np.ndarray) -> ColorStats:
     if least < NEUTRAL_CHROMA:
         grayest = chroma <= least
         cast = (float(np.mean(lab[grayest, 1])), float(np.mean(lab[grayest, 2])))
-    return ColorStats(count, (float(low), float(middle), float(high)), float(np.median(chroma)), hue, cast)
+    mean = (float(np.mean(lab[:, 1])), float(np.mean(lab[:, 2])))
+    return ColorStats(count, (float(low), float(middle), float(high)), float(np.median(chroma)), hue, cast, mean)
 
 
 @dataclass(frozen=True)

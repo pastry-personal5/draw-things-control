@@ -127,16 +127,14 @@ class JobRecords:
     the child's too, until the block ends), and, when the job raises, marks a manifest still ``running`` as failed.
     """
 
-    def __init__(self, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None) -> None:
+    def __init__(self, manifest: JobManifest, manifest_path: Path | None, log_path: Path | None, first_image_path: Path | None = None) -> None:
         self.manifest = manifest
         # Both None unless records are written beside the outputs.
         self.manifest_path = manifest_path
         self.log_path = log_path
-
-    @property
-    def first_image_path(self) -> Path | None:
-        """Where a new chain keeps its first image, named from the manifest's stem; None without records."""
-        return first_image_path(self.manifest_path) if self.manifest_path is not None else None
+        # Where a new video chain keeps its first image, named from the manifest's stem, records or not (owner
+        # decision, 2026-10-01); None for an image job.
+        self.first_image_path = first_image_path
 
     def save(self) -> None:
         """Write the manifest, when records are written."""
@@ -173,14 +171,18 @@ class JobRecords:
         log_path: Path | None = None
         log_sink: int | None = None
         manifest: JobManifest | None = None
+        first_image: Path | None = None
         try:
-            if write_records:
-                stem = job_file_stem(job.output_directory, job.name, clock, random_number)
+            # A video job's stem names its first image even without records, so first and blend always have an anchor.
+            stem = job_file_stem(job.output_directory, job.name, clock, random_number) if write_records or job.mode.is_video else None
+            if stem is not None and job.mode.is_video:
+                first_image = first_image_path(job.output_directory / f"{stem}.json")
+            if stem is not None and write_records:
                 manifest_path = job.output_directory / f"{stem}.json"
                 log_path = job.output_directory / f"{stem}.log"
                 log_sink = add_job_log(log_path)
             manifest = cls._manifest(job, seed=seed, seed_source=seed_source, execution_id=execution_id, clock=clock, log_path=log_path, first_run=first_run, resumes_execution=resumes_execution)
-            records = cls(manifest, manifest_path, log_path)
+            records = cls(manifest, manifest_path, log_path, first_image)
             # Tags every message logged while the job runs, so its own log file (add_job_log's filter) never
             # picks up an unrelated line from the same process, such as a server's API requests.
             with logger.contextualize(dtc_job=True):

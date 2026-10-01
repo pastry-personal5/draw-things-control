@@ -1,13 +1,15 @@
 """Tests for the real tools and the services built on them."""
 
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.errors import ToolMissingError
 from draw_things_control.core.generation import GenerationService
 from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.services.toolkit import Toolkit, create_job_runner, create_runner
+from draw_things_control.services.toolkit import Toolkit, _lazy_segmenter, create_job_runner, create_runner
 
 
 class ToolkitTests(unittest.TestCase):
@@ -35,3 +37,16 @@ class ToolkitTests(unittest.TestCase):
         arguments = DrawThingsGenerateArguments(model="m.ckpt", output=Path("a.png"))
         self.assertTrue(create_runner(arguments, None, 1)._handle_signals)
         self.assertFalse(create_job_runner(arguments, None, 1)._handle_signals)
+
+    def test_the_segmenter_is_made_once_for_the_process_however_many_threads_ask(self) -> None:
+        made = object()
+        with mock.patch("draw_things_control.jobs.media.vision_segmenter.vision_segmenter", return_value=made) as factory:
+            segmenter = _lazy_segmenter()
+            seen: list[object] = []
+            threads = [threading.Thread(target=lambda: seen.append(segmenter())) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(seen, [made] * 4)
+        factory.assert_called_once_with()

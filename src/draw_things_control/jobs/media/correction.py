@@ -11,10 +11,16 @@ The transform, in Oklab: lightness through a monotone curve (black and white sta
 go to the target's median and spread), and ``(a, b)`` to ``gain * R(turn) * (a, b) + shift``: the ratio of chroma medians,
 the difference of mean hues, and what is left of the neutral cast. Colors the transform leaves inside sRGB pass through
 unchanged; one it pushes outside is brought onto the edge at constant lightness and hue.
+
+With regions (increment E), people and the background each get their own transform, fitted the same way to their own
+statistics (the background's own by owner decision, 2026-10-01); and people's skin a residual on top: skin's lightness median and mean ``(a, b)``, after
+people's transform, moved to skin's own target, within ``SKIN_CAP``. Soft masks blend the three per pixel
+(``apply_regions``). A frame without enough of a region takes its parent's fit, before the smoothing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -23,13 +29,15 @@ import numpy as np
 from draw_things_control.jobs.media import oklab
 from draw_things_control.jobs.media.color_stats import ColorStats, measure, turn_degrees
 
-# Caps per run (proposed, Milestone 09; the owner's A/B chains set them). A cap that binds is reported, never exceeded:
+# Caps per run (Milestone 09, as proposed; accepted without the A/B chains, owner decision, 2026-10-01). A cap that binds is reported, never exceeded:
 # a large difference is more likely a change of scene than drift.
 LIGHTNESS_CAP = 0.04
 SPREAD_CAP = (0.92, 1.08)
 CHROMA_CAP = (0.88, 1.12)
 HUE_CAP_DEGREES = 6.0
 CAST_CAP = 0.015
+# The skin residual's cap, on its lightness median and on the length of its (a, b) shift.
+SKIN_CAP = 0.02
 # Tone knots closer than this to each other, or to black or white, are dropped: a letterboxed frame's 10th percentile is
 # black itself, and a lifted white's 90th can reach past 1.
 KNOT_GAP = 0.01
@@ -263,10 +271,87 @@ def apply(frame: np.ndarray, transform: Transform) -> tuple[np.ndarray, int]:
 def plan_run(frame_stats: list[ColorStats], input_stats: ColorStats, anchor_stats: ColorStats | None, pull: float, strength: float, samples: list[np.ndarray] | None = None) -> list[Params]:
     """Every frame's parameters: fitted to the ramped target, capped, smoothed, and scaled by ``strength``; with each
     frame's ``samples`` (``sample_pixels``), the chroma gains are refined for what the tone curve and the gamut's edge do."""
+    return finish_run(smooth(fit_run(frame_stats, input_stats, anchor_stats, pull)), frame_stats, strength, samples)
+
+
+def fit_run(frame_stats: Sequence[ColorStats | None], input_stats: ColorStats, anchor_stats: ColorStats | None, pull: float, parent: list[Params] | None = None) -> list[Params]:
+    """Each frame fitted to the ramped target, within the caps; a frame without statistics (a region it has too little
+    of) takes ``parent``'s fit."""
     count = len(frame_stats)
-    fitted = [fit(stats, target_between(input_stats, anchor_stats, pull * ramp(index, count))) for index, stats in enumerate(frame_stats)]
-    planned = [scaled(params, strength) for params in smooth(fitted)]
+    fitted = []
+    for index, stats in enumerate(frame_stats):
+        if stats is None:
+            if parent is None:
+                raise ValueError("a frame without statistics needs its parent's fit")
+            fitted.append(parent[index])
+            continue
+        fitted.append(fit(stats, target_between(input_stats, anchor_stats, pull * ramp(index, count))))
+    return fitted
+
+
+def finish_run(smoothed: list[Params], frame_stats: list[ColorStats], strength: float, samples: list[np.ndarray] | None = None) -> list[Params]:
+    """Smoothed parameters scaled by ``strength``, and, with ``samples``, their chroma gains refined."""
+    planned = [scaled(params, strength) for params in smoothed]
     return refine_gains(planned, frame_stats, samples) if samples is not None else planned
+
+
+def skin_residuals(samples: list[np.ndarray | None], people_stats: list[ColorStats], people_params: list[Params], input_stats: ColorStats, anchor_stats: ColorStats | None, pull: float) -> tuple[list[Params], list[ColorStats | None]]:
+    """Each frame's skin residual: skin's pixels (``samples``, None where a frame has too little skin) after people's
+    transform, their lightness median and mean ``(a, b)`` moved to skin's ramped target, within ``SKIN_CAP``; and the
+    statistics of those pixels after people's transform, which the residual's transform is built on. ``people_params``
+    are unscaled, so ``strength`` scales the residual and people's transform alike."""
+    count = len(samples)
+    residuals: list[Params] = []
+    after_stats: list[ColorStats | None] = []
+    for index, sample in enumerate(samples):
+        if sample is None or len(sample) == 0:
+            residuals.append(Params())
+            after_stats.append(None)
+            continue
+        after = measure(apply(sample, transform_for(people_stats[index], people_params[index]))[0])
+        share = pull * ramp(index, count)
+        reference = anchor_stats if anchor_stats is not None and share > 0 else input_stats
+        median = input_stats.median + (reference.median - input_stats.median) * share
+        mean = (input_stats.mean[0] + (reference.mean[0] - input_stats.mean[0]) * share, input_stats.mean[1] + (reference.mean[1] - input_stats.mean[1]) * share)
+        bound: set[str] = set()
+        lightness = _capped(median - after.median, -SKIN_CAP, SKIN_CAP, "skin", bound)
+        shift_a, shift_b = mean[0] - after.mean[0], mean[1] - after.mean[1]
+        size = float(np.hypot(shift_a, shift_b))
+        if size > SKIN_CAP:
+            bound.add("skin")
+            shift_a, shift_b = shift_a * SKIN_CAP / size, shift_b * SKIN_CAP / size
+        residuals.append(Params(lightness=float(lightness), shift=(float(shift_a), float(shift_b)), bound=frozenset(bound)))
+        after_stats.append(after)
+    return residuals, after_stats
+
+
+def apply_regions(frame: np.ndarray, transform: Transform, people: tuple[Transform, np.ndarray] | None = None, skin: tuple[Transform, np.ndarray] | None = None) -> tuple[np.ndarray, int]:
+    """``frame`` corrected by the whole frame's ``transform`` and, given ``people`` (its transform and its weights, H by
+    W from 0 to 1), people's, blended per pixel; given ``skin`` too (weights no greater than people's), skin's residual on
+    top of people's, so a pixel's share of skin is its skin weight. Returns how many pixels were brought back onto the
+    sRGB edge, counted once for each transform that moved them."""
+    out, moved = apply(frame, transform)
+    if people is None:
+        return out, moved
+    people_transform, weights = people
+    selected = weights > 0
+    if not selected.any():
+        return out, moved
+    pixels, people_moved = apply(frame[selected], people_transform)
+    moved += people_moved
+    share = weights[selected][:, None]
+    if skin is not None:
+        skin_transform, skin_weights = skin
+        inner_share = np.divide(skin_weights[selected], weights[selected])[:, None]
+        inner = inner_share[:, 0] > 0
+        if inner.any():
+            skinned, skin_moved = apply(pixels[inner], skin_transform)
+            moved += skin_moved
+            # frame[selected] is a copy, so writing into it, or into apply's result, leaves the frame alone.
+            pixels[inner] = pixels[inner] * (1 - inner_share[inner]) + skinned * inner_share[inner]
+    out = out.copy() if out is frame else out
+    out[selected] = out[selected] * (1 - share) + pixels * share
+    return out, moved
 
 
 def sample_pixels(frame: np.ndarray) -> np.ndarray:

@@ -101,12 +101,12 @@ typed tools on top of it.
 | 05 | [Park and hold](milestone-05-park-and-hold.md) | done |
 | 06 | [Delete executions](milestone-06-delete-executions.md) | done |
 | 07 | [Job file management](milestone-07-job-file-management.md) | planned |
-| 08 | [Video format and color](milestone-08-video-format-and-color.md) | in-progress |
-| 09 | [Color preservation](milestone-09-color-preservation.md) | in-progress |
+| 08 | [Video format and color](milestone-08-video-format-and-color.md) | done |
+| 09 | [Color preservation](milestone-09-color-preservation.md) | done |
 | 10 | [MCP server](milestone-10-mcp-server.md) | planned |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and is built next, before Milestone 07 (owner decision, 2026-09-30). Milestone 08 was built after Milestone 06 and waits on the owner's chain run with the new handoff (a 16-bit last frame that `draw-things-cli` reads exactly). The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01); Milestone 07 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
