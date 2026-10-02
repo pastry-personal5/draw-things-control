@@ -148,3 +148,7 @@ class StateCliTests(JobTestCase):
     def test_import_history_reads_another_directory_and_rejects_a_missing_one(self) -> None:
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root / "absent")).exit_code, 2)
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root)).exit_code, 0)
+
+    def test_import_history_takes_no_write_flag(self) -> None:
+        # --allow-write belongs to `dtc serve`; Milestone 07's commit added it here too by mistake.
+        self.assertEqual(self.invoke("import-history", "--allow-write").exit_code, 2)

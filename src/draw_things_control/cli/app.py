@@ -167,7 +167,6 @@ def import_history_command(
     ctx: typer.Context,
     directory: Annotated[Path | None, typer.Option(help="Directory to search for job manifests; default: the configured output directory.")] = None,
     global_config: GlobalConfigOption = None,
-    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files.")] = False,
 ) -> None:
     """Import phase 1 job manifests into the execution history; safe to repeat."""
     paths = services_of(ctx).paths
