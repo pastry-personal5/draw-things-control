@@ -100,7 +100,7 @@ typed tools on top of it.
 | 04 | [TUI verbose mode](milestone-04-tui-verbose-mode.md) | done |
 | 05 | [Park and hold](milestone-05-park-and-hold.md) | done |
 | 06 | [Delete executions](milestone-06-delete-executions.md) | done |
-| 07 | [Job file management](milestone-07-job-file-management.md) | planned |
+| 07 | [Job file management](milestone-07-job-file-management.md) | done |
 | 08 | [Video format and color](milestone-08-video-format-and-color.md) | done |
 | 09 | [Color preservation](milestone-09-color-preservation.md) | done |
 | 10 | [MCP server](milestone-10-mcp-server.md) | planned |
@@ -123,7 +123,7 @@ Milestone 09, left open until 2026-09-30, is color preservation (owner decision)
 8. Milestone 09 holds a chain's colors to its first image: it removes the
    pipeline's own biases, measures drift in every run, and corrects it when
    a job asks.
-9. After Milestone 07, agents can draft and write jobs.
+9. Milestone 07 lets agents validate, create, guardedly replace, and recoverably delete jobs.
 10. Milestone 10 adds MCP.
 11. Milestone 11 reviews the whole surface, `dtc queue` included, adds the
     security suite, and closes any gaps it finds.

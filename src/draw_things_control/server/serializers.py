@@ -30,11 +30,11 @@ def prompt_pair(pair: PromptPair) -> dict[str, Any]:
     return {"name": pair.name, "positive": pair.positive, "negative": pair.negative, "runs": list(pair.runs), "default": pair.default}
 
 
-def job_detail(job: JobDefinition, source_text: str) -> dict[str, Any]:
+def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = None, job_id: str | None = None) -> dict[str, Any]:
     """``GET /jobs/{job}``: the file's text, and the resolved job (prompt pairs, size, seed, cooldown and their
     sources)."""
     seed, seed_source = job.configured_seed()
-    return {
+    detail = {
         "text": source_text,
         "name": job.name,
         "mode": job.mode.value,
@@ -56,6 +56,11 @@ def job_detail(job: JobDefinition, source_text: str) -> dict[str, Any]:
         # The color correction (Milestone 09): {"anchor": "none"} for a job without one.
         "color": job.color.as_dict(),
     }
+    if sha256 is not None:
+        detail["sha256"] = sha256
+    if job_id is not None:
+        detail["job_id"] = job_id
+    return detail
 
 
 def job_preview(job: JobDefinition, preview: JobPreview) -> dict[str, Any]:

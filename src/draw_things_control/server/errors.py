@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import DtcError, InputError, LimitExceededError
@@ -23,6 +24,7 @@ STATUS_BY_ERROR_CODE = {
     "limit_exceeded": 422,
     "not_found": 404,
     "invalid_state": 409,
+    "conflict": 409,
     "busy": 409,
     "tool_missing": 503,
     "state_unavailable": 503,
@@ -47,6 +49,9 @@ def error_body(error: DtcError) -> dict[str, object]:
     if isinstance(error, LimitExceededError):
         body["limit"] = error.limit
         body["value"] = error.value
+    current_sha256 = getattr(error, "current_sha256", None)
+    if current_sha256 is not None:
+        body["current_sha256"] = current_sha256
     return body
 
 
@@ -95,3 +100,11 @@ def install_error_handler(app: FastAPI) -> None:
         input_error = validation_input_error(error)
         _audit_unparsed_body(request, input_error)
         return await handle_dtc_error(request, input_error)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(_request: Request, error: StarletteHTTPException) -> JSONResponse:
+        if error.status_code == 405:
+            return JSONResponse(status_code=405, content={"code": "writes_off", "message": "Writes to data/jobs/ require dtc serve --allow-write"}, headers=error.headers)
+        if error.status_code == 404:
+            return JSONResponse(status_code=404, content={"code": "not_found", "message": "Not found"})
+        return JSONResponse(status_code=error.status_code, content={"detail": error.detail}, headers=error.headers)

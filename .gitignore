@@ -65,6 +65,8 @@ src/draw_things_control/tui/generated/
 data/**
 !data/**/
 !data/**/*example*
+data/jobs/.trash/
+data/jobs/.backups/
 
 # Execution history database and run lock (created at run time)
 /state/

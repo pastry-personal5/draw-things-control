@@ -3,6 +3,10 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-10-02
+
+- **Change** [M07]: Added authenticated draft validation and opt-in (`dtc serve --allow-write`) API creation, SHA-guarded replacement, and recoverable deletion of `data/jobs` YAML files. Writes are atomically persisted, audited, serialized with submission, and preserve backup and trash copies for manual recovery.
+
 ## 2026-10-01
 
 - **Owner decision** [M09]: Step 3, the A/B chains, is dropped, and with it filing the upstream reports as part of the

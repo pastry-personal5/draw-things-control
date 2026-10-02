@@ -1020,7 +1020,8 @@ entry first and stop the server once it has parked (see
 
 Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
 `--grpc-port` (default `8766`), `--executable`, `--shutdown-grace`,
-`--global-config`, and `--allow-remote-bind`. A `--host` that is not loopback
+`--global-config`, `--allow-remote-bind`, and `--allow-write`. Writes are off by default;
+`--allow-write` enables the authenticated job-file endpoints described below. A `--host` that is not loopback
 (`127.0.0.1`, `::1`, `localhost`) is refused (exit 2) unless
 `--allow-remote-bind` is given, since beyond loopback the bearer token below
 crosses the network in plain HTTP; an SSH tunnel is the safer way in from
@@ -1047,6 +1048,9 @@ execution in the history, whichever front end ran it.
 | `GET /health` | Liveness (no auth): up, its version, whether the worker is alive |
 | `GET /capabilities` | Whether writes are enabled, and the limits in force |
 | `GET /jobs`, `GET /jobs/{job}`, `GET /jobs/{job}/preview` | The job files, one file's text and resolved plan, and its dry-run preview |
+| `POST /validate` | Validate `{"yaml":"..."}` as a job write would, without writing; an optional `?name=` also checks its file name |
+| `PUT /jobs/{name}` | Create `data/jobs/{name}.yaml`; with `?overwrite=1` and `expected_sha256`, guardedly replace it |
+| `DELETE /jobs/{name}?expected_sha256=...` | Recoverably trash a job file whose current SHA-256 matches |
 | `GET /inputs` | Images in the input directory, with their size |
 | `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries, with the queue's hold (`held`, `held_since`, `held_by`); read one entry's state and the hold |
 | `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, cancelled, or parked one from its last succeeded run |
@@ -1099,6 +1103,16 @@ A refusal names the `code` (`timeout_required`, `outside_directory`,
 value; the job still runs with `run-job` while no server is up. These limits
 apply to every caller, `dtc queue` (Milestone 03) included: the API cannot
 tell a person from an agent.
+
+**Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. A stale value returns `409 conflict` with `current_sha256`.
+
+Every write observes the API's job rules and `max_job_file_bytes`, is serialized with submission, and refuses a queued or running file. A replacement retains the prior text in `data/jobs/.backups/<name>/`; a deletion links the file into `data/jobs/.trash/`. Neither is pruned. To restore a trashed or backed-up file manually without overwriting a newly created job, run from the project root:
+
+```bash
+cp -n data/jobs/.trash/NAME-YYYYMMDD-HHMMSS.yaml data/jobs/NAME.yaml
+```
+
+Use the corresponding file under `.backups/NAME/` for a backup. `cp -n` refuses to overwrite an existing destination.
 
 **Audit log.** Every submit, cancel, resume, park, unpark, hold, and release
 is recorded in the state store (time, action, target, outcome, caller; hold and

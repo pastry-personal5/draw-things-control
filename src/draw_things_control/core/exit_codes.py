@@ -49,6 +49,7 @@ EXIT_CODES_BY_ERROR_CODE = {
     "outside_directory": EXIT_INVALID_INPUT,
     "limit_exceeded": EXIT_INVALID_INPUT,
     "invalid_state": EXIT_INVALID_INPUT,
+    "conflict": EXIT_INVALID_INPUT,
     "busy": EXIT_BUSY,
     "state_unavailable": EXIT_STATE_UNAVAILABLE,
 }

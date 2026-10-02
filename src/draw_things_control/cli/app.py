@@ -167,6 +167,7 @@ def import_history_command(
     ctx: typer.Context,
     directory: Annotated[Path | None, typer.Option(help="Directory to search for job manifests; default: the configured output directory.")] = None,
     global_config: GlobalConfigOption = None,
+    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files.")] = False,
 ) -> None:
     """Import phase 1 job manifests into the execution history; safe to repeat."""
     paths = services_of(ctx).paths
@@ -221,6 +222,7 @@ def serve_command(
     executable: ExecutableOption = "draw-things-cli",
     shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
     global_config: GlobalConfigOption = None,
+    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files.")] = False,
     allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
 ) -> None:
     """Run the HTTP API and the gRPC monitoring service: the only thing that ever starts draw-things-cli."""
@@ -233,7 +235,7 @@ def serve_command(
     from draw_things_control.server.serve import ServeOptions
     from draw_things_control.server.serve import run as run_server
 
-    options = ServeOptions(host=host, port=port, grpc_port=grpc_port, executable=executable, shutdown_grace=shutdown_grace, allow_remote_bind=allow_remote_bind)
+    options = ServeOptions(host=host, port=port, grpc_port=grpc_port, executable=executable, shutdown_grace=shutdown_grace, allow_remote_bind=allow_remote_bind, allow_write=allow_write)
     with errors_exit():
         run_server(services.paths, settings, services.toolkit, options)
 

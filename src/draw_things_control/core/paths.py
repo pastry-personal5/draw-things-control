@@ -30,6 +30,14 @@ class ProjectPaths:
         return self.root / "data" / "jobs"
 
     @property
+    def jobs_trash(self) -> Path:
+        return self.jobs / ".trash"
+
+    @property
+    def jobs_backups(self) -> Path:
+        return self.jobs / ".backups"
+
+    @property
     def params(self) -> Path:
         """The Draw Things configurations a job names in ``config_file``."""
         return self.root / "data" / "params"

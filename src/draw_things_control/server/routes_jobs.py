@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, Depends
 
 from draw_things_control.core.errors import InputError, NotFoundError
@@ -25,13 +27,14 @@ def list_jobs(context: ServerContext = Depends(get_context), page: Page = Depend
 def get_job(job: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
     path = resolve_job_reference(context.catalog, job)
     try:
-        text = path.read_text(encoding="utf-8")
+        source = path.read_bytes()
+        text = source.decode("utf-8")
     except OSError as error:
         raise NotFoundError(f"Cannot read {path.name}: {error.strerror}") from error
     details = read_details(path, context.global_config, context.paths)
     if details.job is not None:
-        return job_detail(details.job, text)
-    return {"text": text, "error": details.error}
+        return job_detail(details.job, text, sha256=hashlib.sha256(source).hexdigest())
+    return {"text": text, "sha256": hashlib.sha256(source).hexdigest(), "error": details.error}
 
 
 @router.get("/v1/jobs/{job}/preview")

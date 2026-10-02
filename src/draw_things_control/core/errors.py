@@ -44,6 +44,12 @@ class BusyError(DtcError):
     code = "busy"
 
 
+class ConflictError(DtcError):
+    """A guarded file operation would overwrite, move, or use a changed resource."""
+
+    code = "conflict"
+
+
 class StateUnavailableError(DtcError):
     """The state database or the lock file cannot be used."""
 

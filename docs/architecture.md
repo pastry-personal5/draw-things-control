@@ -169,6 +169,10 @@ Adds what every later front end needs, without changing the CLI's behavior.
 
 ## Phase 3: API and MCP for agents (in progress)
 
+### Milestone 7: job file management (done)
+
+- **Job files.** `server/routes_job_files.py` always provides authenticated draft validation and conditionally registers write routes when `ServerContext.allow_write` is on. `services/job_files_write.py` checks text size, the strict API filename/name relationship, parser and API rules, and input decoding before an atomic create or replacement. Writes share `submission_lock` with queue submission; replacement and deletion require SHA-256 optimistic concurrency and refuse queued or running paths. Replacements copy the old bytes to `data/jobs/.backups/<name>/`; deletions hard-link bytes into `data/jobs/.trash/`, so recovery is manual and no server action permanently deletes a job file. The `conflict` error code maps to HTTP 409.
+
 ### Milestone 1: queue and run manager (done)
 
 - **Queue.** `state/queue.py`'s `QueueRepository` keeps the `queue` table
