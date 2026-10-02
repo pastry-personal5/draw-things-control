@@ -466,8 +466,8 @@ Adds what every later front end needs, without changing the CLI's behavior.
 
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
-- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API and the gRPC
-  monitoring service, exposing typed tools. It imports nothing else from the
+- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, its SSE watch of
+  a queue entry included, exposing typed tools. It imports nothing else from the
   package and never touches the core.
 - `dtc serve` and `dtc mcp` in `cli/app.py` start them, as `dtc tui` starts
   the TUI.

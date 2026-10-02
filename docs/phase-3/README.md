@@ -23,15 +23,17 @@ typed tools on top of it.
   `--allow-remote-bind`, with bearer-token auth, job control, and history
 - A gRPC monitoring service, alongside the HTTP API in the same `dtc serve`
   process, streaming job and queue events and answering "watch until this
-  changes" requests for every client (the TUI, MCP agents)
+  changes" requests for the TUI and `dtc queue add --wait`; MCP agents
+  watch one entry over the API's SSE watch instead
+  ([Milestone 10](milestone-10-mcp-server.md#watching-one-entry-over-sse))
 - Rules and limits for every job the API runs or writes (a run timeout, the
   input and output directories, runs, worst-case time, file size), and an
   audit log, built with the first endpoints that accept input
 - Job file management for agents: validate a draft, and create, edit, and
   delete jobs in `data/jobs/` behind an explicit write flag, with backups
   and a trash folder
-- An MCP server (`dtc mcp`) that is a thin client of the HTTP API and the
-  gRPC monitoring service
+- An MCP server (`dtc mcp`) that is a thin client of the HTTP API, its SSE
+  watch of a queue entry included
 - A security review and test suite over the whole agent-facing surface
 - The queue for people: `dtc queue` commands through the API (`add` gains
   `--wait`, replacing `run-job`), and a Queue widget in the TUI that
@@ -50,8 +52,10 @@ typed tools on top of it.
   ([Milestone 05](milestone-05-park-and-hold.md))
 - Deleting executions from the history, one, several, every one the
   filters show, or, written out as `all`, the whole history, from the TUI (after a confirmation dialog) and `dtc history
-  delete`, through the API; never a running one, nor one a queued or
-  running entry uses ([Milestone 06](milestone-06-delete-executions.md))
+  delete`, through the API, and, while writes are on, from MCP after a
+  required dry run; never a running one, nor one a queued or
+  running entry uses ([Milestone 06](milestone-06-delete-executions.md),
+  [Milestone 10](milestone-10-mcp-server.md))
 - Video jobs write ProRes 4444 by default (`output.video_format`), the last
   frame has no alpha, and its color decode and the video's `colr` tag both
   follow the color space the video's own stream states
@@ -88,7 +92,9 @@ typed tools on top of it.
   and holding the queue is how to pause it
   ([Milestone 05](milestone-05-park-and-hold.md)).
 - More than one level of access: whoever holds the token sees every job and
-  every execution.
+  every execution. Milestone 10 keeps agents off the queue entries and holds
+  people made, by the caller a request declares, which guards agents using
+  their tools and limits no one holding the token.
 
 ## Milestones
 
@@ -106,7 +112,7 @@ typed tools on top of it.
 | 10 | [MCP server](milestone-10-mcp-server.md) | planned |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01); Milestone 07 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), and Milestone 07 (2026-10-02); Milestone 10 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -139,7 +145,7 @@ store, and the run lock, in the layout that
 [Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md)
 gives them. The server is one more front end beside the CLI and the TUI.
 What changes below it: the state store gains tables and columns by forward
-migration (schemas 4 to 8), `JobExecutor` can start a chain at run *k*,
+migration (schemas 4 to 9), `JobExecutor` can start a chain at run *k*,
 the job parser can take a stored base configuration, and a job's log file is
 scoped to that job.
 
@@ -148,7 +154,7 @@ scoped to that job.
 - `fastapi` and `uvicorn` (the HTTP API)
 - `httpx` (the clients in `dtc mcp` and `dtc queue`, and API tests)
 - `mcp`, the official Python MCP SDK (the MCP server)
-- `grpcio` (the monitoring service and its clients in the TUI, `dtc mcp`, and
+- `grpcio` (the monitoring service and its clients in the TUI and
   `dtc queue add --wait`); `grpcio-tools` and `protobuf`, dev-only, to
   generate the typed stubs from the checked-in `.proto` file. Nothing
   generated is committed: `make check` regenerates the stubs first (a
@@ -175,7 +181,7 @@ Inside `src/draw_things_control/`:
   (`grpc.aio.server()`, its own token interceptor, on its own loopback port),
   started and stopped together by `dtc serve`.
 - `mcp_server/` holds the MCP server, which imports nothing else from the
-  package and reaches the rest over HTTP and gRPC only.
+  package and reaches the rest over HTTP only, SSE included.
 - `cli/app.py` starts both (`dtc serve`, `dtc mcp`), the two new allowed
   imports between front ends beside `dtc tui`. `cli/` also holds the
   `dtc queue` commands' own HTTP client, and a gRPC client `add --wait`
@@ -204,8 +210,11 @@ Decisions and notable changes are recorded in
 ## Exit criteria
 
 - An agent connected over MCP can list jobs and inputs, validate a draft,
-  create the job, queue it, watch its status, cancel it, resume it, and read
-  its output paths.
+  create the job, queue it, watch its status, park it, cancel it, resume it,
+  hold and release the queue, and read its output paths; while writes are
+  on, it can also delete executions
+  ([Milestone 10](milestone-10-mcp-server.md)). It cannot cancel, park,
+  unpark, or resume an entry a person submitted, or release a person's hold.
 - A person can queue, list, cancel, and resume jobs with `dtc queue` (`add
   --wait` blocks until the entry finishes and exits with its outcome code,
   replacing `run-job`) or the TUI's Queue widget, and watch either update
@@ -233,9 +242,10 @@ Decisions and notable changes are recorded in
   input directory, or the output directory, oversized jobs) is rejected with
   an error naming the field, and touches nothing.
 - Write endpoints and tools do not exist unless the server was started with
-  the write flag.
+  the write flag, and neither does the MCP tool that deletes executions.
 - Deleting or overwriting a job file is always recoverable from `.trash/` and
-  `.backups/`. Deleting an execution is final, and asks first.
+  `.backups/`. Deleting an execution is final: the TUI asks first, and MCP
+  offers it only while writes are on, with a required dry run.
 - Only one `draw-things-cli` runs at a time, machine-wide: only the
   server's worker ever starts one.
 - No credential value (the API token, `--api-key`, `--remote-shared-secret`)

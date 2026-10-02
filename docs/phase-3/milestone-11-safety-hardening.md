@@ -61,6 +61,7 @@ a fake runner, as every test is:
   letter case, the token in the query string, a `Host` that is neither
   loopback nor the bound address, a token file others can read, a
   non-loopback `--host` or `--grpc-port` bind without `--allow-remote-bind`,
+  an SSE watch with no token or a wrong one (401, before any snapshot),
   a gRPC call with no `authorization` metadata or a wrong one (ends
   `UNAUTHENTICATED`), and a non-loopback `--server-url` for `dtc mcp` or
   `dtc queue` without `--allow-remote-server`.
@@ -72,16 +73,22 @@ a fake runner, as every test is:
   tools. The token appears in no response, event, gRPC stream, log line,
   audit row, or manifest.
 - **MCP:** no tool takes a path or a flag, and an unknown argument is
-  rejected.
+  rejected. `delete_executions` is unlisted, and refused without a request,
+  while writes are off
+  ([Milestone 10](milestone-10-mcp-server.md#tools)). An agent's cancel,
+  park, unpark, resume, or release on a person's entry or hold is
+  `not_permitted` and audited
+  ([Milestone 10](milestone-10-mcp-server.md#peoples-entries-and-holds)).
 - **Limits:** each at the limit, over it, and with `--allow-write` on; a
   resume is counted by the runs it has left.
 - **Logs:** a job's log file holds none of the server's own lines.
 
 ### Audit coverage
 
-A test drives each action (submit, cancel, resume, create, replace, delete),
-accepted and refused, through the API, through MCP, and, for those they
-have, through `dtc queue` and the TUI's Queue widget, and reads the log
+A test drives each action (submit, cancel, resume, park, unpark, hold,
+release, create, replace, delete, and deleting an execution), accepted and
+refused, through the API, through MCP, and, for those they have, through
+`dtc queue`, `dtc history`, and the TUI, and reads the log
 back: one row for each, with its caller, and none holding prompts, YAML,
 commands, or credentials.
 
@@ -90,7 +97,8 @@ commands, or credentials.
 The user guide's server, MCP, and queue sections, written by Milestones 02,
 03, 07, and 08, are checked against what was built: starting `serve`, where
 the token is, a sample MCP client entry, `dtc queue`, the write flag and its
-effect, the rules and limits, what a stop or a resume loses, and where
+effect, the rules and limits, what a stop or a resume loses, the checked-in
+`.mcp.json`, and where
 `.trash/` and `.backups/` are. The root `README.md` stays
 short and gains one line linking to them. `docs/architecture.md`'s Phase 3
 section describes the code as built.
@@ -102,9 +110,10 @@ section describes the code as built.
   [rule for jobs the API runs](milestone-02-http-api.md#rules-for-jobs-the-api-runs)
   has a boundary test, through the API, through MCP, through
   `dtc queue add`, and through the TUI's `/queue add`.
-- The audit log has an entry for every submit, cancel, resume, create,
-  replace, and delete, including refused ones, and none contains prompts,
-  YAML, commands, or credentials.
+- The audit log has an entry for every submit, cancel, resume, park,
+  unpark, hold, release, create, replace, and delete, and every execution
+  deleted, including refused ones, and none contains prompts, YAML,
+  commands, or credentials.
 - No known path leads from agent input to a file outside `data/jobs/`
   (writes), the input directory (inputs), or the output directory
   (outputs), or to a `draw-things-cli` argument a job file cannot express.

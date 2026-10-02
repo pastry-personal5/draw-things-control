@@ -22,7 +22,7 @@ In scope:
 
 Out of scope:
 
-- The HTTP and MCP interfaces (Milestones 02 and 08), and the `serve`
+- The HTTP and MCP interfaces (Milestones 02 and 10), and the `serve`
   command that starts the worker (Milestone 02)
 - Writing job files (Milestone 07)
 - Priorities, reordering, scheduling for a time, or parallel workers

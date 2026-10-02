@@ -5,6 +5,110 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-02
 
+- **Owner decision** [M10]: From a third interview on the plan:
+  - Agents are kept off what people started: each queue entry records its submitter and the hold its caller, and
+    the API refuses an agent's cancel, park, unpark, or resume of a person's entry, and its release of a person's hold.
+    Guidance in the server's instructions alone (then recommended) and no limit were the alternatives. Deleting a
+    person's executions is not covered; covering it was recommended.
+  - `GET /v1/queue/{id}` gains no summary of the run just ended; an agent that wants a run's checks asks
+    `get_execution_run`. Adding one, to save a turn a run, was recommended.
+  - Whether the TUI and `dtc queue add --wait` move to SSE, and gRPC is retired, is decided after Milestone 10, once
+    the SSE watch has run. Planning it now, and keeping both for good, were the alternatives.
+  - Milestone 10 is built in increments, each with a code review: A, the API; B, `dtc mcp` with the read, run, and
+    queue control tools; C, the write tools; D, the wait; E, registration and documents.
+- **Design decision** [M10]: The check that keeps agents off people's entries and holds sits in the API, keyed on the
+  request's `X-Dtc-Caller`, not in `mcp_server/`: there it is one step with the action, so a hold cannot change hands
+  between the check and the release, the refusal is audited, and the MCP server keeps no queue logic of its own. The
+  refusal is a new code, 403 `not_permitted`. Entries from before schema 9 count as a person's. An agent's direct
+  hold over a person's leaves it the person's. Since the caller names itself, this guards agents that use their
+  tools; it adds no level of access to the API.
+- **Change** [M07]: `dtc import-history` no longer takes `--allow-write`, which Milestone 07's commit added to it by
+  mistake and nothing read (`92330b5`, with a test). The Milestone 10 plan no longer lists it.
+- **Owner decision** [M10]: From an interview on research into token use and events
+  ([research note](../research/mcp-tokens-and-events.md)), all of it built in Milestone 10, not split into a new
+  milestone:
+  - `get_queue_entry`'s wait ends at the next change an agent acts on, as before, and `wait_seconds` goes up to 7200,
+    above a 3600-second run and an 1800-second cooldown, with a progress notification every 15 seconds. Each call is a
+    turn that reads the conversation again: at about 75 minutes a run, a 600-second cap takes about 45 calls for 6 runs
+    and 225 for 30; this takes about one a run. This supersedes the 600-second cap decided earlier today, and
+    Milestone 02's rule (2026-09-25) that no call waits for a generation: a call can now wait as long as a run, though
+    none waits for a whole job. Waiting until the job finishes, pushing events through Claude Code's channels (a
+    research preview behind `--dangerously-load-development-channels`), and keeping 600 seconds were the alternatives.
+  - The API gains `GET /v1/queue/{id}/watch`, `WatchQueueEntry`'s snapshots over SSE, and `dtc mcp` waits on it, so it
+    speaks HTTP alone: no gRPC client, no fourth copy of the stubs. For MCP only, this supersedes the 2026-09-25
+    decision that gRPC is the one way to watch for change; the TUI and `dtc queue add --wait` keep gRPC. The whole event
+    stream over SSE (`GET /v1/events`) and MCP over HTTP from `dtc serve` were not chosen.
+  - `GET /v1/jobs/{job}?brief=1` leaves out a valid job's YAML text (4.6 KB to 2.1 KB for `duo-blend-i8x`), and
+    `get_job` asks for it unless given `brief: false`. Dropping null fields from MCP results (a queue entry 740 bytes to
+    480) was not chosen, so a tool still returns the API's JSON as it is.
+- **Design decision** [M10]: From the same research:
+  - Claude Code loads an MCP tool's schema only when it is used, keeping the tool names and the server's
+    `instructions` in context on every turn, so the instructions stay a few lines; the number of tools matters little.
+  - Resource subscriptions, MCP tasks, and logging notifications are not used: nothing documented in Claude Code passes
+    a resource update to the model, the SDK's v2 removed tasks, and the 2026-07-28 protocol deprecates logging.
+  - The SSE watch uses FastAPI's own `EventSourceResponse`, sends a keep-alive comment every 15 seconds, has no event
+    IDs (a reconnect gets a new baseline), and ends itself on shutdown, since uvicorn waits for open connections. One
+    snapshot module feeds it and `WatchQueueEntry`. `dtc mcp` reads the stream without an SSE client library, and counts
+    60 seconds of silence as a drop.
+  - A job's brief view keeps an invalid job's text, which is what the agent must fix.
+  - With no gRPC client, `mcp_server/` keeps no copy of `grpc_target`, `build_server` takes no gRPC channel factory,
+    `mcp_server/generated/` never exists, and gRPC's `UNAVAILABLE`, `UNAUTHENTICATED`, and `NOT_FOUND` are not mapped,
+    superseding those parts of the review entry below: a watch that cannot open gives the API's own answer, and one
+    that drops, or is silent for 60 seconds (its read timeout), is `server_unreachable`. A test checks that
+    `mcp_server/` imports no `grpc`.
+  - A run's end, `current_run` becoming null, ends a wait; the next run's start after the cooldown does not, since the
+    worker clears `current_run` between runs and counting both would wake the agent twice a run.
+  - A call that comes without a progress token waits at most 1500 seconds, under Claude Code's 30-minute idle limit
+    for a stdio server, which only progress resets.
+- **Owner decision** [M10]: From an interview on the plan's second review, which settles the 2026-09-30 open
+  questions:
+  - Agents get park, unpark, hold, and release, always listed, and deleting executions (`delete_executions`). Offering
+    no deletion was recommended. The deletion tool is listed only while `dtc serve` runs with `--allow-write`, though
+    its endpoint stays always on for `dtc history delete` and the TUI; listing it always was the alternative. Its
+    `dry_run` is required, where the API's defaults to false.
+  - `get_queue_entry`'s `wait_seconds` goes up to 600, and the agent chooses. 30 (the first draft), 55, and 110 were
+    offered. The owner's runs take about 75 minutes (E0018), Claude Code puts no per-request timer on a stdio server
+    and moves a call past 2 minutes to the background, and an agent in a client with the TypeScript SDK's 60-second
+    default is told to pass 50 or less.
+  - The API gains `GET /v1/executions/{id}?brief=1`, with no run's command and each check as its stage and verdict,
+    and `GET /v1/executions/{id}/runs/{run}`, one run in full; `get_execution` uses the brief view, and the new
+    `get_execution_run` the other. E0018's full answer is 76 KB, about 20,000 tokens, and past 25,000 Claude Code saves
+    an MCP result to a file that the agent reads in parts. Trimming the answer in `mcp_server/`, and passing it through with a user-guide note,
+    were the alternatives.
+  - A `.mcp.json` that registers `dtc mcp` is checked in, so every Claude Code session in the repository is offered
+    the tools. A user-guide entry alone was recommended.
+- **Design decision** [M10]: Reviewed the plan again, against the code as Milestone 07 left it and, Context7 now
+  being available, against the documentation of `mcp` 2.2.0. This supersedes the 2026-09-30 entry's items to be
+  checked when built:
+  - The SDK's low-level `Server`, not `MCPServer`: the tools need hand-written schemas with the API's names, a list
+    that changes at runtime, and error results carrying the API's error shape as structured content, where
+    `MCPServer`'s `ToolError` gives text alone.
+  - The 2026-07-28 protocol delivers list changes only on a `subscriptions/listen` stream the client opens, and lets a
+    list answer carry a cache hint. The server serves that stream over the SDK's bus and publishes `ToolsListChanged`
+    on it, sends `notifications/tools/list_changed` on a session opened with the older handshake, and gives
+    `tools/list` a cache hint of at most 5 seconds. Tests drive both eras (`Client(..., mode="legacy")`).
+  - A result is the API's JSON as structured content and, compact, as the one text block, for clients that read only
+    the text; Claude Code drops a text block that repeats the structured content, so its agent reads one copy. No
+    output schema is declared, since the SDK's client raises on a mismatch.
+  - The MCP server checks arguments against its own schemas, with no bound stricter than the API's (`limit` is
+    clamped at 200 there, not refused), and a list tool sends `limit` 50 when given none: a page of 200 executions is
+    about 70 KB.
+  - The wait reads `GET /v1/queue/{id}` first, so an unknown or finished entry is answered in the API's own shape
+    without opening a stream. While it waits, it sends a progress notification every 15 seconds when given a token; a
+    cancelled call closes its stream; gRPC's `UNAVAILABLE`, `UNAUTHENTICATED`, and `NOT_FOUND` become
+    `server_unreachable`, `unauthorized`, and `not_found`.
+  - `mcp_server/` keeps its own copies of `grpc_target`'s IPv6 brackets and of reading the token, as of the finished
+    states, each tested against the original. `build_server` takes an HTTP transport and a gRPC channel factory, as
+    the TUI does, for its tests and Milestone 11's; tests use `IsolatedAsyncioTestCase` and `httpx.ASGITransport`
+    with a base URL that passes the `Host` check.
+  - `mcp` 2.2.0 brings `httpx2`, `mcp-types`, `jsonschema`, `pyjwt[crypto]`, `opentelemetry-api`, and
+    `sse-starlette`. The phase document's exit criteria and Milestone 11's lists name the tools added.
+  - With deleting executions behind it, `--allow-write`'s help and the line `dtc serve` logs at start name agents'
+    deletions too, and `delete_executions`' own `writes_off` message does not reuse the API's, which names
+    `data/jobs/`. `import-history` loses the `--allow-write` option Milestone 07's commit added to it by mistake.
+  - An interactive Claude Code session asks before it uses a server the checked-in `.mcp.json` names; `claude -p`,
+    Agent SDK, and cloud sessions load it without asking. Hiding a tool is not a security boundary: a session with a
+    shell can read the token and call any endpoint, so the plan and the user guide say so.
 - **Change** [M07]: Added authenticated draft validation and opt-in (`dtc serve --allow-write`) API creation, SHA-guarded replacement, and recoverable deletion of `data/jobs` YAML files. Writes are atomically persisted, audited, serialized with submission, and preserve backup and trash copies for manual recovery.
 
 ## 2026-10-01
