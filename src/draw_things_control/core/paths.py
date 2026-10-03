@@ -64,6 +64,23 @@ class ProjectPaths:
         return self.root / "config" / TUI_PREFERENCES_FILE_NAME
 
 
+def linked_component(path: Path, root: Path) -> Path | None:
+    """First symbolic link from the project root through ``path``, without following it."""
+    root = root.absolute()
+    try:
+        parts = path.absolute().relative_to(root).parts
+    except ValueError:
+        return path if path.is_symlink() else None
+    current = root
+    if current.is_symlink():
+        return current
+    for part in parts:
+        current /= part
+        if current.is_symlink():
+            return current
+    return None
+
+
 # The project this package is installed in (src/draw_things_control/core/paths.py).
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PATHS = ProjectPaths(PROJECT_ROOT)

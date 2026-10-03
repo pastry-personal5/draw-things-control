@@ -28,4 +28,4 @@ def job_files(directory: Path) -> list[Path]:
 
     Raises OSError if the directory cannot be read.
     """
-    return sorted((path for path in directory.iterdir() if is_yaml_file(path) and not path.name.startswith(".") and path.is_file()), key=lambda path: path.name)
+    return sorted((path for path in directory.iterdir() if is_yaml_file(path) and not path.name.startswith(".") and (path.is_symlink() or path.is_file())), key=lambda path: path.name)

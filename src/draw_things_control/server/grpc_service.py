@@ -64,8 +64,9 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
             await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
             return
         last: dict[str, Any] | None = None
+        loop = asyncio.get_running_loop()
         while True:
-            snapshot = entry_snapshot(self._context, found.id)
+            snapshot = await loop.run_in_executor(None, entry_snapshot, self._context, found.id)
             if snapshot is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
                 return

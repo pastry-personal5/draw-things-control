@@ -5,29 +5,15 @@ queue`` included, and with ``--allow-write`` on too: the API cannot tell a perso
 from __future__ import annotations
 
 from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
+from draw_things_control.core.errors import LimitExceededError, TimeoutRequiredError
 from draw_things_control.core.global_config import ApiLimits, GlobalConfig
 from draw_things_control.jobs.definition import JobDefinition
 
 
 def check_job_rules(job: JobDefinition, global_config: GlobalConfig) -> None:
-    """The two structural rules: ``run_timeout_seconds`` is set, since without it the worst case is unbounded, and
-    the job's ``input`` (symbolic links resolved) stays inside the input directory and its ``output.directory``
-    inside the global output directory, so a job cannot create directories, or be told to read a file, anywhere
-    else. Since Milestone 03 retired every way to run a job but the queue, a job file that breaks either no longer
-    runs at all: every submission, from a person or an agent alike, passes through here first."""
+    """Require a finite timeout; the parser checks path containment before touching either path."""
     if job.run_timeout_seconds is None:
         raise TimeoutRequiredError("'run_timeout_seconds' is required for a job the API runs or writes", field="run_timeout_seconds")
-    if job.input is not None:
-        # Parsing already resolved job.input (jobs/parsing.py's _input_path), following any symbolic link; the
-        # configured directory is resolved here too, in case it is itself a symbolic link.
-        input_directory = global_config.input_directory.resolve()
-        if not job.input.is_relative_to(input_directory):
-            raise OutsideDirectoryError(f"'input' must be inside {input_directory}: {job.input}", field="input")
-    output_directory = global_config.output_directory.resolve()
-    resolved_output = job.output_directory.resolve()
-    if not resolved_output.is_relative_to(output_directory):
-        raise OutsideDirectoryError(f"'output.directory' must be inside {output_directory}: {resolved_output}", field="output.directory")
 
 
 def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: int | None = None) -> None:

@@ -165,9 +165,9 @@ class TuiTests(TuiTestCase):
             shown = await self.show(pilot, "broken.yaml")
             walk = await self.show(pilot, "'[b] walk.yaml'")
         self.assertIn("[b] walk.yaml", listing)
-        self.assertIn("a cat [smiling]: [/sad]", listing)
+        self.assertIn("mapping values are not allowed here on line 2", listing)
         self.assertIn("invalid: '[/sad]' is not a known key", listing)
-        self.assertIn("a cat [smiling]: [/sad]", shown)
+        self.assertNotIn("a cat [smiling]: [/sad]", shown)
         self.assertIn("Invalid job:", shown)
         self.assertIn(f"Job file: {self.data / '[b] walk.yaml'}", walk)
         missing = self.root / "[/data]"

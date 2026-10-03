@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from draw_things_control.core.errors import LimitExceededError
+
 YAML_SUFFIXES = {".yaml", ".yml"}
 
 MERGE_TAG = "tag:yaml.org,2002:merge"
@@ -77,7 +79,15 @@ def is_yaml_file(path: Path | str) -> bool:
     return Path(path).suffix.lower() in YAML_SUFFIXES
 
 
-def read_yaml_file(path: Path, description: str, *, require_json: bool = False, show_source: bool = False) -> tuple[dict[str, Any], str]:
+def read_bounded_bytes(path: Path, max_bytes: int, description: str, *, key: str = "max_job_file_bytes") -> bytes:
+    with path.open("rb") as file:
+        raw = file.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise LimitExceededError(f"{description} is over the limit of {max_bytes} bytes", key=key, limit=max_bytes, value=len(raw))
+    return raw
+
+
+def read_yaml_file(path: Path, description: str, *, require_json: bool = False, show_source: bool = False, max_bytes: int | None = None) -> tuple[dict[str, Any], str]:
     """Read a YAML file whose top level must be a mapping; return the mapping and the file's text.
 
     ``description`` starts every message (``Job file``, ``Global configuration``, ``Configuration``). With ``require_json``,
@@ -85,9 +95,15 @@ def read_yaml_file(path: Path, description: str, *, require_json: bool = False, 
     quotes the YAML text it found, as YAML words it; without, it says the problem and its line.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        if max_bytes is None:
+            text = path.read_text(encoding="utf-8")
+        else:
+            raw = read_bounded_bytes(path, max_bytes, description, key="max_job_file_bytes" if description == "Job file" else "config_file")
+            text = raw.decode("utf-8")
     except FileNotFoundError as error:
         raise ValueError(f"{description} not found: {path}") from error
+    except UnicodeError as error:
+        raise ValueError(f"{description} is not valid UTF-8: {path}") from error
     except OSError as error:
         raise ValueError(f"Cannot read {description.lower()} {path}: {error.strerror}") from error
     return parse_yaml_mapping(text, path, description, require_json=require_json, show_source=show_source), text

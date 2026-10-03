@@ -54,6 +54,7 @@ EXIT_CODES_BY_ERROR_CODE = {
     "not_permitted": EXIT_INVALID_INPUT,
     "busy": EXIT_BUSY,
     "state_unavailable": EXIT_STATE_UNAVAILABLE,
+    "internal_error": EXIT_STATE_UNAVAILABLE,
 }
 
 

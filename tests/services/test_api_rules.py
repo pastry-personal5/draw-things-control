@@ -34,16 +34,14 @@ class ApiRulesTests(JobTestCase):
         shutil.move(written, outside)
         link = self.input_directory / "link.png"
         link.symlink_to(outside)
-        job = self.job(run_count=1, run_timeout_seconds=60, input=str(link))
         with self.assertRaises(OutsideDirectoryError) as context:
-            check_job_rules(job, self.global_config)
+            self.job(run_count=1, run_timeout_seconds=60, input=str(link))
         self.assertEqual(context.exception.field, "input")
 
     def test_output_directory_outside_the_global_output_directory_is_refused(self) -> None:
         outside = self.root / "elsewhere-out"
-        job = self.job(run_count=1, run_timeout_seconds=60, output={"directory": str(outside)})
         with self.assertRaises(OutsideDirectoryError) as context:
-            check_job_rules(job, self.global_config)
+            self.job(run_count=1, run_timeout_seconds=60, output={"directory": str(outside)})
         self.assertEqual(context.exception.field, "output.directory")
 
     def test_a_job_exactly_at_the_run_limit_is_accepted_and_one_over_is_refused(self) -> None:

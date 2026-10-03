@@ -13,6 +13,7 @@ from loguru import logger
 from draw_things_control.cli.context import services_of
 from draw_things_control.core.client_config import check_server_host, read_client_token
 from draw_things_control.core.exit_codes import EXIT_CODES_BY_ERROR_CODE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id, queue_id_text
 
 if TYPE_CHECKING:
     import httpx
@@ -22,6 +23,14 @@ ServerUrlOption = Annotated[str, typer.Option("--server-url", help="The dtc serv
 TokenFileOption = Annotated[Path | None, typer.Option("--token-file", help="The API's bearer token file; default: config/server-token in the project.")]
 AllowRemoteServerOption = Annotated[bool, typer.Option("--allow-remote-server", help="Allow --server-url beyond loopback; the token then crosses the network in plain HTTP.")]
 QueueIdArgument = Annotated[str, typer.Argument(help="A queue entry's ID (Q0007).")]
+
+
+def checked_queue_id(value: str) -> str:
+    number = parse_typed_id(value, QUEUE_LETTER)
+    if number is None:
+        logger.error("'queue_id' must be a queue entry ID such as Q0007")
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    return queue_id_text(number)
 
 
 def api_client(ctx: typer.Context, server_url: str, token_file: Path | None, allow_remote_server: bool) -> "httpx.Client":

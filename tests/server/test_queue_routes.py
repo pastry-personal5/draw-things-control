@@ -8,9 +8,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 from fastapi.testclient import TestClient
+from loguru import logger
 
 from draw_things_control.core.global_config import ApiLimits
 from draw_things_control.jobs.executor import JobExecutor
@@ -180,6 +182,31 @@ class QueueRoutesTestCase(JobTestCase):
 
 
 class SubmitTests(QueueRoutesTestCase):
+    def test_a_malformed_existing_job_is_refused_with_an_audited_error(self) -> None:
+        path = self.context.paths.jobs / "broken.yaml"
+        path.write_text("name: x\nname: y\n", encoding="utf-8")
+        client = TestClient(self.client.app, base_url="http://127.0.0.1:8765", raise_server_exceptions=False)
+        response = client.post("/v1/queue", json={"job": "broken.yaml"}, headers={"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual((response.status_code, response.json()["code"]), (422, "invalid_input"))
+        audit = self.request("get", "/v1/audit").json()["audit"]
+        self.assertEqual((audit[0]["action"], audit[0]["target"], audit[0]["outcome"]), ("submit", "broken.yaml", "invalid_input"))
+
+    def test_an_unexpected_submission_failure_is_generic_and_audited(self) -> None:
+        self.write_job_in_catalog("job.yaml")
+        client = TestClient(self.client.app, base_url="http://127.0.0.1:8765", raise_server_exceptions=False)
+        messages: list[str] = []
+        sink = logger.add(lambda message: messages.append(str(message)), format="{message}", diagnose=False, backtrace=False)
+        try:
+            with patch.object(routes_queue, "submit_job", side_effect=RuntimeError("sensitive-text")):
+                response = client.post("/v1/queue", json={"job": "job.yaml"}, headers={"Authorization": f"Bearer {TOKEN}"})
+        finally:
+            logger.remove(sink)
+        self.assertEqual((response.status_code, response.json()["code"]), (500, "internal_error"))
+        self.assertNotIn("sensitive-text", response.text)
+        self.assertNotIn("sensitive-text", "".join(messages))
+        audit = self.request("get", "/v1/audit").json()["audit"]
+        self.assertEqual((audit[0]["target"], audit[0]["outcome"]), ("job.yaml", "internal_error"))
+
     def test_a_valid_submission_is_queued_and_wakes_the_worker(self) -> None:
         entry = self.submit(run_count=1)
         self.assertEqual((entry["queue_id"], entry["state"]), ("Q0001", "queued"))
@@ -242,7 +269,7 @@ class SubmitTests(QueueRoutesTestCase):
         self.submit(run_count=1)
         self.request("post", "/v1/queue", json={"job": "nope.yaml"})
         audit = self.request("get", "/v1/audit").json()["audit"]
-        self.assertEqual([(row["action"], row["outcome"], row["target"]) for row in audit], [("submit", "not_found", "nope.yaml"), ("submit", "ok", "job.yaml")])
+        self.assertEqual([(row["action"], row["outcome"], row["target"]) for row in audit], [("submit", "not_found", None), ("submit", "ok", "job.yaml")])
 
     def test_a_submission_publishes_its_queued_entry_to_the_event_backlog(self) -> None:
         start = self.context.event_backlog.latest_id()
@@ -312,6 +339,23 @@ class SubmitTests(QueueRoutesTestCase):
         self.client.post("/v1/queue", content=b'{"job": ', headers={"Content-Type": "application/json"})  # no Authorization header
         self.assertEqual(self.request("get", "/v1/audit").json()["audit"], [])
 
+    def test_deeply_nested_json_is_a_typed_and_audited_refusal(self) -> None:
+        body = b'{"job":' + b"[" * 1500 + b'"x"' + b"]" * 1500 + b"}"
+        response = self.request("post", "/v1/queue", content=body, headers={"Content-Type": "application/json"})
+        self.assertIn(response.status_code, (400, 422))
+        self.assertEqual(response.json()["code"], "invalid_input")
+        row = self.request("get", "/v1/audit").json()["audit"][0]
+        self.assertEqual((row["action"], row["target"], row["outcome"]), ("submit", None, "invalid_input"))
+
+    def test_oversized_queue_control_bodies_are_audited_before_routing(self) -> None:
+        self.context.global_config = replace(self.context.global_config, api_limits=ApiLimits(max_job_file_bytes=128))
+        for path in ("/v1/queue/hold", "/v1/queue/release", "/v1/queue/Q0001/cancel", "/v1/queue/Q0001/resume", "/v1/queue/Q0001/park", "/v1/queue/Q0001/unpark", "/v1/queue/hold/"):
+            with self.subTest(path=path):
+                response = self.request("post", path, content=b"x" * 1025)
+                self.assertEqual((response.status_code, response.json()["code"]), (413, "limit_exceeded"))
+        rows = self.request("get", "/v1/audit").json()["audit"]
+        self.assertEqual([(row["action"], row["target"], row["outcome"]) for row in rows], [(action, None, "limit_exceeded") for action in ("hold", "unpark", "park", "resume", "cancel", "release", "hold")])
+
 
 class CallerHeaderTests(QueueRoutesTestCase):
     def test_a_known_caller_is_recorded_and_an_unknown_one_is_refused(self) -> None:
@@ -326,7 +370,7 @@ class CallerHeaderTests(QueueRoutesTestCase):
         self.write_job_in_catalog("job.yaml")
         self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Dtc-Caller": "browser"})
         row = self.request("get", "/v1/audit").json()["audit"][0]
-        self.assertEqual((row["action"], row["target"], row["outcome"], row["caller"]), ("submit", "job.yaml", "invalid_input", "api"))
+        self.assertEqual((row["action"], row["target"], row["outcome"], row["caller"]), ("submit", None, "invalid_input", "api"))
         self.assertEqual(self.store.queue.list(), [])
 
     def test_absent_caller_defaults_to_api(self) -> None:

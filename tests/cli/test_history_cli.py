@@ -67,6 +67,11 @@ class FakeHistoryServer:
 
 
 class HistoryCliTests(JobTestCase):
+    def test_an_invalid_execution_id_is_refused_before_a_request(self) -> None:
+        result = self.invoke("E0001/outputs", "--yes")
+        self.assertEqual(result.exit_code, 2)
+        self.assertEqual(self.server.calls, [])
+
     def setUp(self) -> None:
         super().setUp()
         self.runner = CliRunner()

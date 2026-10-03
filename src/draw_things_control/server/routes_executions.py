@@ -61,6 +61,10 @@ def post_delete(body: DeleteBody, context: ServerContext = Depends(get_context),
         if not body.dry_run:
             _audit(context, None, error.code, caller)
         raise
+    except Exception:
+        if not body.dry_run:
+            _audit(context, None, "internal_error", caller)
+        raise
     if not body.dry_run:
         outcomes = {**dict.fromkeys(report.deleted, "ok"), **dict.fromkeys(report.refused, "invalid_state"), **dict.fromkeys(report.missing, "not_found")}
         for number in numbers:

@@ -10,7 +10,7 @@ from unittest import mock
 from PIL import Image
 
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
-from draw_things_control.core.errors import InputError
+from draw_things_control.core.errors import InputError, OutsideDirectoryError
 from draw_things_control.jobs.definition import GenerationMode
 from draw_things_control.jobs.parsing import load_job, load_job_text
 from draw_things_control.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
@@ -47,6 +47,17 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual((job.name, job.path, job.source_text), ("sunset-walk", path, text))
         self.assertFalse(path.exists())
 
+    def test_a_linked_job_file_is_refused_before_its_target_is_opened(self) -> None:
+        outside = self.root / "outside.yaml"
+        outside.write_text("prompt: sentinel-secret\n", encoding="utf-8")
+        linked = self.root / "linked.yaml"
+        linked.symlink_to(outside)
+        with mock.patch.object(Path, "open", side_effect=AssertionError("linked job was opened")):
+            with self.assertRaises(InputError) as caught:
+                load_job(linked, self.global_config, self.params)
+        self.assertIn("symbolic link", str(caught.exception))
+        self.assertNotIn("sentinel-secret", str(caught.exception))
+
     def test_the_text_of_a_job_is_checked_as_a_file_is(self) -> None:
         path = self.root / "queued.yaml"
         with self.assertRaisesRegex(InputError, r"queued\.yaml: 'run_count' is required"):
@@ -61,6 +72,13 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(job.output_directory, self.output_directory / "sunset-walk")
         self.assertEqual(job.extension, "mov")
         self.assertEqual(job.model, "base.ckpt")
+
+    def test_absolute_input_inside_a_configured_directory_symlink_is_valid(self) -> None:
+        alias = self.root / "input-alias"
+        alias.symlink_to(self.input_directory, target_is_directory=True)
+        self.global_config = replace(self.global_config, input_directory=alias)
+        job = self.load(input=str(self.input_directory / "first-frame.png"))
+        self.assertEqual(job.input, self.input_directory / "first-frame.png")
 
     def test_schedule_uses_explicit_runs_then_the_default_pair(self) -> None:
         pairs = [
@@ -83,6 +101,27 @@ class JobDefinitionTests(JobTestCase):
     def test_input_file_name_is_stripped_of_whitespace(self) -> None:
         self.assertEqual(self.load(input="  first-frame.png\t\n").input, self.input_directory / "first-frame.png")
         self.assert_invalid("'input' must be a file path", input="   ")
+
+    def test_an_escaped_input_is_refused_before_any_file_stat_or_image_read(self) -> None:
+        original_stat = Path.stat
+
+        def trusted_directory_stat(path: Path, *args: object, **kwargs: object):
+            if not self.input_directory.is_relative_to(path):
+                raise AssertionError(f"stat touched an escaped path: {path}")
+            return original_stat(path, *args, **kwargs)
+
+        for value in ("../outside.png", str(self.root / "missing.png"), "~/missing.png", "~definitely-not-a-real-user/missing.png", "/etc/hosts"):
+            path = self.write_job(job_data(input=value))
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(value=value), mock.patch.object(Path, "stat", trusted_directory_stat), mock.patch("draw_things_control.jobs.parsing.read_image_info", side_effect=AssertionError("image was read")):
+                with self.assertRaises(OutsideDirectoryError) as caught:
+                    load_job_text(source, path, self.global_config, self.params)
+                self.assertEqual(caught.exception.field, "input")
+
+    def test_nul_in_nested_job_text_names_the_field(self) -> None:
+        with self.assertRaises(InputError) as caught:
+            self.load(prompt_pairs=[{"name": "only", "positive": "secret\x00suffix"}])
+        self.assertEqual(caught.exception.field, "prompt_pairs[0].positive")
 
     def test_i2i_defaults_to_png_and_t2v_has_no_input(self) -> None:
         self.assertEqual(self.load(mode="i2i").extension, "png")

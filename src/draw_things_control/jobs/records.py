@@ -112,7 +112,7 @@ def _is_job_message(record: Record) -> bool:
 
 def add_job_log(path: Path) -> int:
     """Start copying this job's own log messages (child output included) to ``path``; returns the sink id."""
-    return logger.add(path, format=_format, level="INFO", colorize=False, buffering=1, encoding="utf-8", filter=_is_job_message)
+    return logger.add(path, format=_format, level="INFO", colorize=False, buffering=1, encoding="utf-8", filter=_is_job_message, diagnose=False, backtrace=False)
 
 
 def remove_job_log(sink_id: int) -> None:

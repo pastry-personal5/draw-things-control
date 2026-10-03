@@ -38,7 +38,7 @@ uv run dtc --help
 ```
 
 If `draw-things-cli` is not on your `PATH`, add
-`--executable /path/to/draw-things-cli` to `generate` or `run-job`.
+`--executable /path/to/draw-things-cli` to `generate` or `serve`.
 
 For jobs, create the global configuration once:
 
@@ -56,7 +56,7 @@ Then edit it. Paths must be absolute (a leading `~` is fine).
 | `cooldown` | no | The wait between a job's runs: a mapping with `mode` `auto`, `manual`, or `off`; see [Cooldown](#cooldown) (default `auto`) |
 | `history_retention_days` | no | Days of execution history to keep, 0 to 3650; 0 keeps it forever (default 14) |
 
-Use `--global-config PATH` with `run-job` or `validate-job` to read a
+Use `--global-config PATH` with `serve` or `validate-job` to read a
 different file.
 
 ## Commands at a glance
@@ -66,7 +66,7 @@ different file.
 | `generate` | Generate one image or video |
 | `validate-config FILE` | Check a Draw Things YAML configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
-| `run-job FILE` | Run every generation in a job, chained |
+| `queue add JOB` | Submit a job to `dtc serve`; `--wait` watches it finish |
 | `import-history` | Import phase 1 job manifests into the execution history |
 | `tui` | Browse, run, and watch jobs in a terminal UI |
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
@@ -180,20 +180,20 @@ A job is a YAML file in `data/jobs/` describing a chain of generations. It runs
 `run_count` times, and every run starts from the previous run's output (the
 last frame, for video). Each run uses one of your named prompt pairs.
 
-The workflow is always the same three steps:
+Validate the file, start the server, then submit it:
 
 ```bash
 uv run dtc validate-job data/jobs/example-job.yaml
-uv run dtc run-job data/jobs/example-job.yaml --dry-run
-uv run dtc run-job data/jobs/example-job.yaml
+uv run dtc serve
+# In another terminal:
+uv run dtc queue add example-job.yaml --wait
 ```
 
 1. `validate-job` reports any problem, naming the field, and shows the
    settings the job resolves to, including the cooldown and where it came
    from.
-2. `run-job --dry-run` validates again and prints every command without
-   running anything.
-3. `run-job` runs the chain.
+2. `dtc serve` holds the run lock and starts the queue worker.
+3. `queue add --wait` submits the file and follows its runs.
 
 Start from `data/jobs/example-job.yaml`, which is commented line by line. Invalid
 jobs are rejected before any generation starts.
@@ -346,7 +346,7 @@ cooldown:
 - **Where it comes from:** a job's `cooldown` replaces the global one as a
   whole; keys are not merged across the two files. With neither set, `auto`
   applies with its defaults (half of each run, 0 s to 1 h). `validate-job`,
-  `run-job --dry-run`, and `/apply` show the mode and its source (`job`,
+  `/describe job`, and `/apply` show the mode and its source (`job`,
   `global_config`, or `default`); for `auto` they show the most the waits can
   add up to.
 - **Validation is strict:** a missing or unknown `mode`, a key of another
@@ -491,7 +491,7 @@ adds to each run of every video job.
   pattern, so a flat area holds `v` and `v + 1` in equal parts instead of
   being half a level off ([research note](research/color-drift.md#the-handoff)).
   The output check below says when the pixels overrule the stream.
-- With `write_job_records: true`, each `run-job` also writes
+- With `write_job_records: true`, each queued job also writes
   `<name>-<timestamp>-job.json` (a manifest of every run: prompts, seed,
   files, command, exit code, timing) and `<name>-<timestamp>-job.log`.
 - Every video job keeps its **first image**, with or without records,
@@ -556,13 +556,13 @@ adds to each run of every video job.
 
 ## Browse and run jobs in the terminal UI
 
-`dtc tui` shows your jobs, runs one while you watch, and shows what ran
+`dtc tui` shows your jobs, submits them to the server while you watch, and shows what ran
 before, all on one screen in a dark theme. You drive it by typing commands
 that begin with `/`:
 
 ```bash
 uv run dtc tui
-uv run dtc tui --data-dir /path/to/jobs --executable /path/to/draw-things-cli --shutdown-grace 10
+uv run dtc tui --data-dir /path/to/jobs --server-url http://127.0.0.1:8765
 ```
 
 The screen, top to bottom:
@@ -650,24 +650,21 @@ terminal does.
   dot-directories, and dotfiles are ignored. `/get jobs`, `/describe job`, and `/apply`
   read the files again each time, so edit a job in your editor and run the
   command again.
-- `/describe job` prints what `validate-job` and `run-job --dry-run` print,
+- `/describe job` prints the validated job and its dry-run plan,
   in words: the prompt pairs laid out as `/get prompts` lays them out, and
   the plan's header, then each run's heading and its arguments as the
   `/get param` table instead of its command line. The header names the
   executable, which the table leaves out. For a job that sets no seed, the plan uses the placeholder seed `0`, so it is the
   same each time; a run draws a real seed. If `draw-things-cli` or `ffmpeg`
   is missing, the plan says why and the rest still shows.
-- `--executable` is the `draw-things-cli` the plan names and a run uses, and
-  `--shutdown-grace` is how long a stopped run may take before it is killed
-  (default 10 seconds), as for `run-job`.
+- `--server-url` points the TUI at `dtc serve`; `--token-file` selects the
+  shared bearer token. The server's `--executable` and `--shutdown-grace`
+  control its worker.
 - `/apply` asks to confirm, showing the job, mode, runs, cooldown, seed,
-  output directory, and executable. Only `y` runs it; Enter does not, so a
-  second Enter after `/apply` cannot start a job by accident. `n` or Escape
-  cancels. The job then runs as `run-job` would run it: it takes the run
-  lock, is recorded in the execution history, and writes its manifest and
-  log when `write_job_records` is true. If another run holds the lock, or
-  the job cannot start (for example, `draw-things-cli` is missing), Messages
-  says why and nothing runs. One job runs at a time.
+  output directory, and executable. Only `y` submits it; Enter does not, so a
+  second Enter after `/apply` cannot queue a job by accident. `n` or Escape
+  cancels. The server validates and queues it, then its worker runs one job
+  at a time under the run lock. A refusal appears in Messages.
 - As each run starts, Messages shows its positive and negative prompts, laid
   out as `/get prompts` lays them out, and then its `draw-things-cli` arguments
   as the `/get param` table. The table marks the job's overrides and every
@@ -683,12 +680,12 @@ terminal does.
   run 1, except:`), with `(not given)` for a row the run no longer has.
   `/execution` and `/describe job` show arguments the same way; `/get param`
   shows one run in full.
-- `/stop` stops the job after you confirm, as Ctrl-C stops `run-job`: the
+- `/stop` stops the job after you confirm: the
   run and any cooldown end, no later run starts, and the job is
   `interrupted` with exit code 130.
 - The history pane is read when the TUI starts, on `/get history`, when a filter
   changes, and as the TUI's own job progresses. While another process runs a
-  job (for example, `run-job` in another terminal), it is checked every 5
+  job (for example, the server from another terminal), it is checked every 5
   seconds, so that job appears and updates whatever the filter. When no process holds the run lock, an execution left `running`
   by a crash is shown as `interrupted`. More rows load as you move to the
   last one.
@@ -776,7 +773,7 @@ Messages says it could not be saved.
 - After a stop is requested, the bars stop moving and the end times read
   `stopping`. When the job ends, the widget shows its result, the runs that
   succeeded, and how long the job took, until the next job starts.
-- While another process holds the run lock (for example, `run-job` in
+- While another process holds the run lock (for example, `dtc serve` in
   another terminal), it says `A job is running in another process`, from
   the moment the TUI opens.
 - While the queue is held and no job runs, it says `Queue held since 12:04
@@ -865,7 +862,7 @@ they succeed, unless you are in the history or the detail at that moment.
   terminal closed), or `SIGINT`, it stops the job the same way and exits
   with 128+N (143 for `SIGTERM`). A signal while the job is already stopping
   changes nothing.
-- Browsing only reads files. Running a job writes what `run-job` writes (its
+- Browsing only reads files. A queued job writes its
   outputs and last frames, its manifest and log when `write_job_records` is
   true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
   changes a job file, `data/params/`, or the global configuration, and it
@@ -880,18 +877,17 @@ they succeed, unless you are in the history or the detail at that moment.
 
 ## Execution history and the run lock
 
-Every `run-job` (not `--dry-run`) is recorded in a SQLite database,
+Every queued job that starts is recorded in a SQLite database,
 `state/dtc.db` in the project, whatever `write_job_records` says: the job
 file's exact text, the settings it ran with, and each run's prompts, files,
 redacted command, timing, and result. `state/` is git-ignored, created on first
 use, and readable only by you. `generate` is not recorded.
 
 Each execution gets an **execution ID**, `E` and at least four digits
-(`E0012`), before it starts; it is named in `run-job`'s log line, in the
+(`E0012`), before it starts; it is named in the job log line, in the
 manifest (`execution_id`), and in the TUI. The number only goes up: a pruned
 execution's number is never given again. If the database cannot give an ID,
-the job does not start: `run-job` exits with 1 and writes no manifest or
-log. A `--dry-run` needs no ID. The executions already recorded before
+the job does not start, and no manifest or log is written. A preview needs no ID. The executions already recorded before
 execution IDs existed were numbered by start time, oldest first.
 
 - History older than `history_retention_days` (default 14) is pruned whenever a
@@ -915,13 +911,13 @@ execution IDs existed were numbered by start time, oldest first.
   execution was pruned, or `state/` was deleted), both are named:
   `E0040: /path/walk-job.json (its manifest says E0003)`.
 
-Only one run drives the GPU at a time. `run-job` and `generate` take a lock
-(`state/run.lock`) after validating their input and hold it until they finish,
-cooldowns included. If another run holds it, the command exits with 75 and
+Only one run drives the GPU at a time. `dtc serve` holds `state/run.lock` for
+its lifetime, and `generate` takes the same lock for a direct one-off run.
+If another process holds it, the command exits with 75 and
 says who does, and nothing starts:
 
 ```text
-Another run is in progress (run-job, PID 4123). Try again when it finishes.
+Another run is in progress (dtc serve, PID 4123). Try again when it finishes.
 ```
 
 The operating system releases the lock when its holder exits, however it
@@ -930,7 +926,7 @@ running, the next start also refuses (exit 75) until that `draw-things-cli`
 ends, and never stops it for you. `--dry-run`, `validate-job`,
 `validate-config`, and `import-history` never take the lock. If `state/` cannot
 be used (unwritable, a filesystem without SQLite WAL support, or a database
-written by a newer version), `run-job` exits with 1 and the reason, and starts
+written by a newer version), `dtc serve` exits with 1 and the reason, and starts
 nothing.
 
 ### Delete executions
@@ -1007,15 +1003,15 @@ uv run dtc serve
 ```
 
 It reads `config/global-config.yaml` (or `--global-config PATH`) once at
-start; edit and restart to pick up a change. Like `run-job`, it takes the run
-lock (`state/run.lock`) and holds it for as long as it runs, so `run-job` and
-the TUI cannot start a job while a server is up, and a second `dtc serve`
+start; edit and restart to pick up a change. It takes the run
+lock (`state/run.lock`) and holds it for as long as it runs; the TUI and
+`dtc queue` submit to its worker, and a second `dtc serve`
 refuses to start (exit 75) — see
 [Execution history and the run lock](#execution-history-and-the-run-lock). A
 queue submitted through the API runs on the server's own worker, one entry at
 a time, with the same cooldown between entries as between a job's own runs.
-Stopping the server (Ctrl-C, SIGTERM) stops the run in progress at once, the
-same as stopping `run-job`; a later `POST /v1/queue/{id}/resume` reruns the
+Stopping the server (Ctrl-C, SIGTERM) stops the run in progress at once; a
+later `POST /v1/queue/{id}/resume` reruns the
 run that was cut short, never continuing it midway. To keep that run, park the
 entry first and stop the server once it has parked (see
 [Park a job and hold the queue](#park-a-job-and-hold-the-queue)).
@@ -1102,21 +1098,33 @@ client cancels the call. Its snapshot carries `park_requested` and
 `output.directory` inside `output_directory`, and must fit the limits below,
 configurable under `api_limits:` in `config/global-config.yaml` (see
 `config/global-config.example.yaml` for the full block and defaults):
+Containment is checked before an input image or output path is inspected;
+symbolic links that lead out are refused. Job and named base-configuration
+files cannot be symbolic links, including links in their directory ancestors.
+These checks assume local files are not changed concurrently between validation
+and use.
 
 | Key | Meaning | Default |
 |-----|---------|---------|
 | `max_queued_jobs` | Entries `queued` at once | 20 |
 | `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
 | `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; a video job adds its color drift check's 300 s to each run, and a correcting one the correction's time limit (10 s plus 1 s per frame). The other media checks are not counted | 172800 (48 h) |
-| `max_job_file_bytes` | Size of job text the API accepts (from Milestone 07) | 65536 |
+| `max_job_file_bytes` | Maximum job YAML size loaded by the CLI, TUI, or API | 65536 |
+
+An existing job file is read only up to `max_job_file_bytes + 1` bytes; a named
+base configuration is bounded to the larger of 1 MiB and that job limit.
+Every REST request body is capped at eight times `max_job_file_bytes` before
+parsing, even when it arrives in chunks. An oversized request gets HTTP 413
+`limit_exceeded` with `limit` and `value`; an oversized job text inside a
+permitted request gets HTTP 422.
 
 A refusal names the `code` (`timeout_required`, `outside_directory`,
 `limit_exceeded`), the field, and, for a limit, the limit and the job's
-value; the job still runs with `run-job` while no server is up. These limits
+value. These limits
 apply to every caller, `dtc queue` (Milestone 03) included: the API cannot
 tell a person from an agent.
 
-**Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. A stale value returns `409 conflict` with `current_sha256`.
+**Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. For a local file with invalid UTF-8, `text` contains replacement characters and the hash still covers its original bytes. A stale value returns `409 conflict` with `current_sha256`.
 
 Every write observes the API's job rules and `max_job_file_bytes`, is serialized with submission, and refuses a queued or running file. A replacement retains the prior text in `data/jobs/.backups/<name>/`; a deletion links the file into `data/jobs/.trash/`. Neither is pruned. To restore a trashed or backed-up file manually without overwriting a newly created job, run from the project root:
 
@@ -1137,12 +1145,17 @@ person's the agent's, so an agent cannot release a hold a person's park relies o
 A person's own commands are not limited. The caller names itself, so this
 guards agents that use their tools; it adds no level of access.
 
-**Audit log.** Every submit, cancel, resume, park, unpark, hold, and release
-is recorded in the state store (time, action, target, outcome, caller; hold and
-release have no target), refused ones included, and so is each execution a
+**Audit log.** Every authenticated submit, cancel, resume, park, unpark, hold,
+release, and job-file write attempt is recorded in the state store (time,
+action, target, outcome, caller; hold and release have no target), refused ones
+included, and so is each execution a
 `POST /executions/delete` names (`delete_execution`, one row per ID; a request
 refused as a whole has one row with no target; a dry run has none), read
-back with `GET /audit`. It holds no prompt text, YAML, or credential, and is
+back with `GET /audit`. A valid job file name or canonical queue or execution
+ID is recorded only after it is known; otherwise the target is null. An
+authenticated oversized write attempt or server fault is recorded when the
+state store is available. The log holds no prompt text, YAML, or credential,
+and is
 never pruned by `history_retention_days`.
 
 ## Park a job and hold the queue
@@ -1257,8 +1270,8 @@ uv run dtc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bi
 
 It serves the same tools and resources at `http://HOST:PORT/mcp` (`--port`
 default 8767; `--host` default `127.0.0.1`). Every request must carry the
-server token, the text of `config/server-token`, as `Authorization: Bearer
-TOKEN`; any other is 401, and the token is read again for each request, so a
+same server token as the REST API, the text of `config/server-token`, as
+`Authorization: Bearer TOKEN`; any other is 401, and the token is read again for each request, so a
 regenerated one counts at once. A `--host` beyond loopback is refused (exit 2)
 without `--allow-remote-bind`, and then the token crosses the network in plain
 HTTP, as `dtc serve --allow-remote-bind` warns; an SSH tunnel is the safer way
@@ -1282,6 +1295,13 @@ openclaw mcp add draw-things-control-mcp \
   --timeout 1600
 openclaw mcp probe draw-things-control-mcp
 ```
+
+The HTTP listener bounds each authenticated JSON-RPC request at 8 MiB before
+the MCP SDK parses it. An oversized request gets HTTP 413 with `code`,
+`message`, `limit`, and `value`. This transport cap is independent of the REST
+API's configured job limit. Use stdio MCP or the REST API for a larger
+configured job. A listener refusal never reaches the REST API or its audit;
+forwarded writes are audited there.
 
 `--timeout 1600` is OpenClaw's per-request timeout, 60 seconds by default, which
 would end a `get_queue_entry` wait of more than 50 seconds (see
@@ -1370,12 +1390,18 @@ are still listed, and each call answers an error, and `dtc mcp` keeps running:
 | `invalid_input` | An argument it refuses before any request |
 | `writes_off` | `delete_executions` while writes are off |
 
-**Hiding a tool is not a security boundary.** A session that can run a shell can
-read `config/server-token` and call any endpoint itself,
-`POST /v1/executions/delete` included, with or without `--allow-write`. The
-tool list keeps an agent that follows its tools from destructive actions you
-did not turn on; the token, the loopback bind, and the audit log, which records
-every action an agent takes as the caller `mcp`, are what guard the API.
+**What an agent can do.** The token grants full API access: a session that can
+read `config/server-token` can call any endpoint as `cli`, `tui`, or `api`,
+including `POST /v1/executions/delete` with or without `--allow-write`. The
+MCP tool list guides an agent that uses it; it does not restrict a token holder.
+`--allow-write` enables job-file creation, replacement, and deletion and
+advertises MCP's execution deletion tool. `run-server.sh` enables it. Replaced
+files stay in `data/jobs/.backups/`, deleted files in `data/jobs/.trash/`, and
+the audit rows in `state/dtc.db`. The [API limits](#server-http-api-and-grpc-monitoring)
+bound each submission and request. Cancel and server stop lose the current
+partial run; resume starts again from the last successful run. The token,
+loopback bind, and audit log protect and record API use, while MCP refusals
+protect agents that follow the tools.
 
 ## Stopping, failures, and exit codes
 

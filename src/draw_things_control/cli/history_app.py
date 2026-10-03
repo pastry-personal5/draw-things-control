@@ -51,8 +51,7 @@ def history_delete(
     with client:
         summaries: dict[str, dict[str, Any]] = {}
         if executions:
-            # Written as the server answers (E0012), so a listing line and its answer match; one that does not parse
-            # is sent as typed, and the server refuses it.
+            # Written as the server answers (E0012), so a listing line and its answer match.
             ids = list(dict.fromkeys(_normalized(execution) for execution in executions))
         else:
             summaries = {row["execution_id"]: row for row in _read_every_page(client, status, name)}
@@ -91,7 +90,10 @@ def history_delete(
 
 def _normalized(text: str) -> str:
     number = parse_typed_id(text, EXECUTION_LETTER)
-    return execution_id_text(number) if number is not None else text
+    if number is None:
+        logger.error("'execution_id' must be an execution ID such as E0012")
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    return execution_id_text(number)
 
 
 def _read_every_page(client: "httpx.Client", status: str | None, name: str | None) -> list[dict[str, Any]]:

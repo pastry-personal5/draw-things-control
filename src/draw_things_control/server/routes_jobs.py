@@ -7,6 +7,7 @@ import hashlib
 from fastapi import APIRouter, Depends
 
 from draw_things_control.core.errors import InputError, NotFoundError
+from draw_things_control.core.yaml_files import read_bounded_bytes
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.dependencies import Page, get_brief, get_context, get_page, require_auth
 from draw_things_control.server.job_reference import listing_rows, resolve_job_reference
@@ -29,8 +30,8 @@ def get_job(job: str, context: ServerContext = Depends(get_context), brief: bool
     job keeps it, since that is what must be fixed. ``sha256`` stays either way."""
     path = resolve_job_reference(context.catalog, job)
     try:
-        source = path.read_bytes()
-        text = source.decode("utf-8")
+        source = read_bounded_bytes(path, context.global_config.api_limits.max_job_file_bytes, "Job file")
+        text = source.decode("utf-8", errors="replace")
     except OSError as error:
         raise NotFoundError(f"Cannot read {path.name}: {error.strerror}") from error
     details = read_details(path, context.global_config, context.paths)

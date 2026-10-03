@@ -32,7 +32,7 @@ from draw_things_control.services.queue_cancel import cancel_entry
 from draw_things_control.services.queue_park import park_entry, unpark_entry
 from draw_things_control.services.queue_resume import preview_resume, resume_entry
 from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id
+from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id, queue_id_text
 from draw_things_control.state.queue import FINISHED_STATES, QueueRow, QueueState
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -55,10 +55,11 @@ def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), 
         check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context))
 
     caller, caller_error = audit_caller(x_dtc_caller)
-    with audited(context.store, action="submit", target=body.job, caller=caller):
+    with audited(context.store, action="submit", target=None, caller=caller) as audit:
         if caller_error is not None:
             raise caller_error
         path = resolve_job_reference(context.catalog, body.job)
+        audit.value = path.name
         # Held across the check and the insert: two concurrent submissions could otherwise both read the queued
         # count before either inserts, both pass check_api_rules, and together push the queue past max_queued_jobs.
         # The rules run inside submit_job, on the job parsed from the exact text it stores, so a file edited
@@ -159,7 +160,7 @@ def _last_run_seconds(context: ServerContext, entry: QueueRow) -> float | None:
 @router.post("/v1/queue/{queue_id}/cancel")
 def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     caller, caller_error = audit_caller(x_dtc_caller)
-    with audited(context.store, action="cancel", target=queue_id, caller=caller):
+    with audited(context.store, action="cancel", target=_canonical_queue_id(queue_id), caller=caller):
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
@@ -198,7 +199,7 @@ def post_release(context: ServerContext = Depends(get_context), x_dtc_caller: st
 def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """Park a running entry: it ends once its current run finishes, and the queue is held (Milestone 05)."""
     caller, caller_error = audit_caller(x_dtc_caller)
-    with audited(context.store, action="park", target=queue_id, caller=caller):
+    with audited(context.store, action="park", target=_canonical_queue_id(queue_id), caller=caller):
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
@@ -211,7 +212,7 @@ def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_dt
 def post_unpark(queue_id: str, context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
     """Withdraw a running entry's park reservation; the job runs on, and the hold is released when that reservation made it."""
     caller, caller_error = audit_caller(x_dtc_caller)
-    with audited(context.store, action="unpark", target=queue_id, caller=caller):
+    with audited(context.store, action="unpark", target=_canonical_queue_id(queue_id), caller=caller):
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
@@ -226,7 +227,7 @@ def post_resume(queue_id: str, context: ServerContext = Depends(get_context), x_
         check_api_rules(job, context.global_config, context.global_config.api_limits, queued_count=_queued_count(context), remaining_runs=remaining_runs)
 
     caller, caller_error = audit_caller(x_dtc_caller)
-    with audited(context.store, action="resume", target=queue_id, caller=caller):
+    with audited(context.store, action="resume", target=_canonical_queue_id(queue_id), caller=caller):
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
@@ -240,6 +241,11 @@ def post_resume(queue_id: str, context: ServerContext = Depends(get_context), x_
 
 def _queued_count(context: ServerContext) -> int:
     return context.store.queue.count(state=str(QueueState.QUEUED))
+
+
+def _canonical_queue_id(value: str) -> str | None:
+    number = parse_typed_id(value, QUEUE_LETTER)
+    return queue_id_text(number) if number is not None else None
 
 
 def _find_entry(context: ServerContext, queue_id: str) -> QueueRow:

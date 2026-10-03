@@ -11,7 +11,7 @@ from pathlib import Path
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.paths import ProjectPaths
+from draw_things_control.core.paths import ProjectPaths, linked_component
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.files import job_files, read_job
 from draw_things_control.services.job_details import error_text
@@ -94,6 +94,8 @@ class JobCatalog:
     def read(self, *, fresh: bool = False) -> JobListing:
         """Every job file, validated without decoding inputs, with its job ID when this directory gives them."""
         directory = self.directory
+        if linked_component(directory, self._paths.root) is not None:
+            return JobListing(message="Data directory uses a symbolic link")
         if not directory.is_dir():
             return JobListing(message=f"Data directory not found: {directory}")
         try:
@@ -121,6 +123,8 @@ class JobCatalog:
         """The job file ``name`` names: a file name, a unique name without the suffix, or a job ID (J0001, in any case)
         among ``rows`` or, before they are read, in the store. Raises NotFoundError, or InputError when the name is both a
         file's and another file's job ID, which names both, so neither is run by mistake."""
+        if linked_component(self.directory, self._paths.root) is not None:
+            raise InputError("Data directory uses a symbolic link")
         by_file = self._find_file(name)
         number = parse_typed_id(name, JOB_LETTER)
         if number is None:
@@ -167,9 +171,11 @@ class JobCatalog:
         if known is None:
             return missing
         path = self.directory / known[0]
-        return path if path.is_file() else f"{job_id_text(number)} is {known[0]}, which is no longer in {self.directory}"
+        return path if path.is_symlink() or path.is_file() else f"{job_id_text(number)} is {known[0]}, which is no longer in {self.directory}"
 
     def _row(self, path: Path, fresh: bool) -> JobRow:
+        if path.is_symlink():
+            return JobRow(path, None, "is a symbolic link")
         own = signature(path)
         if own is None:
             return JobRow(path, None, f"Cannot read {path.name}")

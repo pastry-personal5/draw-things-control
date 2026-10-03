@@ -68,8 +68,8 @@ ExecutableOption = Annotated[str, typer.Option(help="Draw Things CLI executable.
 def configure_logging() -> None:
     """Route child stdout to stdout and other Loguru messages to stderr."""
     logger.remove()
-    logger.add(sys.stdout, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") == "stdout", colorize=False)
-    logger.add(sys.stderr, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") != "stdout", colorize=False)
+    logger.add(sys.stdout, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") == "stdout", colorize=False, diagnose=False, backtrace=False)
+    logger.add(sys.stderr, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") != "stdout", colorize=False, diagnose=False, backtrace=False)
 
 
 @app.command()
@@ -276,7 +276,7 @@ def mcp_command(
 
     # Stdout carries the protocol over stdio and nothing else: main()'s sinks send child output there, so only stderr remains.
     logger.remove()
-    logger.add(sys.stderr, format="{message}", level="INFO", colorize=False)
+    logger.add(sys.stderr, format="{message}", level="INFO", colorize=False, diagnose=False, backtrace=False)
     token_path = token_file or services.paths.server_token
     if transport == "stdio":
         run_mcp(server_url, token_path)

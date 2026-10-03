@@ -73,7 +73,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `jobs/planning.py`, `jobs/launcher.py`, `jobs/run_finisher.py`, `jobs/color_run.py` | The seed, file names, and arguments of each run (`JobPlanner`); one run through draw-things-cli (`RunLauncher`); tagging, last frame, the color drift check, the color correction, and measuring (`RunFinisher`); the correction's two passes over a run's frames, its corrected copy and handoff, and its checks (`ColorCorrector`, loaded only when a job first corrects; a failed correction hands off the uncorrected frame) |
 | `jobs/records.py`, `jobs/log_writer.py` | The manifest and job log file (`JobRecords`); the job's log lines, written from its events |
 | `jobs/events.py` | Typed events, `RunStatus` and `JobStatus`, and `event_to_dict` for a JSON stream |
-| `jobs/files.py`, `jobs/text.py` | Reading jobs, and the text `validate-job` and `run-job --dry-run` print, shared by the CLI and the TUI |
+| `jobs/files.py`, `jobs/text.py`, `jobs/parsing.py` | Bounded job-file reads, parser validation and path confinement before file access, and the text `validate-job` and the TUI show |
 | `jobs/inputs/`, `jobs/media/`, `jobs/output_naming.py` | Input image check, and run 1's copy of every input (`inputs/resize.py`: upright, 8-bit sRGB, the job's size, made in floating point and rounded once; 16-bit RGB read through `ffmpeg`; a matrix-and-curves ICC profile applied with gamut mapping at constant Oklab lightness and hue, `inputs/gamut.py`, any other through LittleCMS's perceptual intent; Lab values through LittleCMS's Lab transform, profile or not; YCbCr and HSV converted to RGB first); Oklab and gamut edges (`media/oklab.py`); a video's frames as floating-point sRGB raised by the half level Draw Things truncated, and the PNGs the tool wrote read as `draw-things-cli` reads them (`media/clip_frames.py`); color statistics and the `color_drift` check of every video run against its input, its frame 0, and the chain's first image, region by region where a segmenter is given (`media/color_stats.py`, `media/drift.py`); a frame's regions, people, their skin, and the background, from a `Segmenter` (`media/regions.py`: the skin set by each face's own, soft masks kept 8-bit at the segmenter's resolution, feathered for blending, numpy and Pillow only), and Apple Vision's `Segmenter` (`media/vision_segmenter.py`, the only module that imports pyobjc, when `services/toolkit.py` first makes it, once per process, for both the drift check and the correction); the color correction's fit, anchor pull and ramp, caps, smoothing, chroma refinement, skin residual, and applying it to a frame, region by region through soft masks, knowing no files (`media/correction.py`), and the corrected copy's encoder (`media/clip_frames.py`, passing over a listed VideoToolbox that fails a one-frame test encode, kept per process); `ffmpeg` and `ffprobe`; the color a video's stream states, read once before tagging (`stream_color.py`), which both the last frame's decode and the `colr` tag (`video_color.py`) follow; the last frame as the handoff the next run reads (16-bit RGB without alpha, each sample `v * 256 + 128`, with half a level added back and ordered dither, `frames.py`, which also holds the rounding's numpy twin); measuring; the media checks of a video job's input (a resume's as a handoff), resized copy, video, and last frame (`checks.py`, with the matrix measurement in `fingerprint.py`, finding `ffmpeg` and `ffprobe` at each check), reported through `RunFinisher` and the executor as `MediaChecked` events, which `state/recorder.py` keeps in the `media_checks` table (a check it cannot store is skipped; any other failed write stops recording the execution); output names, including the first image named from the manifest's stem |
 | `state/database.py`, `state/schema.py` | The SQLite file, its connections, transactions, and migrations |
 | `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them; `JobIdRepository`, the `job_definitions` table behind J0001 |
@@ -88,7 +88,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/queue_callers.py` (phase 3) | Keeping agents (the caller `mcp`) off the queue entries and holds people made: `check_entry_permitted`, and the words of a refusal |
 | `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
 | `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
-| `server/` (phase 3) | `dtc serve`'s FastAPI app, its SSE watch of a queue entry, and the gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) and [Milestone 10](#milestone-10-mcp-server-done) |
+| `server/` (phase 3) | `dtc serve`'s FastAPI app, its bounded HTTP body gate, audit and safe error boundary, SSE watch, and gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) and [Milestone 11](#milestone-11-safety-hardening-done) |
 | `mcp_server/` (phase 3) | `dtc mcp`: the MCP server's tools, resources, and wait, over the HTTP API alone, on stdio or Streamable HTTP; see [Milestone 10](#milestone-10-mcp-server-done) and [Milestone 13](#milestone-13-mcp-over-streamable-http-done) |
 | `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `import-history`, `tui`, `serve`, `mcp`, and the `queue` and `history` groups) and `CliServices` in Typer's context |
 
@@ -526,23 +526,28 @@ Adds what every later front end needs, without changing the CLI's behavior.
   ASGI check of `Authorization: Bearer` against the token file, read for each request and compared with
   `hmac.compare_digest`; every other request is 401 `unauthorized` with no reason (an unreadable file is logged, not
   answered). `serve_http` binds the socket itself (`BindError` for a taken port, which `cli/app.py` makes exit 2) and
-  runs uvicorn with `ws="none"`. The SDK's `Host` and `Origin` check stays on a loopback bind and is off beyond it.
+  runs uvicorn with `ws="none"`. `McpBodyLimit` caps authenticated requests at 8 MiB before SDK parsing. The SDK's
+  `Host` and `Origin` check stays on a loopback bind and is off beyond it.
 - **Sessions.** The SDK's default, stateful sessions (`Mcp-Session-Id`).
 - **`cli/app.py`.** `dtc mcp` takes `--transport`, `--host`, `--port`, and `--allow-remote-bind`; `mcp_server.app`
   gains `run_http` and re-exports `BindError`, the only names `cli/app.py` imports beyond `run`.
 
-### Milestones 3 onward (planned)
+### Milestone 11: safety hardening (done)
 
-- Job file management in `data/jobs/` behind a write flag, with `.backups/` and
-  `.trash/`.
-- The queue for people: `dtc queue` (an HTTP client in `cli/`, plus a gRPC
-  client for `add --wait`) and a Queue widget in the TUI that submits,
-  cancels, and resumes through the API too, watching live over gRPC while
-  the server is up and falling back to reading the state store, read-only,
-  while it is down.
-- `run-job` is removed, and the TUI's `/apply` no longer runs a job itself:
-  `dtc serve`'s worker is the only thing that ever invokes
-  `draw-things-cli`. `dtc queue add --wait` is `run-job`'s replacement.
+- `jobs/parsing.py` returns typed input errors and rejects NUL, cyclic aliases, and paths outside the configured
+  input and output roots before touching them. Existing job and named base-configuration files have read bounds.
+  `JobCatalog` and named configuration lookup refuse symbolic links in files and directory ancestors.
+- `server/body_limit.py` bounds each HTTP request before routing, including chunked bodies, with authenticated
+  pre-route write refusals audited. `server/audit.py` records a canonical target only when known and records unexpected
+  failures as `internal_error`; `server/errors.py` returns a generic, stable error shape and logs exception types and
+  frames without message text or locals. Blocking job-file work and gRPC snapshots run off the event loop.
+- `cli` and `tui` validate queue IDs before making URL paths. Both MCP transports keep the same tool rules; the HTTP
+  listener has its own 8 MiB body cap after bearer authentication. The security and documentation checks cover these
+  boundaries.
+
+Milestone 12 will move direct `dtc generate` onto the queue. Until then it is
+the one command that invokes `draw-things-cli` itself, under the shared run
+lock.
 
 ## Rules across phases
 

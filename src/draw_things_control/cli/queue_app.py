@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 import typer
 
-from draw_things_control.cli.api_client import AllowRemoteServerOption, QueueIdArgument, ServerUrlOption, TokenFileOption, api_client, api_request
+from draw_things_control.cli.api_client import AllowRemoteServerOption, QueueIdArgument, ServerUrlOption, TokenFileOption, api_client, api_request, checked_queue_id
 from draw_things_control.cli.context import errors_exit, services_of
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, job_argument
 from draw_things_control.services.queue_hold import HoldState, hold_outcome_text, hold_text, release_outcome_text
@@ -86,7 +86,7 @@ def queue_show(
     with errors_exit():
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = api_request(client, "GET", f"/v1/queue/{queue_id}").json()
+        entry = api_request(client, "GET", f"/v1/queue/{checked_queue_id(queue_id)}").json()
     typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({Path(entry['job_path']).name})")
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
@@ -115,7 +115,7 @@ def queue_cancel(
     with errors_exit():
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/cancel").json()
+        entry = api_request(client, "POST", f"/v1/queue/{checked_queue_id(queue_id)}/cancel").json()
     typer.echo(f"{entry['queue_id']} {entry['state']}")
 
 
@@ -131,7 +131,7 @@ def queue_resume(
     with errors_exit():
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/resume").json()
+        entry = api_request(client, "POST", f"/v1/queue/{checked_queue_id(queue_id)}/resume").json()
     typer.echo(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}")
 
 
@@ -147,7 +147,7 @@ def queue_park(
     with errors_exit():
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/park").json()
+        entry = api_request(client, "POST", f"/v1/queue/{checked_queue_id(queue_id)}/park").json()
     typer.echo(park_outcome_text(entry, "dtc queue release"))
 
 
@@ -163,7 +163,7 @@ def queue_unpark(
     with errors_exit():
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
-        entry = api_request(client, "POST", f"/v1/queue/{queue_id}/unpark").json()
+        entry = api_request(client, "POST", f"/v1/queue/{checked_queue_id(queue_id)}/unpark").json()
     typer.echo(unpark_outcome_text(entry))
 
 

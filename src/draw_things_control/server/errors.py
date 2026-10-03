@@ -4,12 +4,16 @@ one, the offending ``field``."""
 
 from __future__ import annotations
 
+import traceback
 from datetime import datetime
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import DtcError, InputError, LimitExceededError
@@ -29,11 +33,70 @@ STATUS_BY_ERROR_CODE = {
     "busy": 409,
     "tool_missing": 503,
     "state_unavailable": 503,
+    "internal_error": 500,
 }
 DEFAULT_STATUS = 503
-# The audited POST endpoints whose body FastAPI's own validation can refuse before the route runs, with the action
-# their audit rows record.
+# Audited POST endpoints with body fields FastAPI can refuse before the route runs.
 AUDITED_BODY_ACTIONS = {"/v1/queue": "submit", "/v1/executions/delete": "delete_execution"}
+QUEUE_CONTROL_ACTIONS = {"hold": "hold", "release": "release", "cancel": "cancel", "resume": "resume", "park": "park", "unpark": "unpark"}
+
+
+def write_action(method: str, path: str, query: bytes, allow_write: bool) -> str | None:
+    path = path.removesuffix("/") if path != "/" else path
+    if method == "POST":
+        action = AUDITED_BODY_ACTIONS.get(path)
+        if action is not None:
+            return action
+        parts = path.split("/")
+        if parts[:3] == ["", "v1", "queue"]:
+            if len(parts) == 4 and parts[3] in {"hold", "release"}:
+                return QUEUE_CONTROL_ACTIONS[parts[3]]
+            if len(parts) == 5 and parts[3] and parts[4] in {"cancel", "resume", "park", "unpark"}:
+                return QUEUE_CONTROL_ACTIONS[parts[4]]
+    if allow_write and path.startswith("/v1/jobs/") and path.count("/") == 3:
+        if method == "PUT":
+            return "replace_job" if parse_qs(query.decode("latin-1"), keep_blank_values=True).get("overwrite", [])[-1:] == ["1"] else "create_job"
+        if method == "DELETE":
+            return "delete_job"
+    return None
+
+
+def log_unexpected(error: Exception) -> None:
+    frames = traceback.extract_tb(error.__traceback__)
+    location = " -> ".join(f"{frame.filename}:{frame.lineno} in {frame.name}" for frame in frames[-8:])
+    logger.error("Unhandled {} at {}", type(error).__name__, location)
+
+
+class UnexpectedErrorBoundary:
+    """Catch route failures inside Starlette's server wrapper so uvicorn never logs their messages."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+        completed = False
+
+        async def mark_started(message: Message) -> None:
+            nonlocal started, completed
+            if message["type"] == "http.response.start":
+                started = True
+            elif message["type"] == "http.response.body" and not message.get("more_body", False):
+                completed = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, mark_started)
+        except Exception as error:
+            log_unexpected(error)
+            if not started:
+                response = JSONResponse(status_code=500, content={"code": "internal_error", "message": "Internal error; see the server log"})
+                await response(scope, receive, send)
+            elif not completed:
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 def status_for_error(error: DtcError) -> int:
@@ -69,16 +132,9 @@ def validation_input_error(error: RequestValidationError) -> InputError:
 
 
 def _audit_unparsed_body(request: Request, error: InputError) -> None:
-    """``POST /v1/queue``'s body (``{"job": ...}``) and ``POST /v1/executions/delete``'s (``{"executions": [...]}``,
-    Milestone 06) are the audited endpoints whose validation FastAPI can refuse before the route body -- and so
-    before its own audit -- ever runs (a path parameter like
-    ``{queue_id}`` is always a plain string at this level; whatever it names is checked, and audited, inside the
-    route body itself). Recorded here instead: headers are read independently of the body, so a valid
-    ``X-Dtc-Caller`` is still recorded as itself, falling back to the documented default ``api`` only when that
-    header is itself missing or unknown (as ``caller.py``'s ``audit_caller`` does). Never for an
-    unauthenticated request, as ``require_auth``'s own 401 is never recorded either -- and FastAPI does not guarantee
-    body validation runs after it, so this checks the token itself rather than assuming that order."""
-    action = AUDITED_BODY_ACTIONS.get(request.url.path) if request.method == "POST" else None
+    """Record an authenticated write that FastAPI refuses before its route's own audit block runs. Read the
+    caller from the header, without trusting body validation to have checked authentication first."""
+    action = write_action(request.method, request.url.path, request.scope.get("query_string", b""), request.app.state.context.allow_write)
     if action is None:
         return
     if not is_authenticated(request, request.headers.get("authorization")):
@@ -103,9 +159,16 @@ def install_error_handler(app: FastAPI) -> None:
         return await handle_dtc_error(request, input_error)
 
     @app.exception_handler(StarletteHTTPException)
-    async def handle_http_exception(_request: Request, error: StarletteHTTPException) -> JSONResponse:
+    async def handle_http_exception(request: Request, error: StarletteHTTPException) -> JSONResponse:
+        if error.status_code == 400:
+            input_error = InputError("Invalid request body")
+            _audit_unparsed_body(request, input_error)
+            return JSONResponse(status_code=400, content=error_body(input_error), headers=error.headers)
         if error.status_code == 405:
-            return JSONResponse(status_code=405, content={"code": "writes_off", "message": "Writes to data/jobs/ require dtc serve --allow-write"}, headers=error.headers)
+            writes_off = request.method in {"PUT", "DELETE"} and request.url.path.startswith("/v1/jobs/") and not request.app.state.context.allow_write
+            return JSONResponse(status_code=405, content={"code": "writes_off" if writes_off else "method_not_allowed", "message": "Writes to data/jobs/ require dtc serve --allow-write" if writes_off else "Method not allowed"}, headers=error.headers)
         if error.status_code == 404:
             return JSONResponse(status_code=404, content={"code": "not_found", "message": "Not found"})
-        return JSONResponse(status_code=error.status_code, content={"detail": error.detail}, headers=error.headers)
+        if error.status_code == 401:
+            return JSONResponse(status_code=401, content={"code": "unauthorized", "message": "A valid bearer token is required"}, headers=error.headers)
+        return JSONResponse(status_code=error.status_code, content={"code": "http_error", "message": "Request refused"}, headers=error.headers)

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from draw_things_control.core.client_config import read_client_token
 from draw_things_control.core.errors import DtcError
 from draw_things_control.services.queue_hold import HoldState
+from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id, queue_id_text
 from draw_things_control.tui.client import CALLER, CALLER_HEADER
 
 if TYPE_CHECKING:
@@ -24,6 +25,13 @@ class ApiError(Exception):
     def __init__(self, text: str) -> None:
         super().__init__(text)
         self.text = text
+
+
+def _queue_segment(value: str) -> str:
+    number = parse_typed_id(value, QUEUE_LETTER)
+    if number is None:
+        raise ApiError("'queue_id' must be a queue entry ID such as Q0007")
+    return queue_id_text(number)
 
 
 async def _client(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None") -> "httpx.AsyncClient":
@@ -66,23 +74,23 @@ async def submit(server_url: str, token_file: Path, transport: "httpx.AsyncBaseT
 
 
 async def cancel(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
-    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/cancel")
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{_queue_segment(queue_id)}/cancel")
 
 
 async def resume(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
-    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/resume")
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{_queue_segment(queue_id)}/resume")
 
 
 async def show(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
-    return await _request(server_url, token_file, transport, "GET", f"/v1/queue/{queue_id}")
+    return await _request(server_url, token_file, transport, "GET", f"/v1/queue/{_queue_segment(queue_id)}")
 
 
 async def park(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
-    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/park")
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{_queue_segment(queue_id)}/park")
 
 
 async def unpark(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None", queue_id: str) -> dict[str, Any]:
-    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{queue_id}/unpark")
+    return await _request(server_url, token_file, transport, "POST", f"/v1/queue/{_queue_segment(queue_id)}/unpark")
 
 
 async def hold(server_url: str, token_file: Path, transport: "httpx.AsyncBaseTransport | None") -> dict[str, Any]:

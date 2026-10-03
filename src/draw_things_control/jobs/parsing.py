@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, NoReturn
 
 from draw_things_control.core import draw_things_config
 from draw_things_control.core.arguments import DEFAULT_VIDEO_FORMAT, VIDEO_FORMATS
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, parse_cooldown, replaced_cooldown_message
-from draw_things_control.core.errors import InputError
+from draw_things_control.core.errors import DtcError, InputError, LimitExceededError, OutsideDirectoryError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.numbers import is_int, is_number
+from draw_things_control.core.paths import linked_component
 from draw_things_control.core.yaml_files import parse_yaml_mapping, read_yaml_file
 from draw_things_control.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, ConfigOverride, GenerationMode, JobDefinition
 from draw_things_control.jobs.inputs.size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, copy_plan, decode_image, read_image_info, resize_plan
@@ -34,9 +36,16 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
     writes the copy right away passes ``decode_input=False``, since writing it decodes the input anyway.
     """
-    path = path.expanduser().resolve()
-    data, text = read_yaml_file(path, "Job file", show_source=True)
-    return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
+    path = path.expanduser()
+    if linked_component(path, Path(path.absolute().anchor)) is not None:
+        raise InputError(f"{path}: Job file uses a symbolic link", path=path)
+    try:
+        data, text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
+    except (ValueError, RecursionError) as error:
+        if isinstance(error, DtcError):
+            raise
+        raise InputError(f"{path}: {error}", path=path) from error
 
 
 def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None) -> JobDefinition:
@@ -46,8 +55,20 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
     ``params_directory``: a queued job's snapshot, so editing or deleting the base configuration after
     submission changes nothing about what runs.
     """
-    data = parse_yaml_mapping(text, path, "Job file", show_source=True)
-    return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text).parse(data, text)
+    limit = global_config.api_limits.max_job_file_bytes
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeError as error:
+        raise InputError(f"{path}: Job text is not valid UTF-8", path=path) from error
+    if size > limit:
+        raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
+    try:
+        data = parse_yaml_mapping(text, path, "Job file")
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text).parse(data, text)
+    except (ValueError, RecursionError) as error:
+        if isinstance(error, DtcError):
+            raise
+        raise InputError(f"{path}: {error}", path=path) from error
 
 
 class JobParser:
@@ -61,6 +82,15 @@ class JobParser:
         self._base_config_text = base_config_text
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
+        try:
+            return self._parse(data, source_text)
+        except (ValueError, RecursionError, OSError) as error:
+            if isinstance(error, DtcError):
+                raise
+            raise self._wrap(error) from error
+
+    def _parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
+        self._check_text_values(data)
         self._check_top_level(data)
         name = self._name(data["name"])
         mode = self._mode(data["mode"])
@@ -77,7 +107,12 @@ class JobParser:
         cooldown, cooldown_source = self._cooldown(data)
         color = self._color(data.get("color"), mode)
         desired = self._desired_size(data, mode)
-        plan, copy, ignored_size = self._input_size(input_path, desired, override, base_config, config_file)
+        try:
+            plan, copy, ignored_size = self._input_size(input_path, desired, override, base_config, config_file)
+        except ValueError as error:
+            if isinstance(error, DtcError):
+                raise
+            raise InputError(f"{self._path}: {error}", field="input", path=self._path) from error
         return JobDefinition(
             path=self._path,
             name=name,
@@ -104,10 +139,40 @@ class JobParser:
             source_text=source_text,
         )
 
+    def _check_text_values(self, data: dict[str, Any]) -> None:
+        """Walk without recursion; aliases shared by siblings are valid, cycles are not."""
+        stack: list[tuple[Any, str, bool]] = [(data, "", False)]
+        active: set[int] = set()
+        completed: set[int] = set()
+        while stack:
+            value, field, leaving = stack.pop()
+            if leaving:
+                active.remove(id(value))
+                completed.add(id(value))
+                continue
+            if isinstance(value, str):
+                if "\x00" in value:
+                    self._fail(field or "the document", "must not contain NUL")
+            elif isinstance(value, (dict, list)):
+                if id(value) in active:
+                    self._fail(field or "the document", "is an alias that refers to itself")
+                if id(value) in completed:
+                    continue
+                active.add(id(value))
+                stack.append((value, field, True))
+                if isinstance(value, dict):
+                    for key, item in reversed(list(value.items())):
+                        key_field = f"{field}.{key}" if field else str(key)
+                        stack.append((item, key_field, False))
+                        stack.append((key, key_field, False))
+                else:
+                    for index in reversed(range(len(value))):
+                        stack.append((value[index], f"{field}[{index}]", False))
+
     def _fail(self, field: str, problem: str) -> NoReturn:
         raise InputError(f"{self._path}: '{field}' {problem}", field=field, path=self._path)
 
-    def _wrap(self, error: ValueError) -> InputError:
+    def _wrap(self, error: Exception) -> InputError:
         """An error from a lower layer, with the job file's name in front."""
         return InputError(f"{self._path}: {error}", path=self._path)
 
@@ -148,8 +213,7 @@ class JobParser:
         if not isinstance(value, str) or not value.strip():
             self._fail("input", "must be a file path")
         # Leading or trailing spaces and tabs are never part of the intended file name.
-        path = Path(value.strip()).expanduser()
-        path = (path if path.is_absolute() else self._global_config.input_directory / path).resolve()
+        path = self._confined_path(value.strip(), self._global_config.input_directory, "input")
         if not path.is_file():
             self._fail("input", f"file does not exist: {path}")
         return path
@@ -167,11 +231,17 @@ class JobParser:
     def _base_config(self, config_file: str) -> dict[str, Any]:
         try:
             if self._base_config_text is not None:
+                limit = max(1048576, self._global_config.api_limits.max_job_file_bytes)
+                size = len(self._base_config_text.encode("utf-8"))
+                if size > limit:
+                    raise LimitExceededError(f"base configuration is over the limit of {limit} bytes", key="config_file", limit=limit, value=size)
                 base_config = parse_yaml_mapping(self._base_config_text, self._params_directory / config_file, "Configuration", require_json=True)
             else:
-                base_config = draw_things_config.load_base_config(config_file, self._params_directory)
+                base_config = draw_things_config.load_base_config(config_file, self._params_directory, max_bytes=max(1048576, self._global_config.api_limits.max_job_file_bytes))
         except ValueError as error:
-            raise self._wrap(error) from error
+            if isinstance(error, DtcError):
+                raise
+            raise InputError(f"{self._path}: {error}", field="config_file", path=self._path) from error
         base_seed = base_config.get("seed")
         if is_int(base_seed) and base_seed > MAX_SEED:
             self._fail("config_file", f"{config_file} sets seed {base_seed}, above the largest seed {MAX_SEED}")
@@ -311,16 +381,34 @@ class JobParser:
         if directory is None:
             output_directory = self._global_config.output_directory / name
         elif isinstance(directory, str) and directory:
-            path = Path(directory).expanduser()
-            output_directory = path if path.is_absolute() else self._global_config.output_directory / path
+            output_directory = self._confined_path(directory, self._global_config.output_directory, "output.directory")
         else:
             self._fail("output.directory", "must be a directory path")
+        output_directory = self._confined_path(str(output_directory), self._global_config.output_directory, "output.directory")
         if output_directory.exists() and not output_directory.is_dir():
             self._fail("output.directory", f"is not a directory: {output_directory}")
         extension = value.get("extension", mode.default_extension)
         if extension not in mode.allowed_extensions:
             self._fail("output.extension", f"must be {' or '.join(mode.allowed_extensions)} in {mode} jobs")
         return output_directory.resolve(), extension, self._video_format(value.get("video_format"), mode, extension)
+
+    def _confined_path(self, value: str, directory: Path, field: str) -> Path:
+        try:
+            candidate = Path(value).expanduser()
+        except RuntimeError as error:
+            raise OutsideDirectoryError(f"'{field}' must be inside its configured directory: {value}", field=field) from error
+        base = Path(os.path.abspath(directory))
+        resolved_base = base.resolve() if linked_component(base, Path(base.anchor)) is not None else base
+        lexical = Path(os.path.abspath(candidate if candidate.is_absolute() else base / candidate))
+        if not lexical.is_relative_to(base) and not lexical.is_relative_to(resolved_base):
+            raise OutsideDirectoryError(f"'{field}' must be inside its configured directory: {value}", field=field)
+        try:
+            resolved = lexical.resolve()
+        except (OSError, RuntimeError) as error:
+            raise InputError(f"'{field}' cannot be resolved", field=field, path=self._path) from error
+        if not resolved.is_relative_to(resolved_base):
+            raise OutsideDirectoryError(f"'{field}' must be inside its configured directory: {value}", field=field)
+        return resolved
 
     def _video_format(self, value: Any, mode: GenerationMode, extension: str) -> str | None:
         if not mode.is_video:

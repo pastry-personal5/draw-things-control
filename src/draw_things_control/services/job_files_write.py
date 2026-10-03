@@ -10,8 +10,8 @@ from pathlib import Path
 
 from draw_things_control.core.errors import ConflictError, InputError, LimitExceededError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.paths import ProjectPaths
-from draw_things_control.core.yaml_files import is_yaml_file
+from draw_things_control.core.paths import ProjectPaths, linked_component
+from draw_things_control.core.yaml_files import is_yaml_file, read_bounded_bytes
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.parsing import load_job_text
 from draw_things_control.jobs.prompt_pairs import NAME_PATTERN
@@ -41,7 +41,7 @@ def create_job(name: str, text: str, *, global_config: GlobalConfig, paths: Proj
     job = validate_job_text(text, name=name, global_config=global_config, paths=paths)
     target = _target(paths, name)
     _check_no_stem_collision(paths.jobs, name, target)
-    _ensure_directory(paths.jobs)
+    _ensure_directory(paths.jobs, paths.root)
     _atomic_create(target, text.encode("utf-8"))
     return target, job
 
@@ -51,13 +51,13 @@ def replace_job(name: str, text: str, expected_sha256: str, *, global_config: Gl
     target = _target(paths, name)
     _check_no_stem_collision(paths.jobs, name, target)
     _check_active(target, store)
-    old = _read_current(target, expected_sha256)
+    old = _read_current(target, expected_sha256, max_bytes=global_config.api_limits.max_job_file_bytes)
     new = text.encode("utf-8")
     if old == new:
         return target, False, job
     backup_directory = paths.jobs_backups / name
-    _ensure_directory(paths.jobs_backups)
-    _ensure_directory(backup_directory)
+    _ensure_directory(paths.jobs_backups, paths.root)
+    _ensure_directory(backup_directory, paths.root)
     backup = _unique_path(backup_directory, ".yaml")
     _exclusive_write(backup, old)
     mode = stat.S_IMODE(target.stat().st_mode)
@@ -69,8 +69,8 @@ def delete_job(name: str, expected_sha256: str, *, paths: ProjectPaths, store: S
     _check_name(name)
     target = _target(paths, name)
     _check_active(target, store)
-    old = _read_current(target, expected_sha256)
-    _ensure_directory(paths.jobs_trash)
+    _check_hash_current(target, expected_sha256)
+    _ensure_directory(paths.jobs_trash, paths.root)
     trash = _unique_path(paths.jobs_trash, ".yaml", prefix=f"{name}-")
     try:
         os.link(target, trash)
@@ -79,8 +79,7 @@ def delete_job(name: str, expected_sha256: str, *, paths: ProjectPaths, store: S
         if trash.exists():
             trash.unlink()
         raise
-    # The byte read above deliberately makes the hash check happen immediately before the link/unlink pair.
-    del old
+    # The streamed hash check happens immediately before the link/unlink pair.
     return trash
 
 
@@ -91,7 +90,10 @@ def check_expected_sha256(value: str | None) -> str:
 
 
 def _check_size(text: str, global_config: GlobalConfig) -> None:
-    size = len(text.encode("utf-8"))
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeError as error:
+        raise InputError("'yaml' must be valid UTF-8", field="yaml") from error
     limit = global_config.api_limits.max_job_file_bytes
     if size > limit:
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
@@ -104,8 +106,8 @@ def _check_name(name: str) -> None:
 
 def _target(paths: ProjectPaths, name: str) -> Path:
     _check_name(name)
-    if paths.jobs.is_symlink():
-        raise ConflictError(f"Refusing to use symbolic link {paths.jobs}")
+    if linked_component(paths.jobs, paths.root) is not None:
+        raise ConflictError("Refusing to use a symbolic link in the jobs directory")
     return paths.jobs / f"{name}.yaml"
 
 
@@ -121,9 +123,9 @@ def _check_no_stem_collision(directory: Path, name: str, target: Path) -> None:
         raise ConflictError(f"Refusing to write through symbolic link {target.name}")
 
 
-def _ensure_directory(directory: Path) -> None:
-    if directory.is_symlink():
-        raise ConflictError(f"Refusing to use symbolic link {directory}")
+def _ensure_directory(directory: Path, root: Path) -> None:
+    if linked_component(directory, root) is not None:
+        raise ConflictError("Refusing to use a symbolic link in the jobs directory")
     directory.mkdir(parents=True, exist_ok=True)
     if directory.is_symlink() or not directory.is_dir():
         raise ConflictError(f"Refusing to use non-directory {directory}")
@@ -135,11 +137,11 @@ def _check_active(target: Path, store: Store) -> None:
         raise ConflictError(f"Job file {target.name} is queued or running")
 
 
-def _read_current(target: Path, expected: str) -> bytes:
+def _read_current(target: Path, expected: str, *, max_bytes: int | None = None) -> bytes:
     if target.is_symlink():
         raise ConflictError(f"Refusing to use symbolic link {target.name}")
     try:
-        data = target.read_bytes()
+        data = target.read_bytes() if max_bytes is None else read_bounded_bytes(target, max_bytes, "Job file")
     except FileNotFoundError as error:
         raise NotFoundError(f"No job file '{target.stem}'") from error
     actual = sha256_bytes(data)
@@ -148,6 +150,24 @@ def _read_current(target: Path, expected: str) -> bytes:
         error.current_sha256 = actual  # type: ignore[attr-defined]  # response-only detail
         raise error
     return data
+
+
+def _check_hash_current(target: Path, expected: str) -> None:
+    """Check a deletion's expected hash without loading an arbitrarily large local file into memory."""
+    if target.is_symlink():
+        raise ConflictError(f"Refusing to use symbolic link {target.name}")
+    digest = hashlib.sha256()
+    try:
+        with target.open("rb") as file:
+            for chunk in iter(lambda: file.read(65536), b""):
+                digest.update(chunk)
+    except FileNotFoundError as error:
+        raise NotFoundError(f"No job file '{target.stem}'") from error
+    actual = digest.hexdigest()
+    if actual != expected:
+        error = ConflictError("Job file changed since it was read")
+        error.current_sha256 = actual  # type: ignore[attr-defined]  # response-only detail
+        raise error
 
 
 def _unique_path(directory: Path, suffix: str, *, prefix: str = "") -> Path:

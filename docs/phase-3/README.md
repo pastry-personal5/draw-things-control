@@ -41,10 +41,9 @@ typed tools on top of it.
   over gRPC, the same subscription that streams `draw-things-cli`'s own
   output into the TUI's `draw-things-cli` pane, live, since the TUI no
   longer runs it to read that output directly
-- Retiring direct execution everywhere but the server: `run-job` is removed,
+- Retiring direct chained jobs everywhere but the server: `run-job` is removed,
   and the TUI's `/apply` submits to the queue instead of running the job
-  itself. `dtc serve`'s worker becomes the only thing that ever invokes
-  `draw-things-cli`
+  itself. `dtc generate` remains a direct one-off command until Milestone 12
 - Parking a running job from the TUI and `dtc queue`: it ends once its
   current run finishes, keeps every run it finished, reads `parked`, and can
   be resumed at the next run. Parking holds the queue until a release, and
@@ -80,9 +79,8 @@ typed tools on top of it.
   file can express is allowed.
 - A background daemon manager (`serve start/stop`, launchd files). The server
   runs in the foreground.
-- Running a job directly from the CLI or the TUI, at all, whether or not a
-  server happens to be up (owner decision): `dtc serve`'s worker is the only
-  thing that ever invokes `draw-things-cli`. `run-job` is retired; `dtc
+- Running a chained job directly from the CLI or the TUI, whether or not a
+  server happens to be up (owner decision): `run-job` is retired; `dtc
   queue add [--wait]` and the TUI's `/apply` submit to the queue and
   require the server to be running. Resuming an execution recorded before
   this change, or any execution with no snapshot of its own.
@@ -110,11 +108,11 @@ typed tools on top of it.
 | 08 | [Video format and color](milestone-08-video-format-and-color.md) | done |
 | 09 | [Color preservation](milestone-09-color-preservation.md) | done |
 | 10 | [MCP server](milestone-10-mcp-server.md) | done |
-| 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
+| 11 | [Safety hardening](milestone-11-safety-hardening.md) | done |
 | 12 | [Generate through the queue](milestone-12-generate-through-the-queue.md) | planned |
 | 13 | [MCP over Streamable HTTP](milestone-13-mcp-over-http.md) | done |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestone 10 (2026-10-03); Milestone 11 is next. Milestone 13, appended after the others were planned, was built before it, at the owner's request (2026-10-03): `dtc mcp` over HTTP, for an agent in a virtual machine. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11, 12 (owner decisions):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestones 10 and 11 (2026-10-03); Milestone 12 is next. Milestone 13, appended after the others were planned, was built before 11, at the owner's request (2026-10-03): `dtc mcp` over HTTP, for an agent in a virtual machine. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11, 12 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -136,9 +134,11 @@ Milestone 09, left open until 2026-09-30, is color preservation (owner decision)
 11. Milestone 11 reviews the whole surface, `dtc queue` included, against
     the code as built, fixes what it finds (bare 500s for ordinary invalid
     jobs, a containment check that runs after the file is touched, caller
-    text in the audit log, documents that still say `run-job`), adds the
-    security suite that keeps those fixed, and checks the documents against
-    what was built.
+    text in the audit log, linked job and parameter files read before a
+    refusal, existing files parsed without a size limit, documents that
+    still say `run-job`), adds the security suite
+    that keeps those fixed, covers Milestone 13's Streamable HTTP MCP
+    listener, and checks the documents against what was built.
 12. Milestone 12 moves `dtc generate` onto the queue, so `dtc serve`'s worker
     is the only thing that ever starts `draw-things-cli`. Until then the
     documents name `dtc generate` as the exception (owner decision,
@@ -239,9 +239,9 @@ Decisions and notable changes are recorded in
   The row, its runs, its log, and its manifest go, its outputs stay. A
   running execution, or one a queued or running entry uses, is refused, and
   a deletion that ends a parked or failed entry's resume says so first.
-- `dtc serve`'s worker is the only thing that ever starts `draw-things-cli`;
-  `run-job` is retired, and the TUI never runs a job itself. Both require
-  the server to be up.
+- `dtc serve`'s worker starts queued jobs; `run-job` is retired, and the TUI
+  submits to the server. Until Milestone 12, `dtc generate` directly starts
+  one generation under the same run lock.
 - The server restarts without losing the queue: queued jobs run (once
   released, if the queue is held), interrupted jobs are marked, and an explicit resume continues one from its
   last succeeded run with the original seed, never from a run's leftover
@@ -251,9 +251,10 @@ Decisions and notable changes are recorded in
 - Invalid or out-of-bounds input (bad names, paths outside `data/jobs/`, the
   input directory, or the output directory, oversized jobs) is rejected with
   an error naming the field, and touches nothing.
-- No input of any caller makes the API answer HTTP 500, and every action,
-  refused ones and crashes included, leaves one audit row, whose target is
-  a name or an ID that passed its shape check, never raw caller text.
+- Malformed caller input receives a typed refusal; a server fault receives a
+  generic HTTP 500 `internal_error`. Authenticated writes and submissions,
+  refused ones and crashes included while the store is available, leave audit
+  rows with a known name or canonical ID or a null target, never raw caller text.
 - Write endpoints and tools do not exist unless the server was started with
   the write flag, and neither does the MCP tool that deletes executions.
 - Deleting or overwriting a job file is always recoverable from `.trash/` and

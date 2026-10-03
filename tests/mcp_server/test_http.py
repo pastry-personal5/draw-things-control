@@ -12,6 +12,7 @@ import unittest
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import httpx
 import httpx2
@@ -20,7 +21,7 @@ from mcp.client.streamable_http import streamable_http_client
 from typer.testing import CliRunner
 
 from draw_things_control.cli.app import app
-from draw_things_control.mcp_server.http import BearerAuth
+from draw_things_control.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBodyLimit, http_app
 from tests.mcp_server.test_process import PROJECT_ROOT, unused_port
 from tests.server.test_queue_routes import TOKEN
 
@@ -89,6 +90,34 @@ class BearerAuthTests(unittest.IsolatedAsyncioTestCase):
 
         await self.guard({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send)
         self.assertEqual(self.inner.scopes, ["lifespan"])
+
+    async def test_an_authenticated_oversized_body_is_refused_before_the_sdk(self) -> None:
+        guard = BearerAuth(McpBodyLimit(self.inner), self.token_file)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://test") as client:
+            response = await client.post("/mcp", content=b"x" * (MAX_HTTP_BODY_BYTES + 1), headers={"Authorization": f"Bearer {TOKEN}"})
+            self.assertEqual((response.status_code, response.json()["code"], response.json()["limit"]), (413, "limit_exceeded", MAX_HTTP_BODY_BYTES))
+            self.assertNotIn(TOKEN, response.text)
+            unauthorized = await client.post("/mcp", content=b"x" * (MAX_HTTP_BODY_BYTES + 1))
+            self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(self.inner.scopes, [])
+
+    async def test_a_streamed_mcp_body_is_bounded_without_content_length(self) -> None:
+        guard = BearerAuth(McpBodyLimit(self.inner), self.token_file)
+
+        async def chunks():
+            yield b"x" * (MAX_HTTP_BODY_BYTES - 1)
+            yield b"yz"
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://test") as client:
+            response = await client.post("/mcp", content=chunks(), headers={"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual((response.status_code, response.json()["value"]), (413, MAX_HTTP_BODY_BYTES + 1))
+        self.assertEqual(self.inner.scopes, [])
+
+    async def test_the_sdk_uses_the_same_eight_mib_limit_as_the_listener(self) -> None:
+        server = Mock()
+        server.streamable_http_app.return_value = self.inner
+        http_app(server, self.token_file, "127.0.0.1")
+        self.assertEqual(server.streamable_http_app.call_args.kwargs["max_request_body_size"], MAX_HTTP_BODY_BYTES)
 
 
 class HttpProcessCase(unittest.IsolatedAsyncioTestCase):

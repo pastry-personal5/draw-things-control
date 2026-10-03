@@ -25,5 +25,5 @@ def resolve_job_reference(catalog: JobCatalog, name: str) -> Path:
 
 def listing_rows(listing: JobListing) -> list[JobRow]:
     """``listing.rows``, each symbolic link replaced with an invalid row naming it one, never its followed-through
-    content (``JobCatalog`` itself follows a symbolic link to read and validate it, as ``Path.is_file()`` does)."""
+    content (the catalog also refuses it before reading or taking its signature)."""
     return [replace(row, job=None, error=f"{row.path.name} {SYMLINK_MESSAGE}", error_field=None) if row.path.is_symlink() else row for row in listing.rows]

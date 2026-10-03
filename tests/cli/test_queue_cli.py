@@ -60,6 +60,12 @@ class FakeMonitorStub:
 
 
 class QueueCliTests(JobTestCase):
+    def test_an_id_with_a_path_separator_is_refused_before_a_request(self) -> None:
+        self.route(lambda request: httpx.Response(200, json={}))
+        result = self.invoke("show", "Q0001/watch")
+        self.assertEqual(result.exit_code, 2)
+        self.assertEqual(self.requests, [])
+
     def setUp(self) -> None:
         super().setUp()
         self.runner = CliRunner()

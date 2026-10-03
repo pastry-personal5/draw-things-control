@@ -10,9 +10,9 @@ from pathlib import Path
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.cooldown import CooldownPolicy, parse_cooldown
 from draw_things_control.core.draw_things_config import find_config_file
-from draw_things_control.core.errors import InputError
+from draw_things_control.core.errors import DtcError, InputError
 from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.yaml_files import read_yaml_file
+from draw_things_control.core.yaml_files import read_bounded_bytes, read_yaml_file
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.parsing import load_job_text
 from draw_things_control.state.executions import ExecutionSettings
@@ -41,7 +41,12 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     ``submitted_by`` is the request's caller, which the entry records (Milestone 10).
     """
     path = job_path.expanduser().resolve()
-    _data, job_text = read_yaml_file(path, "Job file", show_source=True)
+    try:
+        _data, job_text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
+    except ValueError as error:
+        if isinstance(error, InputError):
+            raise
+        raise InputError(f"{path}: {error}", path=path) from error
     # First parsed from disk, to learn the base configuration's name. The input is not decoded yet: before_submit's
     # rules (the input inside the input directory among them) refuse a job before any image it names is decoded.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=False)
@@ -50,8 +55,11 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     try:
         # A plain ValueError (a bad name) or OSError (removed, or unreadable, between the two reads) is wrapped:
         # every refusal here is an InputError, as load_job_text's own base-config reads already are.
-        config_text = find_config_file(job.config_file, params_directory).read_text(encoding="utf-8")
+        config_path = find_config_file(job.config_file, params_directory)
+        config_text = read_bounded_bytes(config_path, max(1048576, global_config.api_limits.max_job_file_bytes), "Configuration", key="config_file").decode("utf-8")
     except (ValueError, OSError) as error:
+        if isinstance(error, DtcError):
+            raise
         raise InputError(f"{path}: {error}") from error
     # Re-parsed from the exact text about to be stored, so a base configuration edited between the two reads above
     # cannot be captured half-written: what is stored is validated in the form it is stored, the input decoded

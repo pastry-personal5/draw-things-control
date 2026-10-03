@@ -38,7 +38,7 @@ class AuditRepository:
         with self._database.transaction() as connection:
             cursor = connection.execute(
                 "INSERT INTO audit_log (at, at_epoch, action, target, outcome, caller) VALUES (?, ?, ?, ?, ?, ?)",
-                (at, epoch(at), action, target, outcome, caller),
+                (at, epoch(at), action, target[:256] if target is not None else None, outcome, caller),
             )
             row = connection.execute("SELECT * FROM audit_log WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return AuditRow.from_row(row)

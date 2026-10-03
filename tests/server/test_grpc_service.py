@@ -5,14 +5,18 @@ client is a real grpc.aio channel, not a network socket in the sense of anything
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 import unittest
 from collections.abc import Callable
 from datetime import datetime
 
 import grpc
 import grpc.aio
+import httpx
 
 from draw_things_control.jobs.executor import JobExecutor
+from draw_things_control.server.app import create_app
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.generated import monitor_pb2, monitor_pb2_grpc
 from draw_things_control.server.grpc_auth import TokenAuthInterceptor
@@ -164,6 +168,33 @@ class WatchEventsTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase):
 
 
 class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase):
+    async def test_a_slow_snapshot_does_not_stall_http_health(self) -> None:
+        entry = self.submit()
+        entered = threading.Event()
+        release = threading.Event()
+
+        def block_snapshot(_entry_id: int) -> None:
+            entered.set()
+            release.wait(2)
+
+        self.worker.on_park_read = block_snapshot
+        fallback = threading.Timer(2, release.set)
+        fallback.start()
+        call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
+        start = time.monotonic()
+        reading = asyncio.create_task(call.read())
+        try:
+            self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(self.context)), base_url="http://127.0.0.1:8766") as client:
+                response = await asyncio.wait_for(client.get("/v1/health"), timeout=1)
+                self.assertEqual(response.status_code, 200)
+                self.assertLess(time.monotonic() - start, 1)
+        finally:
+            release.set()
+            fallback.cancel()
+            await asyncio.wait_for(reading, timeout=2)
+            call.cancel()
+
     async def test_an_unknown_entry_ends_not_found(self) -> None:
         with self.assertRaises(grpc.aio.AioRpcError) as caught:
             async for _snapshot in self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id="Q9999"), metadata=self.auth()):

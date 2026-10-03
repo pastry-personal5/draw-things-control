@@ -10,9 +10,10 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from draw_things_control.server import routes_audit, routes_executions, routes_health, routes_inputs, routes_job_files, routes_jobs, routes_queue
+from draw_things_control.server.body_limit import BodyLimit
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.dependencies import require_auth
-from draw_things_control.server.errors import install_error_handler
+from draw_things_control.server.errors import UnexpectedErrorBoundary, install_error_handler
 from draw_things_control.server.host_check import host_header_is_allowed
 
 
@@ -23,6 +24,8 @@ def create_app(context: ServerContext) -> FastAPI:
     app.state.context = context
     install_error_handler(app)
     _install_host_check(app, context)
+    app.add_middleware(BodyLimit, context=context)
+    app.add_middleware(UnexpectedErrorBoundary)
     for router in (routes_health.health_router, routes_health.capabilities_router, routes_jobs.router, routes_job_files.validation_router, routes_inputs.router, routes_executions.router, routes_audit.router, routes_queue.router):
         app.include_router(router)
     if context.allow_write:
