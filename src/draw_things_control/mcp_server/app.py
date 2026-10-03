@@ -1,4 +1,4 @@
-"""``dtc mcp`` (Milestone 10): an MCP server on stdio whose tools and resources call ``dtc serve``'s HTTP API and
+"""``dtc mcp`` (Milestone 10): an MCP server on stdio, or, from Milestone 13, on Streamable HTTP (``http.py``), whose tools and resources call ``dtc serve``'s HTTP API and
 nothing else. Built on the SDK's low-level ``Server``, not ``MCPServer``: the tools need input schemas written with the
 API's names, a list that changes at runtime, and error results that carry the API's error shape as structured
 content. ``build_server`` is what the tests call; ``run`` is what ``cli/app.py`` calls."""
@@ -29,6 +29,8 @@ from mcp.shared.exceptions import MCPError
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from draw_things_control.mcp_server.api import ApiClient, ToolError, path_segment
+from draw_things_control.mcp_server.http import BindError as BindError  # re-exported: cli/app.py may import this module alone
+from draw_things_control.mcp_server.http import serve_http
 from draw_things_control.mcp_server.tools import TOOLS, Tool, check_arguments, listed_tools
 from draw_things_control.mcp_server.watch import WaitTimes, wait_for_change
 
@@ -269,3 +271,12 @@ async def _serve_stdio(server_url: str, token_path: Path) -> None:
     server = build_server(server_url, token_path)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
+
+
+def run_http(server_url: str, token_path: Path, host: str, port: int) -> None:
+    """Serve MCP over Streamable HTTP at ``http://host:port/mcp`` until a signal stops it; ``BindError`` when the address cannot be bound."""
+    anyio.run(_serve_http, server_url, token_path, host, port)
+
+
+async def _serve_http(server_url: str, token_path: Path, host: str, port: int) -> None:
+    await serve_http(build_server(server_url, token_path), token_path, host, port)

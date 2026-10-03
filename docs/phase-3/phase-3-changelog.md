@@ -5,6 +5,58 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-03
 
+- **Owner decision** [M13]: `openclaw mcp add ... --url http://192.168.64.1:8765 --transport sse` failed because that port is the REST API, not an MCP endpoint, and `dtc mcp` was stdio alone. The owner's OpenClaw runs in a virtual machine (a UTM guest on the `192.168.64.1` bridge), where a stdio command on this machine cannot be started, so the owner chose a Streamable HTTP transport for `dtc mcp` (recommended). The alternatives: starting `dtc mcp` through `ssh` from the guest (no code, but it needs Remote Login and a key in the guest), or, for an OpenClaw on this machine, registering the stdio command.
+- **Design decision** [M13]: The transport is the SDK's Streamable HTTP, not the older SSE one: OpenClaw and the SDK both speak it, and the SSE transport is deprecated in the protocol. Its auth is the server's own token, checked by a small ASGI wrapper that reads the token file for each request, not the SDK's OAuth `token_verifier`, which also serves OAuth discovery routes nothing here uses, and not a second token, which would be one more secret to leak and rotate. A listener beyond loopback stays behind `--allow-remote-bind`, as `dtc serve`'s is, and the `Host` and `Origin` check is the SDK's on a loopback bind alone, since the clients' addresses are not known beyond it and the token is what keeps a caller out.
+- **Change** [M13]: `dtc mcp --transport streamable-http [--host H] [--port P] [--allow-remote-bind]` serves the same tools and resources at `http://H:P/mcp` (default `127.0.0.1:8767`); stdio stays the default and is unchanged. `run-mcp-server.sh` starts it for the virtual machine. See [Milestone 13](milestone-13-mcp-over-http.md).
+
+- **Owner decision** [M11]: From an interview on the re-planned Milestone 11:
+  - The rule that `input` and `output.directory` stay inside their directories lives in `JobParser`, for every consumer
+    (recommended), checked before any file is opened, listed, or stat-ed. `dtc validate-job` and the TUI's job list then
+    show an outside job as invalid, as it can no longer run since Milestone 03. Only in the API's services, with the
+    CLI and the TUI still reading any path, was the alternative.
+  - `dtc generate` goes through the queue, in a new Milestone 12 that is not planned yet: it has no job file to
+    snapshot, so it needs a design of its own (a stub, `milestone-12-generate-through-the-queue.md`, lists the open
+    questions, and the phase document lists the milestone). Keeping it as the one documented exception was
+    recommended, and retiring it the other alternative. Until Milestone 12 is built, Milestone 11 documents it as the exception to "only the
+    worker starts `draw-things-cli`".
+  - gRPC and SSE both stay for good: the TUI and `dtc queue add --wait` keep gRPC, and MCP keeps SSE. This settles
+    the question Milestone 10 left for after it, so Milestone 11 hardens both transports. Deferring the question to a
+    Milestone 12 was recommended, and retiring gRPC first the other alternative.
+- **Change** [M11]: Milestone 11 is re-planned from a review of the code as built, which found that its own acceptance
+  criteria fail today. It is now four increments, each ending with `make check` and a code review: A, typed errors and a
+  record of every refusal; B, confinement before access, and what the audit log may hold; C, the rest of the review and
+  the security suite; D, documentation. Reproduced through the real app on a throwaway project: an ordinary invalid job
+  (a YAML syntax error, an empty file, a duplicate key, an octal number, an input image of the wrong size or not an
+  image, NUL in a path) answers a bare HTTP 500 from `POST /v1/validate`, `PUT /v1/jobs/{name}`, and `POST /v1/queue`,
+  so `dtc queue add`, the TUI, and MCP show "Internal Server Error"; a 500 leaves no audit row; a path outside the input
+  directory is opened (its header read) before the rule refuses it, and is answered three different ways, which tells a
+  caller whether a path exists and how large an image is; the audit log's `target` stores the caller's text as sent (5 MB
+  of it was kept); and `POST /v1/queue` has no body limit. Read from the code, to be confirmed by the first test of each
+  fix: the same plain `ValueError` makes `GET /v1/queue/{id}` and a resume answer 500 once a person replaces a queued
+  job's input image; blocking work runs on the one event loop that serves HTTP, SSE, and gRPC; and Loguru's default
+  `diagnose=True` prints variable values in tracebacks. The README, the user guide, and the architecture still tell
+  people to run `run-job`. The plan lists each finding (F1 to F12), its fix, and the findings accepted as they are.
+- **Design decision** [M11]: A plain `ValueError` from a job's text becomes an `InputError` where the text is parsed (the
+  three entry points of `jobs/parsing.py`), not at each route. Rejected: a `ValueError` handler in the app (it would
+  relabel real bugs as 422 and leave no audit row), a wrapper in each route (it misses the resume and preview paths, and
+  the next route written), and converting the roughly forty `raise ValueError` sites in `core/` and `jobs/inputs/` (the
+  CLI relies on their contract and messages, for no gain over one choke point). Any other exception is answered
+  `500 {"code": "internal_error"}` and audited.
+- **Design decision** [M11]: The first plan asked every rule to be tested through the API, MCP, `dtc queue add`, and the
+  TUI's `/queue add`. The rules live only in the API, so that would test the API four times and the pass-through
+  incidentally. Each rule gets one boundary test where it is enforced; each front end proves what it owns: its caller
+  header, its URL and ID checks, its token handling, and that an API refusal reaches the person or agent intact.
+- **Design decision** [M11]: The audit log records a `target` only once it is known: a job file's name once the
+  reference resolves, an ID in canonical form once it parses, null otherwise, with `outcome` saying what happened.
+  Rejected: a bounded prefix of what was sent, since caller text has no place in that column. Rows already written are
+  not rewritten.
+- **Design decision** [M11]: Accepted as they are, each recorded with its reason in the plan: a loopback `Host` on any
+  port (an SSH tunnel on another local port needs it; only a non-browser client can send one); `GET /v1/health` without
+  a token (liveness, and where clients find the gRPC port); growth a token holder can cause (`.backups/`, `.trash/`, job
+  files, the audit log, open watches), each write being bounded; the unauthenticated 405 (registering the write routes
+  always, to check the token first, contradicts "write endpoints do not exist while writes are off"); and that the `mcp`
+  caller names itself, so an agent that can read `config/server-token` can call the API as anyone (Milestone 10's owner
+  decisions stand; the user guide will say it plainly).
 - **Change** [M10]: Milestone 10 done. `dtc mcp` serves typed tools and the job files as resources over `dtc serve`'s
   API alone, on stdio: the read, run, and queue control tools always, and the write tools (`create_job`, `replace_job`,
   `delete_job`, `delete_executions`) while writes are on, with a list-changed notification in each protocol era;

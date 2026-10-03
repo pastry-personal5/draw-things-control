@@ -3,6 +3,7 @@
 `draw-things-control` is built for long-horizon video generation by autoregressive image-to-video chaining, with the Draw Things app doing the generating underneath.
 
 - [User guide](user-guide.md): using the CLI and the terminal UI
+- [Testing the API with curl](user-guide-for-http-based-mcp.md): exercising the HTTP API that `dtc mcp`'s tools call, by hand
 - [Architecture](architecture.md): modules, process supervision, exit codes
 - [Development rules](development-rules.md): style, checks, documentation, git
 - Plans and decisions, by phase:

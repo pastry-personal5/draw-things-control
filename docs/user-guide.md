@@ -72,7 +72,7 @@ different file.
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
 | `queue` | Submit, list, cancel, resume, park, and hold queue entries through `dtc serve` |
 | `history delete` | Delete executions from the history through `dtc serve` |
-| `mcp` | Give AI agents typed tools over `dtc serve`'s API, as an MCP server on stdio |
+| `mcp` | Give AI agents typed tools over `dtc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
 
@@ -1210,7 +1210,7 @@ runs on, and when it waits behind a hold; an entry that parks prints
 
 ## AI agents over MCP
 
-`dtc mcp` is an MCP server on stdio that gives an AI agent typed tools over
+`dtc mcp` is an MCP server, on stdio or over Streamable HTTP, that gives an AI agent typed tools over
 `dtc serve`'s API, so the agent can draft, create, queue, watch, cancel, and
 resume a long chain without knowing HTTP. It is a client of the API, as
 `dtc queue` is: it runs nothing itself, and `dtc serve` stays the only process
@@ -1244,6 +1244,54 @@ client started from anywhere else, give the project's directory:
   }
 }
 ```
+
+**Over HTTP, for a client that cannot start it.** A client in a virtual machine,
+such as OpenClaw, cannot start `dtc mcp` here, and `dtc serve`'s port is the
+REST API, not an MCP endpoint: a client's `--url` pointed at it gets a 404 for
+`/`, `/sse`, and `/mcp`. Run `dtc mcp` as a listener instead (`./run-mcp-server.sh`
+does this for the `192.168.64.1` bridge):
+
+```bash
+uv run dtc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bind --server-url http://192.168.64.1:8765 --allow-remote-server
+```
+
+It serves the same tools and resources at `http://HOST:PORT/mcp` (`--port`
+default 8767; `--host` default `127.0.0.1`). Every request must carry the
+server token, the text of `config/server-token`, as `Authorization: Bearer
+TOKEN`; any other is 401, and the token is read again for each request, so a
+regenerated one counts at once. A `--host` beyond loopback is refused (exit 2)
+without `--allow-remote-bind`, and then the token crosses the network in plain
+HTTP, as `dtc serve --allow-remote-bind` warns; an SSH tunnel is the safer way
+in from elsewhere. `--host`, `--port`, and `--allow-remote-bind` with the default
+`--transport stdio` are refused, not ignored. Register it in the client with
+the URL, the transport `streamable-http` (not `sse`), and the header; for
+OpenClaw:
+
+```bash
+#!/usr/bin/env bash
+
+if [[ -z "${TOKEN:-}" ]]; then
+  echo "Set the server token from draw-things-control (config/server-token) as a shell variable TOKEN."
+  exit 1
+fi
+
+openclaw mcp add draw-things-control-mcp \
+  --url http://192.168.64.1:8767/mcp \
+  --transport streamable-http \
+  --header "Authorization=Bearer ${TOKEN}" \
+  --timeout 1600
+openclaw mcp probe draw-things-control-mcp
+```
+
+`--timeout 1600` is OpenClaw's per-request timeout, 60 seconds by default, which
+would end a `get_queue_entry` wait of more than 50 seconds (see
+"Waiting for a change" below); 1600 covers a wait of up to the 1500
+seconds `dtc mcp` allows a client that sends no progress token.
+
+`openclaw mcp add` connects before it saves, so a wrong URL, transport, or token
+saves nothing and says why. It writes the header, token included, to
+`openclaw.json` in the clear; OpenClaw's configuration documents `${VAR}` in a
+header value, `Bearer ${MCP_REMOTE_TOKEN}`, as the way to keep it out.
 
 **Tools.** Each calls one API endpoint, with the API's argument names and
 bounds, and returns the API's JSON as it is: as structured content, and the

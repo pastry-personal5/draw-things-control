@@ -39,7 +39,7 @@ src/draw_things_control/
 ├── cli/         # Typer app: the `dtc` command
 ├── tui/         # Textual app: screens, panes/, text/, the command controller
 ├── server/      # HTTP API; its queue worker is in services/        (phase 3)
-└── mcp_server/  # MCP server: typed tools over the HTTP API, its SSE watch included (phase 3)
+└── mcp_server/  # MCP server: typed tools over the HTTP API, its SSE watch included, on stdio or Streamable HTTP (phase 3)
 tests/           # mirrors the package: tests/core, tests/jobs, tests/state, tests/services, ...
 ```
 
@@ -89,7 +89,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
 | `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
 | `server/` (phase 3) | `dtc serve`'s FastAPI app, its SSE watch of a queue entry, and the gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) and [Milestone 10](#milestone-10-mcp-server-done) |
-| `mcp_server/` (phase 3) | `dtc mcp`: the MCP server's tools, resources, and wait, over the HTTP API alone; see [Milestone 10](#milestone-10-mcp-server-done) |
+| `mcp_server/` (phase 3) | `dtc mcp`: the MCP server's tools, resources, and wait, over the HTTP API alone, on stdio or Streamable HTTP; see [Milestone 10](#milestone-10-mcp-server-done) and [Milestone 13](#milestone-13-mcp-over-streamable-http-done) |
 | `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `import-history`, `tui`, `serve`, `mcp`, and the `queue` and `history` groups) and `CliServices` in Typer's context |
 
 Services receive their runner and executable lookup as dependencies, so tests
@@ -517,6 +517,19 @@ Adds what every later front end needs, without changing the CLI's behavior.
     Progress every 15 seconds, at most 1500 seconds without a progress token, and 60 seconds of silence (the stream's
     read timeout) count as a dropped watch (`WaitTimes`, which tests shorten). A cancelled call cancels the stream.
 - **Registration.** `.mcp.json` at the project root registers `uv run dtc mcp` with Claude Code.
+
+### Milestone 13: MCP over Streamable HTTP (done)
+
+- **Why.** `dtc mcp` was stdio alone, so a client that cannot start it here (OpenClaw in a virtual machine) had no way
+  in: `dtc serve`'s port is the REST API, 404 for every path but `/v1/...`.
+- **`mcp_server/http.py`.** `http_app` is the SDK's `Server.streamable_http_app` (`/mcp`) behind `BearerAuth`, a pure
+  ASGI check of `Authorization: Bearer` against the token file, read for each request and compared with
+  `hmac.compare_digest`; every other request is 401 `unauthorized` with no reason (an unreadable file is logged, not
+  answered). `serve_http` binds the socket itself (`BindError` for a taken port, which `cli/app.py` makes exit 2) and
+  runs uvicorn with `ws="none"`. The SDK's `Host` and `Origin` check stays on a loopback bind and is off beyond it.
+- **Sessions.** The SDK's default, stateful sessions (`Mcp-Session-Id`).
+- **`cli/app.py`.** `dtc mcp` takes `--transport`, `--host`, `--port`, and `--allow-remote-bind`; `mcp_server.app`
+  gains `run_http` and re-exports `BindError`, the only names `cli/app.py` imports beyond `run`.
 
 ### Milestones 3 onward (planned)
 

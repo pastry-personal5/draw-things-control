@@ -18,9 +18,11 @@ from draw_things_control.cli.history_app import history_app
 from draw_things_control.cli.queue_app import queue_app
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host
 from draw_things_control.core.draw_things_config import load_config
+from draw_things_control.core.errors import InputError
 from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
 from draw_things_control.core.generation import GenerateRequest
 from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.network import is_loopback_host
 from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
 from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
@@ -239,25 +241,54 @@ def serve_command(
         run_server(services.paths, settings, services.toolkit, options)
 
 
+MCP_TRANSPORTS = ("stdio", "streamable-http")
+DEFAULT_MCP_PORT = 8767
+
+
 @app.command("mcp")
 def mcp_command(
     ctx: typer.Context,
     server_url: ServerUrlOption = DEFAULT_SERVER_URL,
     token_file: TokenFileOption = None,
     allow_remote_server: AllowRemoteServerOption = False,
+    transport: Annotated[str, typer.Option(help="stdio, for a client that starts this command, or streamable-http, which listens at http://HOST:PORT/mcp for a client that cannot, such as an agent in a virtual machine.")] = "stdio",
+    host: Annotated[str | None, typer.Option(help="Address to listen on, with --transport streamable-http; default 127.0.0.1, and refused unless loopback or --allow-remote-bind is given.")] = None,
+    port: Annotated[int | None, typer.Option(help=f"Port to listen on, with --transport streamable-http; default {DEFAULT_MCP_PORT}.")] = None,
+    allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
 ) -> None:
-    """Run an MCP server on stdio that gives AI agents typed tools over dtc serve's API. It starts whether or not
-    dtc serve is up, reads the token at the first call, and acts only through the API."""
+    """Run an MCP server that gives AI agents typed tools over dtc serve's API: on stdio, or over Streamable HTTP, where
+    every request needs the server token as a bearer token. It starts whether or not dtc serve is up, reads the token at
+    the first call, and acts only through the API."""
     services = services_of(ctx)
     with errors_exit():
+        if transport not in MCP_TRANSPORTS:
+            raise InputError(f"--transport {transport} is not one of {', '.join(MCP_TRANSPORTS)}", field="transport")
+        if transport == "stdio" and (host is not None or port is not None or allow_remote_bind):
+            raise InputError("--host, --port, and --allow-remote-bind apply only with --transport streamable-http", field="transport")
+        listen_host = host or "127.0.0.1"
+        if transport == "streamable-http" and not allow_remote_bind and not is_loopback_host(listen_host):
+            raise InputError(f"--host {listen_host} is not loopback; pass --allow-remote-bind to bind beyond it (the token then crosses the network in plain HTTP)", field="host")
         check_server_host(server_url, allow_remote_server=allow_remote_server)
     # Imported here, so the other commands do not load the MCP SDK.
+    from draw_things_control.mcp_server.app import BindError
     from draw_things_control.mcp_server.app import run as run_mcp
+    from draw_things_control.mcp_server.app import run_http as run_mcp_http
 
-    # Stdout carries the protocol and nothing else: main()'s sinks send child output there, so only stderr remains.
+    # Stdout carries the protocol over stdio and nothing else: main()'s sinks send child output there, so only stderr remains.
     logger.remove()
     logger.add(sys.stderr, format="{message}", level="INFO", colorize=False)
-    run_mcp(server_url, token_file or services.paths.server_token)
+    token_path = token_file or services.paths.server_token
+    if transport == "stdio":
+        run_mcp(server_url, token_path)
+        return
+    listen_port = DEFAULT_MCP_PORT if port is None else port
+    if allow_remote_bind:
+        logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
+    with errors_exit():
+        try:
+            run_mcp_http(server_url, token_path, listen_host, listen_port)
+        except BindError as error:
+            raise InputError(str(error), field="port") from error
 
 
 def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:

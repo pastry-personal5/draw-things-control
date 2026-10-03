@@ -111,8 +111,10 @@ typed tools on top of it.
 | 09 | [Color preservation](milestone-09-color-preservation.md) | done |
 | 10 | [MCP server](milestone-10-mcp-server.md) | done |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
+| 12 | [Generate through the queue](milestone-12-generate-through-the-queue.md) | planned |
+| 13 | [MCP over Streamable HTTP](milestone-13-mcp-over-http.md) | done |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestone 10 (2026-10-03); Milestone 11 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestone 10 (2026-10-03); Milestone 11 is next. Milestone 13, appended after the others were planned, was built before it, at the owner's request (2026-10-03): `dtc mcp` over HTTP, for an agent in a virtual machine. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11, 12 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already
@@ -131,8 +133,16 @@ Milestone 09, left open until 2026-09-30, is color preservation (owner decision)
    a job asks.
 9. Milestone 07 lets agents validate, create, guardedly replace, and recoverably delete jobs.
 10. Milestone 10 adds MCP.
-11. Milestone 11 reviews the whole surface, `dtc queue` included, adds the
-    security suite, and closes any gaps it finds.
+11. Milestone 11 reviews the whole surface, `dtc queue` included, against
+    the code as built, fixes what it finds (bare 500s for ordinary invalid
+    jobs, a containment check that runs after the file is touched, caller
+    text in the audit log, documents that still say `run-job`), adds the
+    security suite that keeps those fixed, and checks the documents against
+    what was built.
+12. Milestone 12 moves `dtc generate` onto the queue, so `dtc serve`'s worker
+    is the only thing that ever starts `draw-things-cli`. Until then the
+    documents name `dtc generate` as the exception (owner decision,
+    2026-10-03). It is named here and not yet designed.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before
 anything can be submitted or written. Each milestone documents what it adds
@@ -241,6 +251,9 @@ Decisions and notable changes are recorded in
 - Invalid or out-of-bounds input (bad names, paths outside `data/jobs/`, the
   input directory, or the output directory, oversized jobs) is rejected with
   an error naming the field, and touches nothing.
+- No input of any caller makes the API answer HTTP 500, and every action,
+  refused ones and crashes included, leaves one audit row, whose target is
+  a name or an ID that passed its shape check, never raw caller text.
 - Write endpoints and tools do not exist unless the server was started with
   the write flag, and neither does the MCP tool that deletes executions.
 - Deleting or overwriting a job file is always recoverable from `.trash/` and
