@@ -1,12 +1,21 @@
 """``POST /v1/queue``, ``GET /v1/queue``, ``GET /v1/queue/{queue_id}``, ``POST /v1/queue/{queue_id}/cancel``,
 ``POST /v1/queue/{queue_id}/resume``, and, from Milestone 05, ``POST /v1/queue/{queue_id}/park`` and ``/unpark``, and
-``POST /v1/queue/hold`` and ``/release``. Each POST writes one audit log entry, refusals included."""
+``POST /v1/queue/hold`` and ``/release``. Each POST writes one audit log entry, refusals included. From Milestone 10,
+``GET /v1/queue/{queue_id}/watch``, ``WatchQueueEntry``'s snapshots over SSE; and each action passes the request's
+caller on, which an entry records as its submitter and the hold as its maker, and which keeps an agent off what a
+person started (``services/queue_callers.py``)."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Header
+from fastapi.concurrency import run_in_threadpool
+from fastapi.sse import EventSourceResponse, format_sse_event
 
 from draw_things_control.core.errors import NotFoundError
 from draw_things_control.jobs.definition import JobDefinition
@@ -14,6 +23,7 @@ from draw_things_control.server.audit import audited
 from draw_things_control.server.caller import audit_caller
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.dependencies import Page, get_context, get_page, require_auth
+from draw_things_control.server.entry_snapshot import entry_snapshot, run_progress, snapshot_changed
 from draw_things_control.server.job_reference import resolve_job_reference
 from draw_things_control.server.pagination import next_cursor
 from draw_things_control.server.serializers import queue_entry, queue_hold
@@ -30,6 +40,8 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 # String values, for a plain membership check against the ?state= query parameter, which is not validated against
 # QueueState (an unknown value has always just matched nothing, in list() as in list_finished() below).
 _FINISHED_STATE_VALUES = frozenset(str(state) for state in FINISHED_STATES)
+SNAPSHOT_EVENT = "snapshot"
+KEEPALIVE_COMMENT = format_sse_event(comment="keep-alive")
 
 
 @dataclass
@@ -54,7 +66,7 @@ def post_queue(body: SubmitBody, context: ServerContext = Depends(get_context), 
         # it publishes, go through the worker's own enqueue: it runs both under the same lock the worker's claim
         # loop takes, so a client watching events can never see this entry's 'running' before its own 'queued'.
         with context.submission_lock:
-            entry = submit_job(path, context.global_config, context.paths.params, context.store, before_submit=before_submit, enqueue=context.worker.enqueue)
+            entry = submit_job(path, context.global_config, context.paths.params, context.store, before_submit=before_submit, enqueue=context.worker.enqueue, submitted_by=caller)
     return queue_entry(entry)
 
 
@@ -83,6 +95,35 @@ def get_queue_entry(queue_id: str, context: ServerContext = Depends(get_context)
     return _entry_detail(context, _find_entry(context, queue_id))
 
 
+@router.get("/v1/queue/{queue_id}/watch")
+async def watch_queue_entry(queue_id: str, context: ServerContext = Depends(get_context)) -> EventSourceResponse:
+    """``WatchQueueEntry`` over SSE (Milestone 10), for clients that speak HTTP alone: ``event: snapshot`` with the
+    current snapshot first, then one whenever a field it names changes, and a ``: keep-alive`` comment after
+    ``watch_keepalive_seconds`` without one. An unknown entry is 404 before the stream starts. The stream ends when
+    the client disconnects, the entry is gone, or the server begins to shut down. No event IDs: a client that
+    reconnects gets a new baseline."""
+    entry = await run_in_threadpool(_find_entry, context, queue_id)
+    # The headers FastAPI's own SSE routes set: no cache, and no buffering in a proxy such as nginx.
+    return EventSourceResponse(_watch_stream(context, entry.id), headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _watch_stream(context: ServerContext, entry_id: int) -> AsyncIterator[bytes]:
+    last: dict[str, object] | None = None
+    quiet_since = time.monotonic()
+    while not context.stopping.is_set():
+        # Off the event loop: the snapshot takes the worker's lock, which a deletion can hold a while.
+        snapshot = await run_in_threadpool(entry_snapshot, context, entry_id)
+        if snapshot is None:
+            return
+        if snapshot_changed(last, snapshot):
+            yield format_sse_event(data_str=json.dumps(snapshot), event=SNAPSHOT_EVENT)
+            last, quiet_since = snapshot, time.monotonic()
+        elif time.monotonic() - quiet_since >= context.watch_keepalive_seconds:
+            yield KEEPALIVE_COMMENT
+            quiet_since = time.monotonic()
+        await asyncio.sleep(context.watch_poll_seconds)
+
+
 def _entry(context: ServerContext, entry: QueueRow) -> dict[str, object]:
     """An entry, with the worker's park reservation, which is kept in memory, not in the row."""
     return queue_entry(entry, park_requested=context.worker.park_requested(entry.id))
@@ -95,17 +136,12 @@ def _entry_detail(context: ServerContext, entry: QueueRow) -> dict[str, object]:
     and the hold its effect."""
     preview = preview_resume(context.store, entry, context.global_config, context.paths.params)
     is_current = context.worker.current_entry_id() == entry.id
-    current_run = context.worker.current_run() if is_current else None
-    current_step = context.worker.current_step() if is_current else None
     return {
         **_entry(context, entry),
-        "current_run": current_run[0] if current_run is not None else None,
-        "current_run_elapsed_seconds": current_run[1] if current_run is not None else None,
-        "current_step": current_step[0] if current_step is not None else None,
-        "current_step_total": current_step[1] if current_step is not None else None,
+        # The current run and step, and cooldown_until, as a watch's snapshot carries them.
+        **run_progress(context, entry.id),
         "between_runs_after_run": context.worker.between_runs_after() if is_current else None,
         "last_run_seconds": _last_run_seconds(context, entry),
-        "cooldown_until": context.worker.cooldown_until(),
         **queue_hold(context.worker.hold_state()),
         "resumable": preview.resumable,
         "resume_from_run": preview.from_run,
@@ -129,7 +165,7 @@ def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_
         entry = _find_entry(context, queue_id)
         # cancel_entry publishes the change itself either way: through worker.cancel_queued for a queued entry, or
         # the worker's own finish (from cancel_running stopping it) for a running one.
-        cancel_entry(context.store, context.worker, entry.id)
+        cancel_entry(context.store, context.worker, entry.id, caller=caller)
         updated = _find_entry(context, queue_id)
     return _entry(context, updated)
 
@@ -142,18 +178,19 @@ def post_hold(context: ServerContext = Depends(get_context), x_dtc_caller: str |
     with audited(context.store, action="hold", target=None, caller=caller):
         if caller_error is not None:
             raise caller_error
-        changed, hold = context.worker.hold()
+        changed, hold = context.worker.hold(caller)
     return {**queue_hold(hold), "changed": changed}
 
 
 @router.post("/v1/queue/release")
 def post_release(context: ServerContext = Depends(get_context), x_dtc_caller: str | None = Header(default=None, alias="X-Dtc-Caller")) -> dict[str, object]:
-    """End the hold: the oldest queued entry starts at once. ``changed`` is False when the queue was not held."""
+    """End the hold: the oldest queued entry starts at once. ``changed`` is False when the queue was not held. An agent
+    may release only a hold an agent made (Milestone 10)."""
     caller, caller_error = audit_caller(x_dtc_caller)
     with audited(context.store, action="release", target=None, caller=caller):
         if caller_error is not None:
             raise caller_error
-        changed, hold = context.worker.release()
+        changed, hold = context.worker.release(caller)
     return {**queue_hold(hold), "changed": changed}
 
 
@@ -165,7 +202,7 @@ def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_dt
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
-        park_entry(context.store, context.worker, entry.id)
+        park_entry(context.store, context.worker, entry.id, caller=caller)
         updated = _find_entry(context, queue_id)
     return _entry_detail(context, updated)
 
@@ -178,7 +215,7 @@ def post_unpark(queue_id: str, context: ServerContext = Depends(get_context), x_
         if caller_error is not None:
             raise caller_error
         entry = _find_entry(context, queue_id)
-        unpark_entry(context.store, context.worker, entry.id)
+        unpark_entry(context.store, context.worker, entry.id, caller=caller)
         updated = _find_entry(context, queue_id)
     return _entry_detail(context, updated)
 
@@ -197,7 +234,7 @@ def post_resume(queue_id: str, context: ServerContext = Depends(get_context), x_
         # post_queue holds it: closes the same race on max_queued_jobs for a resume. The insert and its 'queued'
         # event go through the worker's own enqueue, for the same event-ordering reason post_queue uses it.
         with context.submission_lock:
-            resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit, enqueue=context.worker.enqueue)
+            resumed = resume_entry(context.store, entry.id, context.global_config, context.paths.params, before_submit=before_submit, enqueue=context.worker.enqueue, caller=caller)
     return queue_entry(resumed)
 
 

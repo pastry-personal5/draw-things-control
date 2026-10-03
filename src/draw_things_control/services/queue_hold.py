@@ -1,7 +1,8 @@
 """The queue's hold (Milestone 05): while held, the worker starts no new entry. A park reservation holds the queue, and so
 does ``/queue hold``; only a release ends it. The hold is kept in memory and in the state store's ``settings`` table,
 under ``queue_hold``, so it survives a ``dtc serve`` restart. Its own class, so the hold's memory, its row, and the
-reading of a damaged row stay together, apart from the worker's claim and cancel bookkeeping."""
+reading of a damaged row stay together, apart from the worker's claim and cancel bookkeeping. From Milestone 10 it
+records the caller that made it, and an agent may release only a hold an agent made (``queue_callers.py``)."""
 
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ from typing import Any
 from loguru import logger
 
 from draw_things_control.core.clock import Clock, local_timestamp
+from draw_things_control.core.errors import NotPermittedError
+from draw_things_control.services.queue_callers import is_agent, maker_text
 from draw_things_control.services.queue_events import QueueEventPublisher
 from draw_things_control.state.settings import SettingsRepository
 
@@ -22,18 +25,20 @@ HOLD_KEY = "queue_hold"
 
 @dataclass(frozen=True)
 class HoldState:
-    """Whether the queue is held, since when (a local timestamp), and by which entry's park reservation (Q0007), or
-    None for a ``/queue hold``. A damaged saved hold reads as held with neither."""
+    """Whether the queue is held, since when (a local timestamp), by which entry's park reservation (Q0007), or None
+    for a ``/queue hold``, and the caller that made it (Milestone 10: cli, tui, mcp, or api). A damaged saved hold reads
+    as held with none of them; a hold saved before callers were recorded has no caller. Either counts as a person's."""
 
     held: bool = False
     since: str | None = None
     by: str | None = None
+    caller: str | None = None
 
     @classmethod
     def from_body(cls, body: dict[str, Any]) -> HoldState:
-        """The hold fields of an API response (``held``, ``held_since``, ``held_by``, as ``serializers.queue_hold``
-        writes them); not held when it has none."""
-        return cls(held=bool(body.get("held")), since=body.get("held_since"), by=body.get("held_by"))
+        """The hold fields of an API response (``held``, ``held_since``, ``held_by``, ``hold_caller``, as
+        ``serializers.queue_hold`` writes them); not held when it has none."""
+        return cls(held=bool(body.get("held")), since=body.get("held_since"), by=body.get("held_by"), caller=body.get("hold_caller"))
 
     @property
     def damaged(self) -> bool:
@@ -50,15 +55,16 @@ def read_hold(settings: SettingsRepository, *, warn: bool = True) -> HoldState:
         return HoldState()
     try:
         data = json.loads(text)
-        since, by = data["since"], data["by"]
-        if not isinstance(since, str) or not (by is None or isinstance(by, str)):
-            raise TypeError("since must be text and by text or null")
+        # No caller in a hold saved before Milestone 10: it reads as a person's, not as damaged.
+        since, by, caller = data["since"], data["by"], data.get("caller")
+        if not isinstance(since, str) or not all(value is None or isinstance(value, str) for value in (by, caller)):
+            raise TypeError("since must be text, and by and caller text or null")
         datetime.fromisoformat(since)
     except (ValueError, TypeError, KeyError) as error:
         if warn:
             logger.warning("The saved queue hold cannot be read ({}); the queue counts as held until a release", error)
         return HoldState(held=True)
-    return HoldState(held=True, since=since, by=by)
+    return HoldState(held=True, since=since, by=by, caller=caller)
 
 
 class QueueHold:
@@ -81,39 +87,69 @@ class QueueHold:
         with self._lock:
             return self._state
 
-    def hold(self, by: str | None) -> bool:
-        """Hold the queue, by the park reservation of entry ``by`` or, with None, directly (``/queue hold``). On a queue
-        already held, a direct hold makes the hold its own, so a later unpark no longer releases it; a reservation's
-        changes nothing. True when the queue was not held before."""
+    def hold(self, by: str | None, caller: str | None = None) -> bool:
+        """Hold the queue for ``caller``, by the park reservation of entry ``by`` or, with None, directly (``/queue
+        hold``). On a queue already held, see ``_held_again``. True when the queue was not held before."""
         with self._lock:
             was_held = self._state.held
-            if was_held and (by is not None or self._state.by is None):
-                return False
+            if was_held:
+                again = self._held_again(by, caller)
+                if again is None:
+                    return False
+                by, caller = again
             since = self._state.since if was_held and self._state.since is not None else local_timestamp(self._clock())
             # The row first: a hold that could not be saved is not held in memory either.
-            self._settings.set(HOLD_KEY, json.dumps({"since": since, "by": by}))
-            self._state = HoldState(held=True, since=since, by=by)
-        self._events.held(since, by)
+            self._settings.set(HOLD_KEY, json.dumps({"since": since, "by": by, "caller": caller}))
+            self._state = HoldState(held=True, since=since, by=by, caller=caller)
+        self._events.held(since, by, caller)
         return not was_held
 
-    def release(self) -> bool:
-        """End the hold; False, doing nothing, when the queue is not held."""
-        return self._release(None)
+    def _held_again(self, by: str | None, caller: str | None) -> tuple[str | None, str | None] | None:
+        """Call with the lock held, on a held queue: the hold's entry and caller after a hold by ``by`` for ``caller``,
+        or None when it changes nothing. A direct hold makes a park's hold its own, so a later unpark no longer releases
+        it (Milestone 05). A person's hold, direct or a park's, makes an agent's hold the person's, so an agent cannot
+        release what a person's park or hold relies on; an agent never comes to own a person's hold (Milestone 10)."""
+        state = self._state
+        new_by = None if by is None else state.by
+        if is_agent(caller) != is_agent(state.caller):
+            new_caller = state.caller if is_agent(caller) else caller
+        else:
+            new_caller = caller if new_by is None and state.by is not None else state.caller
+        if state.damaged or (new_by, new_caller) == (state.by, state.caller):
+            return None
+        return new_by, new_caller
 
-    def release_if_by(self, label: str) -> bool:
-        """End the hold only when entry ``label``'s park reservation made it (an unpark); True when it did."""
-        return self._release(label)
+    def release(self, caller: str | None = None) -> bool:
+        """End the hold for ``caller``; False, doing nothing, when the queue is not held. Refused (``NotPermittedError``)
+        for an agent when a person made the hold."""
+        return self._release(None, caller)
 
-    def _release(self, only_by: str | None) -> bool:
-        """End the hold, only when entry ``only_by``'s reservation made it unless that is None; True when it ended."""
+    def release_if_by(self, label: str, caller: str | None = None) -> bool:
+        """End the hold only when entry ``label``'s park reservation made it (an unpark); True when it did. Refused, as
+        ``release`` is, for an agent when a person made it (a person parked the entry)."""
+        return self._release(label, caller)
+
+    def _release(self, only_by: str | None, caller: str | None) -> bool:
+        """End the hold, only when entry ``only_by``'s reservation made it unless that is None; True when it ended. The
+        check of ``caller`` is under the same lock as the release, so the hold cannot change hands between them."""
         with self._lock:
             if not self._state.held or (only_by is not None and self._state.by != only_by):
                 return False
+            if is_agent(caller) and not is_agent(self._state.caller):
+                raise NotPermittedError(_refusal_text(self._state))
             # The row first: a hold whose row could not be removed is still held in memory too.
             self._settings.delete(HOLD_KEY)
             self._state = HoldState()
         self._events.released()
         return True
+
+
+def _refusal_text(hold: HoldState) -> str:
+    """Why an agent may not release ``hold``, a person's."""
+    if hold.damaged:
+        return "The queue's saved hold cannot be read, so it counts as a person's; an agent may release only a hold an agent made"
+    park = f" with {hold.by}'s park" if hold.by is not None else ""
+    return f"The queue was held{park} by {maker_text(hold.caller)}; an agent may release only a hold an agent made"
 
 
 def hold_text(hold: HoldState, *, already: bool = False) -> str:

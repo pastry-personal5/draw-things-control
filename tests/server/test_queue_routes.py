@@ -21,6 +21,7 @@ from draw_things_control.server.event_backlog import EventBacklog
 from draw_things_control.services.history_delete import DeleteReport, delete_executions
 from draw_things_control.services.queue_events import QueueEventPublisher
 from draw_things_control.services.queue_hold import HoldState, QueueHold
+from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store, StoreMode
@@ -100,26 +101,25 @@ class FakeWorker:
     def stop_reason(self, entry_id: int) -> str | None:
         return self.stop_reasons.get(entry_id)
 
-    def park_running(self, entry_id: int, label: str) -> bool:
+    def park_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
         if entry_id != self._current_id or entry_id in self.stop_reasons:
             return False
+        self._hold.hold(label, caller)
         self.parking.add(entry_id)
-        if not self._hold.is_held:
-            self._hold.hold(label)
         return True
 
-    def unpark_running(self, entry_id: int, label: str) -> bool:
+    def unpark_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
         if entry_id != self._current_id or self.park_taken:
             return False
+        self._hold.release_if_by(label, caller)
         self.parking.discard(entry_id)
-        self._hold.release_if_by(label)
         return True
 
-    def hold(self) -> tuple[bool, HoldState]:
-        return self._hold.hold(None), self._hold.snapshot()
+    def hold(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        return self._hold.hold(None, caller), self._hold.snapshot()
 
-    def release(self) -> tuple[bool, HoldState]:
-        return self._hold.release(), self._hold.snapshot()
+    def release(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        return self._hold.release(caller), self._hold.snapshot()
 
     def hold_state(self) -> HoldState:
         return self._hold.snapshot()
@@ -154,15 +154,15 @@ class QueueRoutesTestCase(JobTestCase):
         path.write_text(yaml.safe_dump(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), sort_keys=False), encoding="utf-8")
         return path
 
-    def submit(self, name: str = "job.yaml", **changes: Any) -> dict[str, Any]:
+    def submit(self, name: str = "job.yaml", *, caller: str | None = None, **changes: Any) -> dict[str, Any]:
         self.write_job_in_catalog(name, **changes)
-        response = self.request("post", "/v1/queue", json={"job": name})
+        response = self.request("post", "/v1/queue", json={"job": name}, headers={"X-Dtc-Caller": caller} if caller is not None else {})
         assert response.status_code == 200, response.text
         return response.json()
 
-    def seed_resumable_entry(self) -> str:
+    def seed_resumable_entry(self, *, caller: str | None = None) -> str:
         """A queued entry submitted, claimed, given three succeeded runs of seven, and left interrupted."""
-        entry = self.submit("chain.yaml", run_count=7)
+        entry = self.submit("chain.yaml", caller=caller, run_count=7)
         claimed = self.store.queue.claim_oldest(datetime.now())
         assert claimed is not None
         last_frame = self.output_directory / "last-frame-3.png"
@@ -564,7 +564,7 @@ class ParkAndHoldTests(QueueRoutesTestCase):
         self.assertFalse(self.request("post", "/v1/queue/hold").json()["changed"])
         listing = self.request("get", "/v1/queue").json()
         self.assertEqual((listing["held"], listing["held_since"]), (True, body["held_since"]))
-        self.assertEqual(self.request("post", "/v1/queue/release").json(), {"held": False, "held_since": None, "held_by": None, "changed": True})
+        self.assertEqual(self.request("post", "/v1/queue/release").json(), {"held": False, "held_since": None, "held_by": None, "hold_caller": None, "changed": True})
         self.assertFalse(self.request("post", "/v1/queue/release").json()["changed"])
         self.assertEqual([(action, target) for action, target, _outcome, _caller in self.audit()], [("release", None), ("release", None), ("hold", None), ("hold", None)])
 
@@ -586,6 +586,98 @@ class ParkAndHoldTests(QueueRoutesTestCase):
         queue_id = self.running_entry()["queue_id"]
         texts = [self.request("post", f"/v1/queue/{queue_id}/park").text, self.request("post", "/v1/queue/hold").text, self.request("post", "/v1/queue/release").text, self.request("post", f"/v1/queue/{queue_id}/unpark").text, self.request("get", "/v1/audit").text]
         self.assertFalse(any(TOKEN in text for text in texts))
+
+
+class AgentLimitTests(QueueRoutesTestCase):
+    """Milestone 10: each entry records its submitter and the hold its caller, and the API keeps an agent
+    (``X-Dtc-Caller: mcp``) off the entries and holds a person made."""
+
+    AGENT = {"X-Dtc-Caller": "mcp"}
+
+    def running(self, entry: dict[str, Any]) -> str:
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None and claimed.label == entry["queue_id"]
+        self.worker._current_id = claimed.id
+        return entry["queue_id"]
+
+    def agent(self, path: str) -> Any:
+        return self.request("post", path, headers=self.AGENT)
+
+    def audit(self) -> list[tuple[str, str | None, str, str]]:
+        return [(row["action"], row["target"], row["outcome"], row["caller"]) for row in self.request("get", "/v1/audit").json()["audit"]]
+
+    def assert_not_permitted(self, response: Any, words: str) -> None:
+        self.assertEqual((response.status_code, response.json()["code"]), (403, "not_permitted"), response.text)
+        self.assertIn(words, response.json()["message"])
+
+    def test_a_resume_records_its_resumer_as_the_new_entrys_submitter(self) -> None:
+        queue_id = self.seed_resumable_entry(caller="mcp")
+        resumed = self.request("post", f"/v1/queue/{queue_id}/resume", headers={"X-Dtc-Caller": "cli"})
+        self.assertEqual(resumed.json()["submitted_by"], "cli", resumed.text)
+
+    def test_each_entry_records_its_submitter(self) -> None:
+        agents = self.submit("agents.yaml", caller="mcp", run_count=1)
+        persons = self.submit("persons.yaml", run_count=1)
+        self.assertEqual((agents["submitted_by"], persons["submitted_by"]), ("mcp", "api"))
+        listed = {row["queue_id"]: row["submitted_by"] for row in self.request("get", "/v1/queue").json()["queue"]}
+        self.assertEqual(listed, {agents["queue_id"]: "mcp", persons["queue_id"]: "api"})
+        self.assertEqual(self.request("get", f"/v1/queue/{agents['queue_id']}").json()["submitted_by"], "mcp")
+
+    def test_an_agent_is_refused_a_persons_entry_and_nothing_changes(self) -> None:
+        queue_id = self.running(self.submit(caller="tui", run_count=3))
+        self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/cancel"), f"{queue_id} was submitted by tui; an agent may cancel only an entry an agent submitted")
+        self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/park"), "an agent may park only")
+        self.assertEqual((self.worker.cancelled, self.worker.parking), ([], set()))
+        self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"})
+        self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/unpark"), "an agent may unpark only")
+        self.assert_not_permitted(self.agent("/v1/queue/release"), f"The queue was held with {queue_id}'s park by tui; an agent may release only a hold an agent made")
+        detail = self.request("get", f"/v1/queue/{queue_id}").json()
+        self.assertEqual((detail["state"], detail["park_requested"], detail["held"], detail["held_by"], detail["hold_caller"]), ("running", True, True, queue_id, "tui"))
+        resumable = self.seed_resumable_entry(caller="cli")
+        self.assert_not_permitted(self.agent(f"/v1/queue/{resumable}/resume"), "an agent may resume only")
+        self.assertEqual([row.label for row in self.store.queue.list()], [queue_id, resumable])
+        refused = [row for row in self.audit() if row[2] == "not_permitted"]
+        self.assertEqual(sorted((action, caller) for action, _target, _outcome, caller in refused), [("cancel", "mcp"), ("park", "mcp"), ("release", "mcp"), ("resume", "mcp"), ("unpark", "mcp")])
+
+    def test_an_entry_from_before_submitters_were_recorded_counts_as_a_persons(self) -> None:
+        entry = submit_job(self.write_job_in_catalog("old.yaml", run_count=1), self.global_config, self.paths.params, self.store)
+        self.assertIsNone(self.request("get", f"/v1/queue/{entry.label}").json()["submitted_by"])
+        self.assert_not_permitted(self.agent(f"/v1/queue/{entry.label}/cancel"), "made before callers were recorded")
+        self.assertEqual(self.request("get", f"/v1/queue/{entry.label}").json()["state"], "queued")
+
+    def test_an_agent_acts_on_its_own_entries_and_holds(self) -> None:
+        queue_id = self.running(self.submit(caller="mcp", run_count=3))
+        parked = self.agent(f"/v1/queue/{queue_id}/park").json()
+        self.assertEqual((parked["park_requested"], parked["held_by"], parked["hold_caller"]), (True, queue_id, "mcp"))
+        self.assertEqual(self.agent(f"/v1/queue/{queue_id}/unpark").json()["held"], False)
+        self.assertEqual(self.agent("/v1/queue/hold").json()["hold_caller"], "mcp")
+        self.assertEqual(self.agent("/v1/queue/release").json()["changed"], True)
+        self.assertEqual(self.agent(f"/v1/queue/{queue_id}/cancel").status_code, 200)
+        self.assertEqual(len(self.worker.cancelled), 1)
+        resumable = self.seed_resumable_entry(caller="mcp")
+        self.assertEqual(self.agent(f"/v1/queue/{resumable}/resume").json()["submitted_by"], "mcp")
+        self.assertEqual({outcome for _action, _target, outcome, _caller in self.audit()}, {"ok"})
+
+    def test_a_persons_commands_on_an_agents_entry_and_hold_work(self) -> None:
+        queue_id = self.running(self.submit(caller="mcp", run_count=3))
+        self.agent("/v1/queue/hold")
+        self.assertEqual(self.request("post", f"/v1/queue/{queue_id}/cancel", headers={"X-Dtc-Caller": "cli"}).status_code, 200)
+        self.assertEqual(self.request("post", "/v1/queue/release", headers={"X-Dtc-Caller": "cli"}).json()["changed"], True)
+
+    def test_an_agents_direct_hold_over_a_persons_leaves_it_the_persons(self) -> None:
+        self.request("post", "/v1/queue/hold", headers={"X-Dtc-Caller": "tui"})
+        body = self.agent("/v1/queue/hold").json()
+        self.assertEqual((body["changed"], body["hold_caller"]), (False, "tui"))
+        self.assert_not_permitted(self.agent("/v1/queue/release"), "The queue was held by tui")
+        self.assertEqual(self.request("get", "/v1/queue").json()["hold_caller"], "tui")
+
+    def test_a_persons_park_on_a_queue_an_agent_holds_makes_the_hold_the_persons(self) -> None:
+        queue_id = self.running(self.submit(caller="mcp", run_count=3))
+        self.agent("/v1/queue/hold")
+        parked = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"}).json()
+        self.assertEqual((parked["held"], parked["held_by"], parked["hold_caller"]), (True, None, "tui"))
+        self.assert_not_permitted(self.agent("/v1/queue/release"), "The queue was held by tui")
+        self.assertTrue(self.request("get", "/v1/queue").json()["held"])
 
 
 if __name__ == "__main__":

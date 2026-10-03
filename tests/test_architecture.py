@@ -1,8 +1,8 @@
 """The layers of the package, as import rules: cli, tui, server -> services -> state -> jobs -> core.
 
-Front ends never import each other (``dtc tui`` starts the TUI app and ``dtc serve`` starts the HTTP API and gRPC
-service, the two exceptions), ``mcp_server`` reaches the rest only over HTTP, and no layer below the front ends
-imports a terminal, web, or gRPC framework.
+Front ends never import each other (``dtc tui`` starts the TUI app, ``dtc serve`` starts the HTTP API and gRPC
+service, and ``dtc mcp`` starts the MCP server, the three exceptions), ``mcp_server`` reaches the rest only over HTTP,
+with no gRPC, and no layer below the front ends imports a terminal, web, MCP, or gRPC framework.
 """
 
 from __future__ import annotations
@@ -25,10 +25,11 @@ ALLOWED = {
     "server": {"core", "jobs", "state", "services"},
     "mcp_server": set(),
 }
-# The two imports between front ends: `dtc tui` starts the TUI app, and `dtc serve` starts the HTTP API and gRPC service.
-FRONT_END_EXCEPTIONS = {("cli", f"{PACKAGE}.tui.app"), ("cli", f"{PACKAGE}.server.serve")}
+# The three imports between front ends, each by `cli/app.py` alone: `dtc tui` starts the TUI app, `dtc serve` the HTTP
+# API and gRPC service, and `dtc mcp` the MCP server.
+FRONT_END_EXCEPTIONS = {(f"{PACKAGE}.cli.app", f"{PACKAGE}.tui.app"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.server.serve"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.mcp_server.app")}
 # The frameworks a front end owns; the layers below never import them.
-FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "httpx", "rich", "grpc"}
+FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "mcp_types", "httpx", "rich", "grpc"}
 FRAMEWORK_LAYERS = {"core", "jobs", "state", "services"}
 # Rich is the TUI's text type, which the TUI's own modules and nothing below them use.
 
@@ -56,7 +57,7 @@ def violations(files: dict[str, str]) -> list[str]:
             root = imported.split(".")[0]
             if root == PACKAGE:
                 target = imported.split(".")[1] if "." in imported else ""
-                if target and target != layer and target not in ALLOWED[layer] and (layer, imported) not in FRONT_END_EXCEPTIONS:
+                if target and target != layer and target not in ALLOWED[layer] and (module, imported) not in FRONT_END_EXCEPTIONS:
                     problems.append(f"{module} imports {imported}: {layer} may not import {target}")
             elif root in FRAMEWORKS and layer in FRAMEWORK_LAYERS:
                 problems.append(f"{module} imports {imported}: {layer} may not import a framework")
@@ -145,7 +146,21 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(len(self.bad("mcp_server.tools", f"from {PACKAGE}.server.app import app")), 1)
         self.assertEqual(len(self.bad("mcp_server.tools", f"from {PACKAGE}.core.paths import ProjectPaths")), 1)
 
+    def test_dtc_mcp_may_start_the_mcp_server_from_cli_app_alone(self) -> None:
+        self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.mcp_server.app import run"), [])
+        self.assertEqual(len(self.bad("cli.app", f"from {PACKAGE}.mcp_server.tools import TOOLS")), 1)
+        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.mcp_server.app import run")), 1)
+        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.tui.app import DrawThingsApp")), 1)
+
     def test_the_lower_layers_import_no_framework(self) -> None:
         for framework in ("typer", "textual.app", "fastapi", "rich.text"):
             self.assertEqual(len(self.bad("services.history", f"import {framework}")), 1, framework)
         self.assertEqual(self.bad("tui.app", "from textual.app import App"), [])
+
+
+class McpServerImportTests(unittest.TestCase):
+    def test_the_mcp_server_imports_no_grpc(self) -> None:
+        """It watches an entry over the API's SSE watch (Milestone 10), so it needs no gRPC client and no stubs."""
+        found = {module: sorted(name for name in imports_of(source) if name.split(".")[0] == "grpc" or ".generated" in name) for module, source in package_files().items() if module.startswith(f"{PACKAGE}.mcp_server")}
+        self.assertTrue(found, "no mcp_server modules found")
+        self.assertEqual({module: names for module, names in found.items() if names}, {})

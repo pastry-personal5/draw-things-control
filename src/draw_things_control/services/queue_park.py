@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from draw_things_control.core.errors import InputError, NotFoundError
+from draw_things_control.services.queue_callers import check_entry_permitted
 from draw_things_control.services.queue_worker import STOP_CANCEL, QueueWorker
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store
@@ -29,17 +30,19 @@ def _state_now(store: Store, entry: QueueRow) -> str:
     return updated.state if updated is not None else "gone"
 
 
-def park_entry(store: Store, worker: QueueWorker, entry_id: int) -> None:
-    """Make a park reservation on running entry ``entry_id``, holding the queue. Refused, naming the reason, for a queued
-    or finished entry, one being cancelled or stopping with the server, and one that finished between this read and the
-    worker's check: the queue was not held then, so the call must not look accepted. On an entry already parking, it
-    holds the queue again when a release has ended the hold."""
+def park_entry(store: Store, worker: QueueWorker, entry_id: int, *, caller: str | None = None) -> None:
+    """Make a park reservation on running entry ``entry_id``, holding the queue for ``caller``. Refused, naming the reason,
+    for a queued or finished entry, one being cancelled or stopping with the server, and one that finished between this
+    read and the worker's check: the queue was not held then, so the call must not look accepted. On an entry already
+    parking, it holds the queue again when a release has ended the hold. An agent ``caller`` is refused a person's
+    entry (``queue_callers.py``)."""
     entry = _entry(store, entry_id)
+    check_entry_permitted(entry, caller, "park")
     if entry.state == QueueState.QUEUED:
         raise ParkRefusedError(f"{entry.label} cannot be parked: it is queued and has not started; cancel it to remove it, or hold the queue to keep it from starting")
     if entry.state != QueueState.RUNNING:
         raise ParkRefusedError(f"{entry.label} cannot be parked: it is {entry.state}")
-    if worker.park_running(entry.id, entry.label):
+    if worker.park_running(entry.id, entry.label, caller):
         return
     reason = worker.stop_reason(entry.id)
     if reason is not None:
@@ -47,14 +50,16 @@ def park_entry(store: Store, worker: QueueWorker, entry_id: int) -> None:
     raise ParkRefusedError(f"{entry.label} cannot be parked: it is {_state_now(store, entry)}")
 
 
-def unpark_entry(store: Store, worker: QueueWorker, entry_id: int) -> None:
+def unpark_entry(store: Store, worker: QueueWorker, entry_id: int, *, caller: str | None = None) -> None:
     """Withdraw running entry ``entry_id``'s park reservation: the job runs on as if it had never been made, and the
     hold is released when that reservation made it. A no-op on a running entry with none. Refused for a queued or
-    finished entry, and once the park has taken effect."""
+    finished entry, and once the park has taken effect; for an agent ``caller``, refused a person's entry, and a hold
+    a person's park made (``queue_callers.py``)."""
     entry = _entry(store, entry_id)
+    check_entry_permitted(entry, caller, "unpark")
     if entry.state != QueueState.RUNNING:
         raise ParkRefusedError(f"{entry.label} cannot be unparked: it is {entry.state}")
-    if worker.unpark_running(entry.id, entry.label):
+    if worker.unpark_running(entry.id, entry.label, caller):
         return
     state = _state_now(store, entry)
     if state in (QueueState.RUNNING, QueueState.PARKED):

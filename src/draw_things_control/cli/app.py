@@ -221,7 +221,7 @@ def serve_command(
     executable: ExecutableOption = "draw-things-cli",
     shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
     global_config: GlobalConfigOption = None,
-    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files.")] = False,
+    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files, and agents to delete executions through MCP.")] = False,
     allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
 ) -> None:
     """Run the HTTP API and the gRPC monitoring service: the only thing that ever starts draw-things-cli."""
@@ -237,6 +237,27 @@ def serve_command(
     options = ServeOptions(host=host, port=port, grpc_port=grpc_port, executable=executable, shutdown_grace=shutdown_grace, allow_remote_bind=allow_remote_bind, allow_write=allow_write)
     with errors_exit():
         run_server(services.paths, settings, services.toolkit, options)
+
+
+@app.command("mcp")
+def mcp_command(
+    ctx: typer.Context,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """Run an MCP server on stdio that gives AI agents typed tools over dtc serve's API. It starts whether or not
+    dtc serve is up, reads the token at the first call, and acts only through the API."""
+    services = services_of(ctx)
+    with errors_exit():
+        check_server_host(server_url, allow_remote_server=allow_remote_server)
+    # Imported here, so the other commands do not load the MCP SDK.
+    from draw_things_control.mcp_server.app import run as run_mcp
+
+    # Stdout carries the protocol and nothing else: main()'s sinks send child output there, so only stderr remains.
+    logger.remove()
+    logger.add(sys.stderr, format="{message}", level="INFO", colorize=False)
+    run_mcp(server_url, token_file or services.paths.server_token)
 
 
 def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:

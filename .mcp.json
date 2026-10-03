@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dtc": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "dtc", "mcp"]
+    }
+  }
+}

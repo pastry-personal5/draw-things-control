@@ -3,8 +3,110 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-10-03
+
+- **Change** [M10]: Milestone 10 done. `dtc mcp` serves typed tools and the job files as resources over `dtc serve`'s
+  API alone, on stdio: the read, run, and queue control tools always, and the write tools (`create_job`, `replace_job`,
+  `delete_job`, `delete_executions`) while writes are on, with a list-changed notification in each protocol era;
+  `get_queue_entry`'s `wait_seconds` follows the API's SSE watch to the next change an agent acts on. `.mcp.json`
+  registers it with Claude Code. The user guide, the architecture, `AGENTS.md`, and the development rules say so.
+- **Design decision** [M10]: From the review of increments B and C:
+  - A request sent but not answered within 30 seconds is `server_timeout`, a code of the MCP server's own, not
+    `server_unreachable`: it may have taken effect, so an agent that retried a `submit_job` could queue a job twice.
+    A connection that cannot be made is still `server_unreachable`.
+  - A `tools/list` that is the first to see a change tells the other open connections; `get_capabilities` is itself
+    the read, with no other before it; and a read of the capabilities before a call waits at most 5 seconds, so a slow
+    API cannot double a call's time.
+  - An optional argument given as null is left out, and an integer may come as a whole number with a point (`50.0`),
+    as JSON Schema allows; a required one given as null is still refused.
+  - The instructions say `create_job` is listed only while `dtc serve` runs with `--allow-write`, and
+    `get_capabilities`' description names the write tools.
+  - `tests/test_architecture.py` keys the three imports between front ends on `cli/app.py` itself, not on the `cli`
+    layer, so no other module of `cli/` may start a front end.
+- **Design decision** [M10]: Built in increment D, the wait:
+  - Each snapshot is compared with the one before it, not only with the first: a run that starts during a wait, and
+    ends, ends it, though the first snapshot had no run either.
+  - A call has a progress token when its `_meta` carries one. The SDK's in-process client reports progress without a
+    token on the 2026-07-28 path, so the tests of the 1500-second limit use the older handshake. The times (progress
+    every 15 seconds, 1500 seconds without a token, 60 seconds of silence) are `WaitTimes`, which tests shorten.
+  - A watch that ends before a change is `server_unreachable`, as one that drops; one silent past its read timeout
+    says how long. The wait is a task group beside its progress task, and an error inside it is raised after the group
+    ends, so it stays a tool error rather than an exception group.
+  - The wait's tests run the API under uvicorn on a loopback port (`tests/server/live_app.py`), with a worker whose
+    snapshots change by the count read; a test of each rule fails if a step, or the next run's start, ended the wait.
+- **Design decision** [M10]: Built in increment E: the process test keeps the MCP server's stdin open until its call is
+  answered, since at stdin's end the server stops and cancels what is in flight.
+- **Design decision** [M10]: From the review of increments D and E:
+  - A run's end is `current_run` leaving a run's number, for null or straight for the next: with no cooldown between
+    two runs, the worker clears and sets it again within one poll of the watch, and the plan's "becoming null" would
+    let a wait miss every run's end.
+  - The wait compares the watch's first snapshot with the entry as read before the watch opened, so an entry that
+    finishes between the two ends the wait at once, rather than at its limit.
+  - A watch that ends before a change answers as a read of the entry does: `not_found` once the entry is gone, and
+    `server_unreachable` only when the read fails too or the entry is still there.
+  - A `server_timeout` on a read (the capabilities read before `delete_executions` among them) says nothing else was
+    sent; on anything else it says the request may have taken effect.
+  - The MCP server's HTTP client opens with its first request and closes with the last client's connection.
+  - Not changed, and open: `cooldown_until` and `queue_held` belong to the whole queue, so a wait on a queued entry
+    also ends when another job's cooldown starts or ends, or anyone holds or releases the queue, as the plan's list of
+    fields an agent acts on has it. Narrowing them would wake a waiting agent less often.
+- **Design decision** [M10]: Checked when built: a 2026-07-28 client over stdio sends the progress token the wait reads,
+  as an older one does. Not checked: that Claude Code drops a text block repeating a stdio server's structured content,
+  which its documentation says of the Agent SDK's tools.
+
 ## 2026-10-02
 
+- **Design decision** [M10]: Built in increment B, `dtc mcp` with the read, run, and queue control tools:
+  - A path argument holding a slash is refused, `invalid_input` naming it, beside an empty one and one only of dots.
+    The plan held that percent-encoding stops an argument from reaching another endpoint, but an ASGI server (uvicorn,
+    as `httpx.ASGITransport` in the tests) decodes `%2F` before it routes, so `get_queue_entry` with `Q0001/watch`
+    reached the SSE watch, and hung, and `get_execution` with `E0001/outputs` the outputs. No ID or job file name
+    holds a slash.
+  - Each tool builds its whole request, path checks included, before anything is sent, so a refused argument makes
+    no request at all, the capabilities read included.
+  - An unknown tool name is a JSON-RPC `invalid params` error, as MCP says for an error in finding the tool; a
+    resource that cannot be read is a JSON-RPC error too (`-32002` when the API answers `not_found`), with the API's
+    error body as its data, since a resource has no error result.
+  - Only a capabilities read that succeeds, and differs from the list last given, announces a change: a failed read
+    before a call (the API down) leaves the list as it was. `tools/list` reads the capabilities every time.
+  - `tools.listChanged` is declared to a client of the older handshake by the server's own initialization options, on
+    every transport (the SDK's in-memory transport passes none); a 2026-07-28 client is told it because
+    `subscriptions/listen` is served. Each connection's state comes from the server's lifespan, which keeps an older
+    client's session for its notification.
+  - `create_job`, `replace_job`, and `delete_job` take the API's `name`, the file's name without `.yaml`.
+  - The SDK's client lists the tools after a call, to look for an output schema, so the tests leave capabilities reads
+    out when they check which requests a call made.
+- **Change** [M10]: Increment A, the API, built. `GET /v1/executions/{id}?brief=1` and `GET /v1/jobs/{job}?brief=1`,
+  `GET /v1/executions/{id}/runs/{run}`, and `GET /v1/queue/{id}/watch`, which sends `WatchQueueEntry`'s snapshots over
+  SSE from one snapshot module (`server/entry_snapshot.py`) both read. Schema 9 adds `queue.submitted_by`; the hold's
+  saved setting gains `caller`; queue entries answer `submitted_by` and the hold `hold_caller`; and an agent's cancel,
+  park, unpark, or resume of a person's entry, or release of a person's hold, is 403 `not_permitted`
+  (`services/queue_callers.py`). `--allow-write`'s help and start-up line name agents' deletions of executions.
+- **Design decision** [M10]: Built in increment A:
+  - The SSE watch is a plain route that answers `404` first and then returns an `EventSourceResponse` over bytes it
+    formats itself, not a generator route: FastAPI runs a generator route's body only once the stream has started, too
+    late for a 404, and inserts its own `: ping` every 15 seconds. The watch sends `: keep-alive` on its own timer, sets
+    the headers FastAPI's SSE routes set (`Cache-Control: no-cache`, `X-Accel-Buffering: no`), and reads each snapshot
+    off the event loop, since the snapshot takes the worker's lock.
+  - `dtc serve` runs uvicorn as a subclass whose `shutdown()` sets the context's `stopping` event before uvicorn waits
+    for open connections; each watch checks it at every poll (0.5 seconds). Without it, Ctrl-C waited on every open
+    watch for good.
+  - An agent's unpark of its own entry is refused, `not_permitted`, while the hold that entry's park made is a
+    person's (a person parked it): the unpark would end a person's hold. The plan did not cover it; a park reservation
+    keeps no caller of its own.
+  - One rule for a hold on a queue already held: a person's hold, direct or a park's, makes an agent's hold the
+    person's (`changed` stays false), so an agent cannot release what a person's park relies on; an agent never comes
+    to own a person's hold; and a direct hold still makes a park's hold its own, so a later unpark no longer ends it
+    (Milestone 05). The plan said an agent's direct hold over a person's "changes nothing"; it now detaches the hold
+    from the park and leaves it the person's, since otherwise the person's unpark would silently end the hold the agent
+    was told stood. The plan named only a person's direct hold over a park's. `queue_held` events carry the caller.
+  - A hold saved before Milestone 10 has no caller and counts as a person's, not as damaged; a damaged one counts as a
+    person's too, and its refusal says it cannot be read.
+  - An agent is refused a person's entry before its state is checked, so the refusal does not depend on the entry's
+    state.
+  - Starlette's `TestClient` and `httpx.ASGITransport` were checked and do collect a whole response before returning
+    it, so in-process tests end the watch themselves, and the keep-alive, a client's disconnect, and shutdown are
+    tested under uvicorn on a loopback port (`tests/server/live_app.py`).
 - **Owner decision** [M10]: From a third interview on the plan:
   - Agents are kept off what people started: each queue entry records its submitter and the hold its caller, and
     the API refuses an agent's cancel, park, unpark, or resume of a person's entry, and its release of a person's hold.

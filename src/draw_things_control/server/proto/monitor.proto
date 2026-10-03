@@ -5,8 +5,9 @@ package draw_things_control.monitor;
 // Watching for change (Milestone 02): a grpc.aio.server() beside uvicorn in the same `dtc serve` process, not an
 // HTTP endpoint, since nothing here writes (writes stay HTTP POST). Authentication is a server interceptor reading
 // the "authorization" metadata key ("Bearer <token>"), the same bearer token as the HTTP API; missing or wrong, the
-// call ends UNAUTHENTICATED. `mcp_server/`, `tui/`, and `cli/` (`dtc queue add --wait`) each import their own
-// generated client stubs from this same file; only `server/` imports the generated server code.
+// call ends UNAUTHENTICATED. `tui/` and `cli/` (`dtc queue add --wait`) each import their own generated client stubs
+// from this same file; only `server/` imports the generated server code. `mcp_server/` watches an entry over the
+// HTTP API's SSE watch (`GET /v1/queue/{id}/watch`, Milestone 10), which sends WatchQueueEntry's snapshots.
 service Monitor {
   // Replaces GET /events: the Phase 2 job events (jobs/events.py's event_to_dict) and the queue's own (an entry's
   // state change, and the start and end of a between-jobs wait, each naming the entry). Event.id increases within

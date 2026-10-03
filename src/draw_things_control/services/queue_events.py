@@ -43,9 +43,10 @@ class QueueEventPublisher:
         if self._sink is not None:
             self._sink("queue_park_changed", {"queue_id": queue_id, "park_requested": park_requested})
 
-    def held(self, since: str | None, by: str | None) -> None:
+    def held(self, since: str | None, by: str | None, caller: str | None = None) -> None:
+        """The queue was held, or its hold changed hands; ``caller`` made it (Milestone 10)."""
         if self._sink is not None:
-            self._sink("queue_held", {"since": since, "by": by})
+            self._sink("queue_held", {"since": since, "by": by, "caller": caller})
 
     def released(self) -> None:
         if self._sink is not None:

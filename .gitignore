@@ -56,7 +56,7 @@ config/tui-preferences.yaml
 
 # gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
 # stays the single source of truth, with no generated code to drift from it. One copy per front end with a gRPC
-# client (server/, cli/, tui/; mcp_server/ in Milestone 08), since front ends never import each other.
+# client (server/, cli/, tui/; mcp_server/ has none, watching over SSE), since front ends never import each other.
 src/draw_things_control/server/generated/
 src/draw_things_control/cli/generated/
 src/draw_things_control/tui/generated/

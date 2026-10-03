@@ -13,6 +13,7 @@ from unittest import mock
 from draw_things_control.state import database as database_module
 from draw_things_control.state.database import Database, StateError
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
+from draw_things_control.state.queue import NewQueueEntry
 from draw_things_control.state.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_VERSION
 from draw_things_control.state.store import Store, StoreMode
 
@@ -460,3 +461,34 @@ class SchemaEightTests(StoreCase):
         assert execution is not None
         self.assertEqual(execution.first_image, "/out/walk-job-first-image.png")
         self.assertEqual([(run.anchor, run.corrected_output) for run in execution.runs], [("/out/walk-job-first-image.png", "a-cc.mov")])
+
+
+class SchemaNineTests(StoreCase):
+    """Milestone 10's column: each queue entry's submitter."""
+
+    def test_a_version_8_database_with_queue_entries_gains_the_submitter_with_its_rows_kept(self) -> None:
+        from draw_things_control.state.schema import MIGRATIONS
+
+        path = self.path.with_name("v8.db")
+        connection = sqlite3.connect(path)
+        for schema in MIGRATIONS[:8]:
+            for statement in schema.split(";\n"):
+                if statement.strip():
+                    connection.execute(statement)
+        connection.execute("PRAGMA user_version = 8")
+        connection.execute("INSERT INTO queue (queue_number, job_path, job_text, config_file, config_text, input_directory, output_directory, state, submitted_at, submitted_epoch, total_runs) VALUES (1, '/jobs/walk.yaml', 'name: walk', 'base.yaml', 'model: m', '/in', '/out', 'interrupted', '2026-10-01T09:00:00+00:00', 0, 3)")
+        connection.commit()
+        connection.close()
+        store = self.open(path=path)
+        self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+        [entry] = store.queue.list()
+        self.assertEqual((entry.label, entry.state, entry.total_runs, entry.submitted_by), ("Q0001", "interrupted", 3, None))
+
+    def test_the_submitter_round_trips(self) -> None:
+        store = self.open()
+        new = NewQueueEntry(job_path="/jobs/walk.yaml", job_text="name: walk\n", config_file="base.yaml", config_text="model: m\n", input_directory="/in", output_directory="/out", cooldown_default=None, settings=ExecutionSettings(output_directory="/out"), submitted_at="2026-10-02T09:00:00+00:00", total_runs=1, submitted_by="mcp")
+        entry = store.queue.submit(new)
+        self.assertEqual(entry.submitted_by, "mcp")
+        found = store.queue.by_number(entry.queue_number)
+        assert found is not None
+        self.assertEqual(found.submitted_by, "mcp")

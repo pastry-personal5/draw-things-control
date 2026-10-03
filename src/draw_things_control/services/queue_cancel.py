@@ -4,6 +4,7 @@ naming its state (``JobExecutor.cancel()``'s own contract governs everything pas
 from __future__ import annotations
 
 from draw_things_control.core.errors import InputError, NotFoundError
+from draw_things_control.services.queue_callers import check_entry_permitted
 from draw_things_control.services.queue_worker import QueueWorker
 from draw_things_control.state.queue import QueueState
 from draw_things_control.state.store import Store
@@ -16,7 +17,7 @@ class CancelRefusedError(InputError):
     code = "invalid_state"
 
 
-def cancel_entry(store: Store, worker: QueueWorker, entry_id: int) -> bool:
+def cancel_entry(store: Store, worker: QueueWorker, entry_id: int, *, caller: str | None = None) -> bool:
     """Cancel entry ``entry_id``. A queued entry is cancelled directly, through ``worker.cancel_queued`` (its own
     insert-and-publish lock, so this can never interleave with a claim); a running one is stopped through
     ``worker.cancel_running``. Either way, a race with the job's own natural end is not an error: the entry simply
@@ -24,11 +25,13 @@ def cancel_entry(store: Store, worker: QueueWorker, entry_id: int) -> bool:
     its state.
 
     Returns True when a queued entry was cancelled directly, False when the worker was told to stop a running one.
-    Either way the worker itself publishes the change; a caller need not.
+    Either way the worker itself publishes the change; a caller need not. An agent ``caller`` is refused a person's
+    entry (``queue_callers.py``).
     """
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
+    check_entry_permitted(entry, caller, "cancel")
     state = QueueState(entry.state)
     if state is QueueState.QUEUED:
         if worker.cancel_queued(entry.id, entry.label):

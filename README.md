@@ -26,6 +26,10 @@ uv run dtc run-job data/jobs/example-job.yaml
 
 # Browse, run, and watch jobs, and review past runs, in a terminal UI
 uv run dtc tui
+
+# Let an AI agent drive the queue over MCP: dtc serve runs the jobs, and Claude Code
+# finds `dtc mcp` through the project's .mcp.json
+uv run dtc serve
 ```
 
 ## Documentation

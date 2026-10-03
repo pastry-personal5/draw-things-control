@@ -36,9 +36,9 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `state/` (the SQLite store), `services/` (the use cases front ends share),
   `cli/` (Typer app), `tui/`, and, in phase 3, `server/` and `mcp_server/`.
 - Dependencies point one way: `cli`, `tui`, `server` -> `services` -> `state` ->
-  `jobs` -> `core`. `tests/test_architecture.py` fails on an import against it. Front ends never import each other, except that the `dtc tui`
-  command in `cli/app.py` starts the TUI app (`tui` never imports `cli`); `mcp_server` talks to
-  `server` over HTTP only.
+  `jobs` -> `core`. `tests/test_architecture.py` fails on an import against it. Front ends never import each other, except that three
+  commands in `cli/app.py` start one: `dtc tui` the TUI app, `dtc serve` the HTTP API and gRPC service, and `dtc mcp` the MCP server (none of those imports `cli`); `mcp_server` imports nothing else from the package and talks to
+  `server` over HTTP only, with no gRPC.
 - Imports are absolute (`from draw_things_control.core... import ...`).
 - Entry point: the `dtc` console script, or `python -m draw_things_control`.
 - No module holds a path of its own: a directory comes from `ProjectPaths`

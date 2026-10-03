@@ -1,20 +1,22 @@
 """The gRPC ``Monitor`` service (Milestone 02): ``WatchEvents`` and ``WatchQueueEntry``, both unary-request,
 server-streaming, since nothing here writes (writes stay HTTP ``POST``). Only ``server/`` imports the generated
-server code from ``server/proto/monitor.proto``; ``mcp_server/``, ``tui/``, and ``cli/`` import their own generated
-client stubs from the same file."""
+server code from ``server/proto/monitor.proto``; ``tui/`` and ``cli/`` import their own generated client stubs from
+the same file. ``WatchQueueEntry``'s snapshots come from ``entry_snapshot.py``, which the API's SSE watch reads too."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 import grpc
 import grpc.aio
 
 from draw_things_control.server.context import ServerContext
+from draw_things_control.server.entry_snapshot import entry_snapshot, snapshot_changed
 from draw_things_control.server.event_backlog import BacklogEvent
 from draw_things_control.server.generated import monitor_pb2, monitor_pb2_grpc
-from draw_things_control.state.ids import QUEUE_LETTER, execution_id_text, parse_typed_id
+from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id
 
 RESET_KIND = "reset"
 RUN_OUTPUT_KIND = "run_output"
@@ -61,56 +63,22 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
         if found is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
             return
-        last: monitor_pb2.QueueEntrySnapshot | None = None
+        last: dict[str, Any] | None = None
         while True:
-            snapshot = self._snapshot(found.id)
+            snapshot = entry_snapshot(self._context, found.id)
             if snapshot is None:
                 await context.abort(grpc.StatusCode.NOT_FOUND, f"No queue entry {request.queue_id}")
                 return
-            # The elapsed seconds change on every poll while a run is active; a message is sent only when something
-            # the contract names changes (state, execution ID, run, step, cooldown_until, error, the park reservation,
-            # the hold), carrying the elapsed seconds as of then.
-            compared = _without_elapsed(snapshot)
-            if compared != last:
-                yield snapshot
-                last = compared
+            # A message only when something the contract names changes, carrying the elapsed seconds as of then.
+            if snapshot_changed(last, snapshot):
+                yield _snapshot_to_proto(snapshot)
+                last = snapshot
             await asyncio.sleep(self._poll_interval)
 
-    def _snapshot(self, entry_id: int) -> monitor_pb2.QueueEntrySnapshot | None:
-        worker = self._context.worker
-        # The reservation first, then the row: the worker marks the entry finished before it drops the reservation,
-        # both under its lock, so a job that ends between the two reads shows its final state, never 'running'
-        # without its reservation. The queue table alone holds every field read below.
-        park_requested = worker.park_requested(entry_id)
-        entry = self._context.store.queue.get(entry_id)
-        if entry is None:
-            return None
-        # Always set, True or False, so a change either way sends a message and a client reads it with HasField.
-        snapshot = monitor_pb2.QueueEntrySnapshot(queue_id=entry.label, state=entry.state, park_requested=park_requested, queue_held=worker.hold_state().held)
-        if entry.total_runs is not None:
-            snapshot.total_runs = entry.total_runs
-        if entry.execution_number is not None:
-            snapshot.execution_id = execution_id_text(entry.execution_number)
-        if entry.error is not None:
-            snapshot.error = entry.error
-        if self._context.worker.current_entry_id() == entry.id:
-            current_run = self._context.worker.current_run()
-            if current_run is not None:
-                snapshot.current_run, snapshot.current_run_elapsed_seconds = current_run
-            current_step = self._context.worker.current_step()
-            if current_step is not None:
-                snapshot.current_step, snapshot.current_step_total = current_step
-        cooldown_until = self._context.worker.cooldown_until()
-        if cooldown_until is not None:
-            snapshot.cooldown_until = cooldown_until
-        return snapshot
 
-
-def _without_elapsed(snapshot: monitor_pb2.QueueEntrySnapshot) -> monitor_pb2.QueueEntrySnapshot:
-    compared = monitor_pb2.QueueEntrySnapshot()
-    compared.CopyFrom(snapshot)
-    compared.ClearField("current_run_elapsed_seconds")
-    return compared
+def _snapshot_to_proto(snapshot: dict[str, Any]) -> monitor_pb2.QueueEntrySnapshot:
+    """An unset field (None) is left unset, so a client reads it with ``HasField``."""
+    return monitor_pb2.QueueEntrySnapshot(**{name: value for name, value in snapshot.items() if value is not None})
 
 
 def _reset_event() -> monitor_pb2.Event:

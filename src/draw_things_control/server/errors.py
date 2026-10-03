@@ -22,6 +22,7 @@ STATUS_BY_ERROR_CODE = {
     "timeout_required": 422,
     "outside_directory": 422,
     "limit_exceeded": 422,
+    "not_permitted": 403,
     "not_found": 404,
     "invalid_state": 409,
     "conflict": 409,

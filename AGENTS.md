@@ -6,7 +6,7 @@ before changing anything.
 
 ## Project overview
 
-A Python 3.12 project whose mission is long-horizon video generation by autoregressive image-to-video chaining. It uses the Draw Things application beneath, through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) is done; Phase 3 (API and MCP servers) is in progress: milestones 01 to 09 are done. See
+A Python 3.12 project whose mission is long-horizon video generation by autoregressive image-to-video chaining. It uses the Draw Things application beneath, through the locally installed `draw-things-cli`. Phase 1 (CLI and jobs) is done; Phase 2 (TUI, state store, run lock) is done; Phase 3 (API and MCP servers) is in progress: milestones 01 to 10 are done. See
 [docs/architecture.md](docs/architecture.md) for the modules across all three phases and
 [docs/user-guide.md](docs/user-guide.md) for usage.
 
@@ -15,7 +15,7 @@ A Python 3.12 project whose mission is long-horizon video generation by autoregr
 - **Language and tools**: Python 3.12+, uv (`uv.lock`, `pyproject.toml`), `.venv` managed by uv
 - **Layout**: no source in the project root. One package, `src/draw_things_control/`, with `core/`, `jobs/`, `state/`, `services/`, `cli/`, `tui/` and, later, `server/`, `mcp_server/`; tests mirror it in `tests/`
 - **Entry point**: `dtc` (Typer, `cli/app.py`) or `python -m draw_things_control`
-- **Imports**: absolute; `cli`/`tui`/`server` -> `services` -> `state` -> `jobs` -> `core` (`tests/test_architecture.py` checks it); front ends never import each other, except that `dtc tui` in `cli/app.py` starts the TUI app (`tui` never imports `cli`)
+- **Imports**: absolute; `cli`/`tui`/`server` -> `services` -> `state` -> `jobs` -> `core` (`tests/test_architecture.py` checks it); `mcp_server` imports nothing else from the package and reaches the rest over HTTP alone; front ends never import each other, except that `dtc tui`, `dtc serve`, and `dtc mcp` in `cli/app.py` start the TUI app, the server, and the MCP server (none of those imports `cli`)
 - **Logging**: Loguru
 - **Lint, format, and types**: Ruff lints and formats (configured in `pyproject.toml`); no Black; pyright (`standard`) checks `src/` and `tests/`
 
@@ -28,6 +28,7 @@ A Python 3.12 project whose mission is long-horizon video generation by autoregr
 - `make check` must pass; `make format` applies Ruff's formatter. Tests use `unittest` and Typer's `CliRunner`, and never start the real `draw-things-cli`.
 - Use the Context7 MCP tools for current library, framework, SDK, or CLI documentation. Not for refactoring, scripts from scratch, business-logic debugging, code review, or general programming concepts.
 - Architecture rules: front ends call services and observe events, never parse logs; one `draw-things-cli` at a time; no credentials in events, storage, logs, or responses.
+- The checked-in `.mcp.json` offers every Claude Code session here the `dtc` MCP tools, which act on the owner's real queue and history whenever `dtc serve` runs: use them only when the owner asks.
 - Keep docs current in the same change. Phases, milestones, and changelog entries follow [the documentation rules](docs/development-rules.md#documentation); never rewrite past changelog entries.
 - Conventional commits (`feat(scope): ...`); commit only when asked.
 

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.server.app import create_app
 from draw_things_control.server.context import ServerContext
+from draw_things_control.state.execution_rows import MediaCheckRow
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
@@ -209,6 +210,76 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
 
     def test_an_unknown_execution_id_is_not_found(self) -> None:
         self.assertEqual(self.get("/v1/executions/E9999").status_code, 404)
+
+
+class BriefViewTests(ReadRoutesTestCase):
+    """Milestone 10: ``?brief=1`` on an execution and a job, and one run of an execution."""
+
+    def add_checked_execution(self) -> str:
+        """A resumed execution whose runs are 3 and 4, each with a check, and a check of run 5, which never started."""
+        execution_id = self.store.executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at="2026-10-02T09:00:00+00:00", settings=ExecutionSettings(output_directory=str(self.output_directory)), first_run=3))
+        for number in (3, 4):
+            self.store.executions.start_run(execution_id, number, NewRun(pair="p", positive="text", started_at="2026-10-02T09:00:00+00:00", command=["draw-things-cli", "--api-key", "secret", "--prompt", "text"]))
+            self.store.executions.finish_run(execution_id, number, status="succeeded", exit_code=0, seconds=4.0, output=f"run-{number}.mov", last_frame=None)
+        for number in (3, 4, 5):
+            self.store.executions.add_check(execution_id, MediaCheckRow(run=number, stage="video", file=f"run-{number}.mov", summary="ok", verdict="pass", notes=("note",), facts={"drift": 0.1}, at="2026-10-02T09:01:00+00:00"))
+        self.store.executions.finish(execution_id, status="interrupted", exit_code=None, signal=None, finished_at="2026-10-02T09:05:00+00:00")
+        return f"E{self.store.executions.number_of(execution_id):04d}"
+
+    def test_an_executions_brief_view_has_no_command_and_checks_of_stage_and_verdict(self) -> None:
+        execution_id = self.add_checked_execution()
+        full = self.get(f"/v1/executions/{execution_id}").json()
+        brief = self.get(f"/v1/executions/{execution_id}", params={"brief": "1"}).json()
+        self.assertEqual([run["number"] for run in brief["runs"]], [3, 4])
+        self.assertTrue(all("command" not in run for run in brief["runs"]))
+        self.assertEqual([run["checks"] for run in brief["runs"]], [[{"stage": "video", "verdict": "pass"}]] * 2)
+        self.assertEqual(brief["checks"], [{"run": 5, "stage": "video", "verdict": "pass"}])
+        self.assertEqual({key: value for key, value in full.items() if key not in ("runs", "checks")}, {key: value for key, value in brief.items() if key not in ("runs", "checks")})
+        self.assertEqual([{key: value for key, value in run.items() if key not in ("command", "checks")} for run in full["runs"]], [{key: value for key, value in run.items() if key != "checks"} for run in brief["runs"]])
+        self.assertEqual(full["runs"][0]["checks"][0]["facts"], {"drift": 0.1})
+
+    def test_another_value_of_brief_is_refused(self) -> None:
+        execution_id = self.add_checked_execution()
+        self.write_job_in_catalog("valid.yaml", run_timeout_seconds=60)
+        for path in (f"/v1/executions/{execution_id}", "/v1/jobs/valid.yaml"):
+            for value in ("0", "true", ""):
+                response = self.get(path, params={"brief": value})
+                self.assertEqual((response.status_code, response.json()["code"], response.json()["field"]), (422, "invalid_input", "brief"), (path, value))
+
+    def test_one_run_comes_back_in_full_by_its_number_in_the_chain(self) -> None:
+        execution_id = self.add_checked_execution()
+        full = self.get(f"/v1/executions/{execution_id}").json()
+        run = self.get(f"/v1/executions/{execution_id}/runs/4")
+        self.assertEqual(run.status_code, 200, run.text)
+        self.assertEqual(run.json(), full["runs"][1])
+        self.assertIn("[redacted]", run.json()["command"])
+        self.assertNotIn("secret", run.text)
+
+    def test_a_run_the_execution_does_not_have_is_not_found_and_a_bad_number_invalid(self) -> None:
+        execution_id = self.add_checked_execution()
+        for run in ("1", "5", "99", "9" * 5000):
+            self.assertEqual(self.get(f"/v1/executions/{execution_id}/runs/{run}").json()["code"], "not_found", run[:9])
+        self.assertEqual(self.get(f"/v1/executions/{execution_id}/runs/004").json()["number"], 4)
+        for run in ("0", "00", "-1", "x", "1.5", "²", "١"):
+            response = self.get(f"/v1/executions/{execution_id}/runs/{run}")
+            self.assertEqual((response.status_code, response.json()["code"], response.json()["field"]), (422, "invalid_input", "run"), run)
+        self.assertEqual(self.get("/v1/executions/E9999/runs/1").status_code, 404)
+        self.assertEqual(self.client.get(f"/v1/executions/{execution_id}/runs/3").status_code, 401)
+
+    def test_a_valid_jobs_brief_view_has_no_text_and_keeps_its_sha256(self) -> None:
+        self.write_job_in_catalog("valid.yaml", run_timeout_seconds=60)
+        full = self.get("/v1/jobs/valid.yaml").json()
+        brief = self.get("/v1/jobs/valid.yaml", params={"brief": "1"}).json()
+        self.assertNotIn("text", brief)
+        self.assertEqual({key: value for key, value in full.items() if key != "text"}, brief)
+        self.assertEqual(len(brief["sha256"]), 64)
+
+    def test_an_invalid_jobs_brief_view_keeps_its_text(self) -> None:
+        (self.paths.jobs / "broken.yaml").write_text("name: [unclosed\n", encoding="utf-8")
+        brief = self.get("/v1/jobs/broken.yaml", params={"brief": "1"}).json()
+        self.assertEqual(brief["text"], "name: [unclosed\n")
+        self.assertIn("sha256", brief)
+        self.assertIsNotNone(brief["error"])
 
 
 class AuditRouteTests(ReadRoutesTestCase):

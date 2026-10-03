@@ -80,7 +80,9 @@ def audit_entry(row: AuditRow) -> dict[str, Any]:
     return {"at": row.at, "action": row.action, "target": row.target, "outcome": row.outcome, "caller": row.caller}
 
 
-def run_summary(run: RunRow) -> dict[str, Any]:
+def run_summary(run: RunRow, *, brief: bool = False) -> dict[str, Any]:
+    """One run, as ``GET /executions/{id}`` and ``GET /executions/{id}/runs/{run}`` give it; ``brief`` (Milestone 10)
+    leaves out its command and gives each check as its stage and verdict alone."""
     return {
         "number": run.number,
         "pair": run.pair,
@@ -96,8 +98,8 @@ def run_summary(run: RunRow) -> dict[str, Any]:
         # The corrected copy's file name, and the file the run's colors were held to (Milestone 09).
         "corrected_output": run.corrected_output,
         "anchor": run.anchor,
-        "command": redact_command(run.command),
-        "checks": [media_check(check) for check in run.checks],
+        **({} if brief else {"command": redact_command(run.command)}),
+        "checks": [brief_check(check) if brief else media_check(check) for check in run.checks],
     }
 
 
@@ -105,9 +107,14 @@ def media_check(check: MediaCheckRow) -> dict[str, Any]:
     return {"stage": check.stage, "file": check.file, "summary": check.summary, "verdict": check.verdict, "notes": list(check.notes), "facts": check.facts, "at": check.at}
 
 
-def unstarted_check(check: MediaCheckRow) -> dict[str, Any]:
+def brief_check(check: MediaCheckRow) -> dict[str, Any]:
+    """A check in an execution's brief view (Milestone 10): its stage and verdict, without its facts and notes."""
+    return {"stage": check.stage, "verdict": check.verdict}
+
+
+def unstarted_check(check: MediaCheckRow, *, brief: bool = False) -> dict[str, Any]:
     """A check of a run that never started, listed on the execution, so it names the run it was made before."""
-    return {"run": check.run, **media_check(check)}
+    return {"run": check.run, **(brief_check(check) if brief else media_check(check))}
 
 
 def execution_summary(row: ExecutionRow) -> dict[str, Any]:
@@ -127,7 +134,9 @@ def execution_summary(row: ExecutionRow) -> dict[str, Any]:
     }
 
 
-def execution_detail(row: ExecutionRow) -> dict[str, Any]:
+def execution_detail(row: ExecutionRow, *, brief: bool = False) -> dict[str, Any]:
+    """``GET /executions/{id}``; ``brief`` (``?brief=1``, Milestone 10) gives each run and check as ``run_summary`` and
+    ``unstarted_check`` do, so a long chain's answer fits what an agent reads."""
     return {
         **execution_summary(row),
         "seed": row.seed,
@@ -144,9 +153,9 @@ def execution_detail(row: ExecutionRow) -> dict[str, Any]:
         "log": row.log_path,
         # The chain's first image, which its color checks compare with (Milestone 09); None before it was kept.
         "first_image": row.first_image,
-        "runs": [run_summary(run) for run in row.runs],
+        "runs": [run_summary(run, brief=brief) for run in row.runs],
         # Checks made before a run that never started (a stop during the input checks); each names its run.
-        "checks": [unstarted_check(check) for check in row.checks],
+        "checks": [unstarted_check(check, brief=brief) for check in row.checks],
     }
 
 
@@ -195,13 +204,15 @@ def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any
         "total_runs": row.total_runs,
         "succeeded": row.succeeded,
         "park_requested": park_requested,
+        # The caller that submitted or resumed it (Milestone 10); None for an entry made before it was recorded.
+        "submitted_by": row.submitted_by,
     }
 
 
 def queue_hold(hold: HoldState) -> dict[str, Any]:
     """The queue's hold (Milestone 05), beside the entries of ``GET /queue`` and ``GET /queue/{id}``, and the response
-    of ``POST /queue/hold`` and ``/queue/release``."""
-    return {"held": hold.held, "held_since": hold.since, "held_by": hold.by}
+    of ``POST /queue/hold`` and ``/queue/release``. ``hold_caller`` (Milestone 10) is the caller that made it."""
+    return {"held": hold.held, "held_since": hold.since, "held_by": hold.by, "hold_caller": hold.caller}
 
 
 def delete_report(report: DeleteReport, *, dry_run: bool) -> dict[str, Any]:

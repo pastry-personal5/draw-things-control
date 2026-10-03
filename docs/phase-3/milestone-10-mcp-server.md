@@ -1,7 +1,7 @@
 # Milestone 10: MCP Server
 
 **Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
-**Status:** planned
+**Status:** done (2026-10-03; built in increments A to E, all reviewed, though not each before the next started; see [As built](#as-built))
 **Depends on:** [Milestone 02: HTTP API](milestone-02-http-api.md), [Milestone 07: Job file management](milestone-07-job-file-management.md)
 (its write endpoints, `sha256`, and the `writes_off` answer), the queue
 actions of [Milestone 05](milestone-05-park-and-hold.md), and deleting
@@ -558,6 +558,26 @@ the next starts (owner decision):
 - **E. Registration and documents.** `.mcp.json`, the process test over
   stdio, the user guide, the architecture, `AGENTS.md`, and the development
   rules.
+
+## As built
+
+Built as planned, but where the [changelog](phase-3-changelog.md) of 2026-10-02 and 2026-10-03 says otherwise:
+
+- A path argument holding a slash is refused too: an ASGI server decodes `%2F` before it routes, so percent-encoding
+  alone let `Q0001/watch` reach the SSE watch.
+- A request sent but not answered within 30 seconds is `server_timeout`, a fourth error of the MCP server's own: it
+  may have taken effect, so it is not `server_unreachable`.
+- One rule for a hold on a held queue: a person's hold, direct or a park's, makes an agent's hold the person's, and an
+  agent's direct hold over a person's park detaches the hold from the park and leaves it the person's, where the plan
+  said it changes nothing. An agent's unpark is refused while the hold its entry's park made is a person's.
+- The SSE watch's keep-alive is its own `: keep-alive` comment, and `dtc serve` ends open watches as uvicorn begins to
+  shut down; FastAPI's generator routes could not answer 404 before the stream.
+- An optional argument given as null is left out, and an integer may come as `50.0`.
+- The reviews: A's ran before B began. B's first review was cut short by a usage limit, so B and C were reviewed
+  together, and D and E, whose code and documents were written while that review ran, together after.
+- Checked when built: a 2026-07-28 client over stdio, as an older one, sends the progress token the wait reads.
+  Not checked: that Claude Code drops a text block repeating a stdio server's structured content, which its
+  documentation says of the Agent SDK's tools.
 
 ## Follow-ups
 

@@ -140,9 +140,9 @@ class QueueWorker:
         with self._state_lock:
             return self._current.id if self._current is not None else None
 
-    def park_running(self, entry_id: int, label: str) -> bool:
-        """Make a park reservation on the running entry, and hold the queue by it unless the queue is already held (Milestone
-        05). False, doing nothing, when the entry is not the running one (queued, finished, or another entry), or a stop
+    def park_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
+        """Make a park reservation on the running entry, and hold the queue by it, for ``caller``, unless the queue is
+        already held (Milestone 05); on a held queue, a person's park makes an agent's hold the person's (Milestone 10). False, doing nothing, when the entry is not the running one (queued, finished, or another entry), or a stop
         (a cancel, or the server stopping) is already asked for it: ``stop_reason`` tells which. On an entry already
         parking, it only holds the queue again, when a release has ended the hold. Made before ``JobStarted``, the
         reservation stays pending and is applied there (``_start_guard``)."""
@@ -150,9 +150,9 @@ class QueueWorker:
             if not self._is_running(entry_id) or self._stop_reason is not None:
                 return False
             # The hold first: one that cannot be saved raises before any of the park is made, so a park never runs
-            # without the hold that keeps the next entry from starting after it.
-            if not self._hold.is_held:
-                self._hold.hold(label)
+            # without the hold that keeps the next entry from starting after it. On a queue already held, a person's
+            # park makes an agent's hold the person's (QueueHold._held_again), so the agent cannot release it.
+            self._hold.hold(label, caller)
             if not self._park_pending:
                 self._park_pending = True
                 if self._job_started:
@@ -160,9 +160,11 @@ class QueueWorker:
                 self._events.park_changed(label, True)
         return True
 
-    def unpark_running(self, entry_id: int, label: str) -> bool:
+    def unpark_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
         """Withdraw the running entry's park reservation, releasing the hold only when that reservation made it; a no-op
-        when it has none. False when the entry is not the running one, or its park has already taken effect."""
+        when it has none. False when the entry is not the running one, or its park has already taken effect. Refused
+        (``NotPermittedError``), with the reservation and its hold standing, for an agent ``caller`` when a person made
+        that hold (Milestone 10)."""
         with self._state_lock:
             if not self._is_running(entry_id):
                 return False
@@ -171,10 +173,10 @@ class QueueWorker:
             # The hold is released inside the executor's unpark, so no run boundary passes between the two: a hold that
             # cannot be released raises with the reservation, and the hold it made, standing as they were.
             if self._job_started:
-                if not self._executor.unpark(lambda: self._hold.release_if_by(label)):
+                if not self._executor.unpark(lambda: self._hold.release_if_by(label, caller)):
                     return False
             else:
-                self._hold.release_if_by(label)
+                self._hold.release_if_by(label, caller)
             self._park_pending = False
             self._events.park_changed(label, False)
         return True
@@ -193,22 +195,22 @@ class QueueWorker:
         with self._state_lock:
             return self._stop_reason if self._is_running(entry_id) else None
 
-    def hold(self) -> tuple[bool, HoldState]:
-        """Hold the queue directly (``/queue hold``): a running job is not stopped, and nothing starts after it. Ends a
-        between-jobs wait at once. Returns whether the queue was not held before, and the hold, both read under the
-        same lock as the change."""
+    def hold(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        """Hold the queue directly (``/queue hold``) for ``caller``: a running job is not stopped, and nothing starts after
+        it. Ends a between-jobs wait at once. Returns whether the queue was not held before, and the hold, both read
+        under the same lock as the change."""
         with self._state_lock:
-            changed = self._hold.hold(None)
+            changed = self._hold.hold(None, caller)
             hold = self._hold.snapshot()
         self.wake()
         return changed, hold
 
-    def release(self) -> tuple[bool, HoldState]:
-        """End the hold; the oldest queued entry is claimed at once, with no between-jobs cooldown. Returns whether the
-        queue was held (False, doing nothing, when it was not), and the hold, both read under the same lock as the
-        change."""
+    def release(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        """End the hold for ``caller``; the oldest queued entry is claimed at once, with no between-jobs cooldown. Returns
+        whether the queue was held (False, doing nothing, when it was not), and the hold, both read under the same lock
+        as the change. Refused (``NotPermittedError``) for an agent when a person made the hold (Milestone 10)."""
         with self._state_lock:
-            released = self._hold.release()
+            released = self._hold.release(caller)
             # Once the claimed job has ended (or with none claimed), the next claim skips the between-jobs cooldown, even
             # when this lands before _wait_after reads the hold; a release while the job still runs leaves it to wait.
             if released and (self._current is None or self._job_finished):

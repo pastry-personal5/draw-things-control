@@ -109,10 +109,10 @@ typed tools on top of it.
 | 07 | [Job file management](milestone-07-job-file-management.md) | done |
 | 08 | [Video format and color](milestone-08-video-format-and-color.md) | done |
 | 09 | [Color preservation](milestone-09-color-preservation.md) | done |
-| 10 | [MCP server](milestone-10-mcp-server.md) | planned |
+| 10 | [MCP server](milestone-10-mcp-server.md) | done |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | planned |
 
-Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), and Milestone 07 (2026-10-02); Milestone 10 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
+Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestone 10 (2026-10-03); Milestone 11 is next. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11 (owner decisions):
 
 1. Milestone 01 builds the queue and the worker.
 2. After Milestone 02, a program can run and resume jobs that already

@@ -50,6 +50,13 @@ class ConflictError(DtcError):
     code = "conflict"
 
 
+class NotPermittedError(DtcError):
+    """An agent's action on a queue entry or a hold a person made (Milestone 10): the API keeps agents, by the caller a
+    request declares, off what people started."""
+
+    code = "not_permitted"
+
+
 class StateUnavailableError(DtcError):
     """The state database or the lock file cannot be used."""
 

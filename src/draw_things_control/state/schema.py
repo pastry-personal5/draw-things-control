@@ -172,7 +172,14 @@ ALTER TABLE queue ADD COLUMN resume_first_image TEXT;
 ALTER TABLE queue ADD COLUMN resume_anchor TEXT
 """
 
+# Phase 3 Milestone 10: who submitted each queue entry, the caller of the submission or the resume that made it (cli,
+# tui, mcp, or api), so the API can keep agents off the entries people made. Entries already there stay NULL, and count
+# as a person's.
+SCHEMA_V9 = """
+ALTER TABLE queue ADD COLUMN submitted_by TEXT
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9)
 SCHEMA_VERSION = len(MIGRATIONS)

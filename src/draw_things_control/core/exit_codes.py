@@ -50,6 +50,8 @@ EXIT_CODES_BY_ERROR_CODE = {
     "limit_exceeded": EXIT_INVALID_INPUT,
     "invalid_state": EXIT_INVALID_INPUT,
     "conflict": EXIT_INVALID_INPUT,
+    # An agent's action on what a person started (Milestone 10); a person's own commands are never refused it.
+    "not_permitted": EXIT_INVALID_INPUT,
     "busy": EXIT_BUSY,
     "state_unavailable": EXIT_STATE_UNAVAILABLE,
 }

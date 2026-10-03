@@ -13,17 +13,21 @@ from typing import Any
 from unittest import mock
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.services.queue_hold import HOLD_KEY, HoldState, hold_text, read_hold
+from draw_things_control.core.errors import NotPermittedError
+from draw_things_control.services.queue_events import QueueEventPublisher
+from draw_things_control.services.queue_hold import HOLD_KEY, HoldState, QueueHold, hold_text, read_hold
 from draw_things_control.services.queue_park import ParkRefusedError, park_entry, unpark_entry
 from draw_things_control.services.queue_recovery import recover_queue
 from draw_things_control.services.queue_resume import resume_entry
+from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.queue import QueueState
 from draw_things_control.state.settings import SettingsRepository
+from tests.fixtures import job_data
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
 from tests.services.test_queue_worker import NOW, QueueWorkerCase
 
 
-class ParkTests(QueueWorkerCase):
+class ParkCase(QueueWorkerCase):
     def setUp(self) -> None:
         super().setUp()
         self.events: list[tuple[str, dict[str, Any]]] = []
@@ -59,6 +63,8 @@ class ParkTests(QueueWorkerCase):
         assert execution is not None
         return execution.status, len(execution.succeeded_runs)
 
+
+class ParkTests(ParkCase):
     def test_a_park_during_run_2_of_3_ends_it_parked_and_holds_the_queue(self) -> None:
         label = self.submit(run_count=3)
         waiting = self.submit(run_count=1)
@@ -474,13 +480,13 @@ class HoldTests(QueueWorkerCase):
         self.assertTrue(damaged.release()[0])
         self.assertIsNone(self.store.settings.get(HOLD_KEY))
 
-    def test_the_saved_hold_is_json_naming_since_and_by(self) -> None:
-        self.worker.hold()
+    def test_the_saved_hold_is_json_naming_since_by_and_caller(self) -> None:
+        self.worker.hold("tui")
         data = json.loads(self.store.settings.get(HOLD_KEY) or "")
-        self.assertEqual(set(data), {"since", "by"})
-        self.assertIsNone(data["by"])
+        self.assertEqual(set(data), {"since", "by", "caller"})
+        self.assertEqual((data["by"], data["caller"]), (None, "tui"))
         self.assertTrue(hold_text(self.worker.hold_state()).startswith("Queue held since 2026-09-27 15:30:12"))
-        for text in ('{"since": 5, "by": null}', '{"since": "yesterday", "by": null}', '{"by": "Q0001"}', "[]"):
+        for text in ('{"since": 5, "by": null}', '{"since": "yesterday", "by": null}', '{"by": "Q0001"}', "[]", '{"since": "2026-09-27T15:30:12", "by": null, "caller": 5}'):
             with self.subTest(text=text):
                 self.store.settings.set(HOLD_KEY, text)
                 self.assertEqual(read_hold(self.store.settings), HoldState(held=True))
@@ -500,3 +506,133 @@ class HoldTests(QueueWorkerCase):
         self.store._database.connection().execute("UPDATE queue SET state = 'running' WHERE queue_number = ?", (int(label[1:]),)).connection.commit()
         recover_queue(self.store, clock=lambda: NOW)
         self.assertEqual(self.entry(label).state, str(QueueState.PARKED))
+
+
+class HoldCallerTests(ParkCase):
+    """Milestone 10: the hold records its caller, and an agent never ends, or comes to own, a hold a person made."""
+
+    def queue_hold(self) -> QueueHold:
+        return QueueHold(self.store.settings, QueueEventPublisher(None), clock=lambda: NOW)
+
+    def submit_as(self, caller: str, **changes: object) -> str:
+        changes.setdefault("prompt_pairs", [{"name": "only", "positive": "text"}])
+        return submit_job(self.write_job(job_data(**changes)), self.global_config, self.params, self.store, submitted_by=caller).label
+
+    def test_an_agent_cannot_release_a_persons_hold_and_its_own_hold_over_one_changes_nothing(self) -> None:
+        self.worker.hold("tui")
+        self.assertEqual(self.worker.hold("mcp")[0], False)
+        self.assertEqual(self.worker.hold_state().caller, "tui")
+        with self.assertRaisesRegex(NotPermittedError, "^The queue was held by tui; an agent may release only a hold an agent made$"):
+            self.worker.release("mcp")
+        self.assertTrue(self.worker.hold_state().held)
+        self.assertEqual(self.worker.release("cli")[0], True)
+
+    def test_a_persons_direct_hold_makes_an_agents_hold_the_persons(self) -> None:
+        hold = self.queue_hold()
+        for agents in (None, "Q0007"):
+            with self.subTest(agents_hold_by=agents):
+                hold.hold(agents, "mcp")
+                self.assertFalse(hold.hold(None, "cli"))
+                self.assertEqual((hold.snapshot().by, hold.snapshot().caller), (None, "cli"))
+                self.assertEqual(read_hold(self.store.settings).caller, "cli")
+                self.assertRaises(NotPermittedError, hold.release, "mcp")
+                hold.release("cli")
+
+    def test_an_agents_direct_hold_over_a_persons_park_makes_it_direct_and_leaves_it_the_persons(self) -> None:
+        hold = self.queue_hold()
+        hold.hold("Q0007", "tui")
+        self.assertRaisesRegex(NotPermittedError, "^The queue was held with Q0007's park by tui;", hold.release_if_by, "Q0007", "mcp")
+        self.assertFalse(hold.hold(None, "mcp"))
+        self.assertEqual((hold.snapshot().by, hold.snapshot().caller), (None, "tui"))
+        self.assertFalse(hold.release_if_by("Q0007", "tui"), "the unpark ended a hold the direct hold made its own")
+        self.assertRaises(NotPermittedError, hold.release, "mcp")
+        self.assertTrue(hold.release("tui"))
+
+    def test_a_persons_park_makes_an_agents_hold_the_persons(self) -> None:
+        hold = self.queue_hold()
+        for agents_by, persons_by in ((None, "Q0007"), ("Q0007", "Q0007")):
+            with self.subTest(agents_hold_by=agents_by):
+                hold.hold(agents_by, "mcp")
+                self.assertFalse(hold.hold(persons_by, "tui"))
+                self.assertEqual((hold.snapshot().by, hold.snapshot().caller), (agents_by, "tui"))
+                self.assertRaises(NotPermittedError, hold.release, "mcp")
+                hold.release("tui")
+
+    def test_a_hold_that_changes_hands_says_so_in_its_event(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        hold = QueueHold(self.store.settings, QueueEventPublisher(lambda kind, data: events.append((kind, data))), clock=lambda: NOW)
+        hold.hold(None, "mcp")
+        hold.hold(None, "mcp")
+        hold.hold(None, "cli")
+        self.assertEqual([(kind, data["by"], data["caller"]) for kind, data in events], [("queue_held", None, "mcp"), ("queue_held", None, "cli")])
+
+    def test_a_damaged_holds_refusal_says_it_cannot_be_read(self) -> None:
+        self.store.settings.set(HOLD_KEY, "{not json")
+        with self.assertRaisesRegex(NotPermittedError, "saved hold cannot be read, so it counts as a person's"):
+            self.build_worker().release("mcp")
+
+    def test_an_agents_direct_hold_over_its_own_park_becomes_direct(self) -> None:
+        hold = self.queue_hold()
+        hold.hold("Q0007", "mcp")
+        hold.hold(None, "mcp")
+        self.assertEqual((hold.snapshot().by, hold.snapshot().caller), (None, "mcp"))
+        self.assertFalse(hold.release_if_by("Q0007", "mcp"))
+        self.assertTrue(hold.release("mcp"))
+
+    def test_a_hold_saved_before_callers_were_recorded_is_a_persons_not_damaged(self) -> None:
+        self.store.settings.set(HOLD_KEY, json.dumps({"since": "2026-09-27T15:30:12", "by": None}))
+        hold = read_hold(self.store.settings)
+        self.assertEqual((hold.held, hold.damaged, hold.caller), (True, False, None))
+        with self.assertRaisesRegex(NotPermittedError, "made before callers were recorded"):
+            self.build_worker().release("mcp")
+
+    def test_an_agents_unpark_of_its_entry_a_person_parked_is_refused_with_the_park_and_hold_standing(self) -> None:
+        label = self.submit_as("mcp", run_count=2)
+        seen: list[Any] = []
+
+        def park_then_unpark() -> None:
+            park_entry(self.store, self.worker, self.entry(label).id, caller="tui")
+            try:
+                unpark_entry(self.store, self.worker, self.entry(label).id, caller="mcp")
+            except NotPermittedError as error:
+                seen.append(str(error))
+            seen.append((self.worker.park_requested(self.entry(label).id), self.worker.hold_state()))
+
+        self.during_run(1, park_then_unpark)
+        self.worker.claim_and_run_one()
+        self.assertIn("an agent may release only a hold an agent made", seen[0])
+        parked, hold = seen[1]
+        self.assertEqual((parked, hold.by, hold.caller), (True, label, "tui"))
+        self.assertEqual(self.entry(label).state, "parked")
+
+    def test_an_agent_parks_and_unparks_its_own_entry(self) -> None:
+        label = self.submit_as("mcp", run_count=2)
+        seen: list[Any] = []
+
+        def park_then_unpark() -> None:
+            park_entry(self.store, self.worker, self.entry(label).id, caller="mcp")
+            seen.append(self.worker.hold_state().caller)
+            unpark_entry(self.store, self.worker, self.entry(label).id, caller="mcp")
+            seen.append(self.worker.hold_state().held)
+
+        self.during_run(1, park_then_unpark)
+        self.worker.claim_and_run_one()
+        self.assertEqual(seen, ["mcp", False])
+        self.assertEqual(self.entry(label).state, "succeeded")
+
+    def test_an_agent_is_refused_a_persons_entry_before_anything_changes(self) -> None:
+        label = self.submit_as("cli", run_count=2)
+        seen: list[str] = []
+
+        def try_all() -> None:
+            for action in (park_entry, unpark_entry):
+                try:
+                    action(self.store, self.worker, self.entry(label).id, caller="mcp")
+                except NotPermittedError as error:
+                    seen.append(str(error))
+            seen.append(str(self.worker.park_requested(self.entry(label).id)))
+
+        self.during_run(1, try_all)
+        self.worker.claim_and_run_one()
+        self.assertEqual(seen, [f"{label} was submitted by cli; an agent may park only an entry an agent submitted", f"{label} was submitted by cli; an agent may unpark only an entry an agent submitted", "False"])
+        self.assertFalse(self.worker.hold_state().held)

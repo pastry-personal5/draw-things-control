@@ -10,6 +10,7 @@ dependencies = [
     "grpcio>=1.84.0",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
+    "mcp>=2.2.0",
     "numpy>=2.5.3",
     "pillow>=12.3.0",
     "pyobjc-framework-vision>=12.2.2 ; sys_platform == 'darwin'",

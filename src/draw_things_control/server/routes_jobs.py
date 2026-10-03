@@ -1,4 +1,4 @@
-"""``GET /v1/jobs``, ``GET /v1/jobs/{job}``, and ``GET /v1/jobs/{job}/preview``."""
+"""``GET /v1/jobs``, ``GET /v1/jobs/{job}`` (and its brief view, ``?brief=1``, Milestone 10), and ``GET /v1/jobs/{job}/preview``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.server.context import ServerContext
-from draw_things_control.server.dependencies import Page, get_context, get_page, require_auth
+from draw_things_control.server.dependencies import Page, get_brief, get_context, get_page, require_auth
 from draw_things_control.server.job_reference import listing_rows, resolve_job_reference
 from draw_things_control.server.pagination import next_cursor
 from draw_things_control.server.serializers import job_detail, job_preview, job_summary
@@ -24,7 +24,9 @@ def list_jobs(context: ServerContext = Depends(get_context), page: Page = Depend
 
 
 @router.get("/v1/jobs/{job}")
-def get_job(job: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
+def get_job(job: str, context: ServerContext = Depends(get_context), brief: bool = Depends(get_brief)) -> dict[str, object]:
+    """``?brief=1`` (Milestone 10) leaves out a valid job's ``text``, which its resolved fields repeat; an invalid
+    job keeps it, since that is what must be fixed. ``sha256`` stays either way."""
     path = resolve_job_reference(context.catalog, job)
     try:
         source = path.read_bytes()
@@ -33,7 +35,10 @@ def get_job(job: str, context: ServerContext = Depends(get_context)) -> dict[str
         raise NotFoundError(f"Cannot read {path.name}: {error.strerror}") from error
     details = read_details(path, context.global_config, context.paths)
     if details.job is not None:
-        return job_detail(details.job, text, sha256=hashlib.sha256(source).hexdigest())
+        detail = job_detail(details.job, text, sha256=hashlib.sha256(source).hexdigest())
+        if brief:
+            del detail["text"]
+        return detail
     return {"text": text, "sha256": hashlib.sha256(source).hexdigest(), "error": details.error}
 
 

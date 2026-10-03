@@ -28,7 +28,7 @@ from draw_things_control.state.store import Store
 Enqueue = Callable[[Callable[[], QueueRow]], QueueRow]
 
 
-def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Path, store: Store, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition], None] | None = None, enqueue: Enqueue | None = None) -> QueueRow:
+def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Path, store: Store, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition], None] | None = None, enqueue: Enqueue | None = None, submitted_by: str | None = None) -> QueueRow:
     """Validate ``job_path`` exactly as running it would, then store its snapshot as a new ``queued`` entry.
 
     Refuses (raises whatever ``load_job_text`` raises, an ``InputError``) before anything is stored: an invalid job,
@@ -38,6 +38,7 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     02's own API rules and limits), so what it checks is what runs, not an earlier read of a file that may have
     changed since, and before the input image is decoded; it raising refuses the submission and stores nothing.
     ``enqueue`` does the actual insert and publish, as described above; None (most tests) inserts directly.
+    ``submitted_by`` is the request's caller, which the entry records (Milestone 10).
     """
     path = job_path.expanduser().resolve()
     _data, job_text = read_yaml_file(path, "Job file", show_source=True)
@@ -56,11 +57,11 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     # cannot be captured half-written: what is stored is validated in the form it is stored, the input decoded
     # included, not merely read twice.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=True, base_config_text=config_text)
-    new = _new_submitted_entry(path, job_text, config_text, job, global_config, local_timestamp(clock()))
+    new = _new_submitted_entry(path, job_text, config_text, job, global_config, local_timestamp(clock()), submitted_by)
     return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
-def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str) -> NewQueueEntry:
+def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None) -> NewQueueEntry:
     return NewQueueEntry(
         job_path=str(path),
         job_text=job_text,
@@ -72,6 +73,7 @@ def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDe
         settings=_execution_settings(job),
         submitted_at=submitted_at,
         total_runs=job.run_count,
+        submitted_by=submitted_by,
     )
 
 

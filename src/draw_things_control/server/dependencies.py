@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from fastapi import Header, HTTPException, Request
 
+from draw_things_control.core.errors import InputError
 from draw_things_control.server.context import ServerContext
 from draw_things_control.server.pagination import clamp_limit, decode_cursor
 from draw_things_control.server.token_file import token_matches
@@ -45,3 +46,11 @@ class Page:
 
 def get_page(limit: int | None = None, cursor: str | None = None) -> Page:
     return Page(offset=decode_cursor(cursor), limit=clamp_limit(limit))
+
+
+def get_brief(brief: str | None = None) -> bool:
+    """``?brief=1`` (Milestone 10): the smaller view of an execution or a job, for an agent that reads every byte.
+    Any other value is refused, naming ``brief``, as ``overwrite`` is."""
+    if brief not in (None, "1"):
+        raise InputError("'brief' must be 1", field="brief")
+    return brief == "1"

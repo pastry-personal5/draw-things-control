@@ -89,6 +89,19 @@ def _bind_one(family: socket.AddressFamily, socktype: socket.SocketKind, proto: 
     return sock
 
 
+class UvicornServer(uvicorn.Server):
+    """uvicorn's server, which tells every SSE watch to end (``context.stopping``) as it begins to shut down: uvicorn
+    then waits for open connections, and a watch never ends on its own (Milestone 10)."""
+
+    def __init__(self, config: uvicorn.Config, context: ServerContext) -> None:
+        super().__init__(config)
+        self._context = context
+
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        self._context.stopping.set()
+        await super().shutdown(sockets=sockets)
+
+
 @dataclass(frozen=True)
 class ServeOptions:
     host: str = DEFAULT_HOST
@@ -121,7 +134,7 @@ def run(paths: ProjectPaths, global_config: GlobalConfig, toolkit: Toolkit, opti
         context = ServerContext(paths=paths, global_config=global_config, store=host.store, worker=host.worker, executor=executor, executable=options.executable, token=token, bound_host=options.host, bound_port=options.port, grpc_port=options.grpc_port, allow_write=options.allow_write, event_backlog=backlog)
         logger.info("dtc serve listening on http://{}:{} (gRPC on {}); token file: {}", options.host, options.port, options.grpc_port, paths.server_token)
         if options.allow_write:
-            logger.warning("Writes to data/jobs/ are on")
+            logger.warning("Writes to data/jobs/, and deleting executions through MCP, are on")
         hold = host.worker.hold_state()
         if hold.held:
             logger.info("{}; 'dtc queue release' starts it", hold_text(hold))
@@ -170,7 +183,7 @@ async def _serve_async(context: ServerContext, options: ServeOptions, host: Queu
     raises a plain ``InputError`` with nothing yet running, rather than the worker having already claimed a queued
     entry that a late bind failure then interrupts (Milestone 02's startup-order fix, phase-3 changelog 2026-09-28).
     """
-    uvicorn_server = uvicorn.Server(uvicorn.Config(create_app(context), host=options.host, port=options.port, log_config=None))
+    uvicorn_server = UvicornServer(uvicorn.Config(create_app(context), host=options.host, port=options.port, log_config=None), context)
     with uvicorn_server.capture_signals():
         grpc_server = _bind_grpc_server(context, options)
         http_sockets = _bind_http_socket(options.host, options.port)
@@ -179,6 +192,7 @@ async def _serve_async(context: ServerContext, options: ServeOptions, host: Queu
         try:
             await uvicorn_server._serve(sockets=http_sockets)
         finally:
-            # Cancels open watch streams at once (grace=0), before the worker stops, so neither can hold shutdown up.
+            # Cancels open watch streams at once (grace=0), before the worker stops, so neither can hold shutdown up;
+            # the SSE watches ended themselves as uvicorn began to shut down (UvicornServer).
             await grpc_server.stop(grace=0)
             host.stop()

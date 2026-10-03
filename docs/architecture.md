@@ -39,14 +39,16 @@ src/draw_things_control/
 ├── cli/         # Typer app: the `dtc` command
 ├── tui/         # Textual app: screens, panes/, text/, the command controller
 ├── server/      # HTTP API; its queue worker is in services/        (phase 3)
-└── mcp_server/  # MCP client of the HTTP API                        (phase 3)
+└── mcp_server/  # MCP server: typed tools over the HTTP API, its SSE watch included (phase 3)
 tests/           # mirrors the package: tests/core, tests/jobs, tests/state, tests/services, ...
 ```
 
 Import direction: `cli`, `tui`, `server` -> `services` -> `state` -> `jobs` ->
-`core`; `mcp_server` -> `server` over HTTP only. Front ends never import each
-other, except that the `dtc tui` command in `cli/app.py` starts the TUI app.
-Nothing below the front ends imports Typer, Textual, or a web framework.
+`core`; `mcp_server` -> `server` over HTTP only, and imports nothing else from the
+package. Front ends never import each other, except that three commands in
+`cli/app.py` start one: `dtc tui` the TUI app, `dtc serve` the server, and
+`dtc mcp` the MCP server. Nothing below the front ends imports Typer, Textual, a
+web, MCP, or gRPC framework.
 Launch with `dtc` or `python -m draw_things_control`.
 
 Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
@@ -57,7 +59,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | Module | Responsibility |
 |--------|----------------|
 | `core/paths.py` | `ProjectPaths`: where the project keeps its files, worked out once and passed down; no module holds a path of its own |
-| `core/errors.py`, `core/exit_codes.py` | `DtcError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
+| `core/errors.py`, `core/exit_codes.py` | `DtcError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`, and, from phase 3, `conflict` and `not_permitted`, among others); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
 | `core/yaml_files.py` | The one strict YAML reader: duplicate and non-string keys, octal and base-60 numbers are refused |
 | `core/draw_things_config.py` | Draw Things configurations (YAML only), lookup in `data/params/`, and job overrides applied to them |
 | `core/arguments.py` | Validated options and argument-vector building (no shell); one flag table (`GENERATE_FLAGS`) drives the builder, the parser, and redaction; `OVERRIDE_TARGETS` says what each job override becomes; `command_settings` reads a saved command back |
@@ -83,10 +85,12 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/queue_submit.py`, `services/queue_resume.py` (phase 3) | Validate a job and snapshot it as a queue entry; resolve and accept a resume |
 | `services/queue_worker.py`, `services/queue_worker_status.py`, `services/queue_recovery.py`, `services/queue_host.py`, `services/queue_cancel.py` (phase 3) | The queue's one worker thread and its observable status (`is_alive`, `state`, `cooldown_until`, `current_run`, `current_step`, `between_runs_after`); restart recovery; the host that owns the run lock, the store, and the worker's lifecycle; cancelling an entry |
 | `services/queue_hold.py`, `services/queue_park.py`, `services/queue_park_text.py` (phase 3) | The queue's hold, in memory and in the `settings` row; parking and unparking a running entry, and holding and releasing the queue; the words both front ends use for a park and its outcome |
+| `services/queue_callers.py` (phase 3) | Keeping agents (the caller `mcp`) off the queue entries and holds people made: `check_entry_permitted`, and the words of a refusal |
 | `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
 | `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
-| `server/` (phase 3) | `dtc serve`'s FastAPI app and gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) |
-| `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `run-job`, `import-history`, `tui`, `serve`) and `CliServices` in Typer's context |
+| `server/` (phase 3) | `dtc serve`'s FastAPI app, its SSE watch of a queue entry, and the gRPC monitoring service; see [below](#milestone-2-http-api-and-grpc-monitoring-done) and [Milestone 10](#milestone-10-mcp-server-done) |
+| `mcp_server/` (phase 3) | `dtc mcp`: the MCP server's tools, resources, and wait, over the HTTP API alone; see [Milestone 10](#milestone-10-mcp-server-done) |
+| `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `import-history`, `tui`, `serve`, `mcp`, and the `queue` and `history` groups) and `CliServices` in Typer's context |
 
 Services receive their runner and executable lookup as dependencies, so tests
 never start a process.
@@ -462,15 +466,62 @@ Adds what every later front end needs, without changing the CLI's behavior.
   refusals and warnings, and proof the server and token work before any dialog opens), then pushes `DeleteDialog` for
   each execution with `push_screen_wait` on a worker, sending one request per Delete and batches for Delete all.
 
+### Milestone 10: MCP server (done)
+
+- **The API's additions.** `GET /v1/executions/{id}?brief=1` (`serializers.execution_detail(brief=True)`: no run's
+  command, each check as its stage and verdict) and `GET /v1/executions/{id}/runs/{run}` (one `run_summary`, matched by
+  the run's number as text, so no number is too long to parse); `GET /v1/jobs/{job}?brief=1`, without a valid job's
+  text. `dependencies.get_brief` refuses another value of `brief`, as `overwrite` is.
+- **The SSE watch.** `GET /v1/queue/{id}/watch` (`routes_queue.watch_queue_entry`) is a plain route that answers 404
+  first and returns an `EventSourceResponse` over bytes it formats with `fastapi.sse.format_sse_event`: `event:
+  snapshot` and the snapshot as JSON, and `: keep-alive` after `watch_keepalive_seconds` (15) without one. It reads each
+  snapshot off the event loop every `watch_poll_seconds` (0.5). `server/entry_snapshot.py` is the one snapshot and the
+  one rule for when one is sent, which `grpc_service.WatchQueueEntry` reads too (a field left unset when None);
+  `run_progress` is the current run, step, and `cooldown_until` it shares with `GET /v1/queue/{id}`. uvicorn waits for
+  open connections when it stops, so `serve.UvicornServer.shutdown` sets `ServerContext.stopping` before it waits, and
+  each watch ends at its next poll.
+- **People's entries and holds.** Schema 9 adds `queue.submitted_by`, the caller of the submission or resume that made
+  the entry (null before it). The hold's saved setting gains `caller` (`HoldState.caller`); a hold saved without one is
+  a person's, not damaged. `QueueHold._held_again` is the one rule for a hold on a held queue: a direct hold makes a
+  park's hold its own, a person's makes an agent's the person's, and an agent's never takes a person's. The worker
+  calls it on every park, so a person's park on an agent's hold takes it. `services/queue_callers.py`'s
+  `check_entry_permitted` refuses an agent (`mcp`) a person's entry in `cancel_entry`, `park_entry`, `unpark_entry`,
+  and `resume_entry`; `QueueHold._release` refuses an agent a person's hold under the hold's own lock, for a release
+  and an unpark alike. The refusal is `NotPermittedError`, 403 `not_permitted`, audited as any refusal.
+- **`mcp_server/`.** Imports nothing else from the package and no `grpc` (`tests/test_architecture.py`); `cli/app.py`
+  checks `--server-url`, moves logging to stderr, and imports `mcp_server.app` only inside `dtc mcp`.
+  - `app.py`: the SDK's low-level `Server`, not `MCPServer`, for hand-written schemas, a list that changes at runtime,
+    and error results carrying the API's error shape. `McpApp` holds the API client, the last read of `allow_write`,
+    and each connection's state from the server's lifespan (an older client's session). The tool list reads
+    `GET /v1/capabilities`; a call reads it again when the last read is over 5 seconds old or failed, and
+    `delete_executions` always. A read that differs from the list last given publishes `ToolsListChanged` on an
+    `InMemorySubscriptionBus` (served by the SDK's `ListenHandler` on `subscriptions/listen`) and sends
+    `notifications/tools/list_changed` on each older session; `tools/list` and `resources/list` carry a 5-second
+    cache hint. `_Server` declares `tools.listChanged` to an older client on every transport. Resources are the job
+    files, `job://{job}`, through the API.
+  - `api.py`: one `httpx.AsyncClient`, every request with the bearer token and `X-Dtc-Caller: mcp`; the token read as
+    `core/client_config.read_client_token` reads it (a tested copy) and read again after any failure; `ApiRequest`,
+    built whole before anything is sent; `path_segment`, which refuses an empty, dots-only, or slashed argument (an
+    ASGI server decodes `%2F` before it routes) and percent-encodes the rest; the SSE stream; and the errors of its
+    own, `server_unreachable`, `server_timeout` (sent, not answered: a write may have taken effect), and
+    `unauthorized`. The client opens with the first request and closes with the last connection.
+  - `tools.py`: each tool's name, description, input schema (with the API's names and bounds, and
+    `additionalProperties: false`), annotations, and request; `check_arguments`, which refuses an unknown, missing, or
+    wrong argument naming it, before any request.
+  - `watch.py`: `get_queue_entry`'s `wait_seconds`. It reads the entry, answers a finished one at once (a tested copy
+    of `FINISHED_STATES`), and otherwise reads the SSE watch, without an SSE library, until a snapshot changes a field
+    an agent acts on or ends a run (`acted_on`: `current_run` leaving a number, for null or straight for the next),
+    compared with the one before it and the first with the entry as read, or the time is up, then reads the entry
+    again and adds `changed`. A watch that ends first answers as a read of the entry does (`not_found` once it is
+    gone), else `server_unreachable`.
+    Progress every 15 seconds, at most 1500 seconds without a progress token, and 60 seconds of silence (the stream's
+    read timeout) count as a dropped watch (`WaitTimes`, which tests shorten). A cancelled call cancels the stream.
+- **Registration.** `.mcp.json` at the project root registers `uv run dtc mcp` with Claude Code.
+
 ### Milestones 3 onward (planned)
 
 - Job file management in `data/jobs/` behind a write flag, with `.backups/` and
   `.trash/`.
-- `mcp_server/` (`dtc mcp`): a thin client of the HTTP API, its SSE watch of
-  a queue entry included, exposing typed tools. It imports nothing else from the
-  package and never touches the core.
-- `dtc serve` and `dtc mcp` in `cli/app.py` start them, as `dtc tui` starts
-  the TUI.
 - The queue for people: `dtc queue` (an HTTP client in `cli/`, plus a gRPC
   client for `add --wait`) and a Queue widget in the TUI that submits,
   cancels, and resumes through the API too, watching live over gRPC while

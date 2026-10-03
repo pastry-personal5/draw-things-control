@@ -73,6 +73,12 @@ class ServerContext:
     allow_write: bool = False
     event_backlog: EventBacklog = field(default_factory=EventBacklog)
     submission_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set as `dtc serve` begins to shut down (serve.py), so every SSE watch ends itself: uvicorn waits for open
+    # connections before it stops (Milestone 10). How often a watch reads its entry, and how long it stays quiet
+    # before it sends a keep-alive comment.
+    stopping: threading.Event = field(default_factory=threading.Event)
+    watch_poll_seconds: float = 0.5
+    watch_keepalive_seconds: float = 15.0
     catalog: JobCatalog = field(init=False)
     input_catalog: InputCatalog = field(init=False)
 

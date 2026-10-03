@@ -19,6 +19,7 @@ the project root as `uv run dtc <command>`.
 - [Execution history and the run lock](#execution-history-and-the-run-lock)
 - [Server: HTTP API and gRPC monitoring](#server-http-api-and-grpc-monitoring)
 - [Park a job and hold the queue](#park-a-job-and-hold-the-queue)
+- [AI agents over MCP](#ai-agents-over-mcp)
 - [Stopping, failures, and exit codes](#stopping-failures-and-exit-codes)
 - [Troubleshooting](#troubleshooting)
 
@@ -71,6 +72,7 @@ different file.
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
 | `queue` | Submit, list, cancel, resume, park, and hold queue entries through `dtc serve` |
 | `history delete` | Delete executions from the history through `dtc serve` |
+| `mcp` | Give AI agents typed tools over `dtc serve`'s API, as an MCP server on stdio |
 
 Add `--help` to any command for its full option list.
 
@@ -996,7 +998,7 @@ rest are deleted, and the exit code is 2.
 ## Server: HTTP API and gRPC monitoring
 
 `dtc serve` runs an HTTP API and a gRPC monitoring service in one foreground
-process, for an AI agent (over MCP, later) or any local program to list jobs
+process, for an AI agent (over MCP, with [`dtc mcp`](#ai-agents-over-mcp)) or any local program to list jobs
 and inputs, queue and watch runs, and read history — without running
 `draw-things-cli` itself.
 
@@ -1021,7 +1023,8 @@ entry first and stop the server once it has parked (see
 Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
 `--grpc-port` (default `8766`), `--executable`, `--shutdown-grace`,
 `--global-config`, `--allow-remote-bind`, and `--allow-write`. Writes are off by default;
-`--allow-write` enables the authenticated job-file endpoints described below. A `--host` that is not loopback
+`--allow-write` enables the authenticated job-file endpoints described below, and lets agents delete executions
+through MCP (the endpoint itself is always on, for `dtc history delete` and the TUI). A `--host` that is not loopback
 (`127.0.0.1`, `::1`, `localhost`) is refused (exit 2) unless
 `--allow-remote-bind` is given, since beyond loopback the bearer token below
 crosses the network in plain HTTP; an SSH tunnel is the safer way in from
@@ -1047,16 +1050,18 @@ execution in the history, whichever front end ran it.
 |-----------------|---------|
 | `GET /health` | Liveness (no auth): up, its version, whether the worker is alive |
 | `GET /capabilities` | Whether writes are enabled, and the limits in force |
-| `GET /jobs`, `GET /jobs/{job}`, `GET /jobs/{job}/preview` | The job files, one file's text and resolved plan, and its dry-run preview |
+| `GET /jobs`, `GET /jobs/{job}`, `GET /jobs/{job}/preview` | The job files, one file's text and resolved plan, and its dry-run preview; `GET /jobs/{job}?brief=1` leaves out a valid job's `text` (an invalid job keeps it), keeping `sha256` |
 | `POST /validate` | Validate `{"yaml":"..."}` as a job write would, without writing; an optional `?name=` also checks its file name |
 | `PUT /jobs/{name}` | Create `data/jobs/{name}.yaml`; with `?overwrite=1` and `expected_sha256`, guardedly replace it |
 | `DELETE /jobs/{name}?expected_sha256=...` | Recoverably trash a job file whose current SHA-256 matches |
 | `GET /inputs` | Images in the input directory, with their size |
-| `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries, with the queue's hold (`held`, `held_since`, `held_by`); read one entry's state and the hold |
+| `POST /queue`, `GET /queue`, `GET /queue/{id}` | Submit a job by reference; list entries, with the queue's hold (`held`, `held_since`, `held_by`, `hold_caller`); read one entry's state and the hold |
+| `GET /queue/{id}/watch` | Watch one entry over SSE: `event: snapshot` with its current snapshot first, then one on each change, and a `: keep-alive` comment every 15 seconds while nothing changes |
 | `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` | Cancel a queued or running entry; resume an interrupted, failed, cancelled, or parked one from its last succeeded run |
 | `POST /queue/{id}/park`, `POST /queue/{id}/unpark` | Park a running entry, or withdraw its park reservation; each returns the entry as `GET /queue/{id}` does |
-| `POST /queue/hold`, `POST /queue/release` | Hold or release the queue; each returns `held`, `held_since`, `held_by`, and `changed` (false when the queue already was, or was not, held) |
+| `POST /queue/hold`, `POST /queue/release` | Hold or release the queue; each returns `held`, `held_since`, `held_by`, `hold_caller`, and `changed` (false when the queue already was, or was not, held) |
 | `GET /executions`, `GET /executions/{id}`, `GET /executions/{id}/outputs` | Execution history, one execution's runs (with its `first_image`, and each run's `anchor` and `corrected_output`), and each run's output file with whether it is complete, its last frame, and its corrected copy with `corrected_output_exists` |
+| `GET /executions/{id}?brief=1`, `GET /executions/{id}/runs/{run}` | One execution in brief: each run without its `command`, and each check as its `stage` and `verdict` alone (with `run`, for the execution's own); and one run in full, by its number in the chain (a resumed execution's first is not 1) |
 | `POST /executions/delete` | Delete executions: body `{"executions": ["E0012", ...], "dry_run": false}`, 1 to 200 IDs; answers `deleted`, `refused` (ID and reason), `missing`, `resumes_ended` (ID and the entries it ends), and `manifests_kept` (ID and path). With `"dry_run": true` it says what a deletion would do now and deletes nothing |
 | `GET /audit` | The audit log of every submit, cancel, resume, park, unpark, hold, release, and execution deletion, refused ones included |
 
@@ -1070,14 +1075,21 @@ TUI's `/filter name` does. `GET /queue` pages the same way, but only its
 finished entries (newest first); queued and running ones always come back in
 full on the first page, since those alone are bounded by `max_queued_jobs`.
 Each entry carries `park_requested`, true for a running entry with a park
-reservation. `GET /queue/{id}` also carries `between_runs_after_run`: the
+reservation, and `submitted_by`, the caller that submitted or resumed it (`cli`,
+`tui`, `mcp`, or `api`; null for an entry made before callers were recorded). `GET /queue/{id}` also carries `between_runs_after_run`: the
 succeeded run the entry is between runs after, a cooldown included, until its
 next run starts, or null while a run is going (`cooldown_until` is the wait
 between two queued jobs, null while a job runs).
 `worker_state` reads `held` while no job runs and the queue is held.
 
 Watching for change (the event stream, and "tell me when this entry changes")
-is gRPC, not HTTP: `WatchEvents` streams job and queue events from a
+is gRPC, and, for one entry, also SSE: `GET /queue/{id}/watch` sends the snapshots
+`WatchQueueEntry` sends, with the same field names (an unset one as null), for a
+client that speaks HTTP alone, as `dtc mcp` does. An unknown entry is 404 before
+the stream starts; it ends when the client disconnects, the entry is gone, or the
+server shuts down, and a client that reconnects gets a new snapshot first. A
+browser's `EventSource` cannot send the token, so it serves clients that send
+headers. `WatchEvents` streams job and queue events from a
 `last_event_id` onward (an ID from before the server's current run gets a
 `Reset`, telling the client to re-read state over HTTP and resubscribe), and
 `WatchQueueEntry` streams one entry's snapshot on every change until the
@@ -1113,6 +1125,17 @@ cp -n data/jobs/.trash/NAME-YYYYMMDD-HHMMSS.yaml data/jobs/NAME.yaml
 ```
 
 Use the corresponding file under `.backups/NAME/` for a backup. `cp -n` refuses to overwrite an existing destination.
+
+**People's entries and holds.** The queue is shared, so the API keeps agents
+off what people started: a request whose `X-Dtc-Caller` is `mcp` may cancel,
+park, unpark, or resume only an entry an agent submitted, and release only a
+hold an agent made; the rest are refused, 403 `not_permitted`, naming who made
+them, and change nothing. An entry made before callers were recorded, and a
+saved hold that cannot be read, count as a person's. A person's hold, direct or a
+park's, makes an agent's hold the person's, and an agent's hold never makes a
+person's the agent's, so an agent cannot release a hold a person's park relies on.
+A person's own commands are not limited. The caller names itself, so this
+guards agents that use their tools; it adds no level of access.
 
 **Audit log.** Every submit, cancel, resume, park, unpark, hold, and release
 is recorded in the state store (time, action, target, outcome, caller; hold and
@@ -1184,6 +1207,127 @@ server is down. `dtc queue add --wait` says when its entry starts parking or
 runs on, and when it waits behind a hold; an entry that parks prints
 `Q0007 parked after run 5/7; 'dtc queue resume Q0007' continues at run 6`
 (the chain's run number) and exits 3.
+
+## AI agents over MCP
+
+`dtc mcp` is an MCP server on stdio that gives an AI agent typed tools over
+`dtc serve`'s API, so the agent can draft, create, queue, watch, cancel, and
+resume a long chain without knowing HTTP. It is a client of the API, as
+`dtc queue` is: it runs nothing itself, and `dtc serve` stays the only process
+that runs a job. Several MCP sessions can share one server.
+
+```bash
+uv run dtc mcp
+```
+
+It takes `dtc queue`'s three options, with the same defaults: `--server-url`
+(default `http://127.0.0.1:8765`; one that is not loopback is refused, exit 2,
+unless `--allow-remote-server` is given) and `--token-file` (default the
+project's `config/server-token`, found from the package's own place, not from
+the directory a client starts it in). It starts whether or not `dtc serve` is
+up, reads the token at the first call, and reads it again after any failure, so
+a regenerated token or a restarted server needs no restart of `dtc mcp`. Its
+stdout carries the protocol alone; it logs to stderr, and never logs the token.
+
+**Registering it.** The project's `.mcp.json` registers it with Claude Code as
+`dtc`, running `uv run dtc mcp`, so every Claude Code session in this
+repository is offered the tools: an interactive session asks once before it
+uses them, while `claude -p` runs, Agent SDK sessions, and cloud sessions load
+them without asking (`disabledMcpjsonServers` keeps it out of any session). The
+tools act on your real queue and history whenever `dtc serve` runs. For a
+client started from anywhere else, give the project's directory:
+
+```json
+{
+  "mcpServers": {
+    "dtc": {"type": "stdio", "command": "uv", "args": ["run", "--directory", "/path/to/draw-things-control", "dtc", "mcp"]}
+  }
+}
+```
+
+**Tools.** Each calls one API endpoint, with the API's argument names and
+bounds, and returns the API's JSON as it is: as structured content, and the
+same JSON, compact, as the one text block. An error is a tool error whose body
+is the API's error shape (`code`, `message`, and, when there are some, `field`,
+`limit`, `value`, and `current_sha256`). A list tool asks for 50 when given no
+`limit`.
+
+| Tool | Endpoint |
+|------|----------|
+| `get_capabilities` | `GET /capabilities` |
+| `list_jobs`, `get_job`, `preview_job` | `GET /jobs`, `GET /jobs/{job}?brief=1` (or the full answer, with its text, given `brief: false`), `GET /jobs/{job}/preview` |
+| `validate_job_text` | `POST /validate` |
+| `list_inputs` | `GET /inputs` |
+| `submit_job`, `get_queue`, `get_queue_entry` | `POST /queue`, `GET /queue`, `GET /queue/{id}` (with `wait_seconds`, see below) |
+| `cancel_queue_entry`, `resume_queue_entry` | `POST /queue/{id}/cancel`, `POST /queue/{id}/resume` |
+| `park_queue_entry`, `unpark_queue_entry`, `hold_queue`, `release_queue` | `POST /queue/{id}/park`, `/unpark`, `POST /queue/hold`, `/release` |
+| `list_executions`, `get_execution`, `get_execution_run`, `list_outputs` | `GET /executions`, `GET /executions/{id}?brief=1`, `GET /executions/{id}/runs/{run}`, `GET /executions/{id}/outputs` |
+| `create_job`, `replace_job`, `delete_job` | `PUT /jobs/{name}`, `PUT /jobs/{name}?overwrite=1`, `DELETE /jobs/{name}` |
+| `delete_executions` | `POST /executions/delete`, with a required `dry_run` |
+
+No argument is a path, a `draw-things-cli` flag, or a credential, and an
+unknown, missing, or wrong argument is refused, `invalid_input` naming it,
+before any request. An ID or name that would become part of a URL path is
+refused when it is empty, only dots, or holds a slash, so no argument reaches an
+endpoint other than its tool's. Each job file can also be read, as text, as the
+resource `job://{job}`.
+
+An agent may cancel, park, unpark, and resume only the entries it submitted
+through MCP, and release only a hold an agent made: the rest answer
+`not_permitted` (see [People's entries and holds](#server-http-api-and-grpc-monitoring)).
+All MCP sessions share the caller `mcp`, so this keeps agents off people's
+entries, not one agent off another's.
+
+**The write tools.** `create_job`, `replace_job`, `delete_job`, and
+`delete_executions` are listed only while `dtc serve` runs with
+`--allow-write`. `dtc mcp` reads `GET /capabilities` when a client asks for the
+tool list, and again before a call when its last read is over 5 seconds old,
+and when the setting has changed, it tells the client the tool list changed (on
+a `subscriptions/listen` stream for a 2026-07-28 client, and as
+`notifications/tools/list_changed` for an older one); a list carries a 5-second
+cache hint too. A client that does not act on the notice keeps its old list:
+a job file write tool it calls once writes are off gets the API's `writes_off`,
+and write tools turned on appear only when it reads the list again.
+`delete_executions` reads the capabilities afresh before every call, and is
+refused with its own `writes_off` while writes are off, without reaching its
+endpoint; it is final, so its `dry_run` is required.
+
+**Waiting for a change.** `get_queue_entry` with `wait_seconds` (1 to 7200)
+answers once the entry changes in a way an agent acts on — its state, its
+execution, an error, a park, the hold, the between-jobs wait, or a run's end —
+or the time is up, with `changed` (`true` or `false`) added to the entry. A
+run's next start and its steps do not end a wait, so following a chain takes
+about one call a run. A finished entry is answered at once with
+`changed: false`. While it waits, `dtc mcp` sends a progress notification every
+15 seconds when the client asked for progress; a call without a progress token
+waits at most 1500 seconds, under Claude Code's 30-minute idle limit for a stdio
+server. A call can wait as long as a run, but never for a whole job.
+
+How long a client lets a call run bounds the wait. Claude Code puts no
+per-request timer on a stdio server and moves a call past 2 minutes to the
+background, telling the agent when it ends, but only in the main conversation
+of an interactive session: in a subagent, or a `claude -p` run without
+`CLAUDE_AUTO_BACKGROUND_TASKS=1`, a long wait blocks for as long as it waits.
+A client on the MCP TypeScript SDK's defaults ends a call after 60 seconds, so
+an agent in one should pass 50 or less.
+
+**Its own errors.** With the API down, the read, run, and queue control tools
+are still listed, and each call answers an error, and `dtc mcp` keeps running:
+
+| Code | When |
+|------|------|
+| `server_unreachable` | The connection fails, or a watch drops or sends nothing, not even its keep-alive, for 60 seconds; names `--server-url` and `dtc serve` |
+| `server_timeout` | The API took the request but did not answer within 30 seconds; it may have taken effect, so read the state again before you retry |
+| `unauthorized` | The token file is missing, empty, or unreadable, or the API refuses the token; names the token file and `dtc serve` |
+| `invalid_input` | An argument it refuses before any request |
+| `writes_off` | `delete_executions` while writes are off |
+
+**Hiding a tool is not a security boundary.** A session that can run a shell can
+read `config/server-token` and call any endpoint itself,
+`POST /v1/executions/delete` included, with or without `--allow-write`. The
+tool list keeps an agent that follows its tools from destructive actions you
+did not turn on; the token, the loopback bind, and the audit log, which records
+every action an agent takes as the caller `mcp`, are what guard the API.
 
 ## Stopping, failures, and exit codes
 

@@ -12,6 +12,7 @@ from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.services.queue_callers import check_entry_permitted
 from draw_things_control.services.queue_submit import Enqueue, parse_snapshot
 from draw_things_control.services.resume_chain import walk_chain
 from draw_things_control.state.execution_rows import ExecutionRow
@@ -46,16 +47,18 @@ class ResumeChain:
     execution_number: int
 
 
-def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None, enqueue: Enqueue | None = None) -> QueueRow:
+def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None, enqueue: Enqueue | None = None, caller: str | None = None) -> QueueRow:
     """Resolve and accept a resume of the entry ``entry_id``; returns the new ``queued`` entry, at the back of the
     FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed.
     ``before_submit``, when given, is called with the resumed job and the runs it has left (Milestone 02's own API
     rules and limits, which count only what a resume still has to do, not the whole chain) after the resume point is
     resolved but before anything is stored; it raising refuses the resume and stores nothing. ``enqueue`` is
-    ``submit_job``'s own parameter of the same name (see its type alias, ``queue_submit.Enqueue``)."""
+    ``submit_job``'s own parameter of the same name (see its type alias, ``queue_submit.Enqueue``). ``caller`` submits
+    the new entry, and, an agent, is refused a person's entry (Milestone 10, ``queue_callers.py``)."""
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
+    check_entry_permitted(entry, caller, "resume")
     if entry.state not in RESUMABLE_STATES:
         raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
@@ -70,11 +73,11 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
     job = parse_snapshot(entry, global_config, params_directory, decode_input=False)()
     if before_submit is not None:
         before_submit(job, job.run_count - chain.first_run + 1)
-    new = _new_resumed_entry(entry, chain, job.run_count, local_timestamp(clock()))
+    new = _new_resumed_entry(entry, chain, job.run_count, local_timestamp(clock()), caller)
     return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
 
 
-def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, submitted_at: str) -> NewQueueEntry:
+def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, submitted_at: str, submitted_by: str | None) -> NewQueueEntry:
     return NewQueueEntry(
         job_path=entry.job_path,
         job_text=entry.job_text,
@@ -93,6 +96,7 @@ def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, sub
         resume_seed=chain.seed,
         resume_first_image=chain.first_image,
         resume_anchor=chain.anchor,
+        submitted_by=submitted_by,
     )
 
 

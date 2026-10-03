@@ -1,5 +1,6 @@
-"""``GET /v1/executions``, ``GET /v1/executions/{execution_id}``, ``GET /v1/executions/{execution_id}/outputs``, and,
-from Milestone 06, ``POST /v1/executions/delete``, which writes one audit log entry per execution it names."""
+"""``GET /v1/executions``, ``GET /v1/executions/{execution_id}``, ``GET /v1/executions/{execution_id}/outputs``,
+from Milestone 06, ``POST /v1/executions/delete``, which writes one audit log entry per execution it names, and, from
+Milestone 10, ``GET /v1/executions/{execution_id}/runs/{run}``."""
 
 from __future__ import annotations
 
@@ -12,10 +13,11 @@ from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import DtcError, InputError, NotFoundError
 from draw_things_control.server.caller import audit_caller
 from draw_things_control.server.context import ServerContext
-from draw_things_control.server.dependencies import Page, get_context, get_page, require_auth
+from draw_things_control.server.dependencies import Page, get_brief, get_context, get_page, require_auth
 from draw_things_control.server.job_reference import resolve_job_reference
 from draw_things_control.server.pagination import MAX_LIMIT, next_cursor
-from draw_things_control.server.serializers import delete_report, execution_detail, execution_outputs, execution_summary
+from draw_things_control.server.serializers import delete_report, execution_detail, execution_outputs, execution_summary, run_summary
+from draw_things_control.state.execution_rows import ExecutionRow
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -85,23 +87,35 @@ def _audit(context: ServerContext, target: str | None, outcome: str, caller: str
 
 
 @router.get("/v1/executions/{execution_id}")
-def get_execution(execution_id: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
-    row = context.store.executions.by_number(_execution_number(execution_id))
-    if row is None:
-        raise NotFoundError(f"No execution {execution_id}")
-    return execution_detail(row)
+def get_execution(execution_id: str, context: ServerContext = Depends(get_context), brief: bool = Depends(get_brief)) -> dict[str, object]:
+    """``?brief=1`` (Milestone 10) leaves out each run's command and gives each check as its stage and verdict: a long
+    chain's full answer is past what an agent reads in one turn."""
+    return execution_detail(_execution(context, execution_id), brief=brief)
+
+
+@router.get("/v1/executions/{execution_id}/runs/{run}")
+def get_execution_run(execution_id: str, run: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
+    """One run, as the full answer gives it (Milestone 10). ``run`` is its number in the chain, so a resumed
+    execution's first is not 1."""
+    number = run.lstrip("0")
+    if not (run.isascii() and run.isdigit() and number):
+        raise InputError("'run' must be a positive integer", field="run")
+    row = _execution(context, execution_id)
+    # Compared as text: int() refuses a number of over 4300 digits, which no run has.
+    found = next((candidate for candidate in row.runs if str(candidate.number) == number), None)
+    if found is None:
+        raise NotFoundError(f"{row.label} has no run {number}")
+    return run_summary(found)
 
 
 @router.get("/v1/executions/{execution_id}/outputs")
 def get_execution_outputs(execution_id: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
-    row = context.store.executions.by_number(_execution_number(execution_id))
+    return execution_outputs(_execution(context, execution_id))
+
+
+def _execution(context: ServerContext, execution_id: str) -> ExecutionRow:
+    number = parse_typed_id(execution_id, EXECUTION_LETTER)
+    row = context.store.executions.by_number(number) if number is not None else None
     if row is None:
         raise NotFoundError(f"No execution {execution_id}")
-    return execution_outputs(row)
-
-
-def _execution_number(execution_id: str) -> int:
-    number = parse_typed_id(execution_id, EXECUTION_LETTER)
-    if number is None:
-        raise NotFoundError(f"No execution {execution_id}")
-    return number
+    return row
