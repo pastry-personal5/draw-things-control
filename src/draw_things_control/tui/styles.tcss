@@ -6,14 +6,14 @@
     width: 2fr;
 }
 
-/* Owner decision: every widget but the command line, the history, and the execution detail is on black. */
-#status, #cli, #run-line, #cli-output, #messages, #status-line {
+/* The passive work displays use black; the two selectable lists and execution detail do not. */
+#work-status, #generation-output, #run-summary, #output-log, #activity-log, #status-line {
     background: black;
 }
 
 /* 7 lines with its border: the phase, two bars, the details, and the last run (screens.STATUS_LINES). A line too long
    for the width ends in an ellipsis, never wraps into the next: Textual drops a Rich Text's own no_wrap and overflow. */
-#status {
+#work-status {
     height: 7;
     padding: 0 1;
     text-wrap: nowrap;
@@ -22,23 +22,23 @@
     border-title-color: $accent;
 }
 
-#cli {
+#generation-output {
     height: 15;
     border: round $panel;
     border-title-color: $accent;
 }
 
-#run-line {
+#run-summary {
     height: 1;
     padding: 0 1;
 }
 
-#cli-output {
+#output-log {
     height: 1fr;
     padding: 0 1;
 }
 
-#messages {
+#activity-log {
     height: 1fr;
     padding: 0 1;
     border: round $panel;
@@ -51,7 +51,7 @@
 }
 
 /* Owner decision: 8 job rows show, so 11 lines with the border and the header (panes.JOB_DEFINITION_LINES). */
-#jobs {
+#jobs-list {
     height: 11;
     border: round $panel;
     border-title-color: $accent;
@@ -59,25 +59,25 @@
 }
 
 /* Owner decision: 5 rows show, so 8 lines with the border and the header (panes.queue.QUEUE_LINES). */
-#queue {
+#queue-list {
     height: 8;
     border: round $panel;
     border-title-color: $accent;
 }
 
-/* Owner decision: 5 rows show, so 8 lines with the border and the header. */
-#history {
+/* Five rows show, so eight lines with the border and the header. */
+#execution-history-list {
     height: 8;
     border: round $panel;
     border-title-color: $accent;
     border-subtitle-color: $warning;
 }
 
-#jobs:focus, #queue:focus, #history:focus, #execution:focus {
+#jobs-list:focus, #queue-list:focus, #execution-history-list:focus, #execution-detail:focus {
     border: round $accent;
 }
 
-#execution {
+#execution-detail {
     height: 1fr;
     padding: 0 1;
     border: round $panel;
@@ -105,17 +105,17 @@ Rule.command-rule {
     height: 1;
 }
 
-#prompt {
+#command-prompt {
     width: 2;
     color: $accent;
     text-style: bold;
 }
 
-#command {
+#command-field {
     width: 1fr;
 }
 
-#command > .input--cursor {
+#command-field > .input--cursor {
     background: white;
     color: black;
     text-style: none;

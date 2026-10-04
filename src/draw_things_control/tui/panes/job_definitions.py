@@ -1,4 +1,4 @@
-"""The Job Definition widget."""
+"""The Jobs list."""
 
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ JOBS_POLL_SECONDS = 5
 JOBS_WATCH_PAUSE_SECONDS = 0.3
 
 
-# The Job Definition widget's height with its border and header: 8 job rows show (owner decision).
-JOB_DEFINITION_LINES = 11
+# The Jobs list's height with its border and header: eight job rows show.
+JOBS_LIST_LINES = 11
 
 
-class JobDefinitionPane(SidewaysTable):
+class JobsList(SidewaysTable):
     """The job files in the data directory, with their job IDs, sorted by any column; read again when a job file or a file
     a valid job reads changes. Every 5 seconds instead while that cannot be watched or an invalid job is listed, since an
     invalid job's inputs are not known.
@@ -40,7 +40,7 @@ class JobDefinitionPane(SidewaysTable):
     column and ``r`` reverses the order, and the sort is kept in the state store across sessions.
     """
 
-    HEIGHT_LINES = JOB_DEFINITION_LINES
+    HEIGHT_LINES = JOBS_LIST_LINES
     BINDINGS = [
         Binding("s", "next_sort", "Sort by the next column", show=False),
         Binding("r", "reverse_sort", "Reverse the order", show=False),
@@ -88,7 +88,7 @@ class JobDefinitionPane(SidewaysTable):
         return next((row for row in self.job_rows if row.path.name == name), None)
 
     def on_mount(self) -> None:
-        self.border_title = "Job Definition"
+        self.border_title = "Jobs list"
         self.add_columns("ID", "Name", "Changed", "Mode", "Runs")
         # Until the first listing says what can be watched.
         self.check_timer = self.set_interval(JOBS_POLL_SECONDS, self.load)
@@ -113,7 +113,7 @@ class JobDefinitionPane(SidewaysTable):
         self.watch_pause = self.set_timer(JOBS_WATCH_PAUSE_SECONDS, self.load)
 
     def load(self, *, fresh: bool = False, announce: bool = False) -> None:
-        """Read the directory again; ``fresh`` reads every file, and ``announce`` also writes the list to Messages."""
+        """Read the directory again; ``fresh`` reads every file, and ``announce`` also writes the list to activity log."""
         self.read_count += 1
         self.read_jobs(self.read_count, fresh, announce)
 

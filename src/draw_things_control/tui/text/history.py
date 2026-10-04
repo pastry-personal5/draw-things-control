@@ -1,4 +1,4 @@
-"""The Execution History widget's rows."""
+"""The Execution History list's rows."""
 
 from __future__ import annotations
 

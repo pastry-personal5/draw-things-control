@@ -1,4 +1,4 @@
-"""The Job Definition widget's sort, which the state store keeps across sessions."""
+"""The Jobs list's sort, which the state store keeps across sessions."""
 
 from __future__ import annotations
 

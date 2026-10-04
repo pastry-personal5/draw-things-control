@@ -12,7 +12,7 @@ from draw_things_control.state.ids import EXECUTION_LETTER, JOB_LETTER, QUEUE_LE
 from draw_things_control.tui.commands import DELETE_WORDS, GET_WORDS, SORT_DIRECTIONS, SORT_KEYS, VERBOSE_WORDS, CommandError, help_text, parse, usage
 from draw_things_control.tui.deletion import DeleteSelection
 from draw_things_control.tui.panes.job_definitions import natural_descending
-from draw_things_control.tui.widgets import MessageLog
+from draw_things_control.tui.widgets import ActivityLog
 
 if TYPE_CHECKING:
     from draw_things_control.tui.preferences import VerboseLevel
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class CommandController:
-    """Runs the commands a person types on the command line, for the main screen."""
+    """Runs the commands a person types on the command field, for the main screen."""
 
     def __init__(self, screen: MainScreen) -> None:
         self.screen = screen
@@ -52,7 +52,7 @@ class CommandController:
         self.screen.say(help_text())
 
     def command_clear(self) -> None:
-        self.screen.query_one(MessageLog).clear()
+        self.screen.query_one(ActivityLog).clear()
 
     def command_quit(self) -> None:
         self.screen.call_later(self.screen.dtc.action_quit)
@@ -61,11 +61,11 @@ class CommandController:
         """/get jobs, /get queue, /get history, and an execution's prompts or draw-things-cli arguments."""
         word = what.lower()
         if word == "jobs" and not arguments:
-            self.screen.jobs.load(fresh=True, announce=True)
+            self.screen.jobs_list.load(fresh=True, announce=True)
         elif word == "queue" and not arguments:
             self.screen.dtc.show_queue()
         elif word == "history" and not arguments:
-            self.screen.history.load()
+            self.screen.execution_history.load()
         elif word in ("prompts", "positive", "negative", "param", "parameters") and 1 <= len(arguments) <= 2:
             execution = self.execution_number(arguments[0], "get", word)
             run = self.number(arguments[1], "get", word) if len(arguments) == 2 else None
@@ -95,13 +95,13 @@ class CommandController:
             raise CommandError(f"Usage: {usage('describe', word if word in ('job', 'execution', 'queue') else None)}")
 
     def command_sort(self, what: str, key: str, direction: str | None = None) -> None:
-        """/sort jobs KEY [asc|desc]: the Job Definition widget's order, kept across sessions."""
+        """/sort jobs KEY [asc|desc]: the Jobs list's order, kept across sessions."""
         key = key.lower()
         if what.lower() != "jobs" or key not in SORT_KEYS or (direction is not None and direction.lower() not in SORT_DIRECTIONS):
             raise CommandError(f"Usage: {usage('sort')}; KEY is {', '.join(SORT_KEYS)}")
         descending = direction.lower() == "desc" if direction is not None else natural_descending(key)
-        self.screen.jobs.set_sort(key, descending)
-        self.screen.say(f"Job Definition: by {key}, {'descending' if descending else 'ascending'}")
+        self.screen.jobs_list.set_sort(key, descending)
+        self.screen.say(f"Jobs list: by {key}, {'descending' if descending else 'ascending'}")
 
     def command_verbose(self, level: str = "") -> None:
         """/verbose [high|medium|low]: show the level, or set it (kept across sessions)."""
@@ -114,7 +114,7 @@ class CommandController:
             raise CommandError(f"Usage: {usage('verbose')}")
 
     def command_apply(self, name: str | None = None) -> None:
-        """/apply [JOB]: an alias for /queue add, the current Job Definition file when JOB is left out."""
+        """/apply [JOB]: an alias for /queue add, the current Jobs list file when JOB is left out."""
         self._queue_add(name)
 
     def command_queue(self, action: str, *arguments: str) -> None:
@@ -142,7 +142,7 @@ class CommandController:
 
     def _queue_add(self, name: str | None) -> None:
         if name is None:
-            row = self.screen.jobs.selected
+            row = self.screen.jobs_list.selected
             if row is None:
                 raise CommandError("No job is selected")
             self.screen.dtc.start_flow(row.path)
@@ -150,7 +150,7 @@ class CommandController:
         self.screen.dtc.start_flow(self.job_path(name))
 
     def command_stop(self) -> None:
-        """/stop: an alias for /queue cancel on the entry the draw-things-cli pane is following, no confirmation
+        """/stop: an alias for /queue cancel on the entry the generation output is following, no confirmation
         (the same rule /queue cancel and c already give)."""
         live = self.screen.dtc.live
         if live is None or live.ended or live.queue_id is None:
@@ -162,7 +162,7 @@ class CommandController:
         self.screen.dtc.cancel_entry(live.queue_id)
 
     def command_park(self) -> None:
-        """/park: /queue park on the entry the draw-things-cli pane is following. On one already parking it parks again
+        """/park: /queue park on the entry the generation output is following. On one already parking it parks again
         only when a release has ended the hold, which that holds again."""
         dtc = self.screen.dtc
         live = dtc.live
@@ -178,7 +178,7 @@ class CommandController:
         dtc.park_entry(live.queue_id)
 
     def command_unpark(self) -> None:
-        """/unpark: /queue unpark on the entry the draw-things-cli pane is following."""
+        """/unpark: /queue unpark on the entry the generation output is following."""
         live = self.screen.dtc.live
         if live is None or live.ended or live.queue_id is None:
             self.screen.say("No job is running", "yellow")
@@ -197,7 +197,7 @@ class CommandController:
         self.screen.dtc.release_queue()
 
     def command_filter(self, *arguments: str) -> None:
-        current = self.screen.history.history_filter
+        current = self.screen.execution_history.history_filter
         if arguments == ("off",):
             history_filter = HistoryFilter()
         elif len(arguments) == 2 and arguments[0] == "status":
@@ -208,8 +208,8 @@ class CommandController:
             history_filter = HistoryFilter(current.status, arguments[1])
         else:
             raise CommandError(f"Usage: {usage('filter')}")
-        self.screen.say(f"Execution History: {history_filter.text() or 'all executions'}")
-        self.screen.history.set_filter(history_filter)
+        self.screen.say(f"Execution History list: {history_filter.text() or 'all executions'}")
+        self.screen.execution_history.set_filter(history_filter)
 
     def command_delete(self, what: str, *arguments: str) -> None:
         """/delete execution <IDs...>, /delete filtered, and /delete all (Milestone 06): each asks first, in a dialog,
@@ -220,7 +220,7 @@ class CommandController:
         if word == "execution" and arguments:
             dtc.delete_executions(DeleteSelection(tuple(dict.fromkeys(self.execution_number(argument, "delete", "execution") for argument in arguments))))
         elif word == "filtered" and not arguments:
-            history_filter = self.screen.history.history_filter
+            history_filter = self.screen.execution_history.history_filter
             if not history_filter.text():
                 raise CommandError("No filter is set; use /delete all to delete the whole history")
             dtc.delete_executions(DeleteSelection(history_filter=history_filter))
@@ -235,7 +235,7 @@ class CommandController:
     def job_path(self, name: str) -> Path:
         assert self.screen.catalog is not None
         try:
-            return self.screen.catalog.find(name, self.screen.jobs.job_rows)
+            return self.screen.catalog.find(name, self.screen.jobs_list.job_rows)
         except DtcError as error:
             raise CommandError(str(error)) from error
 

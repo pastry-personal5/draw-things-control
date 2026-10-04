@@ -146,7 +146,7 @@ def _same_value(flag_value: str, config_value: object) -> bool:
 
 def _config_value(value: object) -> str:
     """A --config-json value in words, never JSON, and one to one, so two values that differ never read the same: text
-    always in double quotes (a quote or backslash inside escaped), a number as the command line writes it (``5.0`` as
+    always in double quotes (a quote or backslash inside escaped), a number as the command field writes it (``5.0`` as
     ``5``, the same setting), ``true`` or ``false``, ``(none)`` for null, a list in brackets with its items separated by
     commas, and a mapping in braces as ``key=value`` pairs, a key quoted unless it is a plain name."""
     if isinstance(value, str):

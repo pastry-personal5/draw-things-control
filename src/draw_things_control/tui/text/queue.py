@@ -1,4 +1,4 @@
-"""The Queue widget's rows."""
+"""The Queue list's rows."""
 
 from __future__ import annotations
 

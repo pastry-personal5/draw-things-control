@@ -21,15 +21,15 @@ from draw_things_control.state.executions import ExecutionRow, ExecutionSettings
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.desktop import copy_to_pasteboard
-from draw_things_control.tui.panes.execution import ExecutionBody, ExecutionPane
-from draw_things_control.tui.panes.history import HistoryPane
-from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
-from draw_things_control.tui.panes.queue import QueuePane
+from draw_things_control.tui.panes.execution import ExecutionDetailBody, ExecutionDetailPane
+from draw_things_control.tui.panes.history import ExecutionHistoryList
+from draw_things_control.tui.panes.job_definitions import JobsList
+from draw_things_control.tui.panes.queue import QueueList
 from draw_things_control.tui.screens import MainScreen
 from draw_things_control.tui.text.arguments import argument_rows, override_notes, parameters_text
 from draw_things_control.tui.text.events import event_text
 from draw_things_control.tui.text.execution import reveal_action, stored_cooldown_text
-from draw_things_control.tui.widgets import CommandInput
+from draw_things_control.tui.widgets import CommandField
 from tests.fixtures import execution_row, run_row
 from tests.tui.tui_case import TuiTestCase
 
@@ -97,8 +97,8 @@ class HistoryTests(HistoryCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            table = app.screen.query_one(HistoryPane)
-            self.assertEqual((table.row_count, table.border_title, table.border_subtitle), (0, "Execution History", "No execution history yet"))
+            table = app.screen.query_one(ExecutionHistoryList)
+            self.assertEqual((table.row_count, table.border_title, table.border_subtitle), (0, "Execution History list", "No execution history yet"))
             detail = await self.detail(pilot, 1)
         self.assertEqual(detail, "No execution history yet")
         self.assertFalse(self.state.exists())
@@ -120,7 +120,7 @@ class HistoryTests(HistoryCase):
         app = self.app()
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
-            table = app.screen.query_one(HistoryPane)
+            table = app.screen.query_one(ExecutionHistoryList)
             results: dict[str, tuple[list[list[str]], str, str]] = {}
             for line in ("/filter name WALK", "/filter status failed", "/filter name even", "/filter status succeeded", "/filter name wave_1", "/filter name 100%", "/filter name t_", "/filter off", "/filter name walk", "/filter status running"):
                 await self.command(pilot, line)
@@ -128,7 +128,7 @@ class HistoryTests(HistoryCase):
         # A name matches the job name or the job file's name, in any case; never the directory.
         self.assertEqual(results["/filter name WALK"][0], [["sunset-walk", "failed"], ["sunset-walk", "succeeded"]])
         self.assertEqual(results["/filter status failed"][0], [["sunset-walk", "failed"]])
-        self.assertEqual(results["/filter status failed"][1], "Execution History: status failed, name WALK")
+        self.assertEqual(results["/filter status failed"][1], "Execution History list: status failed, name WALK")
         self.assertEqual(results["/filter name even"][0], [["sunset-walk", "failed"]])
         self.assertEqual(results["/filter status succeeded"][0], [["sunset-walk", "succeeded"]])
         # % and _ are matched as written, not as wildcards.
@@ -136,9 +136,9 @@ class HistoryTests(HistoryCase):
         self.assertEqual(results["/filter name 100%"][0], [["wave_100%", "succeeded"]])
         self.assertEqual(results["/filter name t_"][0], [])
         self.assertEqual(results["/filter name t_"][2], "No executions match the filter")
-        self.assertEqual((len(results["/filter off"][0]), results["/filter off"][1], results["/filter off"][2]), (4, "Execution History", ""))
+        self.assertEqual((len(results["/filter off"][0]), results["/filter off"][1], results["/filter off"][2]), (4, "Execution History list", ""))
         self.assertEqual(results["/filter status running"][0], [])
-        self.assertIn("Execution History: status running, name walk", self.said)
+        self.assertIn("Execution History list: status running, name walk", self.said)
 
     async def test_pages_load_at_the_last_row_and_a_refresh_keeps_them_and_the_selection(self) -> None:
         ids = [self.add(f"job{number}", number) for number in range(8)]
@@ -146,7 +146,7 @@ class HistoryTests(HistoryCase):
         with mock.patch("draw_things_control.tui.panes.history.PAGE_SIZE", 3), mock.patch("draw_things_control.services.history.PAGE_SIZE", 3):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
-                table = app.screen.query_one(HistoryPane)
+                table = app.screen.query_one(ExecutionHistoryList)
                 first = table.row_count
                 table.focus()
                 await pilot.press("down", "down")
@@ -299,14 +299,14 @@ class HistoryTests(HistoryCase):
         app = self.app()
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
-            table = app.screen.query_one(HistoryPane)
+            table = app.screen.query_one(ExecutionHistoryList)
             titles = []
             for text in ("[/]", "[bold]x"):
                 await self.command(pilot, f"/filter name '{text}'")
                 # The getter gives the title back as markup; read as markup, it must be the text as typed.
                 titles.append(Text.from_markup(str(table.border_title)).plain)
             self.assertTrue(app.is_running)
-        self.assertEqual(titles, ["Execution History: name [/]", "Execution History: name [bold]x"])
+        self.assertEqual(titles, ["Execution History list: name [/]", "Execution History list: name [bold]x"])
 
     async def test_an_unreadable_row_is_reported_and_the_pane_keeps_working(self) -> None:
         execution_id = self.add("walk", 0)
@@ -316,11 +316,11 @@ class HistoryTests(HistoryCase):
         app = self.app()
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
-            table = app.screen.query_one(HistoryPane)
+            table = app.screen.query_one(ExecutionHistoryList)
             subtitle = Text.from_markup(str(table.border_subtitle)).plain
             detail = await self.detail(pilot, execution_id)
             self.assertTrue(app.is_running)
-            self.assertFalse(cast(MainScreen, app.screen).history.reading)
+            self.assertFalse(cast(MainScreen, app.screen).execution_history.reading)
             connection.execute("UPDATE executions SET settings = '{}' WHERE id = ?", (execution_id,))
             connection.commit()
             await self.command(pilot, "/get history")
@@ -338,15 +338,15 @@ class HistoryTests(HistoryCase):
             await self.settle(pilot)
             screen = app.screen
             assert isinstance(screen, MainScreen)
-            stale = screen.history.read_count
-            with mock.patch.object(HistoryPane, "read_page"):
+            stale = screen.execution_history.read_count
+            with mock.patch.object(ExecutionHistoryList, "read_page"):
                 await self.command(pilot, "/filter name walk")
                 self.assertEqual(self.history(app), [])
-                self.assertTrue(screen.history.reading)
+                self.assertTrue(screen.execution_history.reading)
                 # The unfiltered read that was in flight when the filter changed arrives late.
-                screen.history.show_page(stale, HistoryFilter(), HistoryPage(0, [execution_row(id=99, job_name="old", status="succeeded", started_at=at(0), total_runs=1, succeeded=1)], True))
+                screen.execution_history.show_page(stale, HistoryFilter(), HistoryPage(0, [execution_row(id=99, job_name="old", status="succeeded", started_at=at(0), total_runs=1, succeeded=1)], True))
                 self.assertEqual(self.history(app), [])
-                self.assertTrue(screen.history.reading)
+                self.assertTrue(screen.execution_history.reading)
             await self.command(pilot, "/get history")
             rows = self.columns(app, 1)
         self.assertEqual(rows, [["walk"]])
@@ -387,11 +387,11 @@ class ExecutionDetailTests(HistoryCase):
     """The detail widget under the history: it follows the cursor, lists successful runs, and reveals their outputs."""
 
     @staticmethod
-    def detail_pane(app: DrawThingsApp) -> ExecutionPane:
-        return app.screen.query_one(ExecutionPane)
+    def detail_pane(app: DrawThingsApp) -> ExecutionDetailPane:
+        return app.screen.query_one(ExecutionDetailPane)
 
     def detail_text(self, app: DrawThingsApp) -> list[str]:
-        return str(app.screen.query_one(ExecutionBody).content).split("\n")
+        return str(app.screen.query_one(ExecutionDetailBody).content).split("\n")
 
     async def shown(self, pilot: Any, execution_id: int) -> None:
         await self.wait_for(pilot, lambda: self.detail_pane(pilot.app).execution_id == execution_id, f"execution {execution_id} in the detail")
@@ -409,9 +409,9 @@ class ExecutionDetailTests(HistoryCase):
             await self.shown(pilot, newer)
             first = self.detail_text(app)
             title = Content.from_markup(str(self.detail_pane(app).border_title)).plain
-            table = app.screen.query_one(HistoryPane)
+            table = app.screen.query_one(ExecutionHistoryList)
             table.focus()
-            reads = mock.patch.object(ExecutionPane, "load", autospec=True, side_effect=ExecutionPane.load)
+            reads = mock.patch.object(ExecutionDetailPane, "load", autospec=True, side_effect=ExecutionDetailPane.load)
             with reads as load:
                 await pilot.press("down")
                 await self.shown(pilot, older)
@@ -438,7 +438,7 @@ class ExecutionDetailTests(HistoryCase):
             images = self.detail_text(app)
             width = self.detail_pane(app).scrollable_content_region.width
             await self.command(pilot, f"/describe execution E{old:04d}")
-            app.screen.query_one(HistoryPane).focus()
+            app.screen.query_one(ExecutionHistoryList).focus()
             await pilot.press("down")
             await self.shown(pilot, old)
             olds = self.detail_text(app)
@@ -462,7 +462,7 @@ class ExecutionDetailTests(HistoryCase):
                 await self.settle(pilot)
                 await self.shown(pilot, execution_id)
                 detail = self.detail_pane(app)
-                app.screen.query_one(HistoryPane).focus()
+                app.screen.query_one(ExecutionHistoryList).focus()
                 await pilot.press("enter")
                 focused_after_enter, selected = app.focused, detail.selected
                 await pilot.press("down", "down", "down")
@@ -474,7 +474,7 @@ class ExecutionDetailTests(HistoryCase):
                 moved = detail.selected
                 await pilot.press("escape")
                 after_escape = app.focused
-                app.screen.query_one(HistoryPane).focus()
+                app.screen.query_one(ExecutionHistoryList).focus()
                 await pilot.press("escape")
                 history_escape = app.focused
                 # A run that succeeds while the widget shows it keeps the selection where it was.
@@ -485,8 +485,8 @@ class ExecutionDetailTests(HistoryCase):
                 messages = [line for line in self.said if "Revealed" in line or "missing" in line]
         self.assertIs(focused_after_enter, detail)
         self.assertEqual((selected, last, moved, kept), (1, 3, 2, 3))
-        self.assertIsInstance(after_escape, CommandInput)
-        self.assertIsInstance(history_escape, CommandInput)
+        self.assertIsInstance(after_escape, CommandField)
+        self.assertIsInstance(history_escape, CommandField)
         self.assertEqual([call.args[0] for call in reveal.call_args_list], [self.outputs / "one.mov"])
         self.assertEqual(messages, [f"Revealed {self.outputs / 'one.mov'}", f"{self.outputs / 'two.mov'} is missing"])
         # Only /describe execution writes the full detail to Messages; Enter did not.
@@ -501,7 +501,7 @@ class ExecutionDetailTests(HistoryCase):
             for _ in range(5):
                 await pilot.press("tab")
                 focused.append(type(app.focused).__name__)
-        self.assertEqual(focused, ["JobDefinitionPane", "QueuePane", "HistoryPane", "ExecutionPane", "CommandInput"])
+        self.assertEqual(focused, ["JobsList", "QueueList", "ExecutionHistoryList", "ExecutionDetailPane", "CommandField"])
 
     async def test_a_click_on_a_file_name_reveals_it_and_a_click_on_a_run_selects_it(self) -> None:
         execution_id = self.add("walk", 0, runs=("succeeded", "succeeded"), outputs=("one [x].mov", "two.mov"), measured=(832, 448, 81))
@@ -515,9 +515,9 @@ class ExecutionDetailTests(HistoryCase):
                 await self.shown(pilot, execution_id)
                 detail = self.detail_pane(app)
                 # Line 6 is run 2's numbers; line 5 is run 1's file name, three columns in.
-                await pilot.click(ExecutionBody, offset=(1, 6))
+                await pilot.click(ExecutionDetailBody, offset=(1, 6))
                 clicked_run = detail.selected
-                await pilot.click(ExecutionBody, offset=(5, 5))
+                await pilot.click(ExecutionDetailBody, offset=(5, 5))
                 await self.settle(pilot)
                 after_link = detail.selected
         self.assertEqual((clicked_run, after_link), (2, 1))
@@ -533,7 +533,7 @@ class ExecutionDetailTests(HistoryCase):
         async with app.run_test(size=(140, 40)) as pilot:
             await self.settle(pilot)
             await self.wait_for(pilot, lambda: self.detail_text(app) == ["No execution history yet"], "the message")
-            self.assertEqual(str(self.detail_pane(app).border_title), "Execution")
+            self.assertEqual(str(self.detail_pane(app).border_title), "Execution detail")
 
     async def test_five_rows_show_even_when_the_history_scrolls_sideways(self) -> None:
         for number in range(7):
@@ -544,10 +544,10 @@ class ExecutionDetailTests(HistoryCase):
                 async with app.run_test(size=size) as pilot:
                     await self.settle(pilot)
                     await pilot.pause()
-                    table = app.screen.query_one(HistoryPane)
+                    table = app.screen.query_one(ExecutionHistoryList)
                     shown, height = table.show_horizontal_scrollbar, table.region.height
-                    execution_top = app.screen.query_one(ExecutionPane).region.y
-                    above = app.screen.query_one(JobDefinitionPane).region.height + app.screen.query_one(QueuePane).region.height
+                    execution_top = app.screen.query_one(ExecutionDetailPane).region.y
+                    above = app.screen.query_one(JobsList).region.height + app.screen.query_one(QueueList).region.height
                 # The border, the header, 5 rows, and a line for the sideways scrollbar when there is one; the Job
                 # Definition and Queue widgets above it, 8 lines high each.
                 self.assertEqual((shown, height, execution_top), (scrolls, 9 if scrolls else 8, above + height))

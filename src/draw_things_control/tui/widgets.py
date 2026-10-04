@@ -1,4 +1,4 @@
-"""The TUI's small widgets: the command line, the message log, and the text the one-second tick sets."""
+"""The TUI's small widgets: the command field, the message log, and the text the one-second tick sets."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ MAX_MESSAGE_LINES = 5000
 
 class SteadyText(Static):
     """Text of a fixed size (``styles.tcss`` sets its height) that the one-second tick sets again whether or not it
-    changed: the Status widget, the run line, and the status line. An unchanged text is not drawn again, and a changed
+    changed: the work status, the run summary, and the status line. An unchanged text is not drawn again, and a changed
     one is drawn without a layout pass, which would also redraw the scrollbars below it. While a job runs, draw-things-cli
     keeps the GPU busy and the terminal's own drawing waits for it, so every frame the TUI sends costs the person typing."""
 
@@ -38,8 +38,8 @@ class SteadyText(Static):
         super().update(content, layout=layout)
 
 
-class CommandInput(Input):
-    """The command line: a steady cursor, Tab completion, Escape to clear, and Up/Down to recall this session's commands."""
+class CommandField(Input):
+    """The command field: a steady cursor, Tab completion, Escape to clear, and Up/Down to recall this session's commands."""
 
     BINDINGS = [
         Binding("tab", "complete", "Complete", show=False),
@@ -82,7 +82,7 @@ class CommandInput(Input):
             self.screen.focus_next()
 
 
-class MessageLog(RichLog):
+class ActivityLog(RichLog):
     """Command output and the job's log, each entry under the local time it was written.
 
     A blank line is added before a block (``block``: a command echo, the job's result) and before and after a message

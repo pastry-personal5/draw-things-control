@@ -18,10 +18,10 @@ from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import plan_header, plan_steps
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
-from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
-from draw_things_control.tui.panes.status import StatusPane
+from draw_things_control.tui.panes.job_definitions import JobsList
+from draw_things_control.tui.panes.status import WorkStatus
 from draw_things_control.tui.screens import MainScreen
-from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, CommandInput, MessageLog
+from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField
 from tests.fixtures import JobTestCase, TestExecutor, job_executor
 from tests.tui.tui_case import TuiTestCase
 
@@ -62,27 +62,27 @@ class TuiTests(TuiTestCase):
                 async with app.run_test(size=size) as pilot:
                     await self.settle(pilot)
                     width, height = size
-                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("status", "cli", "messages", "jobs", "queue", "history", "execution", "command-line", "status-line")}
+                    regions = {name: app.screen.query_one(f"#{name}").region for name in ("work-status", "generation-output", "activity-log", "jobs-list", "queue-list", "execution-history-list", "execution-detail", "command-line", "status-line")}
                     rules = [rule.region for rule in app.screen.query(".command-rule")]
                     focused = app.focused
                     status = self.text(app, "status-line")
-                self.assertEqual((regions["status"].x, regions["status"].y, regions["status"].height), (0, 0, 7))
-                self.assertEqual((regions["cli"].x, regions["cli"].y, regions["cli"].height), (0, 7, cli_height))
-                self.assertEqual((regions["messages"].x, regions["messages"].y, regions["messages"].bottom), (0, *messages))
-                self.assertGreaterEqual(regions["messages"].height, 6)
+                self.assertEqual((regions["work-status"].x, regions["work-status"].y, regions["work-status"].height), (0, 0, 7))
+                self.assertEqual((regions["generation-output"].x, regions["generation-output"].y, regions["generation-output"].height), (0, 7, cli_height))
+                self.assertEqual((regions["activity-log"].x, regions["activity-log"].y, regions["activity-log"].bottom), (0, *messages))
+                self.assertGreaterEqual(regions["activity-log"].height, 6)
                 # Job Definition shows 8 rows (11 lines with its border and header), the Queue and Execution History 5 (8
                 # lines each); the detail fills the rest of the column.
-                self.assertEqual((regions["jobs"].x, regions["jobs"].y, regions["jobs"].right, regions["jobs"].height), (regions["history"].x, 0, width, 11))
-                self.assertEqual((regions["queue"].y, regions["queue"].right, regions["queue"].height), (11, width, 8))
-                self.assertEqual((regions["history"].y, regions["history"].right, regions["history"].height), (19, width, 8))
-                self.assertEqual((regions["execution"].x, regions["execution"].y, regions["execution"].right, regions["execution"].bottom), (regions["history"].x, 27, width, height - 4))
-                self.assertEqual(regions["history"].x, regions["cli"].right)
+                self.assertEqual((regions["jobs-list"].x, regions["jobs-list"].y, regions["jobs-list"].right, regions["jobs-list"].height), (regions["execution-history-list"].x, 0, width, 11))
+                self.assertEqual((regions["queue-list"].y, regions["queue-list"].right, regions["queue-list"].height), (11, width, 8))
+                self.assertEqual((regions["execution-history-list"].y, regions["execution-history-list"].right, regions["execution-history-list"].height), (19, width, 8))
+                self.assertEqual((regions["execution-detail"].x, regions["execution-detail"].y, regions["execution-detail"].right, regions["execution-detail"].bottom), (regions["execution-history-list"].x, 27, width, height - 4))
+                self.assertEqual(regions["execution-history-list"].x, regions["generation-output"].right)
                 # A third of the width, at least 36 columns.
-                self.assertEqual(regions["history"].width, max(36, width // 3))
+                self.assertEqual(regions["execution-history-list"].width, max(36, width // 3))
                 self.assertEqual([(rule.x, rule.y, rule.width, rule.height) for rule in rules], [(0, height - 4, width, 1), (0, height - 2, width, 1)])
                 self.assertEqual((regions["command-line"].y, regions["command-line"].width, regions["command-line"].height), (height - 3, width, 1))
                 self.assertEqual((regions["status-line"].y, regions["status-line"].height), (height - 1, 1))
-                self.assertIsInstance(focused, CommandInput)
+                self.assertIsInstance(focused, CommandField)
                 self.assertIn(str(self.data), status)
                 self.assertIn("idle", status)
                 self.assertIn("/help: commands, Ctrl-C twice: quit", status)
@@ -91,7 +91,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test(size=(80, 34)) as pilot:
             await self.settle(pilot)
-            status = app.screen.query_one(StatusPane)
+            status = app.screen.query_one(WorkStatus)
             status.show_text(Text("\n").join([Text("walk " * 40), Text("second")]))
             await pilot.pause()
             # Under the border's top row, without its sides and the padding.
@@ -103,14 +103,14 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            field = app.screen.query_one(CommandInput)
+            field = app.screen.query_one(CommandField)
             self.assertEqual(app.theme, "textual-dark")
             self.assertFalse(field.cursor_blink)
             self.assertEqual(field.placeholder, "")
             # Every widget but the command line, the history, and the execution detail is on black.
-            for name in ("status", "cli", "run-line", "cli-output", "messages", "status-line"):
+            for name in ("work-status", "generation-output", "run-summary", "output-log", "activity-log", "status-line"):
                 self.assertEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
-            for name in ("command", "history", "execution"):
+            for name in ("command-field", "execution-history-list", "execution-detail"):
                 self.assertNotEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
             await pilot.press("ctrl+p")
             await pilot.pause()
@@ -126,7 +126,7 @@ class TuiTests(TuiTestCase):
             await pilot.pause()
             self.assertTrue(app.is_running)
             self.assertIsInstance(app.screen, MainScreen)
-            self.assertEqual(app.screen.query_one(CommandInput).value, "qxlsr?jk")
+            self.assertEqual(app.screen.query_one(CommandField).value, "qxlsr?jk")
             self.assertIsNone(app.live)
 
     async def test_jobs_lists_every_job_file_and_its_status(self) -> None:
@@ -361,7 +361,7 @@ class TuiTests(TuiTestCase):
             await self.settle(pilot)
             await self.command(pilot, "/help")
             [shown] = self.since("/help")
-            log = app.screen.query_one(MessageLog)
+            log = app.screen.query_one(ActivityLog)
             self.assertGreater(len(log.lines), 10)
             await self.command(pilot, "/clear")
             self.assertEqual(len(log.lines), 0)
@@ -372,7 +372,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            log = app.screen.query_one(MessageLog)
+            log = app.screen.query_one(ActivityLog)
             for number in range(MAX_MESSAGE_LINES + 20):
                 log.say(f"line {number}")
             await pilot.pause()
@@ -384,7 +384,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            field = app.screen.query_one(CommandInput)
+            field = app.screen.query_one(CommandField)
             await pilot.press("slash", "r", "e", "v")
             await self.wait_for(pilot, lambda: field._suggestion == "/reveal", "the suggestion")
             await pilot.press("tab")
@@ -397,7 +397,7 @@ class TuiTests(TuiTestCase):
             await self.settle(pilot)
             self.assertIn("  runs: 5", "\n".join(self.since("/describe job walk.yaml")))
             await pilot.press("tab")
-            self.assertIsInstance(app.focused, JobDefinitionPane)
+            self.assertIsInstance(app.focused, JobsList)
             await pilot.press("escape")
             self.assertIs(app.focused, field)
 
@@ -405,7 +405,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            field = app.screen.query_one(CommandInput)
+            field = app.screen.query_one(CommandField)
             for line in ("/help", "/get jobs", "/get jobs", "nonsense"):
                 await self.command(pilot, line)
             field.focus()
@@ -428,7 +428,7 @@ class TuiTests(TuiTestCase):
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
-            field = app.screen.query_one(CommandInput)
+            field = app.screen.query_one(CommandField)
             await pilot.press("slash", "j")
             await pilot.press("ctrl+c")
             await pilot.pause()

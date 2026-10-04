@@ -579,15 +579,15 @@ uv run dtc tui --data-dir /path/to/jobs --server-url http://127.0.0.1:8765
 
 The screen, top to bottom:
 
-- **Status** (top left, 7 lines): the job at a glance (see
-  [The Status widget](#the-status-widget)). Empty until a job runs.
-- **draw-things-cli** (below it, 15 lines): the run line (the running run's
+- **Work status** (top left, 7 lines): the job at a glance (see
+  [Work status](#work-status)). Empty until a job runs.
+- **Generation output** (below it, 15 lines): the run summary (the running run's
   number, elapsed time, step progress, and output file, or the cooldown
   countdown), then the last 2000 lines `draw-things-cli` printed. stderr is
   in red, and progress-bar lines (`Sampling... 4 / 40 [ ] 10  %`) are shown
-  as lines too, as well as updating the run line. `/verbose` changes how
+  as lines too, as well as updating the run summary. `/verbose` changes how
   much of this is shown (see [Verbose levels](#verbose-levels)).
-- **Messages** (below it, like the draw-things-cli pane and the status line
+- **Activity log** (below it, like the generation output and the status line
   on black): the output of each command and a readable log of
   the running job: when it started, each run's start (with its command,
   credentials redacted) and result, cooldowns, and the job's result with its
@@ -595,34 +595,35 @@ The screen, top to bottom:
   before each command you type, before and after each message longer than
   one line (a table, a detail, prompts), and before the job's result; never
   two in a row, and none at the top.
-- **Job Definition** (top of the right third, 8 rows): the job files in the
-  data directory (see [Job Definition](#job-definition)).
-- **Execution History** (below it, 5 rows): every execution recorded in
+- **Jobs list** (top of the right third, 8 rows): the job files in the
+  data directory (see [Jobs list](#jobs-list)).
+- **Queue list** (below it, 5 rows): active, waiting, and recent queue entries.
+- **Execution History list** (below it, 5 rows): every execution recorded in
   the state store, newest first: its execution ID (`E0012`), job name,
   status, start time, and runs succeeded of total. On a narrow terminal it
   scrolls sideways, and its scrollbar gets a line of its own, as the Job
-  Definition widget's does.
-- **Execution** (the rest of the right third): the execution under the
-  history cursor (see [The execution detail](#the-execution-detail)).
-- **The command line**, between two lines, showing `> ` and a white block
+  Jobs list's does.
+- **Execution detail** (the rest of the right third): the execution under the
+  history cursor (see [Execution detail](#execution-detail)).
+- **The command field**, between two lines, showing `> ` and a white block
   cursor, then the **status line**: the running or last job, the data
   directory, and a reminder of `/help` and Ctrl-C.
 
-On a terminal shorter than 32 lines, the draw-things-cli pane shrinks (down
-to 7 lines) to leave Messages at least 6. The smallest usable size is 80x34,
-so the Execution widget keeps about 9 lines under the other two.
+On a terminal shorter than 32 lines, the generation output shrinks (down
+to 7 lines) to leave the Activity log at least 6. The smallest usable size is 80x34,
+so the Execution detail keeps about 9 lines under the other two.
 
 | Command | Action |
 |---------|--------|
 | `/help` | List the commands and keys |
 | `/get jobs` | List the job files and whether each is valid |
 | `/describe job <Job ID>` | The summary, prompt pairs, and dry-run plan of a job |
-| `/sort jobs KEY [asc\|desc]` | Sort the Job Definition widget by `id`, `name`, `changed`, `mode`, or `runs` |
+| `/sort jobs KEY [asc\|desc]` | Sort the Jobs list by `id`, `name`, `changed`, `mode`, or `runs` |
 | `/apply <Job ID>` | Read the job again, confirm, and run it |
-| `/stop` | Cancel the queue entry the draw-things-cli pane is following (no confirmation) |
+| `/stop` | Cancel the queue entry the generation output is following (no confirmation) |
 | `/queue park <Queue ID>`, `/queue unpark <Queue ID>` | Park a running entry, or withdraw its park reservation (see [Park a job and hold the queue](#park-a-job-and-hold-the-queue)) |
 | `/queue hold`, `/queue release` | Hold the queue, or release it |
-| `/park`, `/unpark` | `/queue park` and `/queue unpark` on the entry the draw-things-cli pane is following |
+| `/park`, `/unpark` | `/queue park` and `/queue unpark` on the entry the generation output is following |
 | `/hold`, `/release` | The same as `/queue hold` and `/queue release` |
 | `/get history` | Read the history again |
 | `/get prompts <Execution ID> [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
@@ -705,7 +706,7 @@ terminal does.
   letter of an ID can be typed in either case and its leading zeros left
   out: `e12` is `E0012`, and `j1` is `J0001`. A bare number (`12`) is
   refused with `Use E0012`, so an execution ID and a run number never mix
-  up. Tab completes the execution IDs the Execution History widget has
+  up. Tab completes the execution IDs the Execution History list has
   loaded. `/get` reads the stored execution, never the current job file.
 - `/get param` shows the arguments the run's saved command passed, with
   credentials already redacted: first the flags (a flag that stands alone
@@ -732,27 +733,27 @@ terminal does.
 
 ### Verbose levels
 
-`/verbose high|medium|low` (any letter case) trades the draw-things-cli pane's detail for less noise and less
+`/verbose high|medium|low` (any letter case) trades the generation output's detail for less noise and less
 traffic from `dtc serve`; `/verbose` alone says the current level. The level is kept in
 `config/tui-preferences.yaml` (a per-machine file, ignored by git) and is the level of the next session too; a
 missing or unreadable file means `high`. If the file cannot be written, the level still applies to this session and
-Messages says it could not be saved.
+The Activity log says it could not be saved.
 
-| Level | The draw-things-cli pane | Status widget, run line, status line |
+| Level | The generation output | work status, run summary, status line |
 |-------|--------------------------|--------------------------------------|
 | `high` (default) | Every output line, live | Refreshed every second |
 | `medium` | Every line is streamed, but the pane shows only each run's first minute (`(output hidden: verbose medium, after 1 min)` marks the end, once per run) | Every second |
-| `low` | No output: `dtc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run line nor the Status widget shows step progress |
+| `low` | No output: `dtc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run summary nor the work status shows step progress |
 
 - Typing `/verbose medium` while a run is going opens a fresh minute at that moment, so output shows at once. A line
   medium or low hides is never shown later, and `high` shows only the lines that arrive after the switch.
-- Switching into or out of `low` reconnects the TUI to `dtc serve` (Messages says so). Going back out of low may
+- Switching into or out of `low` reconnects the TUI to `dtc serve` (the Activity log says so). Going back out of low may
   replay the output that arrived meanwhile as one burst, or, after a very chatty run, reread the running job's state
   and show `(earlier output not shown)`. `high` and `medium` differ only in what the pane shows, so switching between
   them reconnects nothing. Without a running server the level still applies and takes effect on the next connection.
-- The Queue widget is not affected by the level and stays live.
+- The Queue list is not affected by the level and stays live.
 
-### The Status widget
+### Work status
 
 | Line | What it shows |
 |------|---------------|
@@ -792,9 +793,9 @@ Messages says it could not be saved.
   (by Q0007)` (dated when the hold began on another day): as its first line
   with nothing run this session, and as its third under a finished job.
 
-### Job Definition
+### Jobs list
 
-The Job Definition widget lists the job files in the data directory, 8 rows
+The Jobs list lists the job files in the data directory, 8 rows
 at a time: each one's **job ID**, its file name without the extension (two
 files that differ only in their extension, such as `walk.yaml` and
 `walk.yml`, keep it), when the file last changed (`09-26 14:05`, or
@@ -813,7 +814,7 @@ why.
   first and the others ascending. Ties go by ID, and invalid files come
   after valid ones by mode and runs. The sort is kept across sessions; the
   default is `changed`, newest first. The widget's subtitle names it.
-- Enter describes the selected job in Messages; `a` asks to run it, with
+- Enter opens the selected job in the Activity log; `a` asks to run it, with
   the same confirmation as `/apply`.
 - The directory is watched, so a file added, changed, renamed, or deleted
   shows within a moment, without `/get jobs` and without polling. While a
@@ -831,9 +832,9 @@ why.
 - Job IDs and execution IDs live in `state/dtc.db` only. Deleting `state/`
   starts both numberings over, and nothing rebuilds them, so keep it.
 
-### The execution detail
+### Execution detail
 
-The Execution widget shows the execution under the history cursor, a moment
+The Execution detail shows the execution under the history cursor, a moment
 after the cursor stops:
 
 - its model, its refiner and where the refiner takes over
@@ -859,14 +860,14 @@ they succeed, unless you are in the history or the detail at that moment.
 
 | Key | Action |
 |-----|--------|
-| Enter | Run the command; in Job Definition, describe the job; in the history, move to the detail; in the detail, show the selected run's output in Finder |
-| Tab | Complete a command, job ID or file name, execution ID, or filter or sort word; with nothing to complete, move to Job Definition, then the history, then the detail |
-| Up/Down | Recall the commands typed in this session; in the widgets, move |
-| PageUp/PageDown, Home/End | In the widgets, move further |
-| `a` | In Job Definition, ask to run the selected job |
-| `s` / `r` | In Job Definition, sort by the next column / reverse the order |
-| Escape | Clear the command line; in the widgets, go back to the command line |
-| Ctrl-C | Clear the command line; on an empty line, press twice within 2 seconds to quit |
+| Enter | Run the command; open the selected job or queue entry; open or reveal the selected execution |
+| Tab | Complete a command, job ID or file name, execution ID, or filter or sort word; with nothing to complete, move to Jobs list, Queue list, Execution History list, then Execution detail |
+| Up/Down | Recall commands typed in this session; in a focused list or detail, move |
+| PageUp/PageDown, Home/End | In a focused list or detail, move further |
+| `a` | In Jobs list, ask to run the selected job |
+| `s` / `r` | In Jobs list, sort by the next column / reverse the order |
+| Escape | Clear the command field; in a focused list or detail, return to the command field |
+| Ctrl-C | Clear the command field; on an empty field, press twice within 2 seconds to quit |
 
 - Ctrl-C twice while a job runs asks whether to stop the job and quit; the
   TUI quits only once the job has stopped. Ctrl-C does nothing while a
@@ -880,7 +881,7 @@ they succeed, unless you are in the history or the detail at that moment.
   changes a job file, `data/params/`, or the global configuration, and it
   does not create `state/dtc.db` just to show an empty history. Browsing
   writes to `state/dtc.db` only to give job IDs to the files in
-  `data/jobs/`, to keep the Job Definition widget's sort, and to upgrade an
+  `data/jobs/`, to keep the Jobs list's sort, and to upgrade an
   existing database to the current schema, which any `dtc` command does the
   first time it opens an older one.
 - An invalid global configuration is reported before the TUI starts, and the
@@ -965,11 +966,11 @@ resumed (`Q0007's execution E0012 was pruned or deleted; it cannot be
 resumed`), and you are warned first: `Q0007 can no longer be resumed`. A
 parked entry left with nothing to resume is no longer kept by retention.
 
-In the TUI, `Space` on the Execution History widget marks the selected row
+In the TUI, `Space` on the Execution History list marks the selected row
 (an `*` before its ID) and `d` deletes the marked rows, or the selected row
 when none is marked. `/delete execution E0012 E0013`, `/delete filtered`
 (every execution the current filters show, all pages), and `/delete all`
-do the same from the command line. Marks follow their executions across
+do the same from the command field. Marks follow their executions across
 re-reads; a filter change or a deletion clears them. A dialog asks about
 each execution, newest first:
 
@@ -984,10 +985,10 @@ Q0007 can no longer be resumed.
 `y` or Enter deletes it, `s` skips it, `a` deletes it and every remaining
 one without asking again, and `n` or Escape stops (what was already deleted
 stays deleted). One execution offers only Delete and Cancel. Executions the
-server would refuse are left out first, and Messages names each one. With the
-server down, no dialog opens and Messages says it cannot be reached.
+server would refuse are left out first, and the Activity log names each one. With the
+server down, no dialog opens and the Activity log says it cannot be reached.
 
-From the command line:
+From the command field:
 
 ```bash
 uv run dtc history delete E0012 E0013
@@ -1191,7 +1192,7 @@ uv run dtc queue resume Q0007
   the oldest queued entry at once, even when the last job's cooldown has not
   passed.
 - While the entry's run goes on, it reads `parking`: in `dtc queue list`,
-  the Queue widget's State column, and the Status widget (`parking after
+  the Queue list's State column, and the work status (`parking after
   run 3/7`, or `parking on its last run`, with `parking` on the Job bar). A
   reservation made from another TUI or from `dtc queue` shows too.
 - A park during the cooldown between two runs ends the cooldown at once, and
@@ -1223,11 +1224,11 @@ uv run dtc queue resume Q0007
 | Where | Park | Withdraw | Hold | Release |
 |-------|------|----------|------|---------|
 | `dtc queue` | `park <Queue ID>` | `unpark <Queue ID>` | `hold` | `release` |
-| The TUI | `/queue park <Queue ID>`, `/park`, `p` on the Queue widget | `/queue unpark <Queue ID>`, `/unpark`, `u` | `/queue hold`, `/hold` | `/queue release`, `/release` |
+| The TUI | `/queue park <Queue ID>`, `/park`, `p` on the Queue list | `/queue unpark <Queue ID>`, `/unpark`, `u` | `/queue hold`, `/hold` | `/queue release`, `/release` |
 
-`/park` and `/unpark` act on the entry the draw-things-cli pane is
-following. None of these asks to confirm. The Queue widget's title reads
-`Queue (held)` while the queue is held, from the state store too while the
+`/park` and `/unpark` act on the entry the generation output is
+following. None of these asks to confirm. The Queue list's title reads
+`Queue list (held)` while the queue is held, from the state store too while the
 server is down. `dtc queue add --wait` says when its entry starts parking or
 runs on, and when it waits behind a hold; an entry that parks prints
 `Q0007 parked after run 5/7; 'dtc queue resume Q0007' continues at run 6`

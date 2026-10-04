@@ -4,6 +4,7 @@ Start with the document for the task; each fact should have one authoritative
 home.
 
 - [User guide](user-guide.md): install, configure, and use every interface
+- [TUI UX terms](ux-terms.md): canonical names for the TUI's visible components and interactions
 - [HTTP API examples](user-guide-for-http-based-mcp.md): exercise the API with curl
 - [Architecture](architecture.md): current structure and runtime boundaries
 - [Development rules](development-rules.md): change, test, document, and commit

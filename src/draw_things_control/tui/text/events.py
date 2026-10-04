@@ -1,4 +1,4 @@
-"""A job's events as the lines Messages shows, and its result."""
+"""A job's events as the lines activity log shows, and its result."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def event_text(event: JobEvent, arguments: Arguments | None = None, previous: Pr
         text.append(f" ({event.mode}, {event.total_runs} run{'s' if event.total_runs != 1 else ''}, seed {event.seed} ({event.seed_source}), model {event.model})")
         return text
     if isinstance(event, RunStarted):
-        # The prompts, then the arguments as a table: never the command line, whose --config-json is bare JSON.
+        # The prompts, then the arguments as a table: never the command field, whose --config-json is bare JSON.
         text = Text(f"Run {event.number}/{event.total} started", style="bold")
         text.append(f" (pair {event.pair}): {event.output}\n")
         prompt_block(text, "positive", "green", event.positive)

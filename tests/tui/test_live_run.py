@@ -19,8 +19,8 @@ from draw_things_control.services.history import HistoryReader
 from draw_things_control.state.executions import ExecutionRow, NewExecution, NewRun
 from draw_things_control.state.store import Store
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, PastRun
-from draw_things_control.tui.panes.execution import ExecutionPane
-from draw_things_control.tui.panes.history import HistoryPane
+from draw_things_control.tui.panes.execution import ExecutionDetailPane
+from draw_things_control.tui.panes.history import ExecutionHistoryList
 from tests.tui.fake_server import job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -37,15 +37,15 @@ class LiveRunTests(FeedTestCase):
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.connect(pilot)
-            self.assertIn("No job has run in this session", self.text(app, "run-line"))
+            self.assertIn("No job has run in this session", self.text(app, "run-summary"))
             await self.start_job(pilot)
             await self.push(pilot, run_started(1), run_output("Loading model base.ckpt"), run_output("Sampling... 4 / 8 [ ] 50  %", progress=(4, 8), percent=50))
-            running = self.text(app, "status").split("\n")
-            run_line = self.text(app, "run-line")
+            running = self.text(app, "work-status").split("\n")
+            run_line = self.text(app, "run-summary")
             pane = self.pane(app)
             await self.push(pilot, run_finished(1), run_started(2), run_finished(2), job_finished())
-            ended = self.text(app, "status").split("\n")
-            final_run_line = self.text(app, "run-line")
+            ended = self.text(app, "work-status").split("\n")
+            final_run_line = self.text(app, "run-summary")
         self.assertEqual(pane, ["Loading model base.ckpt", "Sampling... 4 / 8 [ ] 50  %"])
         self.assertIn("Run 1/2", run_line)
         self.assertIn("progress 4/8, 50%", run_line)
@@ -114,7 +114,7 @@ class LiveRunTests(FeedTestCase):
             await self.connect(pilot)
             await self.wait_for(pilot, lambda: app.live is not None, "the seeded job")
             await self.wait_for(pilot, lambda: self.pane(app), "the marker in the pane")
-            run_line = self.text(app, "run-line")
+            run_line = self.text(app, "run-summary")
             pane = self.pane(app)
         self.assertIn("Run 1/2", run_line)
         self.assertIn("progress 3/8", run_line)
@@ -151,7 +151,7 @@ class LiveRunTests(FeedTestCase):
         wanted = f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand."
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
-            await self.wait_for(pilot, lambda: self.text(app, "status").split("\n")[0] == wanted, "the server's lock line")
+            await self.wait_for(pilot, lambda: self.text(app, "work-status").split("\n")[0] == wanted, "the server's lock line")
 
 
 class StoreBackedTests(FeedTestCase):
@@ -183,7 +183,7 @@ class StoreBackedTests(FeedTestCase):
                 app = self.make_app()
                 async with app.run_test(size=(160, 60)) as pilot:
                     await self.connect(pilot)
-                    table = app.screen.query_one(HistoryPane)
+                    table = app.screen.query_one(ExecutionHistoryList)
                     await self.wait_for(pilot, lambda table=table: table.selected is not None, "the history")
                     before = table.selected
                     if browsing:
@@ -194,24 +194,24 @@ class StoreBackedTests(FeedTestCase):
                     await self.settle(pilot)
                     await self.wait_for(pilot, lambda table=table, new=new: new in table.executions, "the new row")
                     if not browsing:
-                        await self.wait_for(pilot, lambda app=app, new=new: app.screen.query_one(ExecutionPane).execution_id == new, "the new execution in the detail")
+                        await self.wait_for(pilot, lambda app=app, new=new: app.screen.query_one(ExecutionDetailPane).execution_id == new, "the new execution in the detail")
                     selected = table.selected
                 self.assertEqual(selected, before if browsing else new)
 
     async def test_a_finished_run_updates_its_row_without_reading_the_whole_history(self) -> None:
         pages, updates = [], []
-        page, update = HistoryReader.page, HistoryPane.update_rows
+        page, update = HistoryReader.page, ExecutionHistoryList.update_rows
 
         def count_page(reader: HistoryReader, *arguments: Any, **options: Any) -> Any:
             pages.append(arguments)
             return page(reader, *arguments, **options)
 
-        def count_update(pane: HistoryPane, request: int, rows: list[ExecutionRow]) -> None:
+        def count_update(pane: ExecutionHistoryList, request: int, rows: list[ExecutionRow]) -> None:
             updates.append([row.id for row in rows])
             update(pane, request, rows)
 
         app = self.make_app()
-        with mock.patch.object(HistoryReader, "page", count_page), mock.patch.object(HistoryPane, "update_rows", count_update):
+        with mock.patch.object(HistoryReader, "page", count_page), mock.patch.object(ExecutionHistoryList, "update_rows", count_update):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.connect(pilot)
                 before = len(pages)
@@ -240,7 +240,7 @@ class StoreBackedTests(FeedTestCase):
             await self.connect(pilot)
             await self.push(pilot, job_started())
             await self.push(pilot, replace(run_started(1), command=command))
-            run_line = self.text(app, "run-line")
+            run_line = self.text(app, "run-summary")
         self.assertIn("--api-key", self.log())
         for widget in (self.log(), run_line):
             self.assertNotIn("sekret-value", widget)
@@ -255,7 +255,7 @@ class StoreBackedTests(FeedTestCase):
             await self.wait_for(pilot, lambda: app.live is not None and app.live.past_run is not None, "the past run")
             await self.push(pilot, run_started(1))
             past = app.live.past_run  # type: ignore[union-attr]
-            status = self.text(app, "status").split("\n")
+            status = self.text(app, "work-status").split("\n")
         self.assertEqual(past, PastRun(600.0, 30))
         self.assertIn("ends ~", status[1])
         self.assertIn("ends ~", status[2])

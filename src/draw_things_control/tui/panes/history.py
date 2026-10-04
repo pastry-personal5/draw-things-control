@@ -1,4 +1,4 @@
-"""The Execution History widget."""
+"""The Execution History list."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ HISTORY_POLL_SECONDS = 5
 HISTORY_LINES = 8
 
 
-class HistoryPane(SidewaysTable):
+class ExecutionHistoryList(SidewaysTable):
     """The execution history, newest first: paged, filtered, and kept current from the state store.
 
     ``busy`` says whether this TUI is running a job: it then refreshes the pane from that job's events, and holds the
@@ -89,7 +89,7 @@ class HistoryPane(SidewaysTable):
         self.other_process_message: str | None = None
 
     def on_mount(self) -> None:
-        self.border_title = "Execution History"
+        self.border_title = "Execution History list"
         self.column_keys = self.add_columns("ID", "Job", "Status", "Started", "Runs")
         self.set_interval(HISTORY_POLL_SECONDS, self.poll)
         # At once, so a job another process was already running when the TUI opened is shown without waiting for a poll.
@@ -97,7 +97,7 @@ class HistoryPane(SidewaysTable):
         self.load()
 
     def action_leave(self) -> None:
-        # Not focus_next: the Execution widget follows the history in the Tab order.
+        # Not focus_next: the Execution detail follows the history in the Tab order.
         self.leave()
 
     def action_toggle_mark(self) -> None:
@@ -175,7 +175,7 @@ class HistoryPane(SidewaysTable):
             # A marked execution that left the history some other way (retention, another TUI) drops its mark.
             self.marks &= {row.execution_number for row in self.executions.values()}
         # Text, not str: a str title is parsed as markup, and the filter and error texts are the user's or the store's.
-        self.border_title = Text(f"Execution History: {history_filter.text()}" if history_filter.text() else "Execution History")
+        self.border_title = Text(f"Execution History list: {history_filter.text()}" if history_filter.text() else "Execution History list")
         self.border_subtitle = Text(page.message or "")
         if page.offset == 0 and selected is not None and selected in self.executions:
             self.move_cursor(row=self.get_row_index(str(selected)))

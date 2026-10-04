@@ -50,7 +50,7 @@ class DrawThingsApp(App[None]):
 
     TITLE = "Draw Things Control"
     CSS_PATH = "styles.tcss"
-    # Commands are typed on the command line; the palette would be a second way, and a way to change the theme.
+    # Commands are typed on the command field; the palette would be a second way, and a way to change the theme.
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         # Before any widget can take the key: Textual's own ctrl+c only explains how to quit, and Input's copies.
@@ -65,7 +65,7 @@ class DrawThingsApp(App[None]):
         self.server_url = server_url
         self.token_file = token_file
         self.allow_remote_server = allow_remote_server
-        # Only for the Job Definition widget's offline dry-run plan preview (services/job_details.py's add_plan):
+        # Only for the Jobs list's offline dry-run plan preview (services/job_details.py's add_plan):
         # the TUI never runs a job through it any more (Milestone 03), so a test's own FakeToolkit needs no runner.
         self.toolkit = toolkit or Toolkit()
         self.http_transport = http_transport
@@ -80,7 +80,7 @@ class DrawThingsApp(App[None]):
         self.pending_park_requested = False
         self.feed_connected = False
         # The queue's hold (Milestone 05), from every queue read: the API's while the server is up, the store's while
-        # it is down. Shown in the Queue widget's title and, while no job runs, the Status widget.
+        # it is down. Shown in the Queue list's title and, while no job runs, the work status.
         self.queue_hold = HoldState()
         # How much of draw-things-cli's output the TUI streams and shows (Milestone 04); read once, changed by /verbose.
         self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
@@ -111,11 +111,11 @@ class DrawThingsApp(App[None]):
         await self._feed.run()
 
     def on_feed_connection_changed(self) -> None:
-        """The gRPC feed connected or dropped: the Status widget's busy-lock line reads the run lock only while
+        """The gRPC feed connected or dropped: the work status's busy-lock line reads the run lock only while
         the feed cannot itself say the server is up (``dtc serve`` holds that lock for its whole lifetime, not
         only while running a job, so a feed that is up already says everything that line otherwise would)."""
         if self.main is not None:
-            self.main.history.check_lock()
+            self.main.execution_history.check_lock()
         if self.feed_connected and self._low_notice_due and self.main is not None:
             self._low_notice_due = False
             self.say(LOW_NOTICE)
@@ -148,8 +148,8 @@ class DrawThingsApp(App[None]):
         if main is None:
             return
         if level == "low" and self.job_running:
-            main.cli.write_marker(LOW_MARKER)
-        # At once, not at low's next once-a-minute refresh: the run line and the Status widget change with the level.
+            main.generation_output.write_marker(LOW_MARKER)
+        # At once, not at low's next once-a-minute refresh: the run summary and the work status change with the level.
         main.running.tick(force=True)
 
     def _save_verbose_level(self, level: VerboseLevel) -> None:
@@ -179,10 +179,10 @@ class DrawThingsApp(App[None]):
         return self.quit_press.armed
 
     async def action_interrupt(self) -> None:
-        """Ctrl-C: clear the command line if it holds text; otherwise quit on a second press within QUIT_PRESS_SECONDS."""
+        """Ctrl-C: clear the command field if it holds text; otherwise quit on a second press within QUIT_PRESS_SECONDS."""
         main = self.main
-        if main is not None and main.command_line.value:
-            main.command_line.action_clear_line()
+        if main is not None and main.command_field.value:
+            main.command_field.action_clear_line()
             return
         if self.quit_press.armed:
             self.quit_press.disarm()
@@ -228,22 +228,22 @@ class DrawThingsApp(App[None]):
         except ApiError:
             return
         if self.main is not None:
-            self.main.queue.show_entries(entries)
+            self.main.queue_list.show_entries(entries)
         self.set_queue_hold(queue_hold)
 
     def set_queue_hold(self, queue_hold: HoldState) -> None:
         """Keep the hold, from the API or the store's fallback, and show it at once. The title is set every time, since
-        a read can land before the main screen is mounted; the Status widget only when the hold changed."""
+        a read can land before the main screen is mounted; the work status only when the hold changed."""
         changed = queue_hold != self.queue_hold
         self.queue_hold = queue_hold
         if self.main is not None:
-            self.main.queue.show_hold(queue_hold)
+            self.main.queue_list.show_hold(queue_hold)
             if changed:
                 self.show_status()
 
     @work(exclusive=True, group="queue-listing")
     async def show_queue(self) -> None:
-        """/get queue: the entries in Messages, not only the widget's own rows."""
+        """/get queue: the entries in activity log, not only the widget's own rows."""
         try:
             entries, queue_hold = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
         except ApiError as error:
@@ -336,7 +336,7 @@ class DrawThingsApp(App[None]):
         self.refresh_queue()
 
     def ask_to_delete(self, numbers: list[int]) -> None:
-        """``d`` on the Execution History widget: delete these executions, asking first."""
+        """``d`` on the Execution History list: delete these executions, asking first."""
         self.delete_executions(DeleteSelection(tuple(numbers)))
 
     def delete_executions(self, selection: DeleteSelection) -> None:
@@ -357,7 +357,7 @@ class DrawThingsApp(App[None]):
 
     @work(exclusive=True, group="queue-detail")
     async def describe_queue_entry(self, queue_id: str) -> None:
-        """/describe Q0007, and Enter on its row (QueuePane): over the API, not the store fallback (its own
+        """/describe Q0007, and Enter on its row (QueueList): over the API, not the store fallback (its own
         resumability needs a live read: whether some other entry already resumes it can change between polls)."""
         try:
             entry = await show(self.server_url, self.token_file, self.http_transport, queue_id)

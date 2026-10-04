@@ -21,8 +21,8 @@ from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.panes.history import HistoryPane
-from draw_things_control.tui.widgets import CommandInput, MessageLog
+from draw_things_control.tui.panes.history import ExecutionHistoryList
+from draw_things_control.tui.widgets import ActivityLog, CommandField
 from tests.fixtures import FakeToolkit, JobTestCase, job_data
 from tests.tui.fake_server import TOKEN, FakeServer
 
@@ -50,14 +50,14 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         logger.remove()
         # Every message as plain text, in order, across apps.
         self.said: list[str] = []
-        original = MessageLog.say
+        original = ActivityLog.say
 
-        def say(log: MessageLog, text: Text | str, style: str = "", *, block: bool = False) -> None:
+        def say(log: ActivityLog, text: Text | str, style: str = "", *, block: bool = False) -> None:
             # As Messages shows it: its own trailing newlines give way to the blank lines Messages adds.
             self.said.append(str(text).rstrip())
             original(log, text, style, block=block)
 
-        patcher = mock.patch.object(MessageLog, "say", say)
+        patcher = mock.patch.object(ActivityLog, "say", say)
         patcher.start()
         self.addCleanup(patcher.stop)
         observer_patcher = mock.patch("draw_things_control.tui.job_watch.Observer", PollingObserver)
@@ -92,7 +92,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     async def command(self, pilot: Any, line: str, *, settle: bool = True) -> None:
         """Type ``line`` on the command line and press Enter."""
-        field = pilot.app.screen.query_one(CommandInput)
+        field = pilot.app.screen.query_one(CommandField)
         field.focus()
         field.value = line
         await pilot.press("enter")
@@ -111,17 +111,17 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def pane(app: DrawThingsApp) -> list[str]:
-        return [strip.text.rstrip() for strip in app.screen.query_one("#cli-output", RichLog).lines]
+        return [strip.text.rstrip() for strip in app.screen.query_one("#output-log", RichLog).lines]
 
     @staticmethod
     def history(app: DrawThingsApp) -> list[list[str]]:
-        table = app.screen.query_one(HistoryPane)
+        table = app.screen.query_one(ExecutionHistoryList)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
     @staticmethod
     def marks_of(app: DrawThingsApp) -> list[str]:
         """The IDs of the history's marked rows, in order."""
-        table = app.screen.query_one(HistoryPane)
+        table = app.screen.query_one(ExecutionHistoryList)
         return [str(table.get_row_at(index)[0]).removeprefix("*") for index in range(table.row_count) if str(table.get_row_at(index)[0]).startswith("*")]
 
     def executions(self) -> list[ExecutionRow]:

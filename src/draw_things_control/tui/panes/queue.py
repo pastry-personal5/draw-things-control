@@ -1,4 +1,4 @@
-"""The Queue widget: the running entry first, then the queued ones in order, then up to 5 finished ones newest
+"""The Queue list: the running entry first, then the queued ones in order, then up to 5 finished ones newest
 first -- live from the gRPC feed while the server is up, or the state store's own read-only fallback while it is
 down (Milestone 03)."""
 
@@ -21,16 +21,15 @@ if TYPE_CHECKING:
     from draw_things_control.tui.app import DrawThingsApp
 
 # How often the fallback reader checks the store while the feed is down; the feed itself pushes every change while
-# it is up, so polling then does nothing (owner decision, mirrors HistoryPane's HISTORY_POLL_SECONDS).
+# it is up, so polling then does nothing (owner decision, mirrors ExecutionHistoryList's HISTORY_POLL_SECONDS).
 QUEUE_POLL_SECONDS = 5
 # The pane's height with its border and header: 5 rows show (owner decision), a horizontal scrollbar adds a line.
 QUEUE_LINES = 8
 MAX_FINISHED_ROWS = 5
 
 
-class QueuePane(SidewaysTable):
-    """Submits, cancels, resumes, and parks through the API; browsing itself writes nothing. Its title reads
-    ``Queue (held)`` while the queue is held (Milestone 05)."""
+class QueueList(SidewaysTable):
+    """Submits, cancels, resumes, and parks through the API; browsing itself writes nothing."""
 
     HEIGHT_LINES = QUEUE_LINES
     BINDINGS = [
@@ -81,7 +80,7 @@ class QueuePane(SidewaysTable):
         return str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value)
 
     def show_hold(self, hold: HoldState) -> None:
-        self.border_title = "Queue (held)" if hold.held else "Queue"
+        self.border_title = "Queue list (held)" if hold.held else "Queue list"
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a row: the same as /describe on its ID."""

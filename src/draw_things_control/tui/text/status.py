@@ -1,4 +1,4 @@
-"""The Status widget and the status line: a job's progress, its bars, and its estimated end."""
+"""The work status and the status line: a job's progress, its bars, and its estimated end."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from draw_things_control.tui.preferences import VerboseLevel
 from draw_things_control.tui.text.common import STATUS_STYLE
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "parking": "parking", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
-# The phases the Status widget and the run line show in yellow: something is about to change.
+# The phases the work status and the run summary show in yellow: something is about to change.
 _NOTICE_PHASES = ("starting", "stopping", "parking", "not_started", "ended")
 
 
@@ -42,8 +42,8 @@ def cooldown_text(live: LiveRun) -> Text:
     return text
 
 
-def run_line_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text:
-    """The draw-things-cli pane's run line: the active run, the cooldown, or what the job is doing. At verbose low no
+def run_summary_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text:
+    """The generation output's run summary: the active run, the cooldown, or what the job is doing. At verbose low no
     progress is shown: it arrives only as run output, which low never receives, so it would freeze at a stale reading."""
     if live is None:
         return Text("No job has run in this session", style="dim")
@@ -77,7 +77,7 @@ OTHER_PROCESS_TEXT = "A job is running in another process"
 
 
 def whole_duration(seconds: float) -> str:
-    """A duration in whole seconds, as the Status widget writes it: ``7 min 12 s``, never tenths."""
+    """A duration in whole seconds, as the work status writes it: ``7 min 12 s``, never tenths."""
     return duration_text(max(0, round(seconds)))
 
 
@@ -120,8 +120,8 @@ def held_text(hold: HoldState, now: datetime) -> Text:
     return text
 
 
-def status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None, hold: HoldState | None = None, now: datetime | None = None) -> list[Text]:
-    """The Status widget's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
+def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None, hold: HoldState | None = None, now: datetime | None = None) -> list[Text]:
+    """The work status's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
 
     ``message`` is the busy message the run lock's holder would give (an ordinary ``generate`` holder, or the
     server itself when the gRPC feed cannot reach it); without one, a generic line is shown. ``dtc serve`` holds
@@ -217,7 +217,7 @@ def _parking_text(live: LiveRun) -> str:
 
 
 def job_display_name(path: Path) -> str:
-    """A job file's name as the Status widget shows it: without its YAML suffix (``walk``), any other suffix kept."""
+    """A job file's name as the work status shows it: without its YAML suffix (``walk``), any other suffix kept."""
     return path.stem if is_yaml_file(path) else path.name
 
 

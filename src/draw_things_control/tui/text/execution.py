@@ -1,4 +1,4 @@
-"""An execution as text: its detail in Messages, and the Execution widget."""
+"""An execution as text: its detail in activity log, and the Execution detail."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     _check_lines(text, run.checks)
     if not run.command:
         return previous
-    # The arguments as a table, never the command line with its bare --config-json.
+    # The arguments as a table, never the command field with its bare --config-json.
     text.append("\n")
     arguments = argument_rows(run.command, notes)
     text.append_text(arguments_text(arguments, previous))

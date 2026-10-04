@@ -11,8 +11,8 @@ from draw_things_control.state.executions import ExecutionSettings, NewExecution
 from draw_things_control.state.queue import NewQueueEntry
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.delete_dialog import DeleteDialog
-from draw_things_control.tui.panes.execution import ExecutionPane
-from draw_things_control.tui.panes.history import HistoryPane
+from draw_things_control.tui.panes.execution import ExecutionDetailPane
+from draw_things_control.tui.panes.history import ExecutionHistoryList
 from draw_things_control.tui.screens import MainScreen
 from tests.tui.test_history import HistoryCase, at
 
@@ -39,8 +39,8 @@ class DeleteTests(HistoryCase):
         await self.wait_for(pilot, lambda: not pilot.app._deleting, "the deletion to finish")
         await self.settle(pilot)
 
-    async def focus_history(self, pilot: Any, row: int = 0) -> HistoryPane:
-        pane = pilot.app.screen.query_one(HistoryPane)
+    async def focus_history(self, pilot: Any, row: int = 0) -> ExecutionHistoryList:
+        pane = pilot.app.screen.query_one(ExecutionHistoryList)
         pane.focus()
         pane.move_cursor(row=row)
         await pilot.pause()
@@ -53,7 +53,7 @@ class DeleteTests(HistoryCase):
         async with app.run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
             await self.focus_history(pilot)
-            detail = app.screen.query_one(ExecutionPane)
+            detail = app.screen.query_one(ExecutionDetailPane)
             await self.wait_for(pilot, lambda: detail.execution_id == second, "the detail")
             await pilot.press("d")
             text = await self.dialog(pilot)
@@ -170,7 +170,7 @@ class DeleteTests(HistoryCase):
             text = await self.dialog(pilot)
             await self.answer(pilot, "a")
             await self.finished(pilot)
-            remaining = len(app.screen.query_one(HistoryPane).executions)
+            remaining = len(app.screen.query_one(ExecutionHistoryList).executions)
         self.assertEqual(refused, ["No filter is set; use /delete all to delete the whole history"])
         self.assertIn("1 of 103", text)
         # 103 walks: one dry run, then one Delete all request, each under 200 IDs.

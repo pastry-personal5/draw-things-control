@@ -1,4 +1,4 @@
-"""Deleting executions from the TUI (Milestone 06): ``d`` on the Execution History widget and ``/delete``. The
+"""Deleting executions from the TUI (Milestone 06): ``d`` on the Execution History list and ``/delete``. The
 selection is read from the store in full, checked with a dry run of ``POST /v1/executions/delete`` (the server's own
 refusals and resume warnings, and proof it can be reached, before any dialog opens), then asked about one execution
 at a time and deleted as the person confirms."""
@@ -53,7 +53,7 @@ class _Outcome:
 
 
 class DeleteFlow:
-    """One deletion, from reading the selection to the Messages that report it."""
+    """One deletion, from reading the selection to the activity log that report it."""
 
     def __init__(self, app: DrawThingsApp) -> None:
         self.app = app
@@ -91,7 +91,7 @@ class DeleteFlow:
             self._report(done)
         if done.deleted:
             gone = {row.label: row.execution_number for row in deletable}
-            main.history.remove_rows([gone[label] for label in done.deleted if label in gone])
+            main.execution_history.remove_rows([gone[label] for label in done.deleted if label in gone])
 
     async def _read(self, selection: DeleteSelection) -> list[ExecutionRow] | None:
         """The executions selected, newest first, read in full before anything is deleted; None, having said why, when

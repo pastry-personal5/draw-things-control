@@ -1,4 +1,4 @@
-"""The job files as text: the list, the Job Definition rows, and a job's summary and plan."""
+"""The job files as text: the list, the Jobs list rows, and a job's summary and plan."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def jobs_text(rows: list[JobRow], running: str | None, message: str | None) -> T
 
 
 def job_display_names(paths: list[Path]) -> dict[Path, str]:
-    """Each job file's name in the Job Definition widget: without its extension, unless another file has the same stem
+    """Each job file's name in the Jobs list: without its extension, unless another file has the same stem
     (``walk.yaml``, ``walk.yml``), when both keep it so they stay apart."""
     stems: dict[str, int] = {}
     for path in paths:
@@ -55,7 +55,7 @@ def changed_text(changed: float | None, now: datetime | None = None) -> str:
 
 
 def job_definition_cells(row: JobRow, name: str) -> tuple[Text, ...]:
-    """The Job Definition widget's row: ID, name, changed time, mode, and runs; an invalid file in dim red."""
+    """The Jobs list's row: ID, name, changed time, mode, and runs; an invalid file in dim red."""
     style = "dim red" if row.job is None else ""
     mode = str(row.job.mode) if row.job is not None else "invalid"
     runs = str(row.job.run_count) if row.job is not None else "invalid"
@@ -113,7 +113,7 @@ def pairs_text(job: JobDefinition) -> Text:
 
 def plan_text(job: JobDefinition, details: JobDetails) -> Text:
     """The dry-run plan of ``job`` in words: its header, then each run's heading and its arguments as a table (after run
-    1, only what changed since the run before), never a command line; or the reason it cannot be made. The prompts are
+    1, only what changed since the run before), never a command field; or the reason it cannot be made. The prompts are
     in the prompt pairs above."""
     text = Text("Dry-run plan\n\n", style="bold")
     if details.plan_error is not None:

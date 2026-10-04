@@ -24,9 +24,9 @@ from draw_things_control.state.store import Store
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
-from draw_things_control.tui.panes.job_definitions import JobDefinitionPane
+from draw_things_control.tui.panes.job_definitions import JobsList
 from draw_things_control.tui.text.jobs import changed_text, job_display_names, sort_job_rows
-from draw_things_control.tui.widgets import MessageLog
+from draw_things_control.tui.widgets import ActivityLog
 from tests.fixtures import job_data
 from tests.tui.test_tui import make_service
 from tests.tui.tui_case import TuiTestCase
@@ -50,7 +50,7 @@ class JobDefinitionTests(TuiTestCase):
 
     @staticmethod
     def rows(app: App[Any]) -> list[list[str]]:
-        table = app.screen.query_one(JobDefinitionPane)
+        table = app.screen.query_one(JobsList)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
     async def test_each_file_name_keeps_its_id_and_a_new_name_takes_the_next(self) -> None:
@@ -60,12 +60,12 @@ class JobDefinitionTests(TuiTestCase):
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
             first = self.rows(pilot.app)
-            table = pilot.app.screen.query_one(JobDefinitionPane)
+            table = pilot.app.screen.query_one(JobsList)
             title = (table.border_title, str(table.border_subtitle))
         # Newest first by default; the IDs follow the file names' order when first seen.
         self.assertEqual([row[:2] for row in first], [["J0002", "wave"], ["J0001", "walk"]])
         self.assertEqual(first[0][3:], ["i2v", "5"])
-        self.assertEqual(title, ("Job Definition", "by changed, newest first"))
+        self.assertEqual(title, ("Jobs list", "by changed, newest first"))
         # Deleted and a new name added: the new name takes the next number, and the deleted one's comes back with it.
         wave.unlink()
         self.write_data_job("run.yaml")
@@ -109,7 +109,7 @@ class JobDefinitionTests(TuiTestCase):
             self.touch(self.write_data_job(name, run_count=int(when // 1_000_000), prompt_pairs=ONE_PAIR), when)
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
-            table = pilot.app.screen.query_one(JobDefinitionPane)
+            table = pilot.app.screen.query_one(JobsList)
             orders = [[row[1] for row in self.rows(pilot.app)]]
             table.focus()
             await pilot.press("down")
@@ -142,7 +142,7 @@ class JobDefinitionTests(TuiTestCase):
         self.write_data_job("walk.yaml")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
-            table = pilot.app.screen.query_one(JobDefinitionPane)
+            table = pilot.app.screen.query_one(JobsList)
             table.focus()
             await pilot.press("enter")
             await self.settle(pilot)
@@ -162,7 +162,7 @@ class JobDefinitionTests(TuiTestCase):
         walk = self.write_data_job("walk.yaml", prompt_pairs=ONE_PAIR)
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
-            table = pilot.app.screen.query_one(JobDefinitionPane)
+            table = pilot.app.screen.query_one(JobsList)
             self.write_data_job("wave.yaml")
             with mock.patch.object(job_catalog, "read_job", wraps=job_catalog.read_job) as read:
                 table.load()
@@ -196,7 +196,7 @@ class MessagesSpacingTests(TuiTestCase):
         self.write_data_job("walk.yaml")
         async with self.make_app(make_service(frozenset())).run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
-            log = pilot.app.screen.query_one(MessageLog)
+            log = pilot.app.screen.query_one(ActivityLog)
             await self.command(pilot, "/clear")
             log.say("first line")
             log.say("second line")
@@ -323,12 +323,12 @@ class JobCatalogTests(TuiTestCase):
         self.assertEqual(self.sort.sort(), ("name", False))
 
 
-class JobDefinitionPaneTests(JobDefinitionTests):
+class JobsListTests(JobDefinitionTests):
     async def test_a_choice_made_before_the_saved_sort_arrives_wins_and_an_unchanged_check_does_not_redraw(self) -> None:
         self.write_data_job("walk.yaml")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
-            table = pilot.app.screen.query_one(JobDefinitionPane)
+            table = pilot.app.screen.query_one(JobsList)
             table.set_sort("name", False)
             # The saved sort (the default here) lands late.
             table.apply_sort("changed", True)
@@ -382,7 +382,7 @@ class JobDefinitionWatchTests(JobDefinitionTests):
         with mock.patch("draw_things_control.tui.panes.job_definitions.JOBS_POLL_SECONDS", 3600):
             async with self.app().run_test(size=(160, 50)) as pilot:
                 await self.settle(pilot)
-                table = pilot.app.screen.query_one(JobDefinitionPane)
+                table = pilot.app.screen.query_one(JobsList)
                 assert table.check_timer is not None
                 paused = table.check_timer._active.is_set() is False
                 self.write_data_job("wave.yaml")

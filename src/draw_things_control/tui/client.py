@@ -1,4 +1,4 @@
-"""What the TUI needs to reach ``dtc serve``: the gRPC stub Protocol the feed worker and the Queue widget's client
+"""What the TUI needs to reach ``dtc serve``: the gRPC stub Protocol the feed worker and the Queue list's client
 use (Milestone 03), mirroring ``cli/queue_wait.py``'s own. Each front end holds its own copy of the generated
 stubs (``cli/generated/``, ``tui/generated/``, ``server/generated/``); nothing here imports another's."""
 

@@ -1,4 +1,4 @@
-"""Watching the job files and what they read, so the Job Definition widget reads the directory only when something changed.
+"""Watching the job files and what they read, so the Jobs list reads the directory only when something changed.
 
 Watchdog uses the operating system's notifications (FSEvents on macOS, inotify on Linux), so nothing is polled. No widgets:
 the observer calls back on its own thread.

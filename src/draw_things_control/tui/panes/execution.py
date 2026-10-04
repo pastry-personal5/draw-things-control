@@ -1,4 +1,4 @@
-"""The Execution widget: an execution's settings and its successful runs."""
+"""The Execution detail: an execution's settings and its successful runs."""
 
 from __future__ import annotations
 
@@ -32,17 +32,17 @@ DETAIL_HEAD_LINES = 4
 DETAIL_RUN_LINES = 2
 
 
-class ExecutionBody(Static):
+class ExecutionDetailBody(Static):
     """The detail's text; its file-name links run ``reveal`` here, which hands the numbers to the pane."""
 
     def action_reveal(self, execution_id: int, run_number: int) -> None:
         pane = self.parent
-        if isinstance(pane, ExecutionPane):
+        if isinstance(pane, ExecutionDetailPane):
             pane.select(run_number)
             pane.reveal(execution_id, run_number)
 
 
-class ExecutionPane(VerticalScroll, Reads):
+class ExecutionDetailPane(VerticalScroll, Reads):
     """The execution under the history cursor: its settings and its successful runs, each with a link that reveals its output.
 
     Up and Down select a run, and Enter or a click on its file name reveals it in Finder. Reads go through the history's
@@ -81,10 +81,10 @@ class ExecutionPane(VerticalScroll, Reads):
         return self.execution.id if self.execution is not None else None
 
     def compose(self) -> ComposeResult:
-        yield ExecutionBody(id="execution-body")
+        yield ExecutionDetailBody(id="execution-body")
 
     def on_mount(self) -> None:
-        self.border_title = "Execution"
+        self.border_title = "Execution detail"
 
     def follow(self, execution_id: int | None, *, pause: bool = True) -> None:
         """Show ``execution_id``, after DETAIL_PAUSE_SECONDS unless ``pause`` is false; None shows the message instead."""
@@ -135,9 +135,9 @@ class ExecutionPane(VerticalScroll, Reads):
         self.render_detail()
 
     def render_detail(self) -> None:
-        body = self.query_one(ExecutionBody)
+        body = self.query_one(ExecutionDetailBody)
         if self.execution is None or self.detail is None:
-            self.border_title = "Execution"
+            self.border_title = "Execution detail"
             body.update(self.message)
             return
         # Text, not str: a str title is parsed as markup, and the job name is the user's.
@@ -188,7 +188,7 @@ class ExecutionPane(VerticalScroll, Reads):
 
     def on_click(self, event: events.Click) -> None:
         # A click on a run's lines selects it; one on its file name has already revealed it, and stopped the click.
-        offset = event.get_content_offset(self.query_one(ExecutionBody))
+        offset = event.get_content_offset(self.query_one(ExecutionDetailBody))
         if offset is None or offset.y < DETAIL_HEAD_LINES:
             return
         index = (offset.y - DETAIL_HEAD_LINES) // DETAIL_RUN_LINES

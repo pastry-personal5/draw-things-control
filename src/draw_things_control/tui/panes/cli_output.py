@@ -1,4 +1,4 @@
-"""The draw-things-cli pane: the run line and the child's output."""
+"""Generation output: a run summary and the generator's output log."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from textual.widgets import RichLog
 
 from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, LiveRun
 from draw_things_control.tui.preferences import MEDIUM_OUTPUT_WINDOW_SECONDS, VerboseLevel
-from draw_things_control.tui.text.status import run_line_text
+from draw_things_control.tui.text.status import run_summary_text
 from draw_things_control.tui.widgets import SteadyText
 
 # Why the pane went quiet, written in dim text: at medium once per closed window; at low whenever the pane's content
@@ -21,8 +21,8 @@ MEDIUM_MARKER = "(output hidden: verbose medium, after 1 min)"
 LOW_MARKER = "(output hidden: verbose low; status updates once a minute)"
 
 
-class CliPane(Vertical):
-    """The run line and the child's output, rendered from the app's LiveRun; it writes only the lines not yet written."""
+class GenerationOutput(Vertical):
+    """The run summary and output log, rendered from the app's LiveRun."""
 
     def __init__(self, **options: Any) -> None:
         super().__init__(**options)
@@ -32,11 +32,11 @@ class CliPane(Vertical):
         self._marked_window: float | None = None
 
     def compose(self) -> ComposeResult:
-        yield SteadyText(id="run-line")
-        yield RichLog(id="cli-output", max_lines=MAX_OUTPUT_LINES, wrap=True, min_width=20)
+        yield SteadyText(id="run-summary")
+        yield RichLog(id="output-log", max_lines=MAX_OUTPUT_LINES, wrap=True, min_width=20)
 
     def on_mount(self) -> None:
-        self.border_title = "draw-things-cli"
+        self.border_title = "Generation output"
 
     def new_job(self, live: LiveRun, level: VerboseLevel = "high", *, seeded: bool = False) -> None:
         """A job starts: its output replaces the last job's. ``seeded`` (attaching to one already running,
@@ -56,13 +56,13 @@ class CliPane(Vertical):
         self.query_one(RichLog).write(Text(text, style="dim"))
 
     def show(self, live: LiveRun | None, level: VerboseLevel = "high") -> None:
-        """Show the LiveRun as it is now: any new output lines (progress lines included), and the run line."""
+        """Show new output (including progress) and the current run summary."""
         self.write_output(live, level)
         self.tick(live, level)
 
     def tick(self, live: LiveRun | None, level: VerboseLevel = "high") -> None:
         """Update the elapsed time and the cooldown countdown."""
-        self.query_one("#run-line", SteadyText).show_text(run_line_text(live, level))
+        self.query_one("#run-summary", SteadyText).show_text(run_summary_text(live, level))
 
     def write_output(self, live: LiveRun | None, level: VerboseLevel = "high") -> None:
         """Write the lines not yet written, unless the level hides them: low always, medium after its window. A hidden

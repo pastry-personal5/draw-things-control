@@ -13,7 +13,7 @@ from draw_things_control.jobs.events import JobFinished, JobStatus
 from draw_things_control.services.queue_hold import HOLD_KEY
 from draw_things_control.state.store import Store, StoreMode
 from draw_things_control.tui.commands import help_text
-from draw_things_control.tui.panes.queue import QueuePane
+from draw_things_control.tui.panes.queue import QueueList
 from draw_things_control.tui.text.queue import queue_entry_detail_text
 from tests.tui.fake_server import AT, job_started, run_finished, run_started
 from tests.tui.feed_case import FeedTestCase
@@ -29,7 +29,7 @@ class ParkTests(FeedTestCase):
         await self.wait_for(pilot, lambda: pilot.app.live is not None and pilot.app.live.active_run == 1, "the run to start")
 
     def status(self, app: Any) -> list[str]:
-        return self.text(app, "status").split("\n")
+        return self.text(app, "work-status").split("\n")
 
     async def test_queue_park_shows_parking_everywhere_and_says_the_queue_is_held(self) -> None:
         app = self.make_app()
@@ -39,8 +39,8 @@ class ParkTests(FeedTestCase):
             await self.command(pilot, "/queue park q7")
             await self.wait_for(pilot, lambda: app.live is not None and app.live.park_requested, "the park")
             status = self.status(app)
-            run_line = self.text(app, "run-line")
-            title = str(app.screen.query_one(QueuePane).border_title)
+            run_line = self.text(app, "run-summary")
+            title = str(app.screen.query_one(QueueList).border_title)
         self.assertEqual(self.server.parked_ids, ["Q0007"])
         self.assertIn("Q0007 parks after run 1/2; the queue is held ('/queue release' starts it again)", self.said)
         self.assertEqual(status[0], "parking after run 1/2  E0001: walk")
@@ -48,7 +48,7 @@ class ParkTests(FeedTestCase):
         # The run goes on, so its bar keeps its own estimate.
         self.assertFalse(status[2].endswith("parking"), status[2])
         self.assertIn("parking", run_line)
-        self.assertEqual(title, "Queue (held)")
+        self.assertEqual(title, "Queue list (held)")
 
     async def test_park_and_unpark_act_on_the_followed_entry(self) -> None:
         app = self.make_app()
@@ -143,15 +143,15 @@ class HoldTests(FeedTestCase):
             await self.connect(pilot)
             await self.command(pilot, "/hold")
             await self.wait_for(pilot, lambda: app.queue_hold.held, "the hold")
-            title = str(app.screen.query_one(QueuePane).border_title)
-            first_line = self.text(app, "status").split("\n")[0]
+            title = str(app.screen.query_one(QueueList).border_title)
+            first_line = self.text(app, "work-status").split("\n")[0]
             await self.command(pilot, "/queue release")
             await self.wait_for(pilot, lambda: not app.queue_hold.held, "the release")
-            released_title = str(app.screen.query_one(QueuePane).border_title)
+            released_title = str(app.screen.query_one(QueueList).border_title)
             await self.command(pilot, "/release")
             await self.command(pilot, "/queue hold")
         self.assertTrue(self.since("/hold")[0].startswith("Queue held since "))
-        self.assertEqual((title, released_title), ("Queue (held)", "Queue"))
+        self.assertEqual((title, released_title), ("Queue list (held)", "Queue list"))
         self.assertTrue(first_line.startswith("Queue held since "), first_line)
         self.assertEqual(self.since("/release")[0], "The queue is not held")
         self.assertTrue(self.since("/queue hold")[0].startswith("Queue held since "))
@@ -166,7 +166,7 @@ class HoldTests(FeedTestCase):
             await self.wait_for(pilot, lambda: app.queue_hold.held, "the hold")
             since = datetime.fromisoformat(AT).astimezone()
             wanted = f"Queue held since {since.strftime('%H:%M') if since.date() == datetime.now().date() else since.strftime('%Y-%m-%d %H:%M')} (by Q0003)"
-            self.assertEqual(self.text(app, "status").split("\n")[0], wanted)
+            self.assertEqual(self.text(app, "work-status").split("\n")[0], wanted)
             await self.command(pilot, "/apply walk.yaml")
             await self.wait_for(pilot, lambda: any("queued" in line for line in self.said), "the submission")
             await self.received(pilot, [self.server.send_released()])
@@ -181,7 +181,7 @@ class HoldTests(FeedTestCase):
             await self.push(pilot, job_started(total_runs=1), run_started(1, 1), run_finished(1))
             await self.push(pilot, JobFinished(at=AT, status=JobStatus.SUCCEEDED, exit_code=0, completed_runs=1, total_runs=1, signal=None))
             await self.received(pilot, [self.server.send_held(by="Q0001")])
-            await self.wait_for(pilot, lambda: self.text(app, "status").split("\n")[2].startswith("Queue held since"), "the hold under the job")
+            await self.wait_for(pilot, lambda: self.text(app, "work-status").split("\n")[2].startswith("Queue held since"), "the hold under the job")
 
     async def test_the_queue_widget_parks_and_unparks_the_selected_row_and_shows_parking(self) -> None:
         self.server.entries = [{**RUNNING, "park_requested": True}]
@@ -190,7 +190,7 @@ class HoldTests(FeedTestCase):
             await self.connect(pilot)
             # A queue event reads the queue again, whatever the first read found.
             await self.received(pilot, [self.server.send_park_changed("Q0007", True)])
-            pane = app.screen.query_one(QueuePane)
+            pane = app.screen.query_one(QueueList)
             await self.wait_for(pilot, lambda: pane.row_count == 1, "the queue rows")
             state = str(pane.get_row_at(0)[2])
             pane.focus()
@@ -209,8 +209,8 @@ class HoldTests(FeedTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             await self.wait_for(pilot, lambda: app.queue_hold.held, "the saved hold")
-            await self.wait_for(pilot, lambda: str(app.screen.query_one(QueuePane).border_title) == "Queue (held)", "the title")
-            await self.wait_for(pilot, lambda: self.text(app, "status").split("\n")[0].startswith("Queue held since"), "the Status widget")
+            await self.wait_for(pilot, lambda: str(app.screen.query_one(QueueList).border_title) == "Queue list (held)", "the title")
+            await self.wait_for(pilot, lambda: self.text(app, "work-status").split("\n")[0].startswith("Queue held since"), "the Status widget")
 
     def test_describe_queue_names_the_park_reservation_and_the_hold(self) -> None:
         entry = {**RUNNING, "park_requested": True, "current_run": 1, "held": True, "held_since": "2026-09-29T12:04:05+00:00", "held_by": "Q0007", "resumable": False, "resume_refused_reason": "Q0007 is running"}

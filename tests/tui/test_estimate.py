@@ -10,7 +10,7 @@ from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
 from draw_things_control.tui.estimate import job_estimate, moment, run_estimate
 from draw_things_control.tui.live_run import LiveRun, PastRun
-from draw_things_control.tui.text.status import bar_line, end_text, status_lines, whole_duration
+from draw_things_control.tui.text.status import bar_line, end_text, whole_duration, work_status_lines
 from tests.fixtures import JobTestCase, job_data
 
 WALL = datetime(2026, 9, 26, 14, 0, 0)
@@ -166,7 +166,7 @@ class EstimateTests(JobTestCase):
         self.assertEqual((run.remaining, run.fraction), (400.0, 30 / 430))
         # The job has an estimate from the start too: this run as the past run says, the wait, and run 2 as long.
         self.assertEqual(job_estimate(live, 30).remaining, 400 + 60 + 430)
-        self.assertIn("ends ~14:07 (in 6 min 40 s)", str(status_lines(live, False, 60)[2]))
+        self.assertIn("ends ~14:07 (in 6 min 40 s)", str(work_status_lines(live, False, 60)[2]))
         # A run that takes longer than the past one no longer has an estimate from it.
         self.assertIsNone(run_estimate(live, 431).remaining)
 
@@ -205,7 +205,7 @@ class EstimateTests(JobTestCase):
         self.assertIsNone(run_estimate(live, 30 + 420).remaining)
         self.assertEqual(run_estimate(live, 30 + 420).fraction, 1 / 40)
         self.assertIsNone(job_estimate(live, 30 + 420).remaining)
-        self.assertNotIn("in 0 s", str(status_lines(live, False, 60)))
+        self.assertNotIn("in 0 s", str(work_status_lines(live, False, 60)))
         self.at(0)
         live = self.live(runs=3, cooldown=CooldownPolicy("off"))
         end = self.one_run(live, 1, 0)
@@ -249,7 +249,7 @@ class EstimateTests(JobTestCase):
         live.request_stop()
         self.at(500)
         self.assertEqual(moment(live), 50)
-        lines = [str(line) for line in status_lines(live, False, 60)]
+        lines = [str(line) for line in work_status_lines(live, False, 60)]
         self.assertIn("stopping", lines[1])
         self.assertIn("stopping", lines[2])
         self.assertTrue(lines[0].startswith("stopping"), lines[0])
@@ -272,18 +272,18 @@ class EstimateTests(JobTestCase):
         self.assertEqual(str(bar_line("Job", 1.0, "x", 5)), "Job 100%  x")
 
     def test_the_status_lines_in_each_state(self) -> None:
-        self.assertEqual([str(line) for line in status_lines(None, False, 42)], [""] * 5)
-        self.assertEqual(str(status_lines(None, True, 42)[0]), "A job is running in another process")
+        self.assertEqual([str(line) for line in work_status_lines(None, False, 42)], [""] * 5)
+        self.assertEqual(str(work_status_lines(None, True, 42)[0]), "A job is running in another process")
         live = self.live(runs=2, cooldown=CooldownPolicy("manual", seconds=100.0))
         self.start(live, 1)
         self.step(live, 30, 1)
         self.step(live, 40, 2)
-        lines = [str(line) for line in status_lines(live, False, 60)]
+        lines = [str(line) for line in work_status_lines(live, False, 60)]
         assert live.path is not None
         self.assertEqual(lines[0], f"running  {live.path.stem}  run 1/2")
         # Once the state store has recorded it, the execution's ID leads.
         live.execution_id = "E0012"
-        self.assertEqual(str(status_lines(live, False, 60)[0]), f"running  E0012: {live.path.stem}  run 1/2")
+        self.assertEqual(str(work_status_lines(live, False, 60)[0]), f"running  E0012: {live.path.stem}  run 1/2")
         live.execution_id = None
         # 380 s left in run 1, the 100 s wait, and run 2 at run 1's 420 s so far: 900 s from 14:00:40.
         self.assertTrue(lines[1].startswith("Job ") and lines[1].endswith("4%  ends ~14:15 (in 15 min)"), lines[1])
@@ -293,15 +293,15 @@ class EstimateTests(JobTestCase):
         end = self.one_run(live, 1, 0)
         live.apply(CooldownStarted(at=self.stamp(), after_run=1, seconds=100.0, until="14:09:10"))
         self.at(end + 25)
-        lines = [str(line) for line in status_lines(live, False, 60)]
+        lines = [str(line) for line in work_status_lines(live, False, 60)]
         self.assertTrue(lines[2].startswith("Wait ") and "25%  ends ~14:09 (in 1 min 15 s)" in lines[2], lines[2])
         self.assertEqual((lines[3], lines[4]), ("next: run 2/2", "last run took 7 min 10 s"))
         live.apply(CooldownEnded(at=self.stamp(), waited_seconds=100.0, cut_short=False))
         self.one_run(live, 2, end + 100)
         live.apply(JobFinished(at=self.stamp(), status=JobStatus.SUCCEEDED, exit_code=0, completed_runs=2, total_runs=2, signal=None))
         # A job another process starts afterwards is announced in its place.
-        self.assertEqual(str(status_lines(live, True, 60)[0]), "A job is running in another process")
-        lines = [str(line) for line in status_lines(live, False, 60)]
+        self.assertEqual(str(work_status_lines(live, True, 60)[0]), "A job is running in another process")
+        lines = [str(line) for line in work_status_lines(live, False, 60)]
         self.assertEqual(lines[0], f"finished (succeeded)  {live.path.stem}")
         # Run 1 from 0 s to 450 s, the 100 s wait, and run 2 to 1000 s.
         self.assertEqual(lines[1:], ["2/2 runs succeeded", "", "job took 16 min 40 s", "last run took 7 min 10 s"])
@@ -311,8 +311,8 @@ class EstimateTests(JobTestCase):
         self.one_run(live, 1, 0)
         self.start(live, 2)
         self.finish(live, self.clock.now + 5, 2, seconds=5.0, status=RunStatus.FAILED)
-        self.assertEqual(str(status_lines(live, False, 60)[4]), "last run took 7 min 10 s")
+        self.assertEqual(str(work_status_lines(live, False, 60)[4]), "last run took 7 min 10 s")
         never = LiveRun(clock=self.clock)
         never.end(error="The run lock is held")
-        self.assertEqual([str(line) for line in status_lines(never, False, 60)], ["did not start  ", "", "", "", ""])
-        self.assertIsInstance(status_lines(never, False, 60)[0], Text)
+        self.assertEqual([str(line) for line in work_status_lines(never, False, 60)], ["did not start  ", "", "", "", ""])
+        self.assertIsInstance(work_status_lines(never, False, 60)[0], Text)

@@ -1,4 +1,4 @@
-"""The command line's `/` commands: parsing, usage, help text, and completion."""
+"""The command field's `/` commands: parsing, usage, help text, and completion."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ COMMANDS = (
     ("get", "queue", "List the queue's entries"),
     ("describe", "job <Job ID>", "The summary, prompt pairs, and dry-run plan of a job"),
     ("describe", "queue <Queue ID>", "One queue entry: its state, execution, current run, and whether it can be resumed"),
-    ("sort", "jobs KEY [asc|desc]", "Sort the Job Definition widget by id, name, changed, mode, or runs"),
+    ("sort", "jobs KEY [asc|desc]", "Sort the Jobs list by id, name, changed, mode, or runs"),
     ("apply", "[<Job ID>]", "Read the job again and submit it to the queue (the selected job, if none is given)"),
     ("queue", "add [<Job ID>]", "The same as /apply"),
     ("queue", "cancel <Queue ID>", "Cancel a queued or running entry, losing its current run if it has one (/queue park keeps it)"),
@@ -31,9 +31,9 @@ COMMANDS = (
     ("queue", "unpark <Queue ID>", "Withdraw a running entry's park reservation; it runs on"),
     ("queue", "hold", "Hold the queue: a running job goes on, and nothing else starts until a release"),
     ("queue", "release", "End the hold: the oldest queued entry starts at once"),
-    ("stop", "", "Cancel the entry the draw-things-cli pane is following"),
-    ("park", "", "Park the entry the draw-things-cli pane is following"),
-    ("unpark", "", "Withdraw the park reservation of the entry the draw-things-cli pane is following"),
+    ("stop", "", "Cancel the entry the generation output is following"),
+    ("park", "", "Park the entry the generation output is following"),
+    ("unpark", "", "Withdraw the park reservation of the entry the generation output is following"),
     ("hold", "", "The same as /queue hold"),
     ("release", "", "The same as /queue release"),
     ("get", "history", "Read the execution history again"),
@@ -60,12 +60,12 @@ GET_WORDS = tuple(dict.fromkeys(arguments.split()[0] for name, arguments, _ in C
 DESCRIBE_WORDS = ("job", "queue", "execution")
 QUEUE_WORDS = ("add", "cancel", "resume", "park", "unpark", "hold", "release")
 DELETE_WORDS = ("execution", "filtered", "all")
-# The Job Definition widget's sort keys, in the order `s` moves through them, and the directions.
+# The Jobs list's sort keys, in the order `s` moves through them, and the directions.
 SORT_KEYS = ("id", "name", "changed", "mode", "runs")
 SORT_DIRECTIONS = ("asc", "desc")
 FILTER_WORDS = ("status", "name", "off")
 VERBOSE_WORDS: tuple[str, ...] = VERBOSE_LEVELS
-# The fixed words that may follow a command line's earlier words (lowercase), built once rather than per keystroke.
+# The fixed words that may follow a command field's earlier words (lowercase), built once rather than per keystroke.
 FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
     (f"{PREFIX}get",): GET_WORDS,
     (f"{PREFIX}queue",): QUEUE_WORDS,
@@ -79,27 +79,27 @@ FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
 # Characters a shell would split or interpret, escaped with a backslash in a completed job file name.
 SHELL_SPECIAL = re.compile(r"([^\w@%+=:,./-])")
 KEYS = (
-    ("Enter", "Run the command; describe the job (Job Definition); describe the entry (Queue); move to the detail (Execution History); reveal the selected run (Execution)"),
-    ("Tab", "Complete the command line, or move to Job Definition, Queue, Execution History, then Execution"),
-    ("Up/Down", "Recall this session's commands (command line), move (the widgets)"),
-    ("a", "Ask to submit the selected job (Job Definition)"),
+    ("Enter", "Run the command; open the selected job or queue entry; open or reveal the selected execution"),
+    ("Tab", "Complete the command field, or move to Jobs list, Queue list, Execution History list, then Execution detail"),
+    ("Up/Down", "Recall this session's commands (command field), move (the widgets)"),
+    ("a", "Ask to submit the selected job (Jobs list)"),
     ("c", "Cancel the selected entry (Queue)"),
     ("p / u", "Park the selected entry / withdraw its park reservation (Queue)"),
-    ("s / r", "Sort by the next column / reverse the order (Job Definition)"),
-    ("Space", "Mark or unmark the selected row for deletion (Execution History)"),
-    ("d", "Delete the marked rows, or the selected row when none is marked, asking first (Execution History)"),
-    ("Escape", "Clear the command line, or go back to it (the widgets)"),
-    ("Ctrl-C", "Clear the command line, or press twice to quit"),
+    ("s / r", "Sort by the next column / reverse the order (Jobs list)"),
+    ("Space", "Mark or unmark the selected row for deletion (Execution History list)"),
+    ("d", "Delete the marked rows, or the selected row when none is marked, asking first (Execution History list)"),
+    ("Escape", "Clear the command field, or go back to it (the widgets)"),
+    ("Ctrl-C", "Clear the command field, or press twice to quit"),
 )
 
 
 class CommandError(ValueError):
-    """A command line that cannot be run, and why."""
+    """A command field that cannot be run, and why."""
 
 
 @dataclass(frozen=True)
 class Command:
-    """A parsed command line: the command's name, without the slash, and its arguments."""
+    """A parsed command field: the command's name, without the slash, and its arguments."""
 
     name: str
     arguments: tuple[str, ...]
@@ -160,7 +160,7 @@ def _job_name_completion(line: str, jobs: Sequence[str]) -> list[str] | None:
 
 
 def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = (), execution_ids: Sequence[str] = (), queue_ids: Sequence[str] = ()) -> list[str]:
-    """Whole command lines that ``line`` could be completed to, in order; each one begins with ``line``, as Input needs.
+    """Whole command fields that ``line`` could be completed to, in order; each one begins with ``line``, as Input needs.
 
     ``job_names`` and ``job_ids`` (J0001) complete a JOB; ``execution_ids`` (E0012, newest first) and ``queue_ids``
     (Q0007, newest first) each complete their own kind of ID.
@@ -187,14 +187,14 @@ def completions(line: str, job_names: Sequence[str], job_ids: Sequence[str] = ()
 
 
 def _words_after(words: list[str]) -> list[str]:
-    """The fixed words that may follow the command line's earlier ``words`` (lowercase), in the order help lists them."""
+    """The fixed words that may follow the command field's earlier ``words`` (lowercase), in the order help lists them."""
     if len(words) == 3 and words[:2] == [f"{PREFIX}sort", "jobs"]:
         return list(SORT_DIRECTIONS)
     return list(FOLLOWING_WORDS.get(tuple(words), ()))
 
 
 def _identifier_completions(head: str, last: str, identifiers: Sequence[str]) -> list[str]:
-    """Whole command lines finishing an ID (J0001, E0012) that starts with ``last``, kept in the case it was typed."""
+    """Whole command fields finishing an ID (J0001, E0012) that starts with ``last``, kept in the case it was typed."""
     return [f"{head} {last}{identifier[len(last) :]}" for identifier in identifiers if identifier.lower().startswith(last.lower()) and identifier.lower() != last.lower()]
 
 

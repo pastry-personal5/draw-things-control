@@ -118,7 +118,7 @@ class LiveRun:
         self.past_run: PastRun | None = None  # The latest successful run of any job when this one started.
         self.output: deque[OutputLine] = deque(maxlen=MAX_OUTPUT_LINES)
         self.output_count = 0  # Every line ever added, so a view knows how many it has not written yet.
-        # Set only once a cancel this pane issued (/stop, or the Queue widget's own) is confirmed by the API
+        # Set only once a cancel this pane issued (/stop, or the Queue list's own) is confirmed by the API
         # succeeding, never optimistically: moment() pins the bars here, so a failed cancel must not freeze them.
         self.stop_requested = False
         # Whether the entry has a park reservation (Milestone 05): from this TUI's own park or unpark once the API

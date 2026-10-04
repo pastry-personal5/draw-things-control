@@ -13,7 +13,7 @@ from unittest import mock
 from draw_things_control.tui.app import LOW_NOTICE, DrawThingsApp
 from draw_things_control.tui.commands import completions
 from draw_things_control.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
-from draw_things_control.tui.panes.status import StatusPane
+from draw_things_control.tui.panes.status import WorkStatus
 from draw_things_control.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
 from draw_things_control.tui.widgets import SteadyText
 from tests.tui.fake_server import cooldown_started, job_started, run_finished, run_output, run_started
@@ -254,7 +254,7 @@ class LowTests(VerboseTestCase):
             # A stale reading, as an earlier level might have left; low shows none of it.
             app.live.progress, app.live.percent = (3, 8), 37
             app.main.running.tick(force=True)  # type: ignore[union-attr]
-            run_line = self.text(app, "run-line")
+            run_line = self.text(app, "run-summary")
             pane = self.pane(app)
         self.assertEqual(pane, [LOW_MARKER])
         self.assertIn("Run 1/2", run_line)
@@ -268,13 +268,13 @@ class LowTests(VerboseTestCase):
         clock = Clock()
         app = self.make_app()
         renders: list[float] = []
-        original = StatusPane.show
+        original = WorkStatus.show
 
-        def spy(pane: StatusPane, *arguments: Any, **options: Any) -> None:
+        def spy(pane: WorkStatus, *arguments: Any, **options: Any) -> None:
             renders.append(clock.now)
             original(pane, *arguments, **options)
 
-        with mock.patch.object(StatusPane, "show", spy):
+        with mock.patch.object(WorkStatus, "show", spy):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.running_job(pilot, clock)
                 running = app.main.running  # type: ignore[union-attr]
@@ -308,12 +308,12 @@ class LowTests(VerboseTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.running_job(pilot, clock)
             await self.push(pilot, run_output("Sampling... 4 / 8 [ ] 50  %", progress=(4, 8), percent=50))
-            before = (self.text(app, "run-line"), self.text(app, "status"))
+            before = (self.text(app, "run-summary"), self.text(app, "work-status"))
             # The screen's clock stands still: only a render the switch itself forces can change what is shown.
             await self.command(pilot, "/verbose low")
             await self.wait_for(pilot, lambda: len(self.server.requests) == 2, "the reconnect")
             await pilot.pause()
-            after = (self.text(app, "run-line"), self.text(app, "status"))
+            after = (self.text(app, "run-summary"), self.text(app, "work-status"))
         self.assertIn("progress 4/8, 50%", before[0])
         self.assertIn("step 4/8", before[1])
         self.assertNotIn("progress", after[0])
@@ -328,7 +328,7 @@ class LowTests(VerboseTestCase):
         async with app.run_test(size=(160, 60)) as pilot:
             await self.connect(pilot)
             await self.wait_for(pilot, lambda: self.pane(app), "the markers")
-            run_line, status = self.text(app, "run-line"), self.text(app, "status")
+            run_line, status = self.text(app, "run-summary"), self.text(app, "work-status")
         self.assertIn("Run 1/2", run_line)
         self.assertNotIn("progress", run_line)
         self.assertNotIn("step 3/8", status)
@@ -342,7 +342,7 @@ class LowTests(VerboseTestCase):
             await self.command(pilot, "/stop")
             await self.wait_for(pilot, lambda: app.live is not None and app.live.stop_requested, "the stop to be confirmed")
             await pilot.pause()
-            run_line = self.text(app, "run-line")
+            run_line = self.text(app, "run-summary")
         self.assertIn("stopping", run_line)
 
     async def test_the_marker_and_notice_come_from_a_job_starting_seeded_or_a_switch_into_low(self) -> None:
@@ -430,7 +430,7 @@ class RedrawTests(VerboseTestCase):
                 running.tick()
         self.assertEqual(unchanged, [])
         # A second on: the elapsed times change; the status line does not.
-        self.assertEqual(sorted(updates), [("run-line", False), ("status", False)])
+        self.assertEqual(sorted(updates), [("run-summary", False), ("work-status", False)])
 
 
 class OfflineTests(VerboseTestCase):
