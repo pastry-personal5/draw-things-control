@@ -30,7 +30,7 @@ from draw_things_control.server.serializers import queue_entry, queue_hold
 from draw_things_control.services.api_rules import check_api_rules
 from draw_things_control.services.queue_cancel import cancel_entry
 from draw_things_control.services.queue_park import park_entry, unpark_entry
-from draw_things_control.services.queue_resume import preview_resume, resume_entry
+from draw_things_control.services.queue_resume import ResumePreview, preview_resume, resume_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.state.ids import QUEUE_LETTER, parse_typed_id, queue_id_text
 from draw_things_control.state.queue import FINISHED_STATES, QueueRow, QueueState
@@ -135,7 +135,7 @@ def _entry_detail(context: ServerContext, entry: QueueRow) -> dict[str, object]:
     between runs after (``between_runs_after_run``, a cooldown between them included: ``cooldown_until`` is the wait
     between two queued jobs, None while a job runs), let a front end word a park's outcome ("parks after run 3/7"),
     and the hold its effect."""
-    preview = preview_resume(context.store, entry, context.global_config, context.paths.params)
+    preview = preview_resume(context.store, entry, context.global_config, context.paths.params) if entry.kind == "job" else ResumePreview(False, reason=f"{entry.label} is a one-off generation and cannot be resumed")
     is_current = context.worker.current_entry_id() == entry.id
     return {
         **_entry(context, entry),

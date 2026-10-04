@@ -1,5 +1,6 @@
 """Tests for the SQLite state store: the database file, the execution repository, and the store that opens them."""
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -492,3 +493,30 @@ class SchemaNineTests(StoreCase):
         found = store.queue.by_number(entry.queue_number)
         assert found is not None
         self.assertEqual(found.submitted_by, "mcp")
+
+
+class SchemaTenTests(StoreCase):
+    """Milestone 12's tagged queue snapshots and generated-execution source kind."""
+
+    def test_a_version_9_job_and_resume_row_keep_their_meaning_in_a_job_snapshot(self) -> None:
+        from draw_things_control.state.schema import MIGRATIONS
+
+        path = self.path.with_name("v9.db")
+        connection = sqlite3.connect(path)
+        for schema in MIGRATIONS[:9]:
+            for statement in schema.split(";\n"):
+                if statement.strip():
+                    connection.execute(statement)
+        connection.execute("PRAGMA user_version = 9")
+        connection.execute("INSERT INTO executions (job_name, job_file, mode, status, started_at, started_epoch, execution_number) VALUES ('walk', 'walk.yaml', 'i2v', 'interrupted', '2026-10-02T09:00:00+00:00', 0, 4)")
+        connection.execute("INSERT INTO queue (queue_number, job_path, job_text, config_file, config_text, input_directory, output_directory, cooldown_default, settings, state, submitted_at, submitted_epoch, total_runs, resumes, resumes_execution, resume_first_run, resume_input, resume_seed, submitted_by) VALUES (5, '/jobs/walk.yaml', 'name: walk', 'base.yaml', 'model: m', '/in', '/out', '{\"mode\":\"off\"}', '{\"output_directory\":\"/out\"}', 'queued', '2026-10-02T09:00:00+00:00', 0, 3, 2, 4, 2, '/out/last.png', 9, 'cli')")
+        connection.commit()
+        connection.close()
+
+        store = self.open(path=path)
+        self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+        [entry] = store.queue.list()
+        self.assertEqual((entry.kind, entry.resumes, entry.resumes_execution, entry.resume_first_run, entry.resume_input, entry.resume_seed, entry.submitted_by), ("job", 2, 4, 2, "/out/last.png", 9, "cli"))
+        self.assertEqual(json.loads(entry.snapshot or ""), {"version": 1, "kind": "job", "job_path": "/jobs/walk.yaml", "job_text": "name: walk", "config_file": "base.yaml", "config_text": "model: m", "input_directory": "/in", "output_directory": "/out", "cooldown_default": {"mode": "off"}, "settings": {"output_directory": "/out"}})
+        [execution] = store.executions.page()
+        self.assertEqual(execution.source_kind, "job")

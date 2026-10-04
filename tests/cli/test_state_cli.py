@@ -1,4 +1,4 @@
-"""Tests for import-history, and the runner helper it (and generate) share.
+"""Tests for import-history and the runner helper it shares with the queue worker.
 
 The run-lock and execution-recording behaviors this file used to exercise through the now-removed ``run-job``
 command (a busy lock, a crash-left-running row, history retention, an unreachable state directory, a newer schema, a
@@ -9,11 +9,11 @@ against it in ``tests/services/test_job_runs.py``, the layer ``dtc serve``'s wor
 
 import itertools
 import json
-import os
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from loguru import logger
+import httpx
 from typer.testing import CliRunner
 
 from draw_things_control.cli.app import CliServices, app
@@ -85,22 +85,34 @@ class StateCliTests(JobTestCase):
         with RunLock("serve", directory=self.state):
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")], obj=self.services).exit_code, 0)
-            self.assertEqual(self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--dry-run"], obj=self.services).exit_code, 0)
             # None of those touched the database.
             self.assertFalse((self.state / "dtc.db").exists())
             self.output_directory.mkdir()
             self.assertEqual(self.invoke("import-history").exit_code, 0)
 
-    def test_generate_exits_75_naming_the_server_while_it_holds_the_lock(self) -> None:
-        messages: list[str] = []
-        sink = logger.add(lambda message: messages.append(str(message).strip()), format="{message}", level="ERROR")
-        try:
-            with RunLock("serve", directory=self.state):
-                result = self.runner.invoke(app, ["generate", "--model", "m.ckpt", "--prompt", "x", "--output", str(self.root / "x.png")], obj=self.services)
-        finally:
-            logger.remove(sink)
-        self.assertEqual(result.exit_code, 75)
-        self.assertEqual(messages[0], f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand.")
+    def test_generate_submits_to_the_server_without_starting_a_local_runner_or_touching_the_lock(self) -> None:
+        token = self.root / "token"
+        token.write_text("a" * 64, encoding="ascii")
+        requests: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"queue_id": "Q0001", "kind": "generate", "generation": {"model": "m.ckpt", "output": "cube.png"}})
+
+        services = replace(self.services, http_transport=httpx.MockTransport(handle))
+        with RunLock("serve", directory=self.state):
+            result = self.runner.invoke(app, ["generate", "--timeout", "60", "--model", "m.ckpt", "--prompt", "x", "--output", "cube.png", "--token-file", str(token)], obj=services)
+        self.assertEqual((result.exit_code, result.stdout), (0, "Q0001 queued: cube.png\n"))
+        self.assertEqual((requests[0].method, requests[0].url.path, json.loads(requests[0].content)), ("POST", "/v1/generations", {"model": "m.ckpt", "prompt": "x", "image": [], "avc": False, "output": "cube.png", "timeout": 60.0}))
+        self.assertEqual(self.runs_started, 0)
+        self.assertFalse((self.state / "dtc.db").exists())
+
+    def test_generate_treats_a_server_without_the_endpoint_as_unavailable(self) -> None:
+        token = self.root / "token"
+        token.write_text("a" * 64, encoding="ascii")
+        services = replace(self.services, http_transport=httpx.MockTransport(lambda _request: httpx.Response(404, json={"code": "not_found", "message": "Not found"})))
+        result = self.runner.invoke(app, ["generate", "--timeout", "60", "--model", "m.ckpt", "--output", "cube.png", "--token-file", str(token)], obj=services)
+        self.assertEqual(result.exit_code, 1)
 
     def test_the_runner_reports_its_child_with_the_executable_name(self) -> None:
         on_start = mock.Mock()

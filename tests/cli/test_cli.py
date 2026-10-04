@@ -1,7 +1,5 @@
 """Tests for the public command-line interface."""
 
-import json
-import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,10 +26,7 @@ class DrawThingsCliTests(unittest.TestCase):
             (root / "wan.json").write_text('{"model": "example.ckpt"}', encoding="utf-8")
             (root / "solo.json").write_text("{}", encoding="utf-8")
             (root / "wan.yaml").write_text("model: example.ckpt\n", encoding="utf-8")
-            for command in (["validate-config", str(root / "wan.json")], ["generate", "--config-file", str(root / "wan.json"), "--dry-run"]):
-                with self.subTest(command=command[0]):
-                    result = self.runner.invoke(app, command)
-                    self.assertEqual(result.exit_code, 2, result.output)
+            self.assertEqual(self.runner.invoke(app, ["validate-config", str(root / "wan.json")]).exit_code, 2)
             self.assertEqual(self.runner.invoke(app, ["validate-config", str(root / "wan.json")]).exit_code, 2)
             with self.assertRaisesRegex(ValueError, r"wan\.json is JSON; use wan\.yaml instead"):
                 load_config(root / "wan.json")
@@ -42,64 +37,18 @@ class DrawThingsCliTests(unittest.TestCase):
             self.assertEqual((root / "wan.json").read_text(encoding="utf-8"), '{"model": "example.ckpt"}')
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["solo.json", "wan.json", "wan.yaml"])
 
-    def test_example_shape_uses_model_from_config(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = root / "config.yaml"
-            image = root / "source.png"
-            config.write_text("model: example.ckpt\n", encoding="utf-8")
-            image.touch()
-            result = self.runner.invoke(app, ["generate", "--config-file", str(config), "--image", str(image), "--output", str(root / "output.mov"), "--dry-run"])
-            self.assertEqual(result.exit_code, 0, result.output)
-            command = shlex.split(result.stdout.strip())
-            self.assertNotIn("--config-file", command)
-            self.assertEqual(command[command.index("--config-json") + 1], '{"model":"example.ckpt"}')
-            self.assertEqual(command[command.index("--model") + 1], "example.ckpt")
-            self.assertEqual(command[command.index("--image") + 1], str(image.resolve()))
+    def test_generate_requires_a_timeout(self) -> None:
+        result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--output", "cube.png"])
+        self.assertEqual(result.exit_code, 2)
 
-    def test_explicit_model_overrides_config(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = root / "config.yaml"
-            config.write_text("model: config.ckpt\n", encoding="utf-8")
-            result = self.runner.invoke(app, ["generate", "--config", str(config), "-m", "override.ckpt", "--dry-run"])
-            self.assertEqual(result.exit_code, 0, result.output)
-            self.assertIn("--model override.ckpt", result.stdout)
-
-    def test_repeated_images_and_numeric_zero_values(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            images = (root / "first.png", root / "second.png")
-            for image in images:
-                image.touch()
-            result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--image", str(images[0]), "--image", str(images[1]), "--cfg", "0", "--seed", "0", "--strength", "0", "--output", str(root / "clip.mov"), "--video-format", "h264", "--no-download-missing", "--dry-run"])
-            self.assertEqual(result.exit_code, 0, result.output)
-            command = shlex.split(result.stdout.strip())
-            self.assertEqual([command[index + 1] for index, token in enumerate(command) if token == "--image"], [str(image.resolve()) for image in images])
-            self.assertEqual(command[command.index("--cfg") + 1], "0.0")
-            self.assertEqual(command[command.index("--seed") + 1], "0")
-            self.assertIn("--no-download-missing", command)
-
-    def test_text_only_generation_has_no_image_or_output(self) -> None:
-        result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--prompt", "a red cube", "--dry-run"])
-        self.assertEqual(result.exit_code, 0, result.output)
-        command = shlex.split(result.stdout.strip())
-        self.assertNotIn("--image", command)
-        self.assertNotIn("--output", command)
-
-    def test_cloud_credentials_are_redacted_in_preview(self) -> None:
-        result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--cloud-compute", "--api-key", "private-key", "--dry-run"])
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("[redacted]", result.stdout)
-        self.assertNotIn("private-key", result.stdout)
-
-    def test_remote_tls_false_is_forwarded(self) -> None:
-        result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--remote", "--remote-url", "127.0.0.1", "--no-remote-tls", "--dry-run"])
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("--no-remote-tls", shlex.split(result.stdout.strip()))
+    def test_generate_rejects_removed_remote_and_credential_options(self) -> None:
+        for option in ("--remote", "--cloud-compute", "--api-key", "--config-json", "--models-dir", "--terminal-image"):
+            with self.subTest(option=option):
+                result = self.runner.invoke(app, ["generate", "--timeout", "60", "--model", "example.ckpt", "--output", "cube.png", option])
+                self.assertEqual(result.exit_code, 2, result.output)
 
     def test_conflicting_prompts_return_input_error(self) -> None:
-        result = self.runner.invoke(app, ["generate", "--model", "example.ckpt", "--prompt", "one", "--prompt-file", "-", "--dry-run"])
+        result = self.runner.invoke(app, ["generate", "--timeout", "60", "--model", "example.ckpt", "--output", "cube.png", "--prompt", "one", "--prompt-file", "-", "--dry-run"])
         self.assertEqual(result.exit_code, 2)
 
     def test_validate_config_command(self) -> None:
@@ -126,15 +75,3 @@ class DrawThingsCliTests(unittest.TestCase):
                     config.write_text(text, encoding="utf-8")
                     result = self.runner.invoke(app, ["validate-config", str(config)])
                     self.assertEqual(result.exit_code, 2, result.output)
-
-    def test_generate_passes_yaml_inline_merged_with_config_json(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.yaml"
-            config.write_text("model: example.ckpt\nsteps: 30\n", encoding="utf-8")
-            result = self.runner.invoke(app, ["generate", "--config-file", str(config), "--config-json", '{"steps": 8}', "--dry-run"])
-            self.assertEqual(result.exit_code, 0, result.output)
-            command = shlex.split(result.stdout.strip())
-            self.assertNotIn("--config-file", command)
-            self.assertEqual(json.loads(command[command.index("--config-json") + 1]), {"model": "example.ckpt", "steps": 8})
-            self.assertEqual(command[command.index("--model") + 1], "example.ckpt")
-            self.assertEqual([path.name for path in Path(directory).iterdir()], ["config.yaml"])

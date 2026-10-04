@@ -120,6 +120,7 @@ def unstarted_check(check: MediaCheckRow, *, brief: bool = False) -> dict[str, A
 def execution_summary(row: ExecutionRow) -> dict[str, Any]:
     return {
         "execution_id": row.label,
+        "source_kind": row.source_kind,
         "job_name": row.job_name,
         "job_file": row.job_file,
         "mode": row.mode,
@@ -188,9 +189,17 @@ def _run_output(execution: ExecutionRow, run: RunRow) -> dict[str, Any]:
 
 def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any]:
     """``park_requested`` is the worker's (Milestone 05), since a park reservation is kept in memory, not in the row."""
+    generation = None
+    if row.kind == "generate":
+        from draw_things_control.services.generation_submit import GenerationSnapshot
+
+        snapshot = GenerationSnapshot.from_json(row.snapshot)
+        generation = {"model": snapshot.model, "output": snapshot.output}
     return {
         "queue_id": row.label,
-        "job_path": row.job_path,
+        "kind": row.kind,
+        "job_path": row.job_path if row.kind == "job" else None,
+        "generation": generation,
         "state": row.state,
         "submitted_at": row.submitted_at,
         "started_at": row.started_at,

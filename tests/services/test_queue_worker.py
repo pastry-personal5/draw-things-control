@@ -14,12 +14,13 @@ from unittest import mock
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN
 from draw_things_control.core.run_lock import RunLock
+from draw_things_control.services.generation_submit import GenerationSnapshot
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.queue_resume import resume_entry
 from draw_things_control.services.queue_submit import submit_job
 from draw_things_control.services.queue_worker import QueueWorker
 from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import QueueState
+from draw_things_control.state.queue import NewQueueEntry, QueueState
 from draw_things_control.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
@@ -112,6 +113,26 @@ class QueueWorkerCase(JobTestCase):
 
 
 class QueueWorkerTests(QueueWorkerCase):
+    def test_a_cancel_pending_before_a_generation_token_begins_is_applied_when_it_does(self) -> None:
+        self.worker._pending_cancel = True
+        with mock.patch.object(self.executor, "cancel", return_value=True) as cancel:
+            self.worker._generation_start_guard()
+        self.assertTrue(self.worker._job_started)
+        cancel.assert_called_once_with()
+
+    def test_a_generation_entry_runs_once_and_records_a_generation_execution(self) -> None:
+        self.output_directory.mkdir()
+        snapshot = GenerationSnapshot(model="model.ckpt", output="cube.png", output_path=str(self.output_directory / "cube.png"), timeout=60, prompt="cube")
+        entry = self.store.queue.submit(NewQueueEntry(job_path="", job_text="", config_file="", config_text="", input_directory=str(self.input_directory), output_directory=str(self.output_directory), cooldown_default=None, settings=ExecutionSettings(output_directory=str(self.output_directory)), submitted_at="2026-09-27T15:30:12+00:00", total_runs=1, kind="generate", snapshot=snapshot.to_json()))
+        self.assertTrue(self.worker.claim_and_run_one())
+        updated = self.store.queue.get(entry.id)
+        assert updated is not None and updated.execution_number is not None
+        self.assertEqual((updated.kind, updated.state), ("generate", str(QueueState.SUCCEEDED)))
+        execution = self.store.executions.by_number(updated.execution_number)
+        assert execution is not None
+        self.assertEqual((execution.source_kind, execution.job_name, execution.total_runs, execution.runs[0].output), ("generate", "generate: cube.png", 1, str(self.output_directory / "cube.png")))
+        self.assertEqual(self.starts, 1)
+
     def test_two_queued_jobs_run_in_order(self) -> None:
         first = self.submit(run_count=1)
         second = self.submit(run_count=1)

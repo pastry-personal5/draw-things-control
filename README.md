@@ -6,7 +6,7 @@ so a video can run far longer than a single generation allows. The
 [Draw Things](https://github.com/drawthingsai/draw-things-community) app does
 the generating underneath; this Python CLI and terminal UI drive it through the
 locally installed `draw-things-cli`. YAML jobs describe the chain, and single
-`dtc generate` runs cover the one-off image or video.
+`dtc generate` queues a bounded one-off image or video through `dtc serve`.
 
 ## Quick start
 
@@ -16,8 +16,8 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and `draw-things-cli`.
 uv sync
 uv run dtc --help
 
-# Preview a command without running it
-uv run dtc generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube" --output cube.png --dry-run
+# Preview a command without queueing it (after starting dtc serve)
+uv run dtc generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube" --output cube.png --timeout 600 --dry-run
 
 # Validate and queue a job
 cp config/global-config.example.yaml config/global-config.yaml   # then edit the paths

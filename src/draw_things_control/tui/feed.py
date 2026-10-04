@@ -228,8 +228,8 @@ def _synthetic_job_started(entry: dict[str, Any], detail: dict[str, Any], execut
     total_runs = (execution["total_runs"] if execution is not None else entry["total_runs"]) or 0
     return JobStarted(
         at=execution["started_at"] if execution is not None else entry["submitted_at"],
-        job_name=execution["job_name"] if execution is not None else Path(entry["job_path"]).stem,
-        job_file=execution["job_file"] if execution is not None else entry["job_path"],
+        job_name=execution["job_name"] if execution is not None else (f"generate: {entry['generation']['output']}" if isinstance(entry.get("generation"), dict) else Path(str(entry["job_path"])).stem),
+        job_file=execution["job_file"] if execution is not None else str(entry.get("job_path") or ""),
         source_text="",
         mode=execution["mode"] if execution is not None else "",
         total_runs=total_runs,

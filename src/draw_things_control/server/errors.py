@@ -37,7 +37,7 @@ STATUS_BY_ERROR_CODE = {
 }
 DEFAULT_STATUS = 503
 # Audited POST endpoints with body fields FastAPI can refuse before the route runs.
-AUDITED_BODY_ACTIONS = {"/v1/queue": "submit", "/v1/executions/delete": "delete_execution"}
+AUDITED_BODY_ACTIONS = {"/v1/queue": "submit", "/v1/generations": "generate", "/v1/executions/delete": "delete_execution"}
 QUEUE_CONTROL_ACTIONS = {"hold": "hold", "release": "release", "cancel": "cancel", "resume": "resume", "park": "park", "unpark": "unpark"}
 
 

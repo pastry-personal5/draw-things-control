@@ -17,7 +17,18 @@ def queue_row_to_dict(row: QueueRow) -> dict[str, Any]:
     """A stored ``QueueRow`` (the store fallback) as the same shape the API's ``queue_entry()`` gives, so
     ``queue_cells`` renders a row from either source identically."""
     # A park reservation is kept in the server's memory only, so the store never shows one.
-    return {"queue_id": row.label, "job_path": row.job_path, "state": row.state, "total_runs": row.total_runs, "succeeded": row.succeeded, "park_requested": False}
+    generation = None
+    if row.kind == "generate":
+        from draw_things_control.services.generation_submit import GenerationSnapshot
+
+        snapshot = GenerationSnapshot.from_json(row.snapshot)
+        generation = {"model": snapshot.model, "output": snapshot.output}
+    return {"queue_id": row.label, "kind": row.kind, "job_path": row.job_path if row.kind == "job" else None, "generation": generation, "state": row.state, "total_runs": row.total_runs, "succeeded": row.succeeded, "park_requested": False}
+
+
+def _name(row: dict[str, Any]) -> str:
+    generation = row.get("generation")
+    return f"generate: {generation['output']}" if isinstance(generation, dict) else Path(str(row["job_path"])).stem
 
 
 def queue_cells(row: dict[str, Any]) -> tuple[Text, ...]:
@@ -29,7 +40,7 @@ def queue_cells(row: dict[str, Any]) -> tuple[Text, ...]:
     succeeded = row["succeeded"]
     runs = f"run {succeeded + 1}/{total}" if row["state"] == "running" else f"{succeeded}/{total}"
     state = queue_state_text(row)
-    return (Text(row["queue_id"]), Text(Path(row["job_path"]).stem), Text(state, style=STATUS_STYLE.get(state, "")), Text(runs))
+    return (Text(row["queue_id"]), Text(_name(row)), Text(state, style=STATUS_STYLE.get(state, "")), Text(runs))
 
 
 def queue_listing_text(entries: list[dict[str, Any]], hold: HoldState | None = None) -> Text:
@@ -65,7 +76,7 @@ def queue_entry_detail_text(entry: dict[str, Any]) -> Text:
     if entry["state"] == "running" and entry.get("current_run") is not None:
         runs = f"run {entry['current_run']}/{total}" if total is not None else f"run {entry['current_run']}"
     for label, value in (
-        ("Job", Path(entry["job_path"]).name),
+        ("Job", _name(entry)),
         ("Submitted", entry.get("submitted_at")),
         ("Started", entry.get("started_at")),
         ("Finished", entry.get("finished_at")),

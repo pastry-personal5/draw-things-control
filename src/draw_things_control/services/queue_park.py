@@ -37,6 +37,8 @@ def park_entry(store: Store, worker: QueueWorker, entry_id: int, *, caller: str 
     parking, it holds the queue again when a release has ended the hold. An agent ``caller`` is refused a person's
     entry (``queue_callers.py``)."""
     entry = _entry(store, entry_id)
+    if entry.kind != "job":
+        raise ParkRefusedError(f"{entry.label} is a one-off generation and cannot be parked")
     check_entry_permitted(entry, caller, "park")
     if entry.state == QueueState.QUEUED:
         raise ParkRefusedError(f"{entry.label} cannot be parked: it is queued and has not started; cancel it to remove it, or hold the queue to keep it from starting")
@@ -56,6 +58,8 @@ def unpark_entry(store: Store, worker: QueueWorker, entry_id: int, *, caller: st
     finished entry, and once the park has taken effect; for an agent ``caller``, refused a person's entry, and a hold
     a person's park made (``queue_callers.py``)."""
     entry = _entry(store, entry_id)
+    if entry.kind != "job":
+        raise ParkRefusedError(f"{entry.label} is a one-off generation and cannot be unparked")
     check_entry_permitted(entry, caller, "unpark")
     if entry.state != QueueState.RUNNING:
         raise ParkRefusedError(f"{entry.label} cannot be unparked: it is {entry.state}")

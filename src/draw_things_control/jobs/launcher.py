@@ -9,7 +9,7 @@ from loguru import logger
 
 from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_config import load_config
-from draw_things_control.core.generation import GenerationService
+from draw_things_control.core.generation import GenerationOutcome, GenerationService
 from draw_things_control.core.process.output import MessageCallback
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken
@@ -48,6 +48,13 @@ class RunLauncher:
             return RunStatus.FAILED, 1
         failed = self._finisher.finish(job, run, record, lambda: self._token.requested, color)
         return failed if failed is not None else (RunStatus.SUCCEEDED, 0)
+
+    def generate(self, arguments: DrawThingsGenerateArguments, *, timeout: float, shutdown_grace: float, on_start: ChildStartCallback | None = None) -> GenerationOutcome:
+        """Run one bounded generation under the executor's cancellation token, without job planning or finishing."""
+        try:
+            return self._generation.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace, on_start=on_start)
+        finally:
+            self._token.detach()
 
     def _create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> StoppableRunner:
         runner = self._runner_factory(arguments, timeout, shutdown_grace, on_message, on_start)

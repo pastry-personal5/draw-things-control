@@ -27,6 +27,7 @@ def entry_snapshot(context: ServerContext, entry_id: int) -> dict[str, Any] | No
     progress = run_progress(context, entry.id)
     return {
         "queue_id": entry.label,
+        "kind": entry.kind,
         "state": entry.state,
         "execution_id": execution_id_text(entry.execution_number) if entry.execution_number is not None else None,
         "current_run": progress["current_run"],

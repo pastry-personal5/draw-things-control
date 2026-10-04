@@ -23,6 +23,11 @@ def _runs_text(row: dict[str, Any]) -> str:
     return "-" if total is None else f"{row['succeeded']}/{total}"
 
 
+def _entry_name(row: dict[str, Any]) -> str:
+    generation = row.get("generation")
+    return f"generate: {generation['output']}" if isinstance(generation, dict) else Path(str(row["job_path"])).name
+
+
 @queue_app.command("add")
 def queue_add(
     ctx: typer.Context,
@@ -68,7 +73,7 @@ def queue_list(
     if not entries:
         typer.echo("No queue entries.")
         return
-    rows = [("ID", "STATE", "RUNS", "JOB"), *((row["queue_id"], queue_state_text(row), _runs_text(row), Path(row["job_path"]).name) for row in entries)]
+    rows = [("ID", "STATE", "RUNS", "JOB"), *((row["queue_id"], queue_state_text(row), _runs_text(row), _entry_name(row)) for row in entries)]
     widths = [max(len(row[column]) for row in rows) for column in range(4)]
     for row in rows:
         typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip())
@@ -87,7 +92,7 @@ def queue_show(
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
         entry = api_request(client, "GET", f"/v1/queue/{checked_queue_id(queue_id)}").json()
-    typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({Path(entry['job_path']).name})")
+    typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({_entry_name(entry)})")
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
     typer.echo(f"  runs: {_runs_text(entry)}" + (f", run {entry['current_run']} in progress" if entry.get("current_run") is not None else ""))
@@ -132,7 +137,7 @@ def queue_resume(
         client = api_client(ctx, server_url, token_file, allow_remote_server)
     with client:
         entry = api_request(client, "POST", f"/v1/queue/{checked_queue_id(queue_id)}/resume").json()
-    typer.echo(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}")
+    typer.echo(f"{entry['queue_id']} queued (resumed from {queue_id}): {_entry_name(entry)}")
 
 
 @queue_app.command("park")

@@ -12,7 +12,7 @@
 version: 1
 name: sunset-walk                      # job name, the base of output file names; [a-z0-9-]
 mode: i2v                              # i2i, t2v, or i2v
-input: example-first-frame.png                 # first input, run 1 only (i2i/i2v; not allowed for t2v)
+input: ./9999-example/example-first-frame.png                 # first input, run 1 only (i2i/i2v; not allowed for t2v)
 run_count: 7                           # total runs; run k+1 starts from run k's last frame
 
 # Optional (i2i/i2v): resize the first input before run 1, and generate every

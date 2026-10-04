@@ -179,7 +179,19 @@ SCHEMA_V9 = """
 ALTER TABLE queue ADD COLUMN submitted_by TEXT
 """
 
+# Milestone 12: queue entries are either the historical job snapshot or a one-off generation snapshot.  The old job
+# columns deliberately remain: SQLite cannot remove them cheaply and keeping them makes an upgraded job row exactly as
+# resumable as it was before.  ``snapshot`` is the versioned, tagged payload new readers use; the job columns are the
+# compatibility copy for older rows and migrations.  One-off executions do not have a job file, so their source kind
+# is explicit while the old non-null columns keep harmless empty values.
+SCHEMA_V10 = """
+ALTER TABLE queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'job';
+ALTER TABLE queue ADD COLUMN snapshot TEXT;
+UPDATE queue SET snapshot = json_object('version', 1, 'kind', 'job', 'job_path', job_path, 'job_text', job_text, 'config_file', config_file, 'config_text', config_text, 'input_directory', input_directory, 'output_directory', output_directory, 'cooldown_default', json(cooldown_default), 'settings', json(settings)) WHERE snapshot IS NULL;
+ALTER TABLE executions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'job';
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10)
 SCHEMA_VERSION = len(MIGRATIONS)

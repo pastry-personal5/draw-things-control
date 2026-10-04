@@ -65,4 +65,6 @@ message QueueEntrySnapshot {
   // queue is held, so `dtc queue add --wait` can say its queued entry waits behind a hold. Both always set.
   optional bool park_requested = 11;
   optional bool queue_held = 12;
+  // ``job`` or ``generate`` (Milestone 12), so a watcher never has to infer a one-off from an empty job path.
+  string kind = 13;
 }

@@ -12,19 +12,17 @@ from typing import Annotated
 import typer
 from loguru import logger
 
-from draw_things_control.cli.api_client import AllowRemoteServerOption, ServerUrlOption, TokenFileOption
+from draw_things_control.cli.api_client import AllowRemoteServerOption, ServerUrlOption, TokenFileOption, api_client, api_request
 from draw_things_control.cli.context import CliServices, errors_exit, services_of
 from draw_things_control.cli.history_app import history_app
 from draw_things_control.cli.queue_app import queue_app
 from draw_things_control.core.client_config import DEFAULT_SERVER_URL, check_server_host
 from draw_things_control.core.draw_things_config import load_config
-from draw_things_control.core.errors import InputError
+from draw_things_control.core.errors import InputError, LimitExceededError
 from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
-from draw_things_control.core.generation import GenerateRequest
-from draw_things_control.core.global_config import GlobalConfig
+from draw_things_control.core.global_config import DEFAULT_MAX_JOB_FILE_BYTES, GlobalConfig
 from draw_things_control.core.network import is_loopback_host
 from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
-from draw_things_control.core.run_lock import RunLock
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.files import read_job, read_settings
 from draw_things_control.jobs.text import job_summary, report_ignored_config
@@ -75,7 +73,8 @@ def configure_logging() -> None:
 @app.command()
 def generate(
     ctx: typer.Context,
-    models_dir: Annotated[Path | None, typer.Option(help="Models directory.")] = None,
+    timeout: Annotated[float, typer.Option(help="Required maximum generation runtime in seconds.")],
+    output: Annotated[str, typer.Option("--output", "-o", help="Required output-relative PNG, MOV, or MP4 path.")],
     model: Annotated[str | None, typer.Option("--model", "-m", help="Model reference; may also come from a configuration.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", "-p", help="Prompt text.")] = None,
     prompt_file: Annotated[str | None, typer.Option(help="Prompt file, or - for stdin.")] = None,
@@ -88,56 +87,55 @@ def generate(
     frames: Annotated[int | None, typer.Option()] = None,
     strength: Annotated[float | None, typer.Option()] = None,
     seed: Annotated[int | None, typer.Option("--seed", "-s")] = None,
-    config_json: Annotated[str | None, typer.Option(help="Inline JSON configuration override.")] = None,
-    config_file: Annotated[Path | None, typer.Option("--config-file", "--config", help="YAML or JSON configuration file; a YAML file is passed inline with --config-json.")] = None,
-    image: Annotated[list[Path] | None, typer.Option("--image", help="Repeat for ordered reference images.")] = None,
-    audio: Annotated[Path | None, typer.Option()] = None,
-    audio_encoder_file: Annotated[str | None, typer.Option()] = None,
+    config_file: Annotated[str | None, typer.Option("--config-file", "--config", help="YAML configuration name in data/params/.")] = None,
+    image: Annotated[list[str] | None, typer.Option("--image", help="Repeat for ordered input-relative reference images.")] = None,
+    audio: Annotated[str | None, typer.Option(help="Input-relative audio path.")] = None,
     avc: Annotated[bool, typer.Option("--avc")] = False,
     segment_frames: Annotated[int | None, typer.Option()] = None,
     cond_frames: Annotated[int | None, typer.Option()] = None,
-    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
     video_format: Annotated[str | None, typer.Option()] = None,
-    terminal_image: Annotated[bool, typer.Option("--terminal-image")] = False,
-    terminal_image_protocol: Annotated[str | None, typer.Option()] = None,
-    download_missing: Annotated[bool | None, typer.Option("--download-missing/--no-download-missing")] = None,
-    disable_preview: Annotated[bool, typer.Option("--disable-preview")] = False,
-    offline: Annotated[bool, typer.Option("--offline")] = False,
-    remote: Annotated[bool, typer.Option("--remote")] = False,
-    remote_url: Annotated[str | None, typer.Option()] = None,
-    remote_port: Annotated[int | None, typer.Option()] = None,
-    remote_tls: Annotated[bool | None, typer.Option("--remote-tls/--no-remote-tls")] = None,
-    remote_shared_secret: Annotated[str | None, typer.Option()] = None,
-    cloud_compute: Annotated[bool, typer.Option("--cloud-compute")] = False,
-    api_key: Annotated[str | None, typer.Option()] = None,
-    cloud_api_base_url: Annotated[str | None, typer.Option()] = None,
-    executable: Annotated[str, typer.Option(help="Draw Things CLI executable.")] = "draw-things-cli",
-    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown.")] = 10.0,
-    timeout: Annotated[float | None, typer.Option(help="Maximum generation runtime in seconds.")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the command without running it.")] = False,
+    wait: Annotated[bool, typer.Option("--wait", help="Watch the queued generation until it finishes.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print the server command without queueing.")] = False,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
 ) -> None:
-    """Generate an image or video with Draw Things."""
+    """Submit one bounded image or video generation to dtc serve's queue."""
     services = services_of(ctx)
-    # Typer has converted these callback values; its context still holds raw strings.
-    options = locals().copy()
-    for wrapper_option in ("ctx", "services", "dry_run", "timeout", "shutdown_grace"):
-        options.pop(wrapper_option)
-    service = services.toolkit.generation_service()
     with errors_exit():
-        arguments = service.prepare(GenerateRequest(**{**options, "image": tuple(options["image"] or ())}))
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
+        body = {name: value for name, value in {"model": model, "prompt": _prompt_text(prompt, prompt_file, "--prompt", "--prompt-file"), "negative_prompt": _prompt_text(negative_prompt, negative_prompt_file, "--negative-prompt", "--negative-prompt-file"), "steps": steps, "cfg": cfg, "width": width, "height": height, "frames": frames, "strength": strength, "seed": seed, "config_file": config_file, "image": image or [], "audio": audio, "avc": avc, "segment_frames": segment_frames, "cond_frames": cond_frames, "output": output, "video_format": video_format, "timeout": timeout}.items() if value is not None}
+    with client:
         if dry_run:
-            outcome = service.execute(arguments, dry_run=True, timeout=timeout, shutdown_grace=shutdown_grace)
+            typer.echo(api_request(client, "POST", "/v1/generations/preview", json=body, missing_endpoint_is_unavailable=True).json()["command"])
+            return
+        entry = api_request(client, "POST", "/v1/generations", json=body, missing_endpoint_is_unavailable=True).json()
+        typer.echo(f"{entry['queue_id']} queued: {entry['generation']['output']}")
+        if wait:
+            from draw_things_control.cli.queue_wait import wait_for_entry
+
+            exit_code = wait_for_entry(client, entry["queue_id"], services.grpc_stub_factory)
+            if exit_code:
+                raise typer.Exit(code=exit_code)
+
+
+def _prompt_text(value: str | None, file_name: str | None, option: str, file_option: str) -> str | None:
+    """Normalize a prompt file (or stdin) before it crosses the API boundary; the server never sees this path."""
+    if value is not None and file_name is not None:
+        raise InputError(f"{option} and {file_option} are mutually exclusive")
+    if file_name is None:
+        return value
+    try:
+        if file_name == "-":
+            text = sys.stdin.read(DEFAULT_MAX_JOB_FILE_BYTES + 1)
         else:
-            with RunLock("generate", directory=services.paths.state) as lock:
-                outcome = service.execute(arguments, dry_run=False, timeout=timeout, shutdown_grace=shutdown_grace, on_start=lock.record_child)
-    if outcome.command_preview is not None:
-        typer.echo(outcome.command_preview)
-    if outcome.timed_out:
-        logger.error("Generation timed out after {} seconds", timeout)
-    elif outcome.termination_signal is not None:
-        logger.warning("Generation stopped after {}; exit code: {}", outcome.termination_signal.name, outcome.exit_code)
-    if outcome.exit_code:
-        raise typer.Exit(code=outcome.exit_code)
+            with Path(file_name).open(encoding="utf-8") as prompt_file:
+                text = prompt_file.read(DEFAULT_MAX_JOB_FILE_BYTES + 1)
+    except (OSError, UnicodeError) as error:
+        raise InputError(f"Cannot read {file_option}: {file_name}: {error}") from error
+    if len(text.encode("utf-8")) > DEFAULT_MAX_JOB_FILE_BYTES:
+        raise LimitExceededError(f"{file_option} is over the limit of {DEFAULT_MAX_JOB_FILE_BYTES} bytes", key="max_job_file_bytes", limit=DEFAULT_MAX_JOB_FILE_BYTES, value=len(text.encode("utf-8")))
+    return text
 
 
 @app.command("validate-config")

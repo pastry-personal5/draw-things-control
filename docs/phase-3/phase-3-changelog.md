@@ -3,8 +3,15 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.
 
+## 2026-10-04
+
+- **Change** [M12]: Completed the queue-only generation boundary work: stored generation snapshots are strictly tagged and validated before a worker can run them; `.mov` one-offs retain the ProRes default; a cancellation that arrives between a queue claim and runner initialization is retained; and an older server without the generations endpoint is reported as unavailable. Migration and client tests now prove that schema-9 job/resume entries retain their meaning and `dtc generate` never starts a local child.
+
 ## 2026-10-03
 
+- **Change** [M12]: Milestone 12 is built. `dtc generate` validates and submits a bounded, local one-off through `dtc serve`, or previews it without writing. Schema 10 tags queue snapshots and execution history with their source kind; generated entries share FIFO, cancellation, recovery, watches, output reporting, and audit with jobs, but have no cooldown, park, or resume path. MCP remains job-file only.
+- **Owner decision** [M12]: `dtc generate` will return after queue submission unless `--wait` is given; it will accept the safe local subset of its current options, require a relative output inside `output_directory`, and offer no MCP tool. Prompt files and stdin become submitted text, and a server is required for preview or generation.
+- **Design decision** [M12]: One-off generation uses a tagged persistent queue snapshot and a single-run execution record, rather than a fabricated job file. Schema 10 migrates existing job snapshots unchanged, and queue/history clients receive an explicit entry kind so a one-off can be displayed without pretending to be a resumable chain.
 - **Owner decision** [M11]: Apply `max_job_file_bytes` to all job loading, including local CLI validation and TUI listings, as well as API requests.
 - **Change** [M11]: An absolute input path under the resolved target of a configured directory link is accepted, an oversized write with repeated `overwrite` query parameters is audited under the effective action, and a local job file with invalid UTF-8 is shown as invalid with replacement text and the original byte hash.
 - **Change** [M11]: Safety hardening is built. Job parsing now gives typed refusals for malformed YAML, images, paths, NUL text, and oversized stored files; input and output paths are confined before access, and linked job and parameter files are refused before reading. REST and Streamable HTTP MCP bodies are bounded before parsing, existing job and named configuration reads have byte caps, and deletion hashes large local files in chunks. Authenticated write attempts receive bounded, resolved audit targets and internal failures get generic responses without exception messages in logs. Job-file validation and writes and gRPC snapshots leave the event loop free. CLI and TUI queue IDs are checked before URL construction, the command docs reflect the queue workflow, and boundary and documentation tests cover these rules. See [Milestone 11](milestone-11-safety-hardening.md).

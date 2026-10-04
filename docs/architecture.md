@@ -532,6 +532,19 @@ Adds what every later front end needs, without changing the CLI's behavior.
 - **`cli/app.py`.** `dtc mcp` takes `--transport`, `--host`, `--port`, and `--allow-remote-bind`; `mcp_server.app`
   gains `run_http` and re-exports `BindError`, the only names `cli/app.py` imports beyond `run`.
 
+### Milestone 12: Generate through the queue (done)
+
+- **One-off entries.** Schema 10 tags queue snapshots as `job` or `generate`.
+  Existing job rows keep their job snapshots and resume links; a generation
+  stores its resolved model, captured configuration, confined media paths,
+  relative output, and timeout. The worker dispatches a generation to one
+  cancellable runner invocation, records one execution and run with
+  `source_kind: generate`, and does not apply a cooldown, park, or resume path.
+- **API and CLI.** `POST /v1/generations/preview` validates and returns a
+  redacted command without writing; `POST /v1/generations` queues and audits a
+  request. `dtc generate` uses those routes and the existing watcher, so it
+  never takes the run lock or starts a child itself.
+
 ### Milestone 11: safety hardening (done)
 
 - `jobs/parsing.py` returns typed input errors and rejects NUL, cyclic aliases, and paths outside the configured
@@ -545,9 +558,8 @@ Adds what every later front end needs, without changing the CLI's behavior.
   listener has its own 8 MiB body cap after bearer authentication. The security and documentation checks cover these
   boundaries.
 
-Milestone 12 will move direct `dtc generate` onto the queue. Until then it is
-the one command that invokes `draw-things-cli` itself, under the shared run
-lock.
+`dtc serve`'s queue worker is the only component that invokes
+`draw-things-cli`.
 
 ## Rules across phases
 

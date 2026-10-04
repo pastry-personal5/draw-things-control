@@ -12,13 +12,15 @@ from pathlib import Path
 
 from loguru import logger
 
+from draw_things_control.core.arguments import redact_command
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.run_lock import SERVER_HOLDER_NAME, RunLock
 from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus
+from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunStatus
 from draw_things_control.jobs.executor import JobExecutor, ResumePoint
+from draw_things_control.services.generation_submit import GenerationSnapshot
 from draw_things_control.services.history_delete import DeleteReport
 from draw_things_control.services.job_runs import JobRunSession
 from draw_things_control.services.queue_claim_gate import QueueClaimGate
@@ -26,6 +28,7 @@ from draw_things_control.services.queue_events import EventSink, QueueEventPubli
 from draw_things_control.services.queue_hold import HoldState, QueueHold
 from draw_things_control.services.queue_submit import parse_snapshot
 from draw_things_control.services.queue_worker_status import WorkerStatus
+from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
 from draw_things_control.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from draw_things_control.state.queue import QueueRow, QueueState
 from draw_things_control.state.store import Store
@@ -299,6 +302,9 @@ class QueueWorker:
         return True
 
     def _run_claimed(self, entry: QueueRow) -> JobDefinition | None:
+        if entry.kind == "generate":
+            self._run_generation(entry)
+            return None
         # Set once JobFinished has already marked the entry, so an exception the executor re-raises after that (it
         # always re-raises what it caught) does not overwrite a real outcome with a spurious 'failed'.
         finished = [False]
@@ -327,6 +333,61 @@ class QueueWorker:
             else:
                 self._fail_to_start(entry, error)
         return job
+
+    def _run_generation(self, entry: QueueRow) -> None:
+        """Run and record exactly one snapshot, sharing the worker's executor, lock, cancellation, and queue state."""
+        execution_id: int | None = None
+        try:
+            snapshot = GenerationSnapshot.from_json(entry.snapshot)
+            arguments = snapshot.arguments(self._executable)
+            number = self._store.executions.reserve_number()
+            self._store.queue.link_execution(entry.id, number)
+            started_at = local_timestamp(self._clock())
+            execution_id = self._store.executions.start(NewExecution(execution_number=number, job_name=snapshot.display_name, job_file="", mode="i2v" if Path(snapshot.output).suffix.lower() in {".mov", ".mp4"} else "i2i", model=snapshot.model, seed=snapshot.seed, seed_source="given" if snapshot.seed is not None else None, total_runs=1, started_at=started_at, config_file=snapshot.config_file, job_yaml=entry.snapshot, settings=ExecutionSettings(input=snapshot.image[0] if snapshot.image else None, output_directory=entry.output_directory, config_file=snapshot.config_file), source_kind="generate"))
+            self._store.executions.start_run(execution_id, 1, NewRun(pair="generate", positive=snapshot.prompt or "", negative=snapshot.negative_prompt, input=snapshot.image[0] if snapshot.image else None, output=snapshot.output_path, command=redact_command(arguments.command), started_at=started_at))
+            self._status.generation_started()
+            outcome = self._executor.run_generation(arguments, timeout=snapshot.timeout, shutdown_grace=self._shutdown_grace, on_begin=self._generation_start_guard, on_child_start=self._lock.record_child)
+            output_exists = Path(snapshot.output_path).is_file()
+            status = RunStatus.SUCCEEDED if outcome.exit_code == 0 and not outcome.timed_out and outcome.termination_signal is None and output_exists else RunStatus.TIMED_OUT if outcome.timed_out else RunStatus.INTERRUPTED if outcome.termination_signal is not None else RunStatus.FAILED
+            exit_code = outcome.exit_code if output_exists or outcome.exit_code else 1
+            finished_at = local_timestamp(self._clock())
+            self._store.executions.finish_run(execution_id, 1, status=str(status), exit_code=exit_code, seconds=(self._clock().timestamp() - datetime.fromisoformat(started_at).timestamp()), output=snapshot.output_path, last_frame=None)
+            execution_status = JobStatus.SUCCEEDED if status == RunStatus.SUCCEEDED else JobStatus.INTERRUPTED if status == RunStatus.INTERRUPTED else JobStatus.FAILED
+            self._store.executions.finish(execution_id, status=str(execution_status), exit_code=exit_code, signal=outcome.termination_signal.name if outcome.termination_signal is not None else None, finished_at=finished_at)
+            if execution_status == JobStatus.INTERRUPTED:
+                state = self._final_state(JobFinished(at=finished_at, status=execution_status, exit_code=exit_code, completed_runs=0, total_runs=1, signal=outcome.termination_signal.name if outcome.termination_signal is not None else None))
+            else:
+                state = QueueState.SUCCEEDED if execution_status == JobStatus.SUCCEEDED else QueueState.FAILED
+            with self._state_lock:
+                self._store.queue.finish(entry.id, state=state, finished_at=finished_at)
+                self._job_finished = True
+            self._events.entry_changed(entry.label, str(state))
+        except Exception as error:
+            if execution_id is None:
+                self._fail_to_start(entry, error)
+            else:
+                finished_at = local_timestamp(self._clock())
+                self._store.executions.finish_run(execution_id, 1, status=str(RunStatus.FAILED), exit_code=None, seconds=None, output=None, last_frame=None)
+                self._store.executions.finish(execution_id, status=str(JobStatus.FAILED), exit_code=None, signal=None, finished_at=finished_at)
+                with self._state_lock:
+                    self._store.queue.finish(entry.id, state=QueueState.FAILED, finished_at=finished_at, error=str(error))
+                    self._job_finished = True
+                self._events.entry_changed(entry.label, str(QueueState.FAILED))
+        finally:
+            self._status.generation_finished()
+
+    def _generation_start_guard(self) -> None:
+        """Apply a cancel which reached a claimed one-off before its cancel token began.
+
+        ``JobExecutor.run_generation`` invokes this immediately after beginning that token.  A cancellation which
+        lands before then is therefore still delivered to the runner when it attaches, matching the job path's
+        ``JobStarted`` guard.
+        """
+        with self._state_lock:
+            self._job_started = True
+            pending = self._pending_cancel
+        if pending:
+            self._executor.cancel()
 
     def _linker(self, entry: QueueRow) -> Callable[[str], None]:
         def on_reserved(label: str) -> None:

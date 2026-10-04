@@ -43,7 +43,7 @@ typed tools on top of it.
   longer runs it to read that output directly
 - Retiring direct chained jobs everywhere but the server: `run-job` is removed,
   and the TUI's `/apply` submits to the queue instead of running the job
-  itself. `dtc generate` remains a direct one-off command until Milestone 12
+  itself. `dtc generate` is a bounded one-off client of that queue
 - Parking a running job from the TUI and `dtc queue`: it ends once its
   current run finishes, keeps every run it finished, reads `parked`, and can
   be resumed at the next run. Parking holds the queue until a release, and
@@ -109,7 +109,7 @@ typed tools on top of it.
 | 09 | [Color preservation](milestone-09-color-preservation.md) | done |
 | 10 | [MCP server](milestone-10-mcp-server.md) | done |
 | 11 | [Safety hardening](milestone-11-safety-hardening.md) | done |
-| 12 | [Generate through the queue](milestone-12-generate-through-the-queue.md) | planned |
+| 12 | [Generate through the queue](milestone-12-generate-through-the-queue.md) | done |
 | 13 | [MCP over Streamable HTTP](milestone-13-mcp-over-http.md) | done |
 
 Milestone 09, left open until 2026-09-30, is color preservation (owner decision), and was built before Milestone 07 (owner decision, 2026-09-30). Milestones 08 and 09 are done (2026-10-01), Milestone 07 (2026-10-02), and Milestones 10 and 11 (2026-10-03); Milestone 12 is next. Milestone 13, appended after the others were planned, was built before 11, at the owner's request (2026-10-03): `dtc mcp` over HTTP, for an agent in a virtual machine. The order is 01, 02, 03, 04, 05, 06, 08, 09, 07, 10, 11, 12 (owner decisions):
@@ -140,9 +140,7 @@ Milestone 09, left open until 2026-09-30, is color preservation (owner decision)
     that keeps those fixed, covers Milestone 13's Streamable HTTP MCP
     listener, and checks the documents against what was built.
 12. Milestone 12 moves `dtc generate` onto the queue, so `dtc serve`'s worker
-    is the only thing that ever starts `draw-things-cli`. Until then the
-    documents name `dtc generate` as the exception (owner decision,
-    2026-10-03). It is named here and not yet designed.
+    is the only thing that ever starts `draw-things-cli`.
 
 The rules, the limits, and the audit log arrive with Milestone 02, before
 anything can be submitted or written. Each milestone documents what it adds
@@ -239,9 +237,9 @@ Decisions and notable changes are recorded in
   The row, its runs, its log, and its manifest go, its outputs stay. A
   running execution, or one a queued or running entry uses, is refused, and
   a deletion that ends a parked or failed entry's resume says so first.
-- `dtc serve`'s worker starts queued jobs; `run-job` is retired, and the TUI
-  submits to the server. Until Milestone 12, `dtc generate` directly starts
-  one generation under the same run lock.
+- `dtc serve`'s worker starts queued jobs and one-off generations; `run-job`
+  is retired, the TUI submits to the server, and `dtc generate` queues a
+  bounded generation rather than starting one directly.
 - The server restarts without losing the queue: queued jobs run (once
   released, if the queue is held), interrupted jobs are marked, and an explicit resume continues one from its
   last succeeded run with the original seed, never from a run's leftover

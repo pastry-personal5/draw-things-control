@@ -94,6 +94,10 @@ class NewQueueEntry:
     resume_anchor: str | None = None
     # The caller that submitted or resumed it (schema 9, Milestone 10): cli, tui, mcp, or api.
     submitted_by: str | None = None
+    # Tagged snapshot fields added in schema 10. Existing job callers retain their old columns and receive the
+    # matching snapshot automatically in ``submit``; generation callers set these explicitly.
+    kind: str = "job"
+    snapshot: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,8 @@ class QueueRow:
     resume_anchor: str | None = None
     # The caller that submitted or resumed it (schema 9, Milestone 10); None for an entry made before, a person's.
     submitted_by: str | None = None
+    kind: str = "job"
+    snapshot: str | None = None
 
     @property
     def label(self) -> str:
@@ -180,13 +186,15 @@ class QueueRow:
             resume_first_image=row["resume_first_image"],
             resume_anchor=row["resume_anchor"],
             submitted_by=row["submitted_by"],
+            kind=row["kind"] if "kind" in row.keys() else "job",
+            snapshot=row["snapshot"] if "snapshot" in row.keys() else None,
             error=row["error"],
             total_runs=row["total_runs"],
             succeeded=(exec_first_run or 1) - 1 + succeeded_count,
         )
 
 
-QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed", "resume_first_image", "resume_anchor", "submitted_by")
+QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed", "resume_first_image", "resume_anchor", "submitted_by", "kind", "snapshot")
 # list_active, list_finished, and by_number all join in the linked execution to compute "succeeded"
 # (QueueRow.from_row's formula) rather than one executions.by_number() lookup per row (list_active/list_finished:
 # the same reasoning that moved _queued_count to a bare COUNT(*), since a list read can run on every relevant
@@ -206,6 +214,8 @@ class QueueRepository:
         with self._database.transaction() as connection:
             number = next_number(connection, "queue")
             values: dict[str, Any] = {column: getattr(new, column) for column in QUEUE_COLUMNS}
+            if values["snapshot"] is None:
+                values["snapshot"] = json.dumps({"version": 1, "kind": "job", "job_path": new.job_path, "job_text": new.job_text, "config_file": new.config_file, "config_text": new.config_text, "input_directory": new.input_directory, "output_directory": new.output_directory, "cooldown_default": new.cooldown_default, "settings": json.loads(new.settings.to_json())}, ensure_ascii=False)
             values["queue_number"] = number
             values["cooldown_default"] = json_dump(new.cooldown_default)
             values["settings"] = new.settings.to_json()

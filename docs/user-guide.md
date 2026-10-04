@@ -63,7 +63,7 @@ different file.
 
 | Command | Purpose |
 |---------|---------|
-| `generate` | Generate one image or video |
+| `generate` | Queue one bounded image or video through `dtc serve` |
 | `validate-config FILE` | Check a Draw Things YAML configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
 | `queue add JOB` | Submit a job to `dtc serve`; `--wait` watches it finish |
@@ -78,23 +78,29 @@ Add `--help` to any command for its full option list.
 
 ## Generate one image or video
 
-Text to image needs only a model, a prompt, and an output:
+`generate` is a client of `dtc serve`: start the server first. It submits one
+bounded request and prints its queue ID; add `--wait` to follow it through its
+final state. The server worker is the only process that starts Draw Things.
+
+Text to image needs a model, prompt, output, and timeout:
 
 ```bash
 uv run dtc generate \
   --model flux_2_klein_4b_q6p.ckpt \
   --prompt "a small red cube on a table" \
-  --output cube.png
+  --output cube.png \
+  --timeout 600
 ```
 
 Image to video with a bundled configuration:
 
 ```bash
 uv run dtc generate \
-  --config-file data/params/image-to-video-wan-2-2.example.yaml \
-  --image /path/to/source.png \
-  --output /path/to/output.mov \
-  --timeout 3600
+  --config image-to-video-wan-2-2.example.yaml \
+  --image source.png \
+  --output clip.mov \
+  --timeout 3600 \
+  --wait
 ```
 
 A `.mov` output is ProRes 4444 (`--video-format prores4444`) unless
@@ -102,8 +108,11 @@ A `.mov` output is ProRes 4444 (`--video-format prores4444`) unless
 is H.264 when `--video-format` is not given. `generate` neither tags its output
 nor extracts a last frame.
 
-Always preview first with `--dry-run`: it prints the exact command, with
-credentials redacted, and starts nothing.
+`--output` is required and must be relative to the configured output directory;
+its parent must already exist. Input media is similarly relative to the input
+directory. `--dry-run` asks the server to validate and prints its redacted
+command: it does not queue or audit a generation. If the server cannot be
+reached, `generate` does not fall back to a local child.
 
 Common options:
 
@@ -112,13 +121,16 @@ Common options:
 | `-m`, `--model` | Model file; may come from the configuration instead. An explicit `--model` wins |
 | `-p`, `--prompt`, `--negative-prompt` | Prompt text |
 | `--prompt-file`, `--negative-prompt-file` | Read from a file, or `-` for stdin (only one may use stdin) |
-| `--config-file` (alias `--config`) | YAML configuration file, passed to `draw-things-cli` inline with `--config-json`; see [base configurations](#base-configurations). None is used by default |
-| `--image` | Reference image; repeat for several, in order |
+| `--config-file` (alias `--config`) | Bare YAML configuration name in `data/params/`; the server captures it before queueing |
+| `--image` | Input-relative reference image; repeat for several, in order |
 | `--steps`, `--cfg`, `--width`, `--height`, `--frames`, `--strength`, `-s/--seed` | Generation settings; left out, Draw Things picks its recommended values |
-| `-o`, `--output` | Output file. Without it, the image previews in the terminal |
-| `--remote`, `--cloud-compute` and their related options | Choose remote or cloud generation instead of local |
-| `--timeout SECONDS` | Stop the run if it takes longer |
-| `--shutdown-grace SECONDS` | Wait this long after asking to stop before forcing it (default 10) |
+| `-o`, `--output` | Required output-relative file beneath the configured output directory |
+| `--timeout SECONDS` | Required maximum runtime; it cannot exceed the server's `max_job_seconds` |
+| `--wait` | Follow the queue entry; Ctrl-C cancels it |
+
+`generate` intentionally has no remote, cloud, credentials, models-directory,
+arbitrary JSON configuration, terminal preview, download, or `--executable`
+options. Use a job file for chains, resumes, cooldowns, and agent work.
 
 ## Base configurations
 
@@ -912,7 +924,7 @@ execution IDs existed were numbered by start time, oldest first.
   `E0040: /path/walk-job.json (its manifest says E0003)`.
 
 Only one run drives the GPU at a time. `dtc serve` holds `state/run.lock` for
-its lifetime, and `generate` takes the same lock for a direct one-off run.
+its lifetime; `generate` submits to that server and never takes the lock itself.
 If another process holds it, the command exits with 75 and
 says who does, and nothing starts:
 

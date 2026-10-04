@@ -58,6 +58,8 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
+    if entry.kind != "job":
+        raise ResumeRefusedError(f"{entry.label} is a one-off generation and cannot be resumed")
     check_entry_permitted(entry, caller, "resume")
     if entry.state not in RESUMABLE_STATES:
         raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
@@ -115,6 +117,8 @@ def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, p
     here matches what an actual resume attempt would raise -- except for the input image itself, which this checks
     only by its header (``decode_input=False`` below): a corrupt-but-header-readable image can preview as
     resumable here and still be refused by the real resume, which always decodes fully."""
+    if entry.kind != "job":
+        return ResumePreview(False, reason=f"{entry.label} is a one-off generation and cannot be resumed")
     if entry.state not in RESUMABLE_STATES:
         return ResumePreview(False, reason=f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):

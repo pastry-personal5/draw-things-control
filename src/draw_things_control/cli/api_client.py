@@ -42,7 +42,7 @@ def api_client(ctx: typer.Context, server_url: str, token_file: Path | None, all
     return httpx.Client(base_url=server_url, transport=services.http_transport, headers={"Authorization": f"Bearer {token}", CALLER_HEADER: "cli"}, timeout=30.0)
 
 
-def api_request(client: "httpx.Client", method: str, url: str, **kwargs: Any) -> "httpx.Response":
+def api_request(client: "httpx.Client", method: str, url: str, *, missing_endpoint_is_unavailable: bool = False, **kwargs: Any) -> "httpx.Response":
     import httpx
 
     try:
@@ -52,6 +52,9 @@ def api_request(client: "httpx.Client", method: str, url: str, **kwargs: Any) ->
         raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
     if response.status_code == 401:
         logger.error("The server at {} refused the token; is 'dtc serve' running with the same --token-file?", client.base_url)
+        raise typer.Exit(code=EXIT_STATE_UNAVAILABLE)
+    if response.status_code == 404 and missing_endpoint_is_unavailable:
+        logger.error("The server at {} does not support one-off generation; is 'dtc serve' up to date?", client.base_url)
         raise typer.Exit(code=EXIT_STATE_UNAVAILABLE)
     if response.is_error:
         exit_on_api_error(response)

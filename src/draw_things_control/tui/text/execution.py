@@ -54,7 +54,8 @@ def _execution_fields(execution: ExecutionRow) -> tuple[tuple[str, str | None], 
     settings = execution_settings(execution)
     return (
         ("status", f"{execution.status}, exit code {execution.exit_code if execution.exit_code is not None else '-'}{signal}"),
-        ("job file", execution.job_file),
+        ("source", execution.source_kind),
+        ("job file", execution.job_file or None),
         ("mode", execution.mode),
         ("model", execution.model or "-"),
         ("refiner", refiner_text(settings)),

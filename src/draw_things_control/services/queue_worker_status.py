@@ -64,6 +64,15 @@ class WorkerStatus:
             with self._lock:
                 self._between_runs_after = event.after_run
 
+    def generation_started(self) -> None:
+        """Mark the one run of a Milestone 12 entry live; it has no job events to observe."""
+        with self._lock:
+            self._current_run, self._current_run_started_epoch, self._current_step = 1, self._clock().timestamp(), None
+
+    def generation_finished(self) -> None:
+        with self._lock:
+            self._current_run, self._current_run_started_epoch, self._current_step = None, None, None
+
     def state(self) -> str:
         """``running``, ``cooling_down``, or ``idle``."""
         with self._lock:

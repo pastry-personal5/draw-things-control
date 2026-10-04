@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from draw_things_control.core.arguments import redact_command
+from draw_things_control.core.arguments import DrawThingsGenerateArguments, redact_command
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.cooldown import CooldownWait
 from draw_things_control.core.errors import InputError
 from draw_things_control.core.exit_codes import EXIT_PARKED, exit_code_for_signal, signal_for_exit_code
+from draw_things_control.core.generation import GenerationOutcome
 from draw_things_control.core.process.output import MessageCallback, ProcessMessage
 from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
@@ -168,6 +169,16 @@ class JobExecutor:
         lands after the last run has finished changes nothing, so the job still ends as it did.
         """
         return self._token.cancel(received_signal)
+
+    def run_generation(self, arguments: DrawThingsGenerateArguments, *, timeout: float, shutdown_grace: float, on_begin: Callable[[], None] | None = None, on_child_start: ChildStartCallback | None = None) -> GenerationOutcome:
+        """Run Milestone 12's one-off request with the same cancellable runner a job uses."""
+        self._token.begin()
+        try:
+            if on_begin is not None:
+                on_begin()
+            return self._launcher.generate(arguments, timeout=timeout, shutdown_grace=shutdown_grace, on_start=on_child_start)
+        finally:
+            self._token.end()
 
     def park(self) -> bool:
         """Ask the running job to end once its current run finishes; safe from any thread (Milestone 05).
