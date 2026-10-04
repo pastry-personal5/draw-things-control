@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-04
 
+- **Change**: version 3.0.0 release notes are in [docs/releases/3.0.0.md](../releases/3.0.0.md), covering the server-owned queue, API and MCP automation, safety boundaries, media fidelity, and migration from direct generation.
+
 - **Change** [M12]: Completed the queue-only generation boundary work: stored generation snapshots are strictly tagged and validated before a worker can run them; `.mov` one-offs retain the ProRes default; a cancellation that arrives between a queue claim and runner initialization is retained; and an older server without the generations endpoint is reported as unavailable. Migration and client tests now prove that schema-9 job/resume entries retain their meaning and `dtc generate` never starts a local child.
 
 ## 2026-10-03
