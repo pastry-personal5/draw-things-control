@@ -24,6 +24,10 @@ wheels/
 .venv/
 venv/
 
+# Project-local uv cache (overridable with UV_CACHE_DIR)
+.cache/uv/
+!.cache/uv/.gitkeep
+
 # IDE / Editor
 .idea/
 .vscode/
@@ -70,3 +74,4 @@ data/jobs/.backups/
 
 # Execution history database and run lock (created at run time)
 /state/
+

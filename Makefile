@@ -1,4 +1,9 @@
-.PHONY: run check lint format typecheck test proto
+.PHONY: run check lint format typecheck test test-verbose proto
+
+# Keep uv's cache in the checkout so commands never depend on a machine-wide
+# cache path. Callers may still supply UV_CACHE_DIR for a shared CI cache.
+UV_CACHE_DIR ?= $(CURDIR)/.cache/uv
+export UV_CACHE_DIR
 
 # One copy of the generated stubs per front end that needs a gRPC client (Milestone 02 design decision): front
 # ends never import each other (tests/test_architecture.py), so cli/ and tui/ cannot import server/generated's
@@ -36,6 +41,9 @@ typecheck:
 	uv run --extra dev pyright
 
 test:
+	uv run python -m unittest discover -s tests -t .
+
+test-verbose:
 	uv run python -m unittest discover -s tests -t . -v
 
 check: proto lint typecheck test

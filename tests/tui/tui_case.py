@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import time
 import unittest
 from collections.abc import Callable
@@ -42,7 +41,6 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.paths.server_token.write_text(TOKEN, encoding="ascii")
         # As dtc tui leaves it: no sink writes to the terminal while the app runs.
         logger.remove()
-        self.addCleanup(logger.add, sys.stderr)
         # Every message as plain text, in order, across apps.
         self.said: list[str] = []
         original = MessageLog.say

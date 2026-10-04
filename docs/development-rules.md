@@ -8,6 +8,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 - Python 3.12 (see `.python-version`), managed with uv.
 - Install with `uv sync`. Never use `pip install` directly.
 - Run code from the project root: `uv run dtc ...` (or `uv run python -m draw_things_control ...`).
+- The Makefile and checked-in shell launchers use the project-local `.cache/uv` cache. For a direct `uv` command, set `UV_CACHE_DIR=.cache/uv` first (or supply another writable cache location).
 - Keep `pyproject.toml` and `uv.lock` in sync when adding a dependency.
 - Before using a library, framework, SDK, or CLI tool, fetch its current
   documentation through the Context7 MCP tools (`resolve-library-id`, then
@@ -59,6 +60,8 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   (`standard` mode, over `src/` and `tests/`), and the tests. It must pass
   before a change is committed. An ignore comment for pyright names its rule and
   says why.
+- `make test` prints only the test summary and failures; use `make test-verbose`
+  while identifying an individual test.
 - `make format` applies Ruff's formatter.
 
 ## Documentation
