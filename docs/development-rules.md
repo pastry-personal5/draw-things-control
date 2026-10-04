@@ -62,6 +62,8 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   says why.
 - `make test` prints only the test summary and failures; use `make test-verbose`
   while identifying an individual test.
+- `make test-tui` runs the headless TUI suite; `make test-tui-verbose` includes
+  individual test names.
 - `make format` applies Ruff's formatter.
 
 ## Documentation

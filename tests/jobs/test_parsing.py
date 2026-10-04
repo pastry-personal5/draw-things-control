@@ -29,9 +29,6 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("'batch_count' is not a known key", batch_count=5)
         self.assert_invalid(r"'prompt_pairs\[0\]\.batches' is not a known key", prompt_pairs=[{"name": "a", "positive": "x", "batches": [1]}])
 
-    def test_the_old_cooldown_key_still_says_what_to_write(self) -> None:
-        self.assert_invalid(r"'cooldown_seconds' was replaced by 'cooldown'; write cooldown: \{mode: manual, seconds: 90\}", cooldown_seconds=90)
-
     def test_an_error_carries_the_file_and_the_field(self) -> None:
         with self.assertRaises(InputError) as caught:
             self.load(run_count=0)

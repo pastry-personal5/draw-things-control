@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import unittest
 from collections.abc import Callable
@@ -29,6 +30,12 @@ SERVER_URL = "http://127.0.0.1:8765"
 
 
 class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        # Textual's headless tests legitimately schedule substantial redraws.
+        # Keep asyncio's slow-callback diagnostic useful without printing a
+        # warning for ordinary UI work on a loaded CI machine.
+        asyncio.get_running_loop().slow_callback_duration = 1.0
+
     def setUp(self) -> None:
         super().setUp()
         # Not the project's data/jobs/, whose files get job IDs (and so make the state database); a test about IDs uses it.

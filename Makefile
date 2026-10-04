@@ -1,4 +1,4 @@
-.PHONY: run check lint format typecheck test test-verbose proto
+.PHONY: run check lint format typecheck test test-verbose test-tui test-tui-verbose proto
 
 # Keep uv's cache in the checkout so commands never depend on a machine-wide
 # cache path. Callers may still supply UV_CACHE_DIR for a shared CI cache.
@@ -45,5 +45,11 @@ test:
 
 test-verbose:
 	uv run python -m unittest discover -s tests -t . -v
+
+test-tui:
+	uv run python -m unittest discover -s tests/tui -t .
+
+test-tui-verbose:
+	uv run python -m unittest discover -s tests/tui -t . -v
 
 check: proto lint typecheck test
