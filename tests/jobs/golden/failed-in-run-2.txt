@@ -180,6 +180,7 @@ INFO Job sunset-walk failed: 1/3 runs completed; manifest ROOT/output/sunset-wal
         "output_directory": "ROOT/output/sunset-walk"
       },
       "signal": null,
+      "source_kind": "job",
       "started_at": "2026-09-24T15:30:12+ZZ:ZZ",
       "status": "failed",
       "total_runs": 3

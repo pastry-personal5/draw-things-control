@@ -1,6 +1,6 @@
 # Milestone 13: MCP over Streamable HTTP
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-03)
 **Depends on:** [Milestone 10: MCP server](milestone-10-mcp-server.md)
 

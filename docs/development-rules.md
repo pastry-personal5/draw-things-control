@@ -1,4 +1,4 @@
-# Development Rules
+# Development rules
 
 The rules for changing `draw-things-control`, for people and AI agents alike.
 [AGENTS.md](../AGENTS.md) is the short entry point for agents and links here.
@@ -7,7 +7,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 - Python 3.12 (see `.python-version`), managed with uv.
 - Install with `uv sync`. Never use `pip install` directly.
-- Run code from the project root: `uv run dtc ...` (or `uv run python -m draw_things_control ...`.
+- Run code from the project root: `uv run dtc ...` (or `uv run python -m draw_things_control ...`).
 - Keep `pyproject.toml` and `uv.lock` in sync when adding a dependency.
 - Before using a library, framework, SDK, or CLI tool, fetch its current
   documentation through the Context7 MCP tools (`resolve-library-id`, then

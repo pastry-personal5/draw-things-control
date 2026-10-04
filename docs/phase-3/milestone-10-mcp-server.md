@@ -1,6 +1,6 @@
-# Milestone 10: MCP Server
+# Milestone 10: MCP server
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-03; built in increments A to E, all reviewed, though not each before the next started; see [As built](#as-built))
 **Depends on:** [Milestone 02: HTTP API](milestone-02-http-api.md), [Milestone 07: Job file management](milestone-07-job-file-management.md)
 (its write endpoints, `sha256`, and the `writes_off` answer), the queue
@@ -62,9 +62,8 @@ Out of scope:
   an agent that wants a run's checks calls `get_execution_run`
 - Keeping agents off executions people ran (owner decision): an agent with
   writes on may delete any execution the API lets it
-- Retiring gRPC for the TUI and `dtc queue add --wait`: decided after this
-  milestone, once the SSE watch has run (owner decision; see
-  [Follow-ups](#follow-ups))
+- Retiring gRPC for the TUI and `dtc queue add --wait`: the owner decided to
+  keep gRPC alongside the API's SSE watch
 - Reshaping the API's answers: a tool returns the API's JSON as it is. Where
   an answer is too big for an agent, the API gains a smaller view that every
   client can use, as for [executions](#executions-in-brief).
@@ -581,9 +580,9 @@ Built as planned, but where the [changelog](phase-3-changelog.md) of 2026-10-02 
 
 ## Follow-ups
 
-- Whether the TUI and `dtc queue add --wait` move from gRPC to SSE too, and
-  gRPC is retired: decided after this milestone, once the SSE watch has run
-  (owner decision). Until then the server keeps both.
+The owner decided on 2026-10-04 to keep gRPC for the TUI and `dtc queue
+add --wait` alongside the API's SSE watch used by MCP. There is no transport
+migration or gRPC retirement follow-up.
 
 ## Planned changes
 

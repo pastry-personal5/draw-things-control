@@ -33,7 +33,9 @@ from draw_things_control.tui.widgets import CommandInput
 from tests.fixtures import execution_row, run_row
 from tests.tui.tui_case import TuiTestCase
 
-START = datetime(2026, 9, 20, 9, 0).astimezone()
+# Keep fixture executions inside the default 14-day retention window. The tests intentionally open a RUN-mode store
+# repeatedly while building history, so a fixed historical date eventually gets pruned as the calendar advances.
+START = (datetime.now().astimezone() - timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
 # A saved Wan command: its configuration asks for 1000x600 and 17 frames, which the detail never shows.
 WAN_COMMAND = [
     "draw-things-cli", "generate", "--model", "wan_v2.2_a14b_hne_i2v_q8p.ckpt", "--prompt", "a walk", "--width", "1000", "--height", "600",

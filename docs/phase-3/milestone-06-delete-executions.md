@@ -1,6 +1,6 @@
 # Milestone 06: Delete executions
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done
 **Depends on:** [Milestone 02: HTTP API: read and run](milestone-02-http-api.md) (the executions endpoints, the audit
 log) and [Milestone 05: Park and hold](milestone-05-park-and-hold.md) (the parked state, and what retention keeps for

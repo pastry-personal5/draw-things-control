@@ -7,6 +7,7 @@ import asyncio
 import os
 import signal
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -23,7 +24,7 @@ from draw_things_control.tui.panes.history import HistoryPane
 from tests.tui.fake_server import job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
-OLD = "2026-09-20T09:00:00+00:00"
+OLD = (datetime.now().astimezone() - timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
 
 
 class LiveRunTests(FeedTestCase):
@@ -172,7 +173,7 @@ class StoreBackedTests(FeedTestCase):
             if finished:
                 store.executions.finish_run(execution_id, number, status="succeeded", exit_code=0, seconds=seconds, output="a.mov", last_frame=None)
         if finished:
-            store.executions.finish(execution_id, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:01:00+00:00")
+            store.executions.finish(execution_id, status="succeeded", exit_code=0, signal=None, finished_at=(datetime.fromisoformat(OLD) + timedelta(minutes=1)).isoformat())
         return execution_id
 
     async def test_a_new_job_moves_the_history_cursor_unless_the_history_is_being_browsed(self) -> None:
@@ -223,7 +224,7 @@ class StoreBackedTests(FeedTestCase):
                     store.executions.finish_run(execution_id, number, status="succeeded", exit_code=0, seconds=5.0, output="a.mov", last_frame=None)
                     await self.push(pilot, run_finished(number))
                     await self.wait_for(pilot, lambda number=number: len(updates) == number, f"run {number}'s row")
-                store.executions.finish(execution_id, status="succeeded", exit_code=0, signal=None, finished_at="2026-09-20T09:05:00+00:00")
+                store.executions.finish(execution_id, status="succeeded", exit_code=0, signal=None, finished_at=(datetime.fromisoformat(OLD) + timedelta(minutes=5)).isoformat())
                 await self.push(pilot, job_finished(3))
                 await self.settle(pilot)
                 history = self.history(app)

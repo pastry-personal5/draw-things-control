@@ -1,6 +1,6 @@
-# Milestone 03: Queue for People
+# Milestone 03: Queue for people
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done
 **Depends on:** [Milestone 01: Queue and run manager](milestone-01-queue-run-manager.md), [Milestone 02: HTTP API](milestone-02-http-api.md)
 

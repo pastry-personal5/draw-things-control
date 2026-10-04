@@ -21,7 +21,7 @@ from draw_things_control.state.store import Store
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
 
-SNAPSHOT_FIELDS = ("queue_id", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "current_step", "current_step_total", "total_runs", "park_requested", "queue_held")
+SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "current_step", "current_step_total", "total_runs", "park_requested", "queue_held")
 
 
 class ScriptedWorker(FakeWorker):
@@ -140,7 +140,7 @@ class InProcessWatchTests(WatchTestCase):
         snapshots: list[dict[str, Any]] = []
         stream = servicer.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=queue_id), None)  # pyright: ignore[reportArgumentType]  (a known entry never reaches the context)
         async for message in stream:
-            snapshots.append({name: getattr(message, name) if name in ("queue_id", "state") or message.HasField(name) else None for name in SNAPSHOT_FIELDS})
+            snapshots.append({name: getattr(message, name) if name in ("queue_id", "kind", "state") or message.HasField(name) else None for name in SNAPSHOT_FIELDS})
             if len(snapshots) == count:
                 break
         return snapshots

@@ -1,6 +1,6 @@
-# Milestone 07: Job File Management
+# Milestone 07: Job file management
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done
 **Depends on:** [Milestone 02: HTTP API: read and run](milestone-02-http-api.md), and the queue states of
 [Milestone 05](milestone-05-park-and-hold.md) and the audit and error handling of

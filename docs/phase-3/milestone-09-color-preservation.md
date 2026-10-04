@@ -1,6 +1,6 @@
 # Milestone 09: Color preservation
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-01; increments A to D built on 2026-09-30, E on 2026-10-01; the A/B chains dropped and the constants accepted as they are, owner decision; see [As built](#as-built))
 **Depends on:** [Milestone 08](milestone-08-video-format-and-color.md): the resolved decode of each video
 (`StreamColor`), its `colr` tag, the handoff, and the media checks kept per run in the state store.

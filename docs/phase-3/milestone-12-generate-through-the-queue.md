@@ -1,6 +1,6 @@
 # Milestone 12: Generate through the queue
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-04)
 **Depends on:** [Milestone 03: Queue for people](milestone-03-queue-for-people.md) and [Milestone 11: Safety hardening](milestone-11-safety-hardening.md)
 

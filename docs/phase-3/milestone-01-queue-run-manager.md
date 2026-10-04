@@ -1,6 +1,6 @@
-# Milestone 01: Queue and Run Manager
+# Milestone 01: Queue and run manager
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done
 **Depends on:** [Phase 2](../archive/phase-2/README.md): [Milestone 01](../archive/phase-2/milestone-01-job-events-cancel.md) (events and `cancel()`), [Milestone 02](../archive/phase-2/milestone-02-state-store-run-lock.md) (state store and run lock), and [Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) (`services/`, `JobRunSession`)
 

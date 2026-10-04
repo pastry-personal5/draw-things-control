@@ -1,12 +1,9 @@
 # draw-things-control
 
-The mission of this project is long-horizon video generation by autoregressive
-image-to-video chaining: each clip starts from the last frame of the one before,
-so a video can run far longer than a single generation allows. The
-[Draw Things](https://github.com/drawthingsai/draw-things-community) app does
-the generating underneath; this Python CLI and terminal UI drive it through the
-locally installed `draw-things-cli`. YAML jobs describe the chain, and single
-`dtc generate` queues a bounded one-off image or video through `dtc serve`.
+Long-horizon video generation by autoregressive image-to-video chaining, powered
+by the locally installed [Draw Things](https://github.com/drawthingsai/draw-things-community)
+CLI. `dtc serve` owns generation; the CLI, terminal UI, HTTP API, and MCP server
+submit and monitor jobs through it.
 
 ## Quick start
 
@@ -15,37 +12,16 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and `draw-things-cli`.
 ```bash
 uv sync
 uv run dtc --help
-
-# Preview a command without queueing it (after starting dtc serve)
-uv run dtc generate --model flux_2_klein_4b_q6p.ckpt --prompt "a small red cube" --output cube.png --timeout 600 --dry-run
-
-# Validate and queue a job
-cp config/global-config.example.yaml config/global-config.yaml   # then edit the paths
-uv run dtc validate-job data/jobs/example-job.yaml
-uv run dtc serve
-# In another terminal:
-uv run dtc queue add example-job.yaml --wait
-
-# Browse, run, and watch jobs, and review past runs, in a terminal UI
-uv run dtc tui
-
-# Let an AI agent drive the queue over MCP: dtc serve runs the jobs, and Claude Code
-# finds `dtc mcp` through the project's .mcp.json
-uv run dtc serve
 ```
+
+See the [user guide](docs/user-guide.md) for configuration, generation, jobs,
+the TUI, API, and MCP.
 
 ## Documentation
 
-- [User guide](docs/user-guide.md): commands, jobs, outputs, and the terminal UI
-- [Architecture](docs/architecture.md): modules, process supervision, exit codes
-- [Development rules](docs/development-rules.md): style, checks, docs, git
-- [Plans and changelogs](docs/README.md): phases 1 to 3 (1 and 2 are archived)
-
-## Development
-
-```bash
-make check    # Ruff lint, Ruff format check, and tests
-```
+- [Documentation index](docs/README.md)
+- [Architecture](docs/architecture.md)
+- [Development rules](docs/development-rules.md)
 
 ## License
 

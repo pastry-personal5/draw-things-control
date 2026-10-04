@@ -1,4 +1,4 @@
-# Phase 3 Changelog
+# Phase 3 changelog
 
 Owner decisions, design decisions, and notable changes for
 [Phase 3](README.md). Newest first.

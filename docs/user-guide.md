@@ -1,4 +1,4 @@
-# User Guide
+# User guide
 
 How to use the `draw-things-control` command line, whose mission is long-horizon
 video generation by autoregressive image-to-video chaining on top of the Draw
@@ -11,7 +11,7 @@ the project root as `uv run dtc <command>`.
 - [Before you start](#before-you-start)
 - [Commands at a glance](#commands-at-a-glance)
 - [Generate one image or video](#generate-one-image-or-video)
-- [Check a configuration file](#check-a-configuration-file)
+- [Base configurations](#base-configurations)
 - [Jobs: chained runs](#jobs-chained-runs)
 - [Job file reference](#job-file-reference)
 - [Where outputs go](#where-outputs-go)

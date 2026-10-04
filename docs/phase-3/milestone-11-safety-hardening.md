@@ -1,6 +1,6 @@
-# Milestone 11: Safety Hardening
+# Milestone 11: Safety hardening
 
-**Phase:** [Phase 3: API Server and MCP Server for AI](README.md)
+**Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-03)
 **Depends on:** every agent-facing milestone, all built before this one:
 [02 HTTP API](milestone-02-http-api.md),
