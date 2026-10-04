@@ -134,7 +134,7 @@ Watching for change is not HTTP: it is the gRPC monitoring service
 - An output is complete only when its run succeeded. A run stopped or failed
   mid-way may leave a truncated file at its output path, which is kept (as
   since Phase 1) but marked incomplete
-  ([research](../research/draw-things-cli-resume.md)); a resume never
+  ([research](../../research/draw-things-cli-resume.md)); a resume never
   starts from one.
 - `GET /health` always answers 200 while the HTTP process itself is up; a
   dead worker thread ([Milestone

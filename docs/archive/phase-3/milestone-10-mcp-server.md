@@ -52,7 +52,7 @@ Out of scope:
 - Pushing events into a Claude Code session through its channels (owner
   decision): a research preview behind
   `--dangerously-load-development-channels`, on the older handshake only
-  ([research](../research/mcp-tokens-and-events.md#claude-codes-channels))
+  ([research](../../research/mcp-tokens-and-events.md#claude-codes-channels))
 - Other SSE (owner decision): the whole event stream (`GET /v1/events`), and
   MCP over HTTP from `dtc serve`. gRPC stays the TUI's and `dtc queue add
   --wait`'s way to watch.
@@ -356,7 +356,7 @@ Write (listed only while `GET /v1/capabilities` reports writes on):
 waits for the next change an agent acts on (owner decision). Every call is a
 turn that reads the agent's whole conversation again, so the number of calls
 is what costs, more than their size
-([research](../research/mcp-tokens-and-events.md#turns-per-job)). The
+([research](../../research/mcp-tokens-and-events.md#turns-per-job)). The
 owner's chains take about 75 minutes a run, cooldown included (E0018: 6
 runs in 7.5 hours). A 600-second cap would take about 45 calls for 6 runs
 and 225 for 30; a wait that ends at the next change takes about one a run.
@@ -772,7 +772,7 @@ In `tests/server/`:
 - `docs/architecture.md`: `mcp_server/`, which speaks HTTP alone, the third
   import between front ends, the brief views, and the SSE watch beside
   gRPC's.
-- `AGENTS.md` and [the development rules](../development-rules.md#project-layout):
+- `AGENTS.md` and [the development rules](../../development-rules.md#project-layout):
   the imports between front ends, `dtc tui`, `dtc serve` (which the rules do
   not name today), and `dtc mcp`. `AGENTS.md` also says the `.mcp.json`
   tools act on the owner's real queue and history, to be used only when the

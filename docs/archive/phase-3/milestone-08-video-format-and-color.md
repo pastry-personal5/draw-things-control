@@ -3,7 +3,7 @@
 **Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done (2026-10-01, owner decision; the owner's 2-run chain passed on 2026-09-30, and the decode rule and
 the handoff changed since were measured exact on E0017's chain)
-**Depends on:** [Phase 2](../archive/phase-2/README.md)'s color tagging and sRGB last frames (`jobs/media/`), and
+**Depends on:** [Phase 2](../phase-2/README.md)'s color tagging and sRGB last frames (`jobs/media/`), and
 [Milestone 01](milestone-01-queue-run-manager.md)'s queue snapshots, which are parsed again when an entry runs.
 
 ## Goal
@@ -35,7 +35,7 @@ so a job could write ProRes for the color investigation; the rest followed an in
   own choice and left untagged, with a warning.
 - The last frame has no alpha. It was first 16-bit RGB from a source of more than 8 bits (ProRes) and 8-bit from
   H.264, a 16-bit frame rescaled by 257/256 (owner decisions). Later the same day, after the
-  [color drift research](../research/color-drift.md#the-handoff) found that `draw-things-cli` reads a 16-bit PNG by
+  [color drift research](../../research/color-drift.md#the-handoff) found that `draw-things-cli` reads a 16-bit PNG by
   its high byte and truncates the values it writes, it became the handoff (owner decisions superseding both): 16-bit
   RGB from every source, each sample one 8-bit value `v` as `v * 256 + 128`, so `draw-things-cli` reads exactly `v`.
   `v` is the decoded level plus the half level Draw Things truncated (tapered to nothing at black), rounded against a
@@ -44,7 +44,7 @@ so a job could write ProRes for the color investigation; the rest followed an in
 - Not in the plan: the media checks (input, resized copy, video, last frame) of every video job, as `media_checked`
   events on `dtc serve`'s output, the job log, the TUI's Messages, and the gRPC stream, kept per run in the state
   store (schema 7, `media_checks`) and shown in the TUI's execution detail and `GET /v1/executions/{id}`. See
-  [the user guide](../user-guide.md#where-outputs-go).
+  [the user guide](../../user-guide.md#where-outputs-go).
 - From the code review's open items, the owner decided (2026-09-30): a resume's input, the chain's own last frame, is
   checked as a handoff (an RGB PNG without alpha, 8- or 16-bit), not as a person's input, which ends the false
   warning on every ProRes resume; a media check that cannot be stored is skipped and logged once, and the rest of
@@ -109,7 +109,7 @@ for H.264, as it picks the depth today (owner decision: keep the source's depth)
 **Settled: 16-bit from ProRes, 8-bit from H.264 (owner decision, 2026-09-30), pending the owner's chain run.** The
 first verification run fed `draw-things-cli` a 16-bit
 RGB PNG at 8 steps and got pure noise from the first frame on. The second, job `v-i8x`, gave a clean video from an
-8-bit input at 40 steps ([research note](../research/prores-color-matrix.md#the-clis-runs)). The two differ in both
+8-bit input at 40 steps ([research note](../../research/prores-color-matrix.md#the-clis-runs)). The two differ in both
 the depth and the steps, so the noise is still unexplained. A run with a 16-bit input at 40 steps tells them apart.
 The owner chose 16-bit and verifies it with a chain run of the built change. If `draw-things-cli` cannot read a
 16-bit PNG, a 16-bit last frame would break every chain, and the format list becomes `rgb24` alone.
@@ -117,7 +117,7 @@ The owner chose 16-bit and verifies it with a chain run of the built change. If 
 ### The color matrix
 
 **Settled: trust the pixels (owner decision, 2026-09-30),** superseding "honor the header" of the same day. When the
-pixels tell which matrix encoded them ([the test](../research/prores-color-matrix.md#the-test), for 4:4:4 at 10 bits
+pixels tell which matrix encoded them ([the test](../../research/prores-color-matrix.md#the-test), for 4:4:4 at 10 bits
 or more: ProRes 4444), extraction decodes with that matrix and the tagger writes it; otherwise both follow the matrix
 the stream states; BT.709 limited range when it states none. The range always follows the stream. The output check
 still says when the pixels overrule the stream.
@@ -128,7 +128,7 @@ every size: the encoder labels by frame size (the data fits "height 720 or more"
 alike; a 1024x448 run would tell them apart). Honoring that header decoded each 832x448 last frame 1.4 levels off on
 average and 12 at most (red -1.9, green -1.2), and the error went into the next run.
 
-The evidence ([research note](../research/prores-color-matrix.md)):
+The evidence ([research note](../../research/prores-color-matrix.md)):
 
 - Both clean ProRes 4444 files of 2026-09-30, one from the Draw Things app and one from the current `draw-things-cli`
   (job `v-i8x`), state `bt709` and `tv` in every frame header, with no primaries, no transfer, and no `colr` box.
@@ -173,7 +173,7 @@ header would still be followed. Existing outputs are not re-extracted or retagge
 only and the 257/256 rescale. Draw Things' source shows `draw-things-cli` reads a 16-bit PNG by its high byte
 (`>> 8`), and truncates the values it writes (`Int((v + 1) * 127.5)`). With the rescale, that made each handoff
 0.89 level dark in the shadows and 0.10 in the highlights, simulated
-([the handoff](../research/color-drift.md#the-handoff)). Now:
+([the handoff](../../research/color-drift.md#the-handoff)). Now:
 
 - Each sample holds one 8-bit value `v` as `v * 256 + 128`: `draw-things-cli` reads exactly `v`, and a reader that
   divides by 65535 sees `v` within half a level. Every source gets it, H.264 included (owner decision), so the last
@@ -208,12 +208,12 @@ In scope:
 - Dropping alpha from the last frame
 - Reading the stated color space once, before tagging, and using it for both the decode and the `colr` tag, for
   every format
-- The measurement behind the rule, saved in [docs/research](../research/prores-color-matrix.md)
+- The measurement behind the rule, saved in [docs/research](../../research/prores-color-matrix.md)
 
 Out of scope:
 
 - `data/params/`: `--video-format` is a `draw-things-cli` option, not a key of the Draw Things configuration, so no
-  configuration file changes, and none may be edited ([development rules](../development-rules.md))
+  configuration file changes, and none may be edited ([development rules](../../development-rules.md))
 - Re-encoding, retagging, or re-extracting existing outputs
 - Choosing the format per run, or in the global configuration
 - HDR or wide-gamut output, and honoring stated primaries or transfer; the working space stays sRGB

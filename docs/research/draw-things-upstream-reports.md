@@ -3,7 +3,7 @@
 Two issue drafts for [`drawthingsai/draw-things-community`](https://github.com/drawthingsai/draw-things-community), for
 the owner to file (owner decision, 2026-09-30: nothing is sent without the owner). They come from
 [the color drift research](color-drift.md) and were checked against the installed build in
-[Milestone 09](../phase-3/milestone-09-color-preservation.md)'s step 0.
+[Milestone 09](../archive/phase-3/milestone-09-color-preservation.md)'s step 0.
 
 ## The build they cite
 
@@ -56,4 +56,4 @@ Other formats go through ImageIO and CoreGraphics, which do convert.
 
 Milestone 08 hands `draw-things-cli` a 16-bit PNG whose samples are `v * 256 + 128`, which `>> 8` reads as exactly
 `v`. It chooses `v` from the decoded level plus the truncated half level, rounded against a 2x2 ordered dither. See
-[the handoff](../phase-3/milestone-08-video-format-and-color.md#the-handoff).
+[the handoff](../archive/phase-3/milestone-08-video-format-and-color.md#the-handoff).

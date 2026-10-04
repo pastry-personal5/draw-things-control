@@ -10,7 +10,7 @@ the shared `WatchEvents` feed the TUI follows jobs with).
 
 Let a person stop a running job without losing the run in progress. Today a cancel, `/stop`, or stopping the server
 kills `draw-things-cli` at once, and the run it was making is lost, since `draw-things-cli` keeps nothing of a run
-it did not finish ([research](../research/draw-things-cli-resume.md)). A long chain's run can take many minutes of
+it did not finish ([research](../../research/draw-things-cli-resume.md)). A long chain's run can take many minutes of
 GPU time.
 
 A person *parks* a running entry instead. The job goes on until its current run ends, then stops, keeping every run

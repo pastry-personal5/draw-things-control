@@ -1,7 +1,7 @@
 # ProRes color matrix in Draw Things output
 
 Which YCbCr matrix Draw Things' ProRes 4444 output is really encoded with, and whether its frame headers say so,
-for [Phase 3, Milestone 08](../phase-3/milestone-08-video-format-and-color.md#the-color-matrix). Researched
+for [Phase 3, Milestone 08](../archive/phase-3/milestone-08-video-format-and-color.md#the-color-matrix). Researched
 2026-09-30.
 
 ## Summary

@@ -1,6 +1,6 @@
 # MCP: token use and events
 
-How an agent driving `dtc` over MCP spends tokens, how a server can tell an MCP client that something happened, and where SSE could serve the API server, for [Phase 3, Milestone 10](../phase-3/milestone-10-mcp-server.md). Researched 2026-10-02. What the owner chose is in the [changelog](../phase-3/phase-3-changelog.md) of that day.
+How an agent driving `dtc` over MCP spends tokens, how a server can tell an MCP client that something happened, and where SSE could serve the API server, for [Phase 3, Milestone 10](../archive/phase-3/milestone-10-mcp-server.md). Researched 2026-10-02. What the owner chose is in the [changelog](../archive/phase-3/phase-3-changelog.md) of that day.
 
 ## Summary
 

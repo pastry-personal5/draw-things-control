@@ -52,7 +52,7 @@ web, MCP, or gRPC framework.
 Launch with `dtc` or `python -m draw_things_control`.
 
 Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
-[3](phase-3/README.md). Each phase reuses the layers below it unchanged.
+[3](archive/phase-3/README.md). Each phase reuses the layers below it unchanged.
 
 ## Modules
 
@@ -88,8 +88,8 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `services/queue_callers.py` (phase 3) | Keeping agents (the caller `mcp`) off the queue entries and holds people made: `check_entry_permitted`, and the words of a refusal |
 | `services/api_rules.py`, `services/input_listing.py`, `services/queue_events.py` (phase 3) | The rules and limits every job the API runs or writes must meet; the input directory's images; turning the worker's transitions and job events into the (kind, data) shape an event sink takes |
 | `state/audit.py` (phase 3) | `AuditRepository`: the `audit_log` table (schema 5) behind `GET /audit` |
-| `server/` (phase 3) | `dtc serve`'s FastAPI app, bounded HTTP body gate, audit and safe error boundary, SSE watch, and gRPC monitoring service; see [Phase 3](phase-3/README.md) |
-| `mcp_server/` (phase 3) | `dtc mcp`: tools, resources, and queue waiting over the HTTP API alone, on stdio or Streamable HTTP; see [Milestone 10](phase-3/milestone-10-mcp-server.md) and [Milestone 13](phase-3/milestone-13-mcp-over-http.md) |
+| `server/` (phase 3) | `dtc serve`'s FastAPI app, bounded HTTP body gate, audit and safe error boundary, SSE watch, and gRPC monitoring service; see [Phase 3](archive/phase-3/README.md) |
+| `mcp_server/` (phase 3) | `dtc mcp`: tools, resources, and queue waiting over the HTTP API alone, on stdio or Streamable HTTP; see [Milestone 10](archive/phase-3/milestone-10-mcp-server.md) and [Milestone 13](archive/phase-3/milestone-13-mcp-over-http.md) |
 | `cli/app.py` | Commands (`generate`, `validate-config`, `validate-job`, `import-history`, `tui`, `serve`, `mcp`, and the `queue` and `history` groups) and `CliServices` in Typer's context |
 
 Services receive their runner and executable lookup as dependencies, so tests
@@ -163,4 +163,4 @@ being repeated here:
 
 - [Phase 1](archive/phase-1/README.md): jobs and chained runs
 - [Phase 2](archive/phase-2/README.md): TUI, shared state, and the run lock
-- [Phase 3](phase-3/README.md): API, queue, and MCP
+- [Archived Phase 3](archive/phase-3/README.md): API, queue, and MCP

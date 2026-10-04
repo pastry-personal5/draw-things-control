@@ -1,6 +1,6 @@
 # Phase 3: API server and MCP server for AI
 
-**Status:** in-progress
+**Status:** done (2026-10-04)
 
 ## Goal
 
@@ -18,7 +18,7 @@ typed tools on top of it.
 - Restart handling, and an explicit resume that continues an interrupted
   chain from its last succeeded run. The run is the smallest unit that can
   be resumed, since `draw-things-cli` keeps nothing of a run it did not
-  finish ([research](../research/draw-things-cli-resume.md)).
+  finish ([research](../../research/draw-things-cli-resume.md)).
 - An HTTP API (`dtc serve`), on loopback unless the owner passes
   `--allow-remote-bind`, with bearer-token auth, job control, and history
 - A gRPC monitoring service, alongside the HTTP API in the same `dtc serve`
@@ -118,9 +118,9 @@ and implementation; decisions and remaining work are in [open issues](open-issue
 
 ## Depends on
 
-[Phase 2](../archive/phase-2/README.md): job events and `cancel()`, the state
+[Phase 2](../phase-2/README.md): job events and `cancel()`, the state
 store, and the run lock, in the layout that
-[Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md)
+[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md)
 gives them. The server is one more front end beside the CLI and the TUI.
 What changes below it: the state store gains tables and columns by forward
 migration (schemas 4 to 9), `JobExecutor` can start a chain at run *k*,
@@ -178,7 +178,7 @@ Inside `src/draw_things_control/`:
 The parts a server shares with the CLI and the TUI (`Toolkit`,
 `JobRunSession`, `JobCatalog`, `HistoryReader`, `event_to_dict`, the error
 codes) are in `services/`, `jobs/`, and `core/` already, from
-[Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md).
+[Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md).
 
 ## Changelog
 

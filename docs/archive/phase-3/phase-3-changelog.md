@@ -5,7 +5,7 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-04
 
-- **Change**: version 3.0.0 release notes are in [docs/releases/3.0.0.md](../releases/3.0.0.md), covering the server-owned queue, API and MCP automation, safety boundaries, media fidelity, and migration from direct generation.
+- **Change**: version 3.0.0 release notes are in [docs/releases/3.0.0.md](../../releases/3.0.0.md), covering the server-owned queue, API and MCP automation, safety boundaries, media fidelity, and migration from direct generation.
 
 - **Change** [M12]: Completed the queue-only generation boundary work: stored generation snapshots are strictly tagged and validated before a worker can run them; `.mov` one-offs retain the ProRes default; a cancellation that arrives between a queue claim and runner initialization is retained; and an older server without the generations endpoint is reported as unavailable. Migration and client tests now prove that schema-9 job/resume entries retain their meaning and `dtc generate` never starts a local child.
 
@@ -194,7 +194,7 @@ Owner decisions, design decisions, and notable changes for
 - **Change** [M07]: `dtc import-history` no longer takes `--allow-write`, which Milestone 07's commit added to it by
   mistake and nothing read (`92330b5`, with a test). The Milestone 10 plan no longer lists it.
 - **Owner decision** [M10]: From an interview on research into token use and events
-  ([research note](../research/mcp-tokens-and-events.md)), all of it built in Milestone 10, not split into a new
+  ([research note](../../research/mcp-tokens-and-events.md)), all of it built in Milestone 10, not split into a new
   milestone:
   - `get_queue_entry`'s wait ends at the next change an agent acts on, as before, and `wait_seconds` goes up to 7200,
     above a 3600-second run and an 1800-second cooldown, with a progress notification every 15 seconds. Each call is a
@@ -430,12 +430,12 @@ Owner decisions, design decisions, and notable changes for
 - **Owner decision** [M09]: Step 1's measurement of the handoff on E0016 is deferred: that chain's clips are no longer
   on disk. Measuring E0012's H.264 chain instead, whose 4:2:0 chroma and pre-Milestone 08 handoff confound it, and a
   new ProRes chain, were offered. The upstream report drafts are kept in
-  [docs/research/draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md).
+  [docs/research/draw-things-upstream-reports.md](../../research/draw-things-upstream-reports.md).
 - **Design decision** [M09]: Step 0: the installed `draw-things-cli` was built on 2026-09-23 from `draw-things-community`
   `da9b0c8` (2026-09-22), not `0e9c180`. Its `pixelByte`, its PNG read, and its `swift-png` pin are the same as the
   research read, so the plan stands. `cfgZeroStar` is a Bool, `cfgZeroInitSteps` an Int32, and `colorCalibration` a
   string where `lab` turns calibration on and anything else off ([research
-  note](../research/color-drift.md#checked-in-milestone-09s-step-0)).
+  note](../../research/color-drift.md#checked-in-milestone-09s-step-0)).
 - **Owner decision** [M09]: From an interview on the Milestone 09 plan's review:
   - Milestone 09 is built next, before Milestone 07, which answers the plan's open question on its place. The order
     is 01 to 06, 08, 09, 07, 10, 11.
@@ -579,7 +579,7 @@ Owner decisions, design decisions, and notable changes for
   cannot hold to the first image. It stays a setting to test, through a new `config_override` key. Skin comes from
   Vision's person mask and a color model sampled from each face, since Vision has no skin segmentation.
 
-- **Change** [M09]: Added [the color drift research note](../research/color-drift.md) and
+- **Change** [M09]: Added [the color drift research note](../../research/color-drift.md) and
   [the Milestone 09 plan](milestone-09-color-preservation.md). From Draw Things' source (`draw-things-community`
   `0e9c180`): `draw-things-cli` truncates every output frame to 8 bits (half a level dark on average), reads PNG
   values with no color management, and reads a 16-bit PNG by its high byte. That undercuts Milestone 08's 16-bit last
@@ -649,7 +649,7 @@ Owner decisions, design decisions, and notable changes for
   ProRes frame headers. Its first clean run (job `v-i8x`, 2026-09-30) states `bt709`, as does a new file from the
   Draw Things app, and both were encoded BT.709, so in current output the header and the pixels agree. Only the
   noise run stated `smpte170m`. The 16-bit input and the 8 steps are both still candidates for the noise
-  ([research note](../research/prores-color-matrix.md)).
+  ([research note](../../research/prores-color-matrix.md)).
 
 - **Design decision** [M08]: The color space is read once, from the first decoded frame, before the tagger runs,
   and passed to both the tagger and the extractor, which always names the matrix and range to ffmpeg. Tested with
@@ -681,7 +681,7 @@ Owner decisions, design decisions, and notable changes for
   - After the verification run gave noise, the owner investigates it before the decode rule and the last frame's
     depth are settled. Two more runs (8-bit input, then 40 steps), or one 40-step run, were offered.
 
-- **Design decision** [M08]: Measured before planning ([research note](../research/prores-color-matrix.md)). Draw
+- **Design decision** [M08]: Measured before planning ([research note](../../research/prores-color-matrix.md)). Draw
   Things' ProRes 4444 states `smpte170m` in its frame headers, and ffmpeg decodes with it even after the tagger has
   written a BT.709 `colr` box, so a tagged ProRes file contradicts itself and its last frame is decoded as BT.601.
   On 9 older ProRes files only a BT.709 decode lands the pixels near whole 8-bit levels, a test that picks the right
@@ -940,7 +940,7 @@ Owner decisions, design decisions, and notable changes for
   - The hold is shown in the Queue widget's title and, while no job runs, in the Status widget
     (`Queue held since 12:04 (by Q0007)`). The title alone, and the title with the bottom status line, were
     offered.
-- **Owner decision**: The size limits ([development-rules.md](../development-rules.md#project-layout),
+- **Owner decision**: The size limits ([development-rules.md](../../development-rules.md#project-layout),
   `tests/test_architecture.py`) are relaxed: modules rise from 800 to 3200 lines, classes from 250 to 1600, and
   functions from 40 to 800. This supersedes the earlier owner decision of this date that raised modules from 400 to 800 and kept the
   class and function limits. 1200, 500, and 80 were offered. The `generate` exemption from the function limit is
@@ -1046,7 +1046,7 @@ Owner decisions, design decisions, and notable changes for
   `tests/test_architecture.py` already fails on `main` (`MainScreen` is 252 lines, over the 250 limit) and that the
   `tests/tui` harness still uses the constructor Milestone 03 replaced; the owner chose to fix both as Milestone
   04's first step.
-- **Owner decision**: The module size limit ([development-rules.md](../development-rules.md#project-layout),
+- **Owner decision**: The module size limit ([development-rules.md](../../development-rules.md#project-layout),
   `tests/test_architecture.py`'s `MAX_MODULE_LINES`) rises from 400 to 800 lines, to give modules more headroom
   before a split is required. The class (250) and function (40) limits are unchanged.
 - **Owner decision** [M04]: A new milestone, numbered 04 (an unused number, so the build order stays numeric; drafted as 10 first, then moved before anything was committed) and built next (before Milestone 07), gives the TUI a `/verbose
@@ -1154,7 +1154,7 @@ Owner decisions, design decisions, and notable changes for
   Milestone 03 takes direct execution away from the TUI, over the same gRPC channel the Queue widget uses to watch the queue.
   The plan's TUI section named the Queue widget's `WatchEvents` subscription but never said what would feed the pane once
   the TUI stops running jobs itself: retiring direct execution ([Phase 2 Milestone
-  04](../archive/phase-2/milestone-04-tui-live-run.md)) silently drops the pane's only source (`LiveRun`, fed from a
+  04](../phase-2/milestone-04-tui-live-run.md)) silently drops the pane's only source (`LiveRun`, fed from a
   locally-run `JobExecutor`'s events), and nothing in the plan named a replacement. See
   [Milestone 03](milestone-03-queue-for-people.md#the-tuis-live-output) for the corrected plan.
 - **Design decision** [M03]: The Queue widget's existing `WatchEvents` call is extended with `include_output=true` rather than
@@ -1418,7 +1418,7 @@ Owner decisions, design decisions, and notable changes for
 - **Design decision** [M01]: Cancel on a `running` entry does not unconditionally read `cancelled`. There is no transitional state while it stops; the entry reads whatever `JobFinished` actually reports. A cancel that lands after the job's last run has already finished changes nothing (`JobExecutor.cancel()`'s own contract), so that race leaves the entry `succeeded` or `failed`, never `cancelled`. A second `cancel(id)` on an entry already stopping is a no-op, not an error.
 - **Design decision** [M01]: A resumed execution's manifest holds only the runs it made, starting at position 0 for its own first run, so list position is no longer the run number once a manifest can start above run 1. `import-history` must number a resumed manifest's runs from its `first_run`, or reimporting one after the database is lost (the case it exists for) misnumbers every run of it. The first plan did not say `import-history` needed a change.
 - **Design decision** [M01]: `JobRunSession.run` gains the resume point alongside `JobRunOptions`, since it builds `JobRunOptions` itself and is the worker's only entry point into a run. The first plan named only `JobRunOptions`.
-- **Owner decision** [M01]: From an interview on resume, after the research on what `draw-things-cli` can resume ([draw-things-cli-resume.md](../research/draw-things-cli-resume.md)).
+- **Owner decision** [M01]: From an interview on resume, after the research on what `draw-things-cli` can resume ([draw-things-cli-resume.md](../../research/draw-things-cli-resume.md)).
   - Stopping the server stops the running run at once, as planned; a resume reruns it from its start. Letting the first Ctrl-C finish the run (recommended), continuing an entry stopped that way on restart, and finishing the whole job were offered.
   - Cancelling a running entry stops it at once, as planned. An after-run cancel beside it (recommended), and after-run as the default, were offered.
   - No automatic retry: a failed run ends the job, and resume stays explicit. Retrying a failed run once, and resuming a failed entry once on its own, were offered.
@@ -1466,7 +1466,7 @@ Owner decisions, design decisions, and notable changes for
   - `JobRunOptions` gets a resume point with the seed, since the planner draws a new random seed for a job that sets none, and the executor skips run 1's resized copy.
   - A cancelled entry's execution reads `interrupted`, as a Ctrl-C does, and a run stopped from outside makes the entry `failed`.
 - **Design decision** [M01]: Three gaps the code shows.
-  - `JobExecutor.cancel()` does nothing before the job has begun, so a cancel that lands between the worker's claim and the job's start is kept and applied at the start, as the TUI does ([Phase 2 Milestone 04](../archive/phase-2/milestone-04-tui-live-run.md)).
+  - `JobExecutor.cancel()` does nothing before the job has begun, so a cancel that lands between the worker's claim and the job's start is kept and applied at the start, as the TUI does ([Phase 2 Milestone 04](../phase-2/milestone-04-tui-live-run.md)).
   - The job log file is a Loguru sink that copies every message of the process; in the server it would take in API lines, so it is scoped to its job.
   - The busy message names the server and how to free the lock, instead of `Another run is in progress` while the queue is idle.
 - **Design decision** [M02]: The server binds to loopback only, and `--allow-remote-bind` is dropped. This supersedes the [M02] design decision of 2026-09-25. Beyond loopback the bearer token would cross the network over plain HTTP, which the non-goals already exclude; an SSH tunnel serves remote use. A `Host` header check keeps web pages out through DNS rebinding.
@@ -1498,7 +1498,7 @@ Owner decisions, design decisions, and notable changes for
 
 - **Change**: Phase 2 is done and archived under `docs/archive/phase-2/`; links from these documents now point there. The plans were checked against the code: `load_job_text` and the `lock` parameter of `JobRunSession.run` already exist, so Milestone 01 no longer lists them as new. `start_run` and the input override in `JobRunOptions`, the `queue` table, and the `fastapi`, `uvicorn`, `httpx`, and `mcp` dependencies are still to build. No decision changed.
 
-- **Change**: [Phase 2 Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) renamed and moved the code these plans name: `JobService` is `JobExecutor` (with `JobRunOptions`), `jobs/job_definition.py` is `jobs/parsing.py`, and `install_signals` is `handle_signals`. The queue is a repository in `state/` with a worker on `JobRunSession`, not `jobs/job_queue.py`. The milestone documents were updated to match; no decision changed.
+- **Change**: [Phase 2 Milestone 11](../phase-2/milestone-11-clean-architecture.md) renamed and moved the code these plans name: `JobService` is `JobExecutor` (with `JobRunOptions`), `jobs/job_definition.py` is `jobs/parsing.py`, and `install_signals` is `handle_signals`. The queue is a repository in `state/` with a worker on `JobRunSession`, not `jobs/job_queue.py`. The milestone documents were updated to match; no decision changed.
 
 - **Owner decision** [M01, M03]: Whether the TUI could start a run directly while the server is up was reconsidered and rejected: the server keeps the run lock for its whole lifetime, unchanged. The TUI gets a run while the server is up by submitting to the queue instead, as `dtc queue` already did.
 - **Owner decision** [M03]: The TUI's Queue widget stops being read-only. `/queue add [JOB]`, `/queue cancel Q0007`, and `/queue resume Q0007` (and a `c` shortcut for cancel on a selected row) call the API exactly as `dtc queue` does: the same rules and limits, the same error shown inline naming `dtc serve` when it cannot be reached, and caller `tui` in the audit log. This supersedes the design decision above that it "reads the queue from the state store... It never writes" and the "offers no action" acceptance criterion of the same date; reading still falls back to the state store, read-only, while the server is down.

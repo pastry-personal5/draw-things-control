@@ -12,7 +12,7 @@ the pipeline itself adds is removed; what the model adds is measured at every ru
 corrected in the frame each run hands to the next and in a corrected copy of each clip. A file Draw Things wrote is
 never re-encoded and none of its pixels change; Milestone 08's `colr` tag stays the only change made to one.
 
-The evidence is in [the color drift research note](../research/color-drift.md). Its summary table lists each stage
+The evidence is in [the color drift research note](../../research/color-drift.md). Its summary table lists each stage
 from the first image to the handoff, what it does to color, and whether that is read in code, simulated, or a
 hypothesis.
 
@@ -25,13 +25,13 @@ whole frame (layer 5 without Vision); and E, Apple Vision's regions, in the drif
 below holds, with these as the built facts:
 
 - **Step 0.** The installed `draw-things-cli` is built from `da9b0c8`, not `0e9c180`; the code the research read is the
-  same in both ([research note](../research/color-drift.md#checked-in-milestone-09s-step-0)). The upstream reports are
-  drafted in [draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md). `prores_videotoolbox`
+  same in both ([research note](../../research/color-drift.md#checked-in-milestone-09s-step-0)). The upstream reports are
+  drafted in [draw-things-upstream-reports.md](../../research/draw-things-upstream-reports.md). `prores_videotoolbox`
   writes ProRes 4444 from `p416le`.
 - **Step 1 is deferred** (owner decision): E0016's clips are gone. Every run's `color_drift` check measures from now on.
   The handoff was measured on E0017 instead on 2026-10-01
-  ([research note](../research/color-drift.md#measured-on-e0017)), and Vision's masks were timed and inspected on its
-  frames and E0021's ([research note](../research/color-drift.md#vision-on-generated-frames)).
+  ([research note](../../research/color-drift.md#measured-on-e0017)), and Vision's masks were timed and inspected on its
+  frames and E0021's ([research note](../../research/color-drift.md#vision-on-generated-frames)).
 - **Schema 8** also adds `queue.resume_first_image` and `queue.resume_anchor`, since a queued resume carries its whole
   resume point on its queue row.
 - **The first image without records.** A video job keeps it whether or not it writes records, named from the stem its
@@ -85,7 +85,7 @@ Dropped (owner decision, 2026-10-01):
   (`jobs/definition.py`). No generation setting is recommended over the configuration's. The job files
   `data/jobs/ab-*.yaml` stay, for the owner to run whenever.
 - **Filing the upstream reports** is no longer part of this milestone; the drafts stay in
-  [draw-things-upstream-reports.md](../research/draw-things-upstream-reports.md).
+  [draw-things-upstream-reports.md](../../research/draw-things-upstream-reports.md).
 
 ## The owner's answers
 
@@ -138,10 +138,10 @@ fifth only when the job asks.
 The research found three biases in the handoff, all from reading and writing values, none from the picture itself:
 
 - `draw-things-cli` truncates every output frame to 8 bits (`Int((v + 1) * 127.5)`): half a level dark on average,
-  in every run and every format ([source](../research/color-drift.md#how-draw-things-cli-writes-a-video)).
+  in every run and every format ([source](../../research/color-drift.md#how-draw-things-cli-writes-a-video)).
 - It reads a 16-bit PNG by its high byte (`>> 8`) and drops the rest. With Milestone 08's first 257/256 rescale, each
   handoff was then 0.89 level dark in the shadows and 0.10 in the highlights, simulated
-  ([the handoff](../research/color-drift.md#the-handoff)).
+  ([the handoff](../../research/color-drift.md#the-handoff)).
 - It reads PNG values raw, with no color management, and resamples a PNG of another size nearest-neighbour. Other
   formats go through CoreGraphics, whose handling of them is not verified.
 
@@ -239,7 +239,7 @@ The configuration files write `cfgZeroStar: false`, `cfgZeroInitSteps: 0`, and `
 confirms the names and values against the source.
 
 `colorCalibration: lab` is Draw Things' own "previous run" anchor, applied to every frame inside Draw Things
-([how it works](../research/color-drift.md#draw-things-colorcalibration)). It takes each frame's large-scale color
+([how it works](../../research/color-drift.md#draw-things-colorcalibration)). It takes each frame's large-scale color
 and brightness from the input image at the input's positions, so expect a ghost of the first frame with motion, and
 no intended change of light within a run. It is tested, not adopted: the tool's correction (layer 5) can anchor to
 the first image and keeps the original untouched.
@@ -373,7 +373,7 @@ In scope:
 
 Out of scope:
 
-- `data/params/`: no configuration file changes, and none may be edited ([development rules](../development-rules.md))
+- `data/params/`: no configuration file changes, and none may be edited ([development rules](../../development-rules.md))
 - Re-encoding any file Draw Things wrote or changing its pixels, or retagging, correcting, or re-extracting existing
   outputs
 - Stitching the clips of a chain into one video (not chosen)

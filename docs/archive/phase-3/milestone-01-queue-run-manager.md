@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 3: API server and MCP server for AI](README.md)
 **Status:** done
-**Depends on:** [Phase 2](../archive/phase-2/README.md): [Milestone 01](../archive/phase-2/milestone-01-job-events-cancel.md) (events and `cancel()`), [Milestone 02](../archive/phase-2/milestone-02-state-store-run-lock.md) (state store and run lock), and [Milestone 11](../archive/phase-2/milestone-11-clean-architecture.md) (`services/`, `JobRunSession`)
+**Depends on:** [Phase 2](../phase-2/README.md): [Milestone 01](../phase-2/milestone-01-job-events-cancel.md) (events and `cancel()`), [Milestone 02](../phase-2/milestone-02-state-store-run-lock.md) (state store and run lock), and [Milestone 11](../phase-2/milestone-11-clean-architecture.md) (`services/`, `JobRunSession`)
 
 ## Goal
 
@@ -96,7 +96,7 @@ without an execution.
   which time the recorder has written the execution's row.
 - Finished entries are pruned with the rest of the history under
   `history_retention_days`
-  ([Phase 2, Milestone 02](../archive/phase-2/milestone-02-state-store-run-lock.md#retention));
+  ([Phase 2, Milestone 02](../phase-2/milestone-02-state-store-run-lock.md#retention));
   `queued` and `running` ones never are. An entry whose execution was
   pruned keeps no link to it and can no longer be resumed.
 
@@ -125,7 +125,7 @@ without an execution.
   `handle_signals=False`, since it runs off the main thread.
 - A cancel that lands after the claim but before the executor has begun is
   kept and applied as the job starts, as the TUI does for a stop requested
-  during start-up ([Phase 2 Milestone 04](../archive/phase-2/milestone-04-tui-live-run.md)).
+  during start-up ([Phase 2 Milestone 04](../phase-2/milestone-04-tui-live-run.md)).
 - A job's log file (`write_job_records`) holds that job's lines only. The
   job log is a Loguru sink, and today it copies every message of the
   process; in the server that would include API requests, so it is scoped
@@ -202,14 +202,14 @@ On startup, while holding the lock and before the worker starts:
   alive (an orphaned child of a `SIGKILL`ed server) does not reach any of
   the above: `RunLock.acquire()` already refuses it, naming the PID, as it
   does for `run-job` and the TUI today ([Phase 2 Milestone
-  02](../archive/phase-2/milestone-02-state-store-run-lock.md#run-lock-corerun_lockpy)).
+  02](../phase-2/milestone-02-state-store-run-lock.md#run-lock-corerun_lockpy)).
   The server's own crash recovery depends on this guard staying in place
   (owner decision, phase-3-changelog.md).
 
 ### Resume
 
 What can be resumed is set by `draw-things-cli`
-([research](../research/draw-things-cli-resume.md)): a run writes its output
+([research](../../research/draw-things-cli-resume.md)): a run writes its output
 only when it has finished, and the CLI has no resume, checkpoint, or partial
 output of its own. The smallest unit this project can resume is therefore
 one run:
@@ -273,7 +273,7 @@ The rules:
   *k* onward), at positions 0, 1, 2, ... of its `runs` list, so the list
   position is no longer the run number once a manifest can start above run
   1. `import-history` ([Phase 2 Milestone
-  02](../archive/phase-2/milestone-02-state-store-run-lock.md#history-import))
+  02](../phase-2/milestone-02-state-store-run-lock.md#history-import))
   takes a manifest's per-run `batch` field the same way it already ignores
   it for the plain case: it must number a resumed manifest's runs from its
   `first_run`, not from 1, or re-importing one after the database is lost

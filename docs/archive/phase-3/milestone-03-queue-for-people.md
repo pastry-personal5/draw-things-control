@@ -153,7 +153,7 @@ sections that follow.
 
 - The `run-job` command and its module are removed from `cli/`. It ran
   `draw-things-cli` itself, taking the run lock directly
-  ([Phase 1](../archive/phase-1/README.md)); `dtc queue add --wait` is its
+  ([Phase 1](../phase-1/README.md)); `dtc queue add --wait` is its
   replacement, going through the server instead.
 - `run-job`'s own `--executable` and `--shutdown-grace` have no equivalent
   on `dtc queue add`: they governed how `run-job` drove `draw-things-cli`
@@ -189,7 +189,7 @@ sections that follow.
   shortcut for `/queue cancel` on it.
 - `/apply` becomes an alias for `/queue add` with no `JOB`: it no longer
   runs the current Job Definition itself
-  ([Phase 2](../archive/phase-2/README.md)), since the TUI never invokes
+  ([Phase 2](../phase-2/README.md)), since the TUI never invokes
   `draw-things-cli` (**Change**). Its old busy message ("another run is in
   progress") no longer applies to it; a server it cannot reach is the only
   way it fails now.
@@ -205,7 +205,7 @@ sections that follow.
 Today the `draw-things-cli` pane (`CliPane`) and the run line read `LiveRun`,
 updated from the `JobExecutor` the TUI ran itself
 ([Phase 2 Milestone
-04](../archive/phase-2/milestone-04-tui-live-run.md)). Once the TUI never
+04](../phase-2/milestone-04-tui-live-run.md)). Once the TUI never
 invokes `draw-things-cli`, that source is gone, and this milestone's plan
 must name its replacement: the same
 [`WatchEvents`](milestone-02-http-api.md#monitoring-grpc) subscription the

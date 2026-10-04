@@ -46,7 +46,7 @@ processes from driving the GPU at once.
 - Editing `data/params/*.json` or the global configuration from anywhere.
 - Parallel generation. One run at a time, machine-wide.
 - A queue of jobs. Phase 2 runs one job at a time; queuing is
-  [Phase 3](../../phase-3/README.md).
+  [Phase 3](../phase-3/README.md).
 - Recording the one-off `generate` command in the state store. It takes the
   run lock, but it is not a job and stays out of history.
 - Image or video preview inside the terminal.

@@ -1,7 +1,7 @@
 # Color through the chain
 
 Where color is lost or biased on the way from the first image to the last run of a chain, what the model itself adds,
-and what can be done about each, for [Phase 3, Milestone 09](../phase-3/milestone-09-color-preservation.md).
+and what can be done about each, for [Phase 3, Milestone 09](../archive/phase-3/milestone-09-color-preservation.md).
 Researched 2026-09-30.
 
 Nothing was run or measured for this note (owner decision: plan only, no experiments); the measurements it calls for
@@ -125,7 +125,7 @@ are unbiased either way.
 
 **What was built (owner decisions, 2026-09-30):** the 16-bit handoff with `v * 256 + 128`, from every source, `v` the
 decoded level plus the tapered half level, rounded against the ordered dither, decoded with accurate rounding; see
-[Milestone 08](../phase-3/milestone-08-video-format-and-color.md#the-handoff).
+[Milestone 08](../archive/phase-3/milestone-08-video-format-and-color.md#the-handoff).
 
 Whether the bias compounds depends on how faithfully Wan reproduces its conditioning frame's tone through the VAE.
 Run 2 of the owner's `duo` chain (execution E0016) could have told for the handoff before 2026-09-30, but its clips

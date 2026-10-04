@@ -7,7 +7,7 @@
 ## Goal
 
 Leave Phase 2 with a clean codebase and a clean architecture before
-[Phase 3](../../phase-3/README.md) adds the HTTP API server and the MCP server:
+[Phase 3](../phase-3/README.md) adds the HTTP API server and the MCP server:
 
 - every fact and every rule lives in one place;
 - no long module, class, or function remains where a smaller unit reads
@@ -357,7 +357,7 @@ says otherwise.
 - `load_job` becomes `JobParser`, one method per part of the job file, in
   `jobs/parsing.py`. `load_job_text(text, path, global_config, ...)` parses
   text (`path` only names the file in messages) and `load_job(path, ...)` reads a file and calls it, as
-  [Phase 3 Milestone 01](../../phase-3/milestone-01-queue-run-manager.md)
+  [Phase 3 Milestone 01](../phase-3/milestone-01-queue-run-manager.md)
   planned. Its errors are `InputError`s naming the `field`. The rename hints
   for `batch_count` and `batches` go (owner decision); the hint for
   `cooldown_seconds` stays (owner decision).

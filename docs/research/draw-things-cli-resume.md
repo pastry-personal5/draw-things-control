@@ -1,6 +1,6 @@
 # Resume in draw-things-cli
 
-What `draw-things-cli` can resume after an interruption, and what that means for this project's chain resume ([Phase 3, Milestone 01](../phase-3/milestone-01-queue-run-manager.md#resume)). Researched 2026-09-27.
+What `draw-things-cli` can resume after an interruption, and what that means for this project's chain resume ([Phase 3, Milestone 01](../archive/phase-3/milestone-01-queue-run-manager.md#resume)). Researched 2026-09-27.
 
 ## Summary
 
