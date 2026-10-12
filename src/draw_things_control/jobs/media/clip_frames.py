@@ -128,7 +128,8 @@ def read_tool_png(path: Path) -> np.ndarray:
 
 # The corrected copy is encoded in the original's format (owner decision, Milestone 09). Each format's encoder, the
 # pixel format it is fed, and its options: VideoToolbox first, and for ProRes, prores_ks when VideoToolbox is missing
-# or cannot encode here (``encoder_works``).
+# or cannot encode here (``encoder_works``). H.264 also has a software fallback when VideoToolbox has no hardware
+# session, which is common in headless or heavily loaded environments.
 # The frame headers are then set by a bitstream filter, since VideoToolbox drops the primaries and the transfer: BT.709
 # primaries and matrix and limited range, and the sRGB transfer where the format has one; ProRes has none (only
 # unknown, BT.709, PQ, and HLG), so its header leaves the transfer unknown and the colr box states it (owner decision).
@@ -138,7 +139,7 @@ HEVC_HEADER = "hevc_metadata=colour_primaries=1:transfer_characteristics=13:matr
 ENCODERS: dict[str, tuple[tuple[str, str, tuple[str, ...], str], ...]] = {
     "ap4h": (("prores_videotoolbox", "p416le", ("-profile:v", "4444"), PRORES_HEADER), ("prores_ks", "yuv444p10le", ("-profile:v", "4444"), PRORES_HEADER)),
     "apch": (("prores_videotoolbox", "p216le", ("-profile:v", "hq"), PRORES_HEADER), ("prores_ks", "yuv422p10le", ("-profile:v", "hq"), PRORES_HEADER)),
-    "h264": (("h264_videotoolbox", "nv12", (), H264_HEADER),),
+    "h264": (("h264_videotoolbox", "nv12", (), H264_HEADER), ("libx264", "yuv420p", ("-qp", "0"), H264_HEADER)),
     "hevc": (("hevc_videotoolbox", "nv12", ("-tag:v", "hvc1"), HEVC_HEADER),),
 }
 ENCODE_FLAGS = "accurate_rnd+full_chroma_int"

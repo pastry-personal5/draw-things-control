@@ -22,8 +22,8 @@ def job_summary(row: JobRow) -> dict[str, Any]:
     """One row of ``GET /jobs``: job ID, file name, job name, mode, runs, and validity or the first error and field."""
     base = {"job_id": row.job_id, "file_name": row.path.name}
     if row.job is not None:
-        return {**base, "name": row.job.name, "mode": row.job.mode.value, "runs": row.job.run_count, "valid": True, "error": None, "field": None}
-    return {**base, "name": None, "mode": None, "runs": None, "valid": False, "error": row.error, "field": row.error_field}
+        return {**base, "name": row.job.name, "mode": row.job.mode.value, "backend": row.job.backend, "runs": row.job.run_count, "valid": True, "error": None, "field": None}
+    return {**base, "name": None, "mode": None, "backend": None, "runs": None, "valid": False, "error": row.error, "field": row.error_field}
 
 
 def prompt_pair(pair: PromptPair) -> dict[str, Any]:
@@ -38,6 +38,8 @@ def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = Non
         "text": source_text,
         "name": job.name,
         "mode": job.mode.value,
+        "backend": job.backend,
+        "backend_settings": job.backend_settings,
         "input": str(job.input) if job.input is not None else None,
         "run_count": job.run_count,
         "prompt_pairs": [prompt_pair(pair) for pair in job.prompt_pairs],
@@ -66,6 +68,7 @@ def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = Non
 def job_preview(job: JobDefinition, preview: JobPreview) -> dict[str, Any]:
     """``GET /jobs/{job}/preview``: the dry-run plan, commands redacted."""
     return {
+        "backend": job.backend,
         "seed": preview.seed,
         "seed_source": preview.seed_source,
         "runs": [{"number": run.number, "pair": run.pair.name, "input": str(run.input) if run.input is not None else None, "output": str(run.output), "last_frame": str(run.last_frame) if run.last_frame is not None else None, "command": command} for run, command in zip(preview.runs, (redact_command(command) for command in preview.commands), strict=True)],
@@ -121,6 +124,7 @@ def execution_summary(row: ExecutionRow) -> dict[str, Any]:
     return {
         "execution_id": row.label,
         "source_kind": row.source_kind,
+        "backend": row.backend,
         "job_name": row.job_name,
         "job_file": row.job_file,
         "mode": row.mode,
@@ -149,6 +153,7 @@ def execution_detail(row: ExecutionRow, *, brief: bool = False) -> dict[str, Any
         # had only cooldown_seconds. The TUI's seeding (Milestone 03, attaching to a running entry with no live
         # JobStarted to read a CooldownPolicy from) is the first reader of it over the API.
         "cooldown": row.settings.cooldown,
+        "backend_settings": row.settings.backend_settings or {},
         "config_file": row.config_file,
         "manifest": row.manifest_path,
         "log": row.log_path,
@@ -198,6 +203,7 @@ def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any
     return {
         "queue_id": row.label,
         "kind": row.kind,
+        "backend": row.backend,
         "job_path": row.job_path if row.kind == "job" else None,
         "generation": generation,
         "state": row.state,

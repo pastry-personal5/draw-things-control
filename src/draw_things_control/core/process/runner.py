@@ -1,4 +1,4 @@
-"""Supervised execution of Draw Things CLI commands."""
+"""Supervised execution of process-based backend commands."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, TextIO, TypeVar
+from typing import Any, Protocol, TextIO, TypeVar
 
 from loguru import logger
 
@@ -58,6 +58,12 @@ class RunnerFactory(Protocol[R_co]):
     def __call__(self, arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> R_co: ...
 
 
+class JobRunnerFactory(Protocol[R_co]):
+    """Creates a supervised runner from any backend's prepared command."""
+
+    def __call__(self, arguments: Any, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None, /) -> R_co: ...
+
+
 @dataclass(frozen=True)
 class ProcessResult:
     """The final state of a supervised command."""
@@ -76,7 +82,7 @@ class ProcessResult:
 
 
 class DrawThingsProcessRunner:
-    """Run typed arguments with live output and bounded process-group shutdown."""
+    """Run a prepared command with live output and bounded process-group shutdown."""
 
     def __init__(
         self,

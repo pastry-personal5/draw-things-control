@@ -32,15 +32,17 @@ class ExecutionSettings:
     config_file: str | None = None
     config_override: dict[str, Any] | None = None
     input_resize: dict[str, Any] | None = None
+    backend: str = "draw-things-cli"
+    backend_settings: dict[str, Any] | None = None
 
     def to_json(self) -> str:
         """The keys that are set, as JSON."""
-        return json.dumps({name: value for name, value in self.__dict__.items() if value is not None}, ensure_ascii=False)
+        return json.dumps({name: value for name, value in self.__dict__.items() if value is not None and (name != "backend" or value != "draw-things-cli")}, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, text: str) -> ExecutionSettings:
         data = json.loads(text) if text else {}
-        return cls(**{name: data.get(name) for name in cls.__dataclass_fields__})
+        return cls(**{name: data.get(name, "draw-things-cli" if name == "backend" else None) for name in cls.__dataclass_fields__})
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,7 @@ class NewExecution:
     first_image: str | None = None
     # ``job`` for every historical execution, ``generate`` for Milestone 12's one-off requests.
     source_kind: str = "job"
+    backend: str = "draw-things-cli"
 
 
 @dataclass(frozen=True)
@@ -214,6 +217,7 @@ class ExecutionRow:
     # The chain's first image, a full path; None for an execution recorded before Milestone 09, or without one.
     first_image: str | None = None
     source_kind: str = "job"
+    backend: str = "draw-things-cli"
     # Media checks of a run that never started (a stop during the input checks), which no run row can show; filled, like
     # ``runs``, only when the execution is read by itself.
     checks: tuple[MediaCheckRow, ...] = ()
@@ -252,6 +256,7 @@ class ExecutionRow:
             resumes=row["resumes"] if "resumes" in row.keys() else None,
             first_image=row["first_image"] if "first_image" in row.keys() else None,
             source_kind=row["source_kind"] if "source_kind" in row.keys() else "job",
+            backend=row["backend"] if "backend" in row.keys() else "draw-things-cli",
         )
 
     @property
@@ -289,7 +294,7 @@ class ExecutionRow:
         return next((run for run in self.runs if run.number == number), None)
 
 
-EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes", "first_image", "source_kind")
+EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes", "first_image", "source_kind", "backend")
 RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "anchor", "corrected_output")
 # Each execution's count of successful runs, read with it.
 SUCCEEDED_COUNT = "(SELECT COUNT(*) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS succeeded"

@@ -1,0 +1,10 @@
+# h3.c for Phase 4
+
+Researched 2026-10-12 for [Phase 4, Milestone 03](../phase-4/milestone-03-h3-i2av.md). Source: the [antirez/h3.c README](https://github.com/antirez/h3.c) and its [CLI entry point](https://github.com/antirez/h3.c/blob/main/main.c), checked against the local `contrib/backends/h3.c` checkout. The underlying model's [MiniMax H3 documentation](https://github.com/MiniMax-AI/MiniMax-H3) describes a broader set of modes; this plan targets the h3.c executable's current interface.
+
+- h3.c is an Apple Silicon MiniMax H3 inference engine. Its one-shot CLI takes `-d MODEL_DIR`, `-p PROMPT`, `-o OUTPUT`, dimensions, temporal controls, steps, seed, and conditioning flags. Without a prompt it enters an interactive session, which does not fit the existing run-boundary queue model.
+- `--first-frame` selects first-frame conditioning. `--ref-image` uses a separate ordered-reference checkpoint and treats the image as a reference rather than the opening frame. The owner chose `--first-frame` for `i2av` chains.
+- The output is MP4 with synchronized H.264 video and 32 kHz stereo AAC audio. FFmpeg and FFprobe must be available for media inputs and MP4 output; the executable also accepts `H3_FFMPEG` and `H3_FFPROBE` overrides.
+- Output is 24 fps. Requested frame counts are rounded upward to `5 + 17*n` (for example, 23 becomes 39). Width and height must be multiples of 32; their product is capped at `768 * 1344` pixels. Short development clips work, while the released workflow targets roughly 4–15 seconds.
+- The public CLI currently supports first/last-frame conditioning and ordered image, video, and audio references. These are different modes with different inputs; only first-frame `i2av` is planned for the initial integration.
+- The local checkout contains `contrib/backends/h3.c/h3` and `contrib/backends/h3.c/MiniMax-H3`. The executable path is the owner's chosen integration path; the model snapshot location is the planned default to validate at implementation time.

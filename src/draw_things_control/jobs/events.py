@@ -72,6 +72,8 @@ class JobStarted:
     # start from (Milestone 09): kept for every video execution that writes records, or the resumed execution's; None
     # without one. A t2v job's is run 1's last frame, written after run 1.
     first_image: str | None = None
+    backend: str = "draw-things-cli"
+    backend_settings: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

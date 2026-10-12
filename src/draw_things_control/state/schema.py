@@ -191,7 +191,14 @@ UPDATE queue SET snapshot = json_object('version', 1, 'kind', 'job', 'job_path',
 ALTER TABLE executions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'job';
 """
 
+# Phase 4 Milestone 02: the generator is independent of a queue entry's source kind and a job's mode. Existing jobs
+# and one-off generations are Draw Things; old records acquire that identity without reparsing their saved text.
+SCHEMA_V11 = """
+ALTER TABLE queue ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli';
+ALTER TABLE executions ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli'
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11)
 SCHEMA_VERSION = len(MIGRATIONS)

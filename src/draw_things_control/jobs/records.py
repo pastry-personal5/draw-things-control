@@ -83,6 +83,8 @@ class JobManifest:
     total_runs: int = 0
     # The chain's first image, a full path (see JobStarted); None without one.
     first_image: str | None = None
+    backend: str = "draw-things-cli"
+    backend_settings: dict[str, Any] = field(default_factory=dict)
 
 
 def write_manifest(path: Path, manifest: JobManifest) -> None:
@@ -147,6 +149,8 @@ class JobRecords:
             job_file=str(job.path),
             name=job.name,
             mode=str(job.mode),
+            backend=job.backend,
+            backend_settings=dict(job.backend_settings),
             config_file=job.config_file,
             config_override=job.config_override.as_dict(),
             seed=seed,

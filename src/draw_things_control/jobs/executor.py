@@ -13,15 +13,17 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments, redact_command
+from draw_things_control.core.arguments import CommandArguments
 from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.cooldown import CooldownWait
 from draw_things_control.core.errors import InputError
 from draw_things_control.core.exit_codes import EXIT_PARKED, exit_code_for_signal, signal_for_exit_code
 from draw_things_control.core.generation import GenerationOutcome
 from draw_things_control.core.process.output import MessageCallback, ProcessMessage
-from draw_things_control.core.process.runner import ChildStartCallback, RunnerFactory, StoppableRunner
+from draw_things_control.core.process.runner import ChildStartCallback, JobRunnerFactory, StoppableRunner
 from draw_things_control.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
+from draw_things_control.jobs.backend import BackendRegistry, RunContext
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import GenerationMode, JobDefinition, PromptPair
 from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, notify
 from draw_things_control.jobs.launcher import RunLauncher
@@ -32,7 +34,6 @@ from draw_things_control.jobs.media.tools import find_ffmpeg
 from draw_things_control.jobs.output_naming import RandomNumber, random_four_digits
 from draw_things_control.jobs.planning import JobPlanner, JobPreview, PlannedRun
 from draw_things_control.jobs.records import JobManifest, JobRecords, RunRecord
-from draw_things_control.jobs.run_finisher import RunColor, RunFinisher
 from draw_things_control.jobs.text import report_ignored_config, seconds_text
 
 if TYPE_CHECKING:
@@ -121,7 +122,7 @@ class JobExecutor:
 
     def __init__(
         self,
-        runner_factory: RunnerFactory[StoppableRunner],
+        runner_factory: JobRunnerFactory[StoppableRunner],
         find_executable: Callable[[str], str | None],
         media: MediaTools,
         *,
@@ -130,15 +131,17 @@ class JobExecutor:
         random_seed: Callable[[], int] = lambda: random.randint(0, 2**32 - 1),
         handle_signals: bool = True,
         cooldown: Cooldown | None = None,
+        backends: BackendRegistry = DEFAULT_BACKENDS,
     ) -> None:
         self._clock = clock
         self._random_number = random_number
         self._handle_signals = handle_signals
-        self._planner = JobPlanner(find_executable, media, clock=clock, random_number=random_number, random_seed=random_seed)
+        self._backends = backends
+        self._planner = JobPlanner(find_executable, media, clock=clock, random_number=random_number, random_seed=random_seed, backends=backends)
         self._token = CancelToken(handle_signals=handle_signals)
         self._cooldown = cooldown or self._token.wait
         self._media = media
-        self._launcher = RunLauncher(runner_factory, find_executable, RunFinisher(media, self._report_check), self._token)
+        self._launcher = RunLauncher(runner_factory, find_executable, media, self._token, backends, self._report_check)
         self._observer: JobObserver | None = None
         self._log_writer = JobLogWriter()
         self._on_child_start: ChildStartCallback | None = None
@@ -170,7 +173,7 @@ class JobExecutor:
         """
         return self._token.cancel(received_signal)
 
-    def run_generation(self, arguments: DrawThingsGenerateArguments, *, timeout: float, shutdown_grace: float, on_begin: Callable[[], None] | None = None, on_child_start: ChildStartCallback | None = None) -> GenerationOutcome:
+    def run_generation(self, arguments: CommandArguments, *, timeout: float, shutdown_grace: float, on_begin: Callable[[], None] | None = None, on_child_start: ChildStartCallback | None = None) -> GenerationOutcome:
         """Run Milestone 12's one-off request with the same cancellable runner a job uses."""
         self._token.begin()
         try:
@@ -376,37 +379,16 @@ class JobExecutor:
         manifest.first_image = None
         self._emit(FirstImageDropped(at=self._timestamp(), reason=reason))
 
-    def _run_color(self, chain: _Chain, number: int, pair: PromptPair, run_input: Path | None) -> RunColor:
-        """What run ``number``'s colors are compared with, and, when its job corrects, held to."""
-        job = chain.job
-        notes = chain.first_image_notes
-        fresh_t2v = _fresh_t2v(chain, number)
-        if fresh_t2v:
-            notes = ("A t2v job's run 1 has no input: it is measured within itself, not corrected, and its last frame becomes the first image.",)
-        corrects = job.mode.is_video and job.color.corrects and not fresh_t2v and run_input is not None
-        anchor, reanchored = self._anchor(chain, number, pair, run_input) if corrects and job.color.holds_to_anchor else (None, False)
-        return RunColor(first_image=chain.first_image, anchor=anchor, reanchored=reanchored, notes=notes, corrects=corrects)
-
-    @staticmethod
-    def _anchor(chain: _Chain, number: int, pair: PromptPair, run_input: Path | None) -> tuple[Path | None, bool]:
-        """The anchor of run ``number``, and whether it re-anchored there. With ``reanchor: prompt_pair`` (the default,
-        owner decision), a run whose prompt pair differs from the previous run's makes its own input the anchor, at every
-        change, even when pairs alternate; ``never`` holds the chain to the first image."""
-        if chain.job.color.reanchor == "prompt_pair" and number > 1 and run_input is not None and chain.schedule[number - 2].name != pair.name:
-            chain.anchor = run_input
-            return run_input, True
-        if chain.anchor is None:
-            chain.anchor = chain.first_image
-        return chain.anchor, False
-
     def _run_step(self, chain: _Chain, number: int, pair: PromptPair, current_input: Path | None) -> tuple[PlannedRun, RunRecord, RunStatus, int]:
         """Plan, start, execute, and record one run; returns it with its status and exit code."""
         job = chain.job
         run = self._planner.plan_run(job, number, pair, current_input, chain.records.manifest.seed, chain.options.executable, set())
-        color = self._run_color(chain, number, pair, current_input)
-        record = self._start_run(chain, run, color.anchor)
+        context = RunContext(number, pair, current_input, chain.first_image, chain.anchor, chain.schedule[number - 2] if number > 1 else None, chain.first_image_notes, _fresh_t2v(chain, number))
+        prepared = self._backends.get(job.backend).prepare_run(job, context)
+        chain.anchor = prepared.chain_anchor
+        record = self._start_run(chain, run, prepared.record_anchor)
         try:
-            status, exit_code = self._execute_run(chain, run, record, color)
+            status, exit_code = self._execute_run(chain, run, record, prepared.finish_state)
         except BaseException:
             record.status = RunStatus.FAILED
             if _fresh_t2v(chain, number):
@@ -447,7 +429,7 @@ class JobExecutor:
             input=str(chain.job.input if number == 1 else run.input) if run.input is not None else None,
             output=run.output.name,
             last_frame=None,
-            command=redact_command(run.arguments.command),
+            command=list(self._backends.get(chain.job.backend).redact(run.arguments.command)),
             started_at=self._timestamp(),
             resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
             anchor=str(anchor) if anchor is not None else None,
@@ -518,8 +500,8 @@ class JobExecutor:
 
         return on_message
 
-    def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, color: RunColor) -> tuple[RunStatus, int]:
-        return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, color=color)
+    def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, finish_state: object | None) -> tuple[RunStatus, int]:
+        return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, finish_state=finish_state)
 
 
 def _copy_first_image(chain: _Chain, source: Path, path: Path) -> bool:
@@ -547,6 +529,8 @@ def job_started_event(chain: _Chain) -> JobStarted:
         job_file=manifest.job_file,
         source_text=job.source_text,
         mode=manifest.mode,
+        backend=job.backend,
+        backend_settings=dict(job.backend_settings),
         total_runs=chain.total,
         output_directory=str(job.output_directory),
         input=str(job.input) if job.input is not None else None,

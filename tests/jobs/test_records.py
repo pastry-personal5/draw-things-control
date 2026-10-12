@@ -25,6 +25,7 @@ class JobManifestTests(unittest.TestCase):
             write_manifest(path, manifest)
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "succeeded")
+            self.assertEqual(data["backend"], "draw-things-cli")
             self.assertEqual(data["runs"][0]["pair"], "walk")
             self.assertEqual([entry.name for entry in Path(directory).iterdir()], [path.name])
 

@@ -98,6 +98,7 @@ class NewQueueEntry:
     # matching snapshot automatically in ``submit``; generation callers set these explicitly.
     kind: str = "job"
     snapshot: str | None = None
+    backend: str = "draw-things-cli"
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,7 @@ class QueueRow:
     submitted_by: str | None = None
     kind: str = "job"
     snapshot: str | None = None
+    backend: str = "draw-things-cli"
 
     @property
     def label(self) -> str:
@@ -188,13 +190,14 @@ class QueueRow:
             submitted_by=row["submitted_by"],
             kind=row["kind"] if "kind" in row.keys() else "job",
             snapshot=row["snapshot"] if "snapshot" in row.keys() else None,
+            backend=row["backend"] if "backend" in row.keys() else "draw-things-cli",
             error=row["error"],
             total_runs=row["total_runs"],
             succeeded=(exec_first_run or 1) - 1 + succeeded_count,
         )
 
 
-QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed", "resume_first_image", "resume_anchor", "submitted_by", "kind", "snapshot")
+QUEUE_COLUMNS = ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory", "total_runs", "resumes", "resumes_execution", "resume_first_run", "resume_input", "resume_seed", "resume_first_image", "resume_anchor", "submitted_by", "kind", "snapshot", "backend")
 # list_active, list_finished, and by_number all join in the linked execution to compute "succeeded"
 # (QueueRow.from_row's formula) rather than one executions.by_number() lookup per row (list_active/list_finished:
 # the same reasoning that moved _queued_count to a bare COUNT(*), since a list read can run on every relevant

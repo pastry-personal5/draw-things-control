@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -14,14 +16,17 @@ from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.numbers import is_int, is_number
 from draw_things_control.core.paths import linked_component
 from draw_things_control.core.yaml_files import parse_yaml_mapping, read_yaml_file
-from draw_things_control.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, ConfigOverride, GenerationMode, JobDefinition
+from draw_things_control.jobs.backend import DRAW_THINGS_BACKEND, BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
+from draw_things_control.jobs.backends.draw_things import DrawThingsJobSettings
+from draw_things_control.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, ConfigOverride, GenerationMode, JobDefinition, PromptPair
 from draw_things_control.jobs.inputs.size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, copy_plan, decode_image, read_image_info, resize_plan
 from draw_things_control.jobs.overrides import MAX_SEED, parse_config_override
 from draw_things_control.jobs.prompt_pairs import NAME_PATTERN, parse_prompt_pairs
 
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", *SIZE_KEYS, "max_input_crop_percent", "cooldown", "color"}
-REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs", "config_file")
+JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", "backend", "backend_settings", *SIZE_KEYS, "max_input_crop_percent", "cooldown", "color"}
+REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs")
 OUTPUT_KEYS = {"directory", "extension", "video_format"}
 COLOR_KEYS = {"anchor", "strength", "first_weight", "reanchor", "regions"}
 # Base configuration keys each mode drops, because the job itself decides them.
@@ -30,7 +35,19 @@ IGNORED_CONFIG_KEYS = {"i2v": ("batchCount",)}
 DesiredSize = tuple[int | None, int | None, float | None]
 
 
-def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True) -> JobDefinition:
+@dataclass(frozen=True)
+class CommonJobFields:
+    name: str
+    mode: GenerationMode
+    input: Path | None
+    run_count: int
+    prompt_pairs: tuple[PromptPair, ...]
+    run_timeout_seconds: float | None
+    cooldown: CooldownPolicy
+    cooldown_source: str
+
+
+def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
@@ -41,14 +58,14 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: Job file uses a symbolic link", path=path)
     try:
         data, text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
-        return JobParser(path, global_config, params_directory, decode_input=decode_input).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, DtcError):
             raise
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -64,7 +81,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, DtcError):
             raise
@@ -74,12 +91,13 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
         self._decode_input = decode_input
         self._base_config_text = base_config_text
+        self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
         try:
@@ -92,19 +110,40 @@ class JobParser:
     def _parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
         self._check_text_values(data)
         self._check_top_level(data)
-        name = self._name(data["name"])
-        mode = self._mode(data["mode"])
-        input_path = self._input_path(data, mode)
-        run_count = self._run_count(data["run_count"])
-        prompt_pairs = parse_prompt_pairs(data["prompt_pairs"], run_count, self._fail, self._check_keys)
+        backend = self._backend(data)
+        adapter = self._backends.get(backend)
+        if self._mode(data["mode"]).value not in adapter.supported_modes:
+            self._fail("mode", f"is not supported by {backend}")
+        job = adapter.parse_job(self, data, source_text)
+        if job.backend != backend:
+            raise ValueError(f"Backend {backend} returned a job for {job.backend}")
+        try:
+            safe_settings = json.loads(json.dumps(adapter.safe_settings(job), allow_nan=False))
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Backend {backend} returned invalid safe settings") from error
+        if not isinstance(safe_settings, dict):
+            raise ValueError(f"Backend {backend} returned invalid safe settings")
+        return replace(job, backend_settings=safe_settings)
+
+    def parse_draw_things(self, data: dict[str, Any], source_text: str) -> JobDefinition:
+        if "config_file" not in data:
+            self._fail("config_file", "is required")
+        settings = data.get("backend_settings", {})
+        if not isinstance(settings, dict):
+            self._fail("backend_settings", "must be a mapping")
+        if settings:
+            self._fail("backend_settings", "is not supported by draw-things-cli")
+        common = self.parse_common(data)
+        name, mode, input_path, run_count, prompt_pairs = common.name, common.mode, common.input, common.run_count, common.prompt_pairs
         output_directory, extension, video_format = self._output(data.get("output", {}), mode, name)
         config_file = self._config_file(data["config_file"])
         base_config = self._base_config(config_file)
         ignored_config = {key: base_config.pop(key) for key in IGNORED_CONFIG_KEYS.get(mode, ()) if key in base_config}
         override = parse_config_override(data.get("config_override", {}), mode, self._fail, self._check_keys)
         model = self._model(override, base_config, config_file)
-        timeout = self._timeout(data.get("run_timeout_seconds"))
-        cooldown, cooldown_source = self._cooldown(data)
+        requested_seed = override.seed if override.seed is not None else base_config.get("seed")
+        seed_source = "config_override" if override.seed is not None else "config_file" if is_int(requested_seed) and requested_seed >= 0 else "random"
+        timeout, cooldown, cooldown_source = common.run_timeout_seconds, common.cooldown, common.cooldown_source
         color = self._color(data.get("color"), mode)
         desired = self._desired_size(data, mode)
         try:
@@ -128,6 +167,10 @@ class JobParser:
             config_override=override,
             model=model,
             run_timeout_seconds=timeout,
+            requested_seed=requested_seed if is_int(requested_seed) and requested_seed >= 0 else None,
+            requested_seed_source=seed_source,
+            backend=DRAW_THINGS_BACKEND,
+            backend_data=DrawThingsJobSettings(config_file, base_config, override, model, video_format, color, plan.target_size if plan is not None else None),
             cooldown=cooldown,
             cooldown_source=cooldown_source,
             color=color,
@@ -138,6 +181,53 @@ class JobParser:
             ignored_size=ignored_size,
             source_text=source_text,
         )
+
+    def parse_common(self, data: dict[str, Any]) -> CommonJobFields:
+        """Fields shared by process backends; an adapter validates its remaining fields and output contract."""
+        name = self._name(data["name"])
+        mode = self._mode(data["mode"])
+        input_path = self._input_path(data, mode)
+        run_count = self._run_count(data["run_count"])
+        pairs = parse_prompt_pairs(data["prompt_pairs"], run_count, self._fail, self._check_keys)
+        cooldown, source = self._cooldown(data)
+        return CommonJobFields(name, mode, input_path, run_count, pairs, self._timeout(data.get("run_timeout_seconds")), cooldown, source)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def global_config(self) -> GlobalConfig:
+        return self._global_config
+
+    def fail(self, field: str, problem: str) -> NoReturn:
+        self._fail(field, problem)
+
+    def output_directory(self, value: Any, name: str, allowed_keys: set[str]) -> Path:
+        if not isinstance(value, dict):
+            self._fail("output", "must be a mapping")
+        self._check_keys(value, allowed_keys, "output.")
+        directory = value.get("directory")
+        if directory is None:
+            output_directory = self._global_config.output_directory / name
+        elif isinstance(directory, str) and directory:
+            output_directory = self._confined_path(directory, self._global_config.output_directory, "output.directory")
+        else:
+            self._fail("output.directory", "must be a directory path")
+        output_directory = self._confined_path(str(output_directory), self._global_config.output_directory, "output.directory")
+        if output_directory.exists() and not output_directory.is_dir():
+            self._fail("output.directory", f"is not a directory: {output_directory}")
+        return output_directory
+
+    def _backend(self, data: dict[str, Any]) -> str:
+        value = data.get("backend", DRAW_THINGS_BACKEND)
+        if not isinstance(value, str):
+            self._fail("backend", "must be a backend name")
+        try:
+            self._backends.get(value)
+        except InputError:
+            self._fail("backend", f"must be one of {', '.join(self._backends.names)}")
+        return value
 
     def _check_text_values(self, data: dict[str, Any]) -> None:
         """Walk without recursion; aliases shared by siblings are valid, cycles are not."""
@@ -200,7 +290,7 @@ class JobParser:
         try:
             return GenerationMode(value)
         except ValueError:
-            self._fail("mode", "must be one of i2i, t2v, or i2v")
+            self._fail("mode", "must be one of i2i, t2v, i2v, or i2av")
 
     def _input_path(self, data: dict[str, Any], mode: GenerationMode) -> Path | None:
         value = data.get("input")
@@ -374,19 +464,7 @@ class JobParser:
         return (size[0], size[1]), source
 
     def _output(self, value: Any, mode: GenerationMode, name: str) -> tuple[Path, str, str | None]:
-        if not isinstance(value, dict):
-            self._fail("output", "must be a mapping")
-        self._check_keys(value, OUTPUT_KEYS, "output.")
-        directory = value.get("directory")
-        if directory is None:
-            output_directory = self._global_config.output_directory / name
-        elif isinstance(directory, str) and directory:
-            output_directory = self._confined_path(directory, self._global_config.output_directory, "output.directory")
-        else:
-            self._fail("output.directory", "must be a directory path")
-        output_directory = self._confined_path(str(output_directory), self._global_config.output_directory, "output.directory")
-        if output_directory.exists() and not output_directory.is_dir():
-            self._fail("output.directory", f"is not a directory: {output_directory}")
+        output_directory = self.output_directory(value, name, OUTPUT_KEYS)
         extension = value.get("extension", mode.default_extension)
         if extension not in mode.allowed_extensions:
             self._fail("output.extension", f"must be {' or '.join(mode.allowed_extensions)} in {mode} jobs")

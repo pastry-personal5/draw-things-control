@@ -4,9 +4,10 @@ import json
 import unittest
 from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
+from draw_things_control.core.arguments import DrawThingsGenerateArguments
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
 from draw_things_control.jobs.parsing import load_job
@@ -96,7 +97,7 @@ class EventsOfARealJobTests(JobTestCase):
 
         def with_a_key(*arguments: Any, **options: Any) -> PlannedRun:
             run = plan_run(*arguments, **options)
-            return replace(run, arguments=replace(run.arguments, cloud_compute=True, api_key=secret))
+            return replace(run, arguments=replace(cast(DrawThingsGenerateArguments, run.arguments), cloud_compute=True, api_key=secret))
 
         events: list[JobEvent] = []
         job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)

@@ -60,10 +60,9 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   (`standard` mode, over `src/` and `tests/`), and the tests. It must pass
   before a change is committed. An ignore comment for pyright names its rule and
   says why.
-- `make test` prints only the test summary and failures; use `make test-verbose`
-  while identifying an individual test.
-- `make test-tui` runs the headless TUI suite; `make test-tui-verbose` includes
-  individual test names.
+- `make test` and `make test-tui` are silent on success and show failures; use
+  their `-verbose` variants while identifying an individual test.
+- `make proto` is silent on success and shows build errors.
 - `make format` applies Ruff's formatter.
 
 ## Documentation

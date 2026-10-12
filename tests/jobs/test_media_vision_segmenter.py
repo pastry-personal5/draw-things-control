@@ -61,7 +61,12 @@ class VisionTests(unittest.TestCase):
         assert segmenter is not None
         gradient = np.linspace(0, 1, 96, dtype=np.float32)
         frame = np.repeat(np.repeat(gradient[None, :, None], 64, axis=0), 3, axis=2)
-        segmentation = segmenter(frame)
+        try:
+            segmentation = segmenter(frame)
+        except ValueError as error:
+            if "failed to load ANE model" in str(error):
+                self.skipTest("Apple Vision cannot load its installed person segmentation model")
+            raise
         self.assertEqual(segmentation.person.dtype, np.uint8)
         self.assertEqual(segmentation.person.ndim, 2)
         self.assertLess(float(segmentation.person.mean()), 128)

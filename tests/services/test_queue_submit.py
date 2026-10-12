@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 from draw_things_control.core.cooldown import CooldownPolicy
@@ -24,6 +25,35 @@ class SubmitJobTests(JobTestCase):
         self.assertEqual(entry.settings.config_file, "base.yaml")
         self.assertIn("name: sunset-walk", entry.job_text)
         self.assertIn("model: base.ckpt", entry.config_text)
+        self.assertEqual((entry.backend, json.loads(entry.snapshot or "")["version"]), ("draw-things-cli", 3))
+
+    def test_version_three_snapshot_refuses_a_conflicting_backend_or_legacy_copy(self) -> None:
+        path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        for changed, field in ((replace(entry, backend="other"), "backend"), (replace(entry, job_text="changed"), "job_text")):
+            with self.subTest(field=field), self.assertRaises(InputError) as caught:
+                parse_snapshot(changed, self.global_config, self.params)()
+            self.assertEqual(caught.exception.field, field)
+
+    def test_version_three_snapshot_refuses_settings_that_do_not_match_its_job(self) -> None:
+        path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        summary = {**(entry.settings.backend_settings or {}), "model": "other.ckpt"}
+        snapshot["settings"]["backend_settings"] = summary
+        changed = replace(entry, settings=replace(entry.settings, backend_settings=summary), snapshot=json.dumps(snapshot))
+        with self.assertRaises(InputError) as caught:
+            parse_snapshot(changed, self.global_config, self.params)()
+        self.assertEqual(caught.exception.field, "settings")
+
+    def test_version_two_snapshot_keeps_its_older_safe_settings_shape(self) -> None:
+        path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        snapshot["version"] = 2
+        snapshot["settings"]["backend_settings"] = {}
+        previous = replace(entry, snapshot=json.dumps(snapshot), settings=replace(entry.settings, backend_settings={}))
+        self.assertEqual(parse_snapshot(previous, self.global_config, self.params)().backend, "draw-things-cli")
 
     def test_an_invalid_job_stores_nothing(self) -> None:
         path = self.write_job(job_data(run_count=0, prompt_pairs=[{"name": "only", "positive": "text"}]))

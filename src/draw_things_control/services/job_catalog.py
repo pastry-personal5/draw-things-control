@@ -191,7 +191,7 @@ class JobCatalog:
             row, dependencies = JobRow(path, None, error_text(path, error), error_field=getattr(error, "field", None), changed=changed), None
         else:
             row = JobRow(path, job, changed=changed)
-            inputs = ((job.input,) if job.input is not None else ()) + (self._paths.params / job.config_file,)
+            inputs = ((job.input,) if job.input is not None else ()) + ((self._paths.params / job.config_file,) if job.config_file else ())
             dependencies = tuple((dependency, signature(dependency)) for dependency in inputs)
         with self._lock:
             self._cache[path] = (own, dependencies, row)

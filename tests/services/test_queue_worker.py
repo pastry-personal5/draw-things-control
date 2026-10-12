@@ -99,8 +99,8 @@ class QueueWorkerCase(JobTestCase):
         claimed = threading.Event()
         release = threading.Event()
 
-        def blocking(entry: Any, global_config: Any, params_directory: Any):
-            thunk = real_parse_snapshot(entry, global_config, params_directory)
+        def blocking(entry: Any, global_config: Any, params_directory: Any, **options: Any):
+            thunk = real_parse_snapshot(entry, global_config, params_directory, **options)
 
             def parse() -> Any:
                 claimed.set()
@@ -131,6 +131,7 @@ class QueueWorkerTests(QueueWorkerCase):
         execution = self.store.executions.by_number(updated.execution_number)
         assert execution is not None
         self.assertEqual((execution.source_kind, execution.job_name, execution.total_runs, execution.runs[0].output), ("generate", "generate: cube.png", 1, str(self.output_directory / "cube.png")))
+        self.assertEqual((entry.backend, execution.backend), ("draw-things-cli", "draw-things-cli"))
         self.assertEqual(self.starts, 1)
 
     def test_two_queued_jobs_run_in_order(self) -> None:

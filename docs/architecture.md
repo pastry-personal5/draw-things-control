@@ -1,10 +1,11 @@
 # Architecture
 
 `draw-things-control` exists for long-horizon video generation by
-autoregressive image-to-video chaining: each run starts from the previous run's
-output. It uses the Draw Things app beneath, through the locally installed
-`draw-things-cli`. One core runs the chained generations; front ends (CLI, TUI, API, MCP) are thin layers over it.
-Only one `draw-things-cli` runs at a time on the machine.
+autoregressive chaining: each run starts from the previous run's output.
+Chained jobs select a backend; the installed production backend is Draw Things,
+through `draw-things-cli`. One executor runs the chain; front ends (CLI, TUI,
+API, MCP) are thin layers over it. The run lock permits one supervised backend
+command at a time on the machine.
 
 ## Overview
 
@@ -18,9 +19,11 @@ CLI (Typer) ─┐   TUI (Textual) ─┐   HTTP API ─┐            MCP serve
              │
              ▼
    jobs: JobExecutor ◀── events, cancel() ── JobPlanner, RunLauncher, JobRecords, JobLogWriter
+             │                             │
+             └──────── backend registry ───┘ (Draw Things adapter)
              │
              ▼
-   core: DrawThingsProcessRunner ──▶ draw-things-cli
+   core: supervised process runner ──▶ backend executable
 ```
 
 ## Source layout
@@ -67,10 +70,11 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `core/global_config.py`, `core/cooldown.py` | The global configuration; `CooldownPolicy` and its mapping, shared by it and jobs |
 | `core/numbers.py`, `core/clock.py` | Numbers read from outside and written for people; the clock every timestamp comes from |
 | `core/run_lock.py` | `fcntl.flock` on `state/run.lock`, naming the holder and the running child |
-| `core/process/` | `DrawThingsProcessRunner` (process group, timeout, graceful-then-forced shutdown), its protocols (`RunnerFactory`), output processing, signals, `CancelToken`, process groups |
+| `core/process/` | The supervised process runner (process group, timeout, graceful-then-forced shutdown), its runner factories, output processing, signals, `CancelToken`, process groups |
+| `jobs/backend.py`, `jobs/backends/` | The backend protocol and registry; adapters own typed settings, safe settings summaries, command preparation, tool checks, per-run finishing state, and output finishing. The Draw Things adapter keeps its color policy inside that boundary |
 | `jobs/definition.py`, `jobs/parsing.py`, `jobs/prompt_pairs.py`, `jobs/overrides.py` | A validated job, and `JobParser` (`load_job`, `load_job_text`), whose errors are `InputError`s naming the file and the field |
-| `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and each correcting run's anchor, re-anchored where the prompt pair changes (`RunColor`) |
-| `jobs/planning.py`, `jobs/launcher.py`, `jobs/run_finisher.py`, `jobs/color_run.py` | The seed, file names, and arguments of each run (`JobPlanner`); one run through draw-things-cli (`RunLauncher`); tagging, last frame, the color drift check, the color correction, and measuring (`RunFinisher`); the correction's two passes over a run's frames, its corrected copy and handoff, and its checks (`ColorCorrector`, loaded only when a job first corrects; a failed correction hands off the uncorrected frame) |
+| `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and the anchor state handed to the backend for each run |
+| `jobs/planning.py`, `jobs/launcher.py`, `jobs/run_finisher.py`, `jobs/color_run.py` | The shared seed, file names, and backend-prepared arguments of each run (`JobPlanner`); supervised execution and common result mapping (`RunLauncher`); Draw Things tagging, last frame, drift check, correction, and measurement (`RunFinisher`, called by its adapter); the correction's two passes over a run's frames, its corrected copy and handoff, and its checks (`ColorCorrector`, loaded only when a job first corrects; a failed correction hands off the uncorrected frame) |
 | `jobs/records.py`, `jobs/log_writer.py` | The manifest and job log file (`JobRecords`); the job's log lines, written from its events |
 | `jobs/events.py` | Typed events, `RunStatus` and `JobStatus`, and `event_to_dict` for a JSON stream |
 | `jobs/files.py`, `jobs/text.py`, `jobs/parsing.py` | Bounded job-file reads, parser validation and path confinement before file access, and the text `validate-job` and the TUI show |
@@ -113,11 +117,13 @@ allowed to start `draw-things-cli`. It executes one entry at a time. Shutdown
 stops the current child and releases the lock only after the worker has joined;
 startup recovers entries left running by a previous server.
 
-A queued job stores the exact job and base-configuration text plus its resolved
-directories and cooldown policy. A queued one-off generation stores its
-resolved request. Later file edits therefore do not change queued work.
-Resuming creates a new entry at the next unfinished run with the original seed;
-an interrupted run always restarts from its boundary.
+A queued job stores a versioned snapshot of the exact job and base-configuration
+text, backend identity, resolved directories, and cooldown policy. Older
+snapshots and rows without a backend read as Draw Things. A queued one-off
+generation stores its resolved request and also identifies Draw Things as its
+backend. Later file edits therefore do not change queued work. Resuming copies
+the original snapshot and backend into a new entry at the next unfinished run
+with the original seed; an interrupted run always restarts from its boundary.
 
 The SQLite store keeps execution, run, queue, job-ID, audit, and preference
 state. Public IDs such as `E0012`, `Q0007`, and `J0001` are stable and

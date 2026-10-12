@@ -23,7 +23,7 @@ def queue_row_to_dict(row: QueueRow) -> dict[str, Any]:
 
         snapshot = GenerationSnapshot.from_json(row.snapshot)
         generation = {"model": snapshot.model, "output": snapshot.output}
-    return {"queue_id": row.label, "kind": row.kind, "job_path": row.job_path if row.kind == "job" else None, "generation": generation, "state": row.state, "total_runs": row.total_runs, "succeeded": row.succeeded, "park_requested": False}
+    return {"queue_id": row.label, "kind": row.kind, "backend": row.backend, "job_path": row.job_path if row.kind == "job" else None, "generation": generation, "state": row.state, "total_runs": row.total_runs, "succeeded": row.succeeded, "park_requested": False}
 
 
 def _name(row: dict[str, Any]) -> str:
@@ -77,6 +77,7 @@ def queue_entry_detail_text(entry: dict[str, Any]) -> Text:
         runs = f"run {entry['current_run']}/{total}" if total is not None else f"run {entry['current_run']}"
     for label, value in (
         ("Job", _name(entry)),
+        ("Backend", entry.get("backend")),
         ("Submitted", entry.get("submitted_at")),
         ("Started", entry.get("started_at")),
         ("Finished", entry.get("finished_at")),

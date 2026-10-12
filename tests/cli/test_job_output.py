@@ -43,7 +43,7 @@ class JobOutputTests(JobTestCase):
         return result.stdout.replace(str(self.root), "ROOT")
 
     def test_validate_job_output(self) -> None:
-        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  output format: prores4444 (.mov)\n  config file: batch.yaml\n  model: base.ckpt\n  seed: 42 (config_file)\n"
+        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  backend: draw-things-cli\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  output format: prores4444 (.mov)\n  config file: batch.yaml\n  model: base.ckpt\n  seed: 42 (config_file)\n"
         self.assertEqual(self.invoke("validate-job", str(self.job_path)), expected)
         self.assertEqual(self.logged, IGNORED)
 

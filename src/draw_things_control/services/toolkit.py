@@ -8,11 +8,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
+from draw_things_control.core.arguments import CommandArguments, DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_config import load_config
 from draw_things_control.core.generation import GenerationService
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor
-from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner, RunnerFactory, StoppableRunner
+from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner, JobRunnerFactory, StoppableRunner
 from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.media.checks import MediaChecker
 from draw_things_control.jobs.media.frames import extract_last_frame
@@ -36,9 +36,11 @@ def create_runner(arguments: DrawThingsGenerateArguments, timeout: float | None,
     return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=capture_output, handle_signals=handle_signals, on_start=on_pid)
 
 
-def create_job_runner(arguments: DrawThingsGenerateArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
-    """Create a run's runner; JobExecutor owns signal handling and forwards signals to it."""
-    return create_runner(arguments, timeout, shutdown_grace, on_message, on_start, handle_signals=False)
+def create_job_runner(arguments: CommandArguments, timeout: float | None, shutdown_grace: float, on_message: MessageCallback | None = None, on_start: ChildStartCallback | None = None) -> DrawThingsProcessRunner:
+    """Create a supervised backend command; JobExecutor owns signal handling."""
+    name = Path(arguments.command[0]).name
+    on_pid = (lambda pid: on_start(pid, name)) if on_start is not None else None
+    return DrawThingsProcessRunner(arguments, output_processor=OutputProcessor(callback=on_message), timeout_seconds=timeout, shutdown_grace_seconds=shutdown_grace, capture_output=True, handle_signals=False, on_start=on_pid)
 
 
 def default_media_tools() -> MediaTools:
@@ -93,7 +95,7 @@ class Toolkit:
     """The tools of this machine. Built once by a front end, which asks it for the services that use them; a test builds one
     with fake tools, or overrides ``generation_service`` and ``job_executor``."""
 
-    def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: RunnerFactory[StoppableRunner] = create_job_runner) -> None:
+    def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: JobRunnerFactory[StoppableRunner] = create_job_runner) -> None:
         self._find_executable = find_executable
         self._media = media or default_media_tools()
         self._job_runner_factory = job_runner_factory

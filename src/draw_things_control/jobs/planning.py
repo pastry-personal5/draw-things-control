@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 import shlex
 from collections.abc import Callable
@@ -10,13 +9,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments, override_arguments, redact_command
+from draw_things_control.core.arguments import CommandArguments
 from draw_things_control.core.clock import Clock
-from draw_things_control.core.draw_things_config import build_config_json
-from draw_things_control.core.generation import require_executable
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition, PromptPair
 from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.jobs.output_naming import RandomNumber, corrected_output_path, last_frame_path, next_output_path, random_four_digits, raw_last_frame_path
+from draw_things_control.jobs.output_naming import RandomNumber, next_output_path, random_four_digits
 
 
 @dataclass(frozen=True)
@@ -28,7 +27,7 @@ class PlannedRun:
     input: Path | None
     output: Path
     last_frame: Path | None
-    arguments: DrawThingsGenerateArguments
+    arguments: CommandArguments
     # A correcting job's uncorrected last frame and corrected copy (Milestone 09); None for any other.
     raw_last_frame: Path | None = None
     corrected_output: Path | None = None
@@ -51,7 +50,7 @@ class JobPreview:
 
 
 class JobPlanner:
-    """Expands a job into runs: names their files and builds their draw-things-cli arguments. Starts nothing."""
+    """Expands a job into runs: names their files and asks its backend for commands. Starts nothing."""
 
     def __init__(
         self,
@@ -61,21 +60,18 @@ class JobPlanner:
         clock: Clock = datetime.now,
         random_number: RandomNumber = random_four_digits,
         random_seed: Callable[[], int] = lambda: random.randint(0, 2**32 - 1),
+        backends: BackendRegistry = DEFAULT_BACKENDS,
     ) -> None:
         self._find_executable = find_executable
         self._media = media
         self._clock = clock
         self._random_number = random_number
         self._random_seed = random_seed
+        self._backends = backends
 
     def check_tools(self, job: JobDefinition, executable: str) -> None:
         """Raise ToolMissingError when the job cannot start for want of draw-things-cli, ffmpeg, or ffprobe."""
-        require_executable(self._find_executable, executable)
-        if job.mode.is_video:
-            self._media.require_ffmpeg()
-            # A video job that could not measure its outputs would record no actual size, so it does not start.
-            if self._media.require_ffprobe is not None:
-                self._media.require_ffprobe()
+        self._backends.get(job.backend).check_tools(job, executable, self._media, self._find_executable)
 
     def seed(self, job: JobDefinition, placeholder: int | None) -> tuple[int, str]:
         """The job's seed and where it came from; a job with none draws a random one, unless ``placeholder`` is given."""
@@ -105,22 +101,13 @@ class JobPlanner:
             runs.append(run)
             current_input = run.last_frame or run.output
         # The job's timeout was checked when it was loaded, so each command only needs its credentials redacted.
-        commands = tuple(tuple(redact_command(run.arguments.command)) for run in runs)
+        backend = self._backends.get(job.backend)
+        commands = tuple(backend.redact(run.arguments.command) for run in runs)
         return JobPreview(seed=seed, seed_source=source, runs=tuple(runs), commands=commands)
 
     def plan_run(self, job: JobDefinition, number: int, pair: PromptPair, run_input: Path | None, seed: int, executable: str, reserved: set[Path]) -> PlannedRun:
         output = next_output_path(job.output_directory, job.name, job.extension, self._clock, self._random_number, reserved)
-        last_frame = last_frame_path(output) if job.mode.is_video else None
-        override = job.config_override
-        config = build_config_json(job.base_config, override.as_dict())
-        config["model"] = job.model
-        width, height = override.width, override.height
-        if job.size is not None:
-            width, height = job.size
-            config["width"], config["height"] = job.size
-        flags = {**override_arguments(override.as_dict()), "model": job.model, "width": width, "height": height, "seed": seed}
-        # A job's output is captured, never shown, so the live sampling preview is only extra work.
-        arguments = DrawThingsGenerateArguments(executable=executable, prompt=pair.positive, negative_prompt=pair.negative, config_json=json.dumps(config, separators=(",", ":")), image=run_input, output=output, video_format=job.video_format, disable_preview=True, **flags)
-        corrects = job.mode.is_video and job.color.corrects
-        raw, copy = (raw_last_frame_path(output), corrected_output_path(output)) if corrects else (None, None)
-        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=last_frame, arguments=arguments, raw_last_frame=raw, corrected_output=copy)
+        backend = self._backends.get(job.backend)
+        paths = backend.output_paths(job, output)
+        arguments = backend.arguments(job, pair, run_input, output, seed, executable)
+        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=paths.handoff, arguments=arguments, raw_last_frame=paths.raw_handoff, corrected_output=paths.corrected_output)

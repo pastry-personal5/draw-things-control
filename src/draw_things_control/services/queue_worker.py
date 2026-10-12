@@ -17,6 +17,8 @@ from draw_things_control.core.clock import Clock, local_timestamp
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
 from draw_things_control.core.run_lock import SERVER_HOLDER_NAME, RunLock
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunStatus
 from draw_things_control.jobs.executor import JobExecutor, ResumePoint
@@ -60,13 +62,14 @@ WaitBetweenJobs = Callable[[float], None]
 class QueueWorker:
     """Runs queued jobs one after another off its own thread, while ``lock`` and ``store`` are held for the host's whole lifetime."""
 
-    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None) -> None:
+    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._store = store
         self._session = session
         self._executor = executor
         self._lock = lock
         self._paths = paths
         self._global_config = global_config
+        self._backends = backends
         self._executable = executable
         self._shutdown_grace = shutdown_grace
         self._clock = clock
@@ -309,7 +312,7 @@ class QueueWorker:
         # always re-raises what it caught) does not overwrite a real outcome with a spurious 'failed'.
         finished = [False]
         try:
-            job = parse_snapshot(entry, self._global_config, self._paths.params)()
+            job = parse_snapshot(entry, self._global_config, self._paths.params, backends=self._backends)()
             resume = _resume_point_of(entry)
         except Exception as error:
             self._fail_to_start(entry, error)

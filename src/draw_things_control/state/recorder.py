@@ -99,6 +99,8 @@ class ExecutionRecorder:
             config_file=event.config_file,
             config_override=event.config_override,
             input_resize=event.input_resize,
+            backend=event.backend,
+            backend_settings=event.backend_settings,
         )
         self._execution_id = self._executions.start(
             NewExecution(
@@ -106,6 +108,7 @@ class ExecutionRecorder:
                 job_name=event.job_name,
                 job_file=event.job_file,
                 mode=event.mode,
+                backend=event.backend,
                 model=event.model,
                 seed=event.seed,
                 seed_source=event.seed_source,

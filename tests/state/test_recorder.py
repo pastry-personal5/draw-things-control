@@ -6,7 +6,7 @@ import signal
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from loguru import logger
@@ -182,7 +182,7 @@ class RecorderTests(JobTestCase):
 
         def plan_run_with_a_key(*arguments: Any, **options: Any) -> PlannedRun:
             run = plan_run(*arguments, **options)
-            return replace(run, arguments=replace(run.arguments, cloud_compute=True, api_key=secret))
+            return replace(run, arguments=replace(cast(DrawThingsGenerateArguments, run.arguments), cloud_compute=True, api_key=secret))
 
         with mock.patch.object(self.service._planner, "plan_run", plan_run_with_a_key):
             self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False)

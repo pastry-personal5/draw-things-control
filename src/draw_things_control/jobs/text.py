@@ -151,6 +151,7 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
     seed_value = random_seed_text if seed is None and random_seed_text is not None else f"{seed if seed is not None else '(random, drawn when the job starts)'} ({source})"
     return [
         ("name", job.name),
+        ("backend", job.backend),
         ("mode", str(job.mode)),
         ("runs", f"{job.run_count} ({', '.join(pair.name for pair in job.schedule())})"),
         ("cooldown", cooldown_details(job)),
@@ -197,7 +198,7 @@ class PlanStep:
 def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
     """The dry-run plan's lines before its runs, as text without the ``# `` the CLI adds."""
     return [
-        f"Job {job.name} ({job.mode}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job.cooldown, job.cooldown_source)}",
+        f"Job {job.name} ({job.mode}, {job.backend}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job.cooldown, job.cooldown_source)}",
         "Output names are examples; a real run generates new ones.",
     ]
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 from draw_things_control.core.cooldown import CooldownPolicy
 from draw_things_control.core.errors import LimitExceededError, TimeoutRequiredError
 from draw_things_control.core.global_config import ApiLimits, GlobalConfig
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition
 
 
@@ -16,7 +18,7 @@ def check_job_rules(job: JobDefinition, global_config: GlobalConfig) -> None:
         raise TimeoutRequiredError("'run_timeout_seconds' is required for a job the API runs or writes", field="run_timeout_seconds")
 
 
-def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: int | None = None) -> None:
+def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
     """``max_job_runs`` and ``max_job_seconds``, the job's worst case: its runs times ``run_timeout_seconds``, for a
     video job the ``color_drift`` check's time limit, and for a job that corrects its colors the correction's (Milestone
     09), plus the longest wait between runs (the job's cooldown applied to ``run_timeout_seconds``, since a wait follows
@@ -26,7 +28,7 @@ def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: i
     if runs > limits.max_job_runs:
         raise LimitExceededError(f"{runs} runs is over the max_job_runs limit of {limits.max_job_runs}", key="max_job_runs", limit=limits.max_job_runs, value=runs)
     assert job.run_timeout_seconds is not None  # check_job_rules already required it
-    worst_case = _worst_case_seconds(job.run_timeout_seconds, job.cooldown, runs) + runs * (job.drift_seconds() + job.correction_seconds())
+    worst_case = _worst_case_seconds(job.run_timeout_seconds, job.cooldown, runs) + runs * backends.get(job.backend).finishing_seconds(job)
     if worst_case > limits.max_job_seconds:
         raise LimitExceededError(f"a worst case of {worst_case:g} seconds is over the max_job_seconds limit of {limits.max_job_seconds:g}", key="max_job_seconds", limit=limits.max_job_seconds, value=worst_case)
 
@@ -45,9 +47,9 @@ def check_queue_not_full(queued_count: int, limits: ApiLimits) -> None:
         raise LimitExceededError(f"{queued_count} entries are already queued, at the max_queued_jobs limit of {limits.max_queued_jobs}", key="max_queued_jobs", limit=limits.max_queued_jobs, value=queued_count)
 
 
-def check_api_rules(job: JobDefinition, global_config: GlobalConfig, limits: ApiLimits, *, queued_count: int, remaining_runs: int | None = None) -> None:
+def check_api_rules(job: JobDefinition, global_config: GlobalConfig, limits: ApiLimits, *, queued_count: int, remaining_runs: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
     """Every rule and limit a submission or resume must meet, in the order the acceptance criteria check them:
     the structural rules, the queue-length limit, then the job's own run and time limits."""
     check_job_rules(job, global_config)
     check_queue_not_full(queued_count, limits)
-    check_job_limits(job, limits, remaining_runs=remaining_runs)
+    check_job_limits(job, limits, remaining_runs=remaining_runs, backends=backends)

@@ -93,6 +93,8 @@ def queue_show(
     with client:
         entry = api_request(client, "GET", f"/v1/queue/{checked_queue_id(queue_id)}").json()
     typer.echo(f"{entry['queue_id']}: {queue_state_text(entry)} ({_entry_name(entry)})")
+    if entry.get("backend"):
+        typer.echo(f"  backend: {entry['backend']}")
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
     typer.echo(f"  runs: {_runs_text(entry)}" + (f", run {entry['current_run']} in progress" if entry.get("current_run") is not None else ""))

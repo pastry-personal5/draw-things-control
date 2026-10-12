@@ -5,6 +5,12 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-12
 
+- **Change** [M02]: The backend now prepares its own finishing context and safe settings summary; the shared chain no longer computes Draw Things color anchors. Version-3 queue snapshots verify resolved settings while version 1 and 2 remain readable, and the test backend exercises snapshot recovery. H.264 color correction can fall back to `libx264` when VideoToolbox cannot encode.
+- **Change** [M02]: Jobs now name a backend (default `draw-things-cli`), validate backend settings through an adapter, and run backend-prepared commands through the shared chain. Queue snapshots, manifests, execution records, API responses, and resume keep that identity; older records read as Draw Things. A test-only backend checks the second implementation path, while H3 remains unavailable until Milestone 03.
+- **Owner decision** [M02, M03]: Jobs use `backend` and `backend_settings`; Milestone 02 ships the Draw Things adapter and proves the interface with a test-only fake backend. H3 arrives in Milestone 03 and rejects `color` initially, until its color checks and correction have a backend-specific design.
+- **Design decision** [M02]: The backend owns validation, command preparation, and output finishing; the shared executor owns the chain and supervision. A versioned queue snapshot and explicit backend fields in queue and execution rows preserve identity through recovery and resume; older records default to Draw Things.
+- **Owner decision** [M02, M03, M04]: Phase 4 adds a multiple-backend refactor before h3.c support. H3 is the `i2av` backend, uses `--first-frame` for chain handoff and the repo-local `contrib/backends/h3.c/h3` executable, and is available through all existing front ends. Graph-based metadata remains a later milestone.
+- **Design decision** [M02, M03]: Keep existing jobs on `draw-things-cli` by default, make backend identity durable for queue and resume, and scope the first H3 integration to first-frame-conditioned MP4 output with generated audio. H3 reference modes use different conditioning and are outside this milestone.
 - **Change** [M01]: Milestone 01 is done. Its contextual shortcut help and focus-sensitive status-line hint are covered for the Jobs list, Queue list, Execution History list, and Execution detail; `make check` passes.
 
 ## 2026-10-05

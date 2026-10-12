@@ -155,6 +155,8 @@ class EncoderChoiceTests(unittest.TestCase):
         self.assertEqual(choose_encoder(self.PRORES_4444, {"prores_ks"}, lambda choice: self.fail("probed")).encoder, "prores_ks")
         h264 = choose_encoder(ClipInfo(64, 64, 1, "16/1", 1000, "h264", "avc1"), {"h264_videotoolbox"}, lambda choice: self.fail("probed"))
         self.assertEqual((h264.encoder, h264.skipped), ("h264_videotoolbox", ()))
+        fallback_h264 = choose_encoder(ClipInfo(64, 64, 1, "16/1", 1000, "h264", "avc1"), {"h264_videotoolbox", "libx264"}, lambda choice: False)
+        self.assertEqual((fallback_h264.encoder, fallback_h264.skipped), ("libx264", ("h264_videotoolbox",)))
         with self.assertRaisesRegex(ValueError, "ffmpeg has none of prores_videotoolbox, prores_ks"):
             choose_encoder(self.PRORES_4444, set())
 

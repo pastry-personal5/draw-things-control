@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 from loguru import logger
@@ -275,8 +275,8 @@ class JobExecutorTests(JobTestCase):
         # Before YAML, a job's base_config was the JSON file's object; the plan must not change.
         json_job = replace(yaml_job, base_config=json.loads((self.params / "wan.json").read_text(encoding="utf-8")))
         yaml_plan, json_plan = (self.service.preview(job, executable="draw-things-cli", seed=1) for job in (yaml_job, json_job))
-        self.assertEqual([run.arguments.config_json for run in yaml_plan.runs], [run.arguments.config_json for run in json_plan.runs])
-        self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', yaml_plan.runs[0].arguments.config_json or "")
+        self.assertEqual([cast(DrawThingsGenerateArguments, run.arguments).config_json for run in yaml_plan.runs], [cast(DrawThingsGenerateArguments, run.arguments).config_json for run in json_plan.runs])
+        self.assertIn('"loras":[{"file":"l.ckpt","weight":0.6}]', cast(DrawThingsGenerateArguments, yaml_plan.runs[0].arguments).config_json or "")
         self.assertNotIn("--config-file", yaml_plan.runs[0].arguments.command)
 
     def test_missing_tools_fail_before_anything_runs(self) -> None:

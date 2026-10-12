@@ -9,6 +9,7 @@ from typing import Any
 
 from draw_things_control.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from draw_things_control.core.numbers import is_int
+from draw_things_control.jobs.backend import DRAW_THINGS_BACKEND
 from draw_things_control.jobs.inputs.size import ResizePlan
 
 
@@ -18,6 +19,9 @@ class GenerationMode(StrEnum):
     I2I = "i2i"
     T2V = "t2v"
     I2V = "i2v"
+    # Reserved for the H3 adapter in Phase 4, Milestone 03.  The common chain
+    # needs to represent a backend-owned mode before that adapter is installed.
+    I2AV = "i2av"
 
     @property
     def is_video(self) -> bool:
@@ -149,11 +153,18 @@ class JobDefinition:
     prompt_pairs: tuple[PromptPair, ...]
     output_directory: Path
     extension: str
-    config_file: str
-    base_config: dict[str, Any]
-    config_override: ConfigOverride
-    model: str
-    run_timeout_seconds: float | None
+    config_file: str = ""
+    base_config: dict[str, Any] = field(default_factory=dict)
+    config_override: ConfigOverride = ConfigOverride()
+    model: str = ""
+    run_timeout_seconds: float | None = None
+    # The validated backend's configured seed and its provenance; None means draw a seed when planning.
+    requested_seed: int | None = None
+    requested_seed_source: str = "random"
+    backend: str = DRAW_THINGS_BACKEND
+    # Adapter-provided effective summary, safe to serialize; raw validated options live in backend_data.
+    backend_settings: dict[str, Any] = field(default_factory=dict)
+    backend_data: object | None = field(default=None, repr=False, compare=False)
     # draw-things-cli's --video-format for every run of a video job (prores4444 unless the job names another); None for an image job.
     video_format: str | None = None
     ignored_config: dict[str, Any] = field(default_factory=dict)
@@ -199,10 +210,5 @@ class JobDefinition:
         return DRIFT_SECONDS if self.mode.is_video else 0.0
 
     def configured_seed(self) -> tuple[int | None, str]:
-        """Return the seed from the job or base configuration and where it came from."""
-        if self.config_override.seed is not None:
-            return self.config_override.seed, "config_override"
-        seed = self.base_config.get("seed")
-        if is_int(seed) and seed >= 0:
-            return seed, "config_file"
-        return None, "random"
+        """Return the backend-validated seed and where it came from."""
+        return self.requested_seed, self.requested_seed_source

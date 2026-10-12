@@ -216,12 +216,14 @@ jobs are rejected before any generation starts.
 |-----|---------|
 | `version` | Format version, `1` |
 | `name` | Base of output file names; `a-z`, `0-9`, `-` only |
+| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; no other production backend is installed yet |
+| `backend_settings` | Backend-specific mapping. Omit it or use an empty mapping for Draw Things; nonempty Draw Things settings are rejected |
 | `mode` | `i2i` (image to image), `t2v` (text to video), or `i2v` (image to video) |
 | `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
 | `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
-| `config_file` | A YAML file name in `data/params/`, the [base configuration](#base-configurations) |
-| `config_override` | Settings applied to every run on top of `config_file` |
+| `config_file` | Required for Draw Things: a YAML file name in `data/params/`, the [base configuration](#base-configurations) |
+| `config_override` | Draw Things settings applied to every run on top of `config_file` |
 | `output` | `directory`, `extension` (`mov` or `mp4` for video), and, in video jobs, `video_format`: `prores4444` (the default), `prores422hq`, `h264`, or `hevc`, passed to every run as `--video-format`. ProRes needs `mov`, so an `mp4` job names `h264` or `hevc`. ProRes 4444 keeps 4:4:4 chroma at 12 bits, where H.264 is 4:2:0 at 8 bits, and its files are about 7 times larger per pixel (an 81-frame 448x576 clip is about 28 MB); set `video_format: h264` for small files |
 | `run_timeout_seconds` | Limit for each run |
 | `cooldown` | The wait after each successful run except the last; replaces the global `cooldown` as a whole; see [Cooldown](#cooldown) |
@@ -238,6 +240,15 @@ Things' recommended one in effect.
 
 Job files written before the rename used `batch_count` and `batches`; they now
 fail validation with a message naming the new key (`run_count`, `runs`).
+Existing jobs with no `backend` keep the Draw Things behavior. `backend: h3`
+is reserved for the next milestone and currently fails validation. A job
+cannot switch backends between runs. Queue submissions store the backend and
+the validated job and base-configuration text; editing those files later does
+not change queued or resumed work.
+Job, queue, and execution details show a safe summary of effective backend
+settings. For Draw Things it includes the resolved model, output extension,
+video format when relevant, and any explicitly requested size; the job file's
+`backend_settings` mapping must still be empty.
 
 ### Configuration overrides
 
@@ -894,7 +905,7 @@ they succeed, unless you are in the history or the detail at that moment.
 
 Every queued job that starts is recorded in a SQLite database,
 `state/dtc.db` in the project, whatever `write_job_records` says: the job
-file's exact text, the settings it ran with, and each run's prompts, files,
+file's exact text, backend, the settings it ran with, and each run's prompts, files,
 redacted command, timing, and result. `state/` is git-ignored, created on first
 use, and readable only by you. `generate` is not recorded.
 

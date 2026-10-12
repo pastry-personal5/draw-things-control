@@ -57,6 +57,7 @@ def _execution_fields(execution: ExecutionRow) -> tuple[tuple[str, str | None], 
         ("source", execution.source_kind),
         ("job file", execution.job_file or None),
         ("mode", execution.mode),
+        ("backend", execution.backend),
         ("model", execution.model or "-"),
         ("refiner", refiner_text(settings)),
         ("CFG", number_text(settings.cfg)),
@@ -151,6 +152,8 @@ def number_text(value: float | None) -> str:
 
 def execution_settings(execution: ExecutionRow) -> CommandSettings:
     """The execution's settings, from the first run with a readable command; the model falls back to the execution's own."""
+    if execution.backend != "draw-things-cli":
+        return CommandSettings(model=execution.model or None)
     for run in execution.runs:
         if run.command:
             settings = command_settings(run.command)

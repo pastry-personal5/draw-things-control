@@ -517,6 +517,8 @@ class SchemaTenTests(StoreCase):
         self.assertEqual(store._database.connection().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         [entry] = store.queue.list()
         self.assertEqual((entry.kind, entry.resumes, entry.resumes_execution, entry.resume_first_run, entry.resume_input, entry.resume_seed, entry.submitted_by), ("job", 2, 4, 2, "/out/last.png", 9, "cli"))
+        self.assertEqual(entry.backend, "draw-things-cli")
         self.assertEqual(json.loads(entry.snapshot or ""), {"version": 1, "kind": "job", "job_path": "/jobs/walk.yaml", "job_text": "name: walk", "config_file": "base.yaml", "config_text": "model: m", "input_directory": "/in", "output_directory": "/out", "cooldown_default": {"mode": "off"}, "settings": {"output_directory": "/out"}})
         [execution] = store.executions.page()
         self.assertEqual(execution.source_kind, "job")
+        self.assertEqual(execution.backend, "draw-things-cli")
