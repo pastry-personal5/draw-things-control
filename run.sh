@@ -6,4 +6,4 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-"$project_root/.cache/uv"}"
 uv run dtc \
 run-job \
 ./data/jobs/duo.yaml \
---executable ./draw-things-cli
+--executable ./contrib/backends/draw-things/draw-things-cli

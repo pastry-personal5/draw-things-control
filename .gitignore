@@ -37,8 +37,8 @@ venv/
 .DS_Store
 
 # Draw Things CLI binary (large build artifact)
-draw-things-cli
-draw-things-cli.exe
+./contrib/backends/draw-things/draw-things-cli
+./contrib/backends/draw-things/draw-things-cli.exe
 
 # Runtime / output artifacts
 *.log

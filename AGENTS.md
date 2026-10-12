@@ -6,8 +6,8 @@ project document needed for the task.
 
 ## Safeguards
 
-- Never read the root `draw-things-cli` binary, `.venv/`, caches, or generated
-  gRPC stubs. Search with `rg` or `git grep`.
+- Never read `contrib/backends/draw-things/draw-things-cli`, `.venv/`, caches,
+  or generated gRPC stubs. Search with `rg` or `git grep`.
 - Never edit, delete, or deduplicate `data/params/*.json`,
   `data/params/*.yaml`, or `config/global-config.yaml`.
 - Use the checked-in `dtc` MCP tools only when the owner asks; they can act on
