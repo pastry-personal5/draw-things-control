@@ -198,7 +198,18 @@ ALTER TABLE queue ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli';
 ALTER TABLE executions ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli'
 """
 
+# Phase 4 Milestone 03: native H3 audio is part of a successful run's artifact,
+# not merely a diagnostic media-check fact. Existing Draw Things rows stay NULL.
+SCHEMA_V12 = """
+ALTER TABLE runs ADD COLUMN output_frame_rate REAL;
+ALTER TABLE runs ADD COLUMN output_duration REAL;
+ALTER TABLE runs ADD COLUMN audio_codec TEXT;
+ALTER TABLE runs ADD COLUMN audio_sample_rate INTEGER;
+ALTER TABLE runs ADD COLUMN audio_channels INTEGER;
+ALTER TABLE runs ADD COLUMN audio_duration REAL
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12)
 SCHEMA_VERSION = len(MIGRATIONS)

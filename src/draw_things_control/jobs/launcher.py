@@ -49,10 +49,12 @@ class RunLauncher:
             return RunStatus.INTERRUPTED, exit_code
         if exit_code != 0:
             return RunStatus.FAILED, exit_code
-        if not run.output.is_file():
-            logger.error("{} exited with 0 but did not write {}", job.backend, run.output)
+        backend = self._backends.get(job.backend)
+        child_output = getattr(backend, "child_output", lambda planned: planned.output)(run)
+        if not child_output.is_file():
+            logger.error("{} exited with 0 but did not write {}", job.backend, child_output)
             return RunStatus.FAILED, 1
-        failed = self._backends.get(job.backend).finish(job, run, record, lambda: self._token.requested, finish_state, self._media, self._report)
+        failed = backend.finish(job, run, record, lambda: self._token.requested, finish_state, self._media, self._report)
         if failed is None and run.last_frame is not None and not run.last_frame.is_file():
             logger.error("{} did not produce the handoff {}", job.backend, run.last_frame)
             return RunStatus.FAILED, 1

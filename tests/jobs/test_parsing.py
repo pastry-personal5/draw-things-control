@@ -70,6 +70,41 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(job.extension, "mov")
         self.assertEqual(job.model, "base.ckpt")
 
+    def test_h3_i2av_has_a_closed_schema_and_a_center_crop_first_frame(self) -> None:
+        data = job_data(
+            backend="h3",
+            mode="i2av",
+            config_file=None,
+            prompt_pairs=[{"name": "scene", "positive": "wind in trees", "default": True}],
+            backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42},
+            output={"extension": "mp4"},
+        )
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        self.assertEqual((job.backend, job.mode, job.extension, job.requested_seed), ("h3", GenerationMode.I2AV, "mp4", 42))
+        assert job.input_resize is not None
+        self.assertEqual((job.input_resize.target_size, job.input_resize.fit), ((768, 1344), "crop"))
+        self.assertEqual(job.backend_settings["effective_frames"], 107)
+
+    def test_h3_rejects_draw_things_fields_and_negative_prompt_key(self) -> None:
+        base = {
+            "backend": "h3",
+            "mode": "i2av",
+            "config_file": None,
+            "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}],
+            "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42},
+            "output": {"extension": "mp4"},
+        }
+        for field, change in (("config_override", {"config_override": {}}), ("color", {"color": {}}), ("prompt_pairs[0].negative", {"prompt_pairs": [{"name": "scene", "positive": "wind", "negative": None, "default": True}]})):
+            with self.subTest(field=field), self.assertRaises(InputError) as caught:
+                load_job(self.write_job(job_data(**(base | change))), self.global_config, self.params)
+            self.assertEqual(caught.exception.field, field)
+
+    def test_h3_rejects_temporal_disagreement(self) -> None:
+        data = job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 95, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
+        with self.assertRaises(InputError) as caught:
+            load_job(self.write_job(data), self.global_config, self.params)
+        self.assertEqual(caught.exception.field, "backend_settings.frames")
+
     def test_absolute_input_inside_a_configured_directory_symlink_is_valid(self) -> None:
         alias = self.root / "input-alias"
         alias.symlink_to(self.input_directory, target_is_directory=True)

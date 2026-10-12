@@ -106,6 +106,8 @@ class DrawThingsProcessRunner:
         if kill_wait_seconds < 0:
             raise ValueError("kill_wait_seconds must not be negative")
         self._command = arguments.command
+        self._environment = getattr(arguments, "environment", None)
+        self._cwd = getattr(arguments, "cwd", None)
         if not self._command:
             raise ValueError("command must not be empty")
         self._output_processor = output_processor or OutputProcessor()
@@ -267,6 +269,8 @@ class DrawThingsProcessRunner:
                 errors="replace",
                 bufsize=1,
                 start_new_session=True,
+                env=self._environment,
+                cwd=self._cwd,
             )
         except OSError as error:
             raise ValueError(f"Could not start executable {self._command[0]}: {error.strerror or error}") from error

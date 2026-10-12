@@ -136,7 +136,7 @@ class ExecutionRecorder:
         self._executions.start_run(execution_id, event.number, NewRun(pair=event.pair, positive=event.positive, negative=event.negative, input=event.input, resized_input=event.resized_input, output=event.output, last_frame=event.last_frame, command=event.command, started_at=event.at, anchor=event.anchor))
 
     def _run_finished(self, execution_id: int, event: RunFinished) -> None:
-        self._executions.finish_run(execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame, output_width=event.output_width, output_height=event.output_height, output_frames=event.output_frames, corrected_output=event.corrected_output)
+        self._executions.finish_run(execution_id, event.number, status=event.status, exit_code=event.exit_code, seconds=event.seconds, output=event.output, last_frame=event.last_frame, output_width=event.output_width, output_height=event.output_height, output_frames=event.output_frames, output_frame_rate=event.output_frame_rate, output_duration=event.output_duration, audio_codec=event.audio_codec, audio_sample_rate=event.audio_sample_rate, audio_channels=event.audio_channels, audio_duration=event.audio_duration, corrected_output=event.corrected_output)
 
     def _cooldown_ended(self, execution_id: int, event: CooldownEnded) -> None:
         if self._last_run is not None:

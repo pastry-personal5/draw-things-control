@@ -1,0 +1,36 @@
+# Example H3 image-to-audio-video job (job format version 1).
+#
+# H3 is project-installed: contrib/backends/h3.c/h3 and its MiniMax-H3 model
+# snapshot must be present. `ffmpeg` and `ffprobe` must also be available.
+# Validate: uv run dtc validate-job data/jobs/example-job-for-backend-h3.yaml
+
+version: 1
+name: autumn-street-audio
+backend: h3
+mode: i2av
+input: ./9999-example/example-first-frame.png
+run_count: 2
+
+# H3 accepts positive prompts only. Run 2 receives the verified final frame
+# from run 1, while H3 generates fresh synchronized audio for each run.
+prompt_pairs:
+  - name: street
+    positive: "A calm autumn street at dusk; leaves stir in a light wind; distant city ambience."
+    default: true
+
+# Closed H3 settings. Requested frames must equal llround(seconds * 24).
+# H3 aligns that request to its supported effective frame count internally.
+backend_settings:
+  width: 768
+  height: 1344
+  frames: 96
+  seconds: 4
+  steps: 30
+  seed: 42
+
+output:
+  extension: mp4
+
+run_timeout_seconds: 3600
+cooldown:
+  mode: off

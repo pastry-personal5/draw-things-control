@@ -2,8 +2,8 @@
 
 `draw-things-control` exists for long-horizon video generation by
 autoregressive chaining: each run starts from the previous run's output.
-Chained jobs select a backend; the installed production backend is Draw Things,
-through `draw-things-cli`. One executor runs the chain; front ends (CLI, TUI,
+Chained jobs select a backend: Draw Things through `draw-things-cli`, or H3
+image-to-audio-video through the project-owned h3.c installation. One executor runs the chain; front ends (CLI, TUI,
 API, MCP) are thin layers over it. The run lock permits one supervised backend
 command at a time on the machine.
 
@@ -20,7 +20,7 @@ CLI (Typer) ─┐   TUI (Textual) ─┐   HTTP API ─┐            MCP serve
              ▼
    jobs: JobExecutor ◀── events, cancel() ── JobPlanner, RunLauncher, JobRecords, JobLogWriter
              │                             │
-             └──────── backend registry ───┘ (Draw Things adapter)
+             └──────── backend registry ───┘ (Draw Things and H3 adapters)
              │
              ▼
    core: supervised process runner ──▶ backend executable
@@ -61,7 +61,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 
 | Module | Responsibility |
 |--------|----------------|
-| `core/paths.py` | `ProjectPaths`: where the project keeps its files, worked out once and passed down; no module holds a path of its own |
+| `core/paths.py` | `ProjectPaths`: where the project keeps its files, including the project-owned H3 executable and model snapshot, worked out once and passed down; no module holds a path of its own |
 | `core/errors.py`, `core/exit_codes.py` | `DtcError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`, and, from phase 3, `conflict` and `not_permitted`, among others); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
 | `core/yaml_files.py` | The one strict YAML reader: duplicate and non-string keys, octal and base-60 numbers are refused |
 | `core/draw_things_config.py` | Draw Things configurations (YAML only), lookup in `data/params/`, and job overrides applied to them |
@@ -71,7 +71,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `core/numbers.py`, `core/clock.py` | Numbers read from outside and written for people; the clock every timestamp comes from |
 | `core/run_lock.py` | `fcntl.flock` on `state/run.lock`, naming the holder and the running child |
 | `core/process/` | The supervised process runner (process group, timeout, graceful-then-forced shutdown), its runner factories, output processing, signals, `CancelToken`, process groups |
-| `jobs/backend.py`, `jobs/backends/` | The backend protocol and registry; adapters own typed settings, safe settings summaries, command preparation, tool checks, per-run finishing state, and output finishing. The Draw Things adapter keeps its color policy inside that boundary |
+| `jobs/backend.py`, `jobs/backends/` | The backend protocol and registry; adapters own typed settings, safe settings summaries, command preparation, tool checks, per-run finishing state, and output finishing. The Draw Things adapter keeps its color policy inside that boundary. The H3 adapter owns its first-frame crop/normalization, project-installed runtime preflight, staged MP4 verification/promotion, audio facts, and 8-bit sRGB final-frame handoff; it never enters the Draw Things color pipeline |
 | `jobs/definition.py`, `jobs/parsing.py`, `jobs/prompt_pairs.py`, `jobs/overrides.py` | A validated job, and `JobParser` (`load_job`, `load_job_text`), whose errors are `InputError`s naming the file and the field |
 | `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and the anchor state handed to the backend for each run |
 | `jobs/planning.py`, `jobs/launcher.py`, `jobs/run_finisher.py`, `jobs/color_run.py` | The shared seed, file names, and backend-prepared arguments of each run (`JobPlanner`); supervised execution and common result mapping (`RunLauncher`); Draw Things tagging, last frame, drift check, correction, and measurement (`RunFinisher`, called by its adapter); the correction's two passes over a run's frames, its corrected copy and handoff, and its checks (`ColorCorrector`, loaded only when a job first corrects; a failed correction hands off the uncorrected frame) |
@@ -80,7 +80,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `jobs/files.py`, `jobs/text.py`, `jobs/parsing.py` | Bounded job-file reads, parser validation and path confinement before file access, and the text `validate-job` and the TUI show |
 | `jobs/inputs/`, `jobs/media/`, `jobs/output_naming.py` | Input image check, and run 1's copy of every input (`inputs/resize.py`: upright, 8-bit sRGB, the job's size, made in floating point and rounded once; 16-bit RGB read through `ffmpeg`; a matrix-and-curves ICC profile applied with gamut mapping at constant Oklab lightness and hue, `inputs/gamut.py`, any other through LittleCMS's perceptual intent; Lab values through LittleCMS's Lab transform, profile or not; YCbCr and HSV converted to RGB first); Oklab and gamut edges (`media/oklab.py`); a video's frames as floating-point sRGB raised by the half level Draw Things truncated, and the PNGs the tool wrote read as `draw-things-cli` reads them (`media/clip_frames.py`); color statistics and the `color_drift` check of every video run against its input, its frame 0, and the chain's first image, region by region where a segmenter is given (`media/color_stats.py`, `media/drift.py`); a frame's regions, people, their skin, and the background, from a `Segmenter` (`media/regions.py`: the skin set by each face's own, soft masks kept 8-bit at the segmenter's resolution, feathered for blending, numpy and Pillow only), and Apple Vision's `Segmenter` (`media/vision_segmenter.py`, the only module that imports pyobjc, when `services/toolkit.py` first makes it, once per process, for both the drift check and the correction); the color correction's fit, anchor pull and ramp, caps, smoothing, chroma refinement, skin residual, and applying it to a frame, region by region through soft masks, knowing no files (`media/correction.py`), and the corrected copy's encoder (`media/clip_frames.py`, passing over a listed VideoToolbox that fails a one-frame test encode, kept per process); `ffmpeg` and `ffprobe`; the color a video's stream states, read once before tagging (`stream_color.py`), which both the last frame's decode and the `colr` tag (`video_color.py`) follow; the last frame as the handoff the next run reads (16-bit RGB without alpha, each sample `v * 256 + 128`, with half a level added back and ordered dither, `frames.py`, which also holds the rounding's numpy twin); measuring; the media checks of a video job's input (a resume's as a handoff), resized copy, video, and last frame (`checks.py`, with the matrix measurement in `fingerprint.py`, finding `ffmpeg` and `ffprobe` at each check), reported through `RunFinisher` and the executor as `MediaChecked` events, which `state/recorder.py` keeps in the `media_checks` table (a check it cannot store is skipped; any other failed write stops recording the execution); output names, including the first image named from the manifest's stem |
 | `state/database.py`, `state/schema.py` | The SQLite file, its connections, transactions, and migrations |
-| `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them; `JobIdRepository`, the `job_definitions` table behind J0001 |
+| `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them. Runs retain measured video dimensions/rate/duration and native H3 audio facts as additive fields; `JobIdRepository`, the `job_definitions` table behind J0001 |
 | `state/store.py`, `state/recorder.py`, `state/history_import.py`, `state/ids.py` | `Store` (opened as `run`, `write`, or `browse`), the event recorder, the phase 1 import, and `E0012` and `J0001` |
 | `state/queue.py` (phase 3) | `QueueRepository`, `QueueRow`, and `QueueState`: the `queue` table, ordered first in, first out by its public ID (`Q0007`) |
 | `services/toolkit.py` | `Toolkit`: the real tools; builds the generation service and executors |
@@ -118,7 +118,7 @@ stops the current child and releases the lock only after the worker has joined;
 startup recovers entries left running by a previous server.
 
 A queued job stores a versioned snapshot of the exact job and base-configuration
-text, backend identity, resolved directories, and cooldown policy. Older
+text, backend identity, resolved directories, and cooldown policy. H3 snapshots deliberately exclude the mutable local model snapshot, which is rechecked before execution and resume. Older
 snapshots and rows without a backend read as Draw Things. A queued one-off
 generation stores its resolved request and also identifies Draw Things as its
 backend. Later file edits therefore do not change queued work. Resuming copies

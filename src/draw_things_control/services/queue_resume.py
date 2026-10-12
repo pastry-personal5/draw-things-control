@@ -14,6 +14,7 @@ from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.jobs.backend import BackendRegistry
 from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition
+from draw_things_control.jobs.inputs.size import decode_image, read_image_info
 from draw_things_control.services.queue_callers import check_entry_permitted
 from draw_things_control.services.queue_submit import Enqueue, parse_snapshot
 from draw_things_control.services.resume_chain import walk_chain
@@ -67,14 +68,16 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
         raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
-    _check_own_input(entry, global_config, params_directory, backends=backends)
+    if entry.backend != "h3":
+        _check_own_input(entry, global_config, params_directory, backends=backends)
     chain = _resolve_chain(store, entry)
     # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is still
     # valid; nothing below reads the parsed job for more than its fields (run count, timeout, cooldown), so
     # decoding the image a second time here would be wasted work. Parsed unconditionally, not only inside
     # before_submit's own check, since total_runs below needs it on every resume, not only a checked one (a direct
     # call with no before_submit, as some tests make, still gets a total_runs).
-    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, backends=backends)()
+    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, backends=backends)()
+    _check_resume_input(job, chain.input)
     if before_submit is not None:
         before_submit(job, job.run_count - chain.first_run + 1)
     new = _new_resumed_entry(entry, chain, job.run_count, local_timestamp(clock()), caller)
@@ -128,8 +131,11 @@ def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, p
     if _resumed_by_some_entry(store, entry.queue_number):
         return ResumePreview(False, reason=f"{entry.label} already has a resume; resume the newest one instead")
     try:
-        _check_own_input(entry, global_config, params_directory, decode_input=False, backends=backends)
+        if entry.backend != "h3":
+            _check_own_input(entry, global_config, params_directory, decode_input=False, backends=backends)
         chain = _resolve_chain(store, entry)
+        job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, backends=backends)()
+        _check_resume_input(job, chain.input, decode=False)
     except ResumeRefusedError as error:
         return ResumePreview(False, reason=str(error))
     return ResumePreview(True, from_run=chain.first_run)
@@ -150,6 +156,24 @@ def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_direct
         parse_snapshot(entry, global_config, params_directory, decode_input=decode_input, backends=backends)()
     except InputError as error:
         raise ResumeRefusedError(f"{entry.label}'s job cannot be resolved: {error}") from error
+
+
+def _check_resume_input(job: JobDefinition, handoff: Path, *, decode: bool = True) -> None:
+    """A saved H3 handoff, unlike an ordinary file check, must be decodable at
+    exactly the backend's requested dimensions before a resumed child starts."""
+    if job.backend != "h3":
+        return
+    try:
+        size, _orientation = read_image_info(handoff)
+        plan = job.input_resize
+        if plan is None:
+            raise ValueError("has no H3 input-normalization plan")
+        if size != plan.target_size:
+            raise ValueError(f"has dimensions {size[0]}x{size[1]}, expected {plan.target_size[0]}x{plan.target_size[1]}")
+        if decode:
+            decode_image(handoff)
+    except ValueError as error:
+        raise ResumeRefusedError(f"H3 saved handoff {handoff} is not a valid next input: {error}") from error
 
 
 def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:

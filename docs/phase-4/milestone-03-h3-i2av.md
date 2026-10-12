@@ -1,7 +1,7 @@
 # Milestone 03: H3 image-to-audio-video support
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
+**Status:** in-progress
 **Depends on:** [Milestone 02](milestone-02-multiple-backends.md) and the local [h3.c](https://github.com/antirez/h3.c) build and model snapshot.
 
 ## Goal

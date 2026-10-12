@@ -43,6 +43,16 @@ class ProjectPaths:
         return self.root / "data" / "params"
 
     @property
+    def h3_executable(self) -> Path:
+        """The checked-in H3 executable; jobs never select an executable themselves."""
+        return self.root / "contrib" / "backends" / "h3.c" / "h3"
+
+    @property
+    def h3_model_directory(self) -> Path:
+        """The local H3 model snapshot, deliberately outside job and queue data."""
+        return self.root / "contrib" / "backends" / "h3.c" / "MiniMax-H3"
+
+    @property
     def state(self) -> Path:
         """The state database and the run lock: fixed, since every process must share one lock file."""
         return self.root / "state"

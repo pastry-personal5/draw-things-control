@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 DRAW_THINGS_BACKEND = "draw-things-cli"
+H3_BACKEND = "h3"
 
 
 @dataclass(frozen=True)

@@ -83,5 +83,5 @@ class ServerContext:
     input_catalog: InputCatalog = field(init=False)
 
     def __post_init__(self) -> None:
-        self.catalog = JobCatalog(self.paths.jobs, self.global_config, self.paths, SharedStoreProvider(self.store))
+        self.catalog = JobCatalog(self.paths.jobs, self.global_config, self.paths, SharedStoreProvider(self.store), backends=self.executor.backends)
         self.input_catalog = InputCatalog(self.global_config.input_directory)

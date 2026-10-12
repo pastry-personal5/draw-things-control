@@ -65,7 +65,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -81,7 +81,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, DtcError):
             raise
@@ -91,12 +91,13 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
         self._decode_input = decode_input
         self._base_config_text = base_config_text
+        self._allow_missing_input = allow_missing_input
         self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
@@ -199,6 +200,15 @@ class JobParser:
     @property
     def global_config(self) -> GlobalConfig:
         return self._global_config
+
+    @property
+    def decode_input(self) -> bool:
+        return self._decode_input
+
+    @property
+    def allow_missing_input(self) -> bool:
+        """Only a resumed backend chain may parse after its original input is gone."""
+        return self._allow_missing_input
 
     def fail(self, field: str, problem: str) -> NoReturn:
         self._fail(field, problem)
@@ -304,7 +314,7 @@ class JobParser:
             self._fail("input", "must be a file path")
         # Leading or trailing spaces and tabs are never part of the intended file name.
         path = self._confined_path(value.strip(), self._global_config.input_directory, "input")
-        if not path.is_file():
+        if not path.is_file() and not self._allow_missing_input:
             self._fail("input", f"file does not exist: {path}")
         return path
 

@@ -11,8 +11,11 @@ from typing import TYPE_CHECKING
 from draw_things_control.core.arguments import CommandArguments, DrawThingsGenerateArguments
 from draw_things_control.core.draw_things_config import load_config
 from draw_things_control.core.generation import GenerationService
+from draw_things_control.core.paths import DEFAULT_PATHS, ProjectPaths
 from draw_things_control.core.process.output import MessageCallback, OutputProcessor
 from draw_things_control.core.process.runner import ChildStartCallback, DrawThingsProcessRunner, JobRunnerFactory, StoppableRunner
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DrawThingsBackend, H3Backend, H3Runtime
 from draw_things_control.jobs.executor import JobExecutor
 from draw_things_control.jobs.media.checks import MediaChecker
 from draw_things_control.jobs.media.frames import extract_last_frame
@@ -95,10 +98,15 @@ class Toolkit:
     """The tools of this machine. Built once by a front end, which asks it for the services that use them; a test builds one
     with fake tools, or overrides ``generation_service`` and ``job_executor``."""
 
-    def __init__(self, *, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: JobRunnerFactory[StoppableRunner] = create_job_runner) -> None:
+    def __init__(self, *, paths: ProjectPaths = DEFAULT_PATHS, find_executable: Callable[[str], str | None] = shutil.which, media: MediaTools | None = None, job_runner_factory: JobRunnerFactory[StoppableRunner] = create_job_runner) -> None:
         self._find_executable = find_executable
         self._media = media or default_media_tools()
         self._job_runner_factory = job_runner_factory
+        self._backends = BackendRegistry((DrawThingsBackend(), H3Backend(H3Runtime(paths.h3_executable, paths.h3_model_directory))))
+
+    @property
+    def backends(self) -> BackendRegistry:
+        return self._backends
 
     def generation_service(self) -> GenerationService:
         """The service behind ``generate``: one draw-things-cli run, with the caller's terminal for its preview."""
@@ -106,4 +114,4 @@ class Toolkit:
 
     def job_executor(self, *, handle_signals: bool = True) -> JobExecutor:
         """A job executor; ``handle_signals`` must be False for jobs run off the main thread."""
-        return JobExecutor(runner_factory=self._job_runner_factory, find_executable=self._find_executable, media=self._media, handle_signals=handle_signals)
+        return JobExecutor(runner_factory=self._job_runner_factory, find_executable=self._find_executable, media=self._media, handle_signals=handle_signals, backends=self._backends)

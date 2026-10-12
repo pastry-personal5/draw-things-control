@@ -65,6 +65,12 @@ class NewRun:
     output_width: int | None = None
     output_height: int | None = None
     output_frames: int | None = None
+    output_frame_rate: float | None = None
+    output_duration: float | None = None
+    audio_codec: str | None = None
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
+    audio_duration: float | None = None
     anchor: str | None = None
     corrected_output: str | None = None
 
@@ -144,6 +150,12 @@ class RunRow:
     output_width: int | None
     output_height: int | None
     output_frames: int | None
+    output_frame_rate: float | None = None
+    output_duration: float | None = None
+    audio_codec: str | None = None
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
+    audio_duration: float | None = None
     # The file the run's colors were held to (a full path), and its corrected copy's file name (Milestone 09).
     anchor: str | None = None
     corrected_output: str | None = None
@@ -174,6 +186,12 @@ class RunRow:
             output_width=row["output_width"],
             output_height=row["output_height"],
             output_frames=row["output_frames"],
+            output_frame_rate=row["output_frame_rate"] if "output_frame_rate" in row.keys() else None,
+            output_duration=row["output_duration"] if "output_duration" in row.keys() else None,
+            audio_codec=row["audio_codec"] if "audio_codec" in row.keys() else None,
+            audio_sample_rate=row["audio_sample_rate"] if "audio_sample_rate" in row.keys() else None,
+            audio_channels=row["audio_channels"] if "audio_channels" in row.keys() else None,
+            audio_duration=row["audio_duration"] if "audio_duration" in row.keys() else None,
             anchor=row["anchor"],
             corrected_output=row["corrected_output"],
             id=row["id"],
@@ -295,6 +313,6 @@ class ExecutionRow:
 
 
 EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes", "first_image", "source_kind", "backend")
-RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "anchor", "corrected_output")
+RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "output_frame_rate", "output_duration", "audio_codec", "audio_sample_rate", "audio_channels", "audio_duration", "anchor", "corrected_output")
 # Each execution's count of successful runs, read with it.
 SUCCEEDED_COUNT = "(SELECT COUNT(*) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS succeeded"

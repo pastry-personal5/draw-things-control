@@ -131,6 +131,12 @@ class RunFinished:
     output_width: int | None = None
     output_height: int | None = None
     output_frames: int | None = None
+    output_frame_rate: float | None = None
+    output_duration: float | None = None
+    audio_codec: str | None = None
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
+    audio_duration: float | None = None
     # The corrected copy of the video, <clip>-cc.<ext>, when the job corrects and the correction succeeded.
     corrected_output: str | None = None
 

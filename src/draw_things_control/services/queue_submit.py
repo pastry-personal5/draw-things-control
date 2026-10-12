@@ -123,7 +123,7 @@ def _cooldown_of(data: dict[str, object]) -> CooldownPolicy:
     return parse_cooldown(data, "cooldown")
 
 
-def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> Callable[[], JobDefinition]:
+def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> Callable[[], JobDefinition]:
     """A thunk that parses the entry's snapshot into a ``JobDefinition``, exactly as it was validated at submission.
     ``params_directory`` only names the base configuration in messages: its text comes from the snapshot, never disk.
     ``decode_input=False`` for a caller that only reads the parsed job's fields (not running it), to skip decoding
@@ -148,7 +148,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 if snapshot.get("cooldown_default") != entry.cooldown_default or snapshot.get("settings") != json.loads(entry.settings.to_json()):
                     raise InputError(f"{entry.label}: settings differ between the queue row and snapshot", field="settings")
                 config = GlobalConfig(input_directory=Path(snapshot["input_directory"]), output_directory=Path(snapshot["output_directory"]), write_job_records=live.write_job_records, cooldown=_cooldown_of(snapshot["cooldown_default"]) if snapshot.get("cooldown_default") is not None else None, history_retention_days=live.history_retention_days)
-                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], backends=backends)
+                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], allow_missing_input=allow_missing_input, backends=backends)
                 if job.backend != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between job text and queue snapshot", field="backend")
                 if snapshot["version"] == 3:
@@ -158,7 +158,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                         raise InputError(f"{entry.label}: run count differs from the queue row", field="run_count")
                 return job
         global_config = global_config_of(entry, live)
-        job = load_job_text(entry.job_text, Path(entry.job_path), global_config, params_directory, decode_input=decode_input, base_config_text=entry.config_text, backends=backends)
+        job = load_job_text(entry.job_text, Path(entry.job_path), global_config, params_directory, decode_input=decode_input, base_config_text=entry.config_text, allow_missing_input=allow_missing_input, backends=backends)
         if job.backend != entry.backend:
             raise InputError(f"{entry.label}: backend differs between job text and queue row", field="backend")
         return job

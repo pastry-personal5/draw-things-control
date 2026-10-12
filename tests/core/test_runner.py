@@ -22,6 +22,7 @@ from draw_things_control.core.process.signals import interruptible_wait
 @dataclass(frozen=True)
 class ProcessCommand:
     command: tuple[str, ...]
+    cwd: Path | None = None
 
 
 class ProcessRunnerTests(unittest.TestCase):
@@ -111,6 +112,13 @@ class ProcessRunnerTests(unittest.TestCase):
             runner = DrawThingsProcessRunner(ProcessCommand((str(script),)), handle_signals=False)
             with self.assertRaisesRegex(ValueError, "Could not start executable"):
                 runner.run()
+
+    def test_runner_uses_a_backend_requested_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            command = ProcessCommand((sys.executable, "-c", "import os; print(os.getcwd())"), Path(directory))
+            result = DrawThingsProcessRunner(command, handle_signals=False).run()
+        self.assertTrue(result.succeeded)
+        self.assertEqual(Path(result.messages[0].text).resolve(), Path(directory).resolve())
 
     def test_cleanup_does_not_restart_shutdown_after_giving_up(self) -> None:
         runner = DrawThingsProcessRunner(ProcessCommand(("unused",)), shutdown_grace_seconds=10, handle_signals=False)

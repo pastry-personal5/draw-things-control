@@ -23,7 +23,7 @@ Improve the product experience, make chained generation support multiple backend
 
 1. [Milestone 01: TUI interaction and contextual shortcut help](milestone-01-tui-interaction.md) — done
 2. [Milestone 02: Refactor for multiple backends](milestone-02-multiple-backends.md) — done
-3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — planned
+3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — in progress
 4. [Milestone 04: Graph-based metadata](milestone-04-graph-metadata.md) — planned
 
 ## Depends on

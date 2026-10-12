@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-12
 
+- **Change** [M03]: H3 is an installed `i2av` backend with a closed job schema, project-owned executable and model paths, first-frame normalization, controlled media-tool environment, staged MP4 promotion, verified final-frame handoffs, and H.264/AAC media validation. Its safe requested/effective timing settings are kept with queue snapshots and run records; local model snapshots are an installation dependency and are rechecked when work starts or resumes.
+
 - **Design decision** [M03]: H3 outputs are generated into a unique sibling staging MP4, then strictly probed, decoded, and atomically promoted before they can be recorded or used as a handoff. The H3 child receives a controlled media-tool environment: inherited `H3_FFMPEG` and `H3_FFPROBE` overrides are rejected, and the resolved FFmpeg/FFprobe pair is placed first on its `PATH`. This prevents partial output and tool-selection drift across H3, preflight, and finishing.
 - **Owner decision** [M04]: The graph is a DTC-owned JSON format, available through a read API and an explicit JSON export. The file is produced on request rather than after every execution.
 - **Design decision** [M04]: Project a versioned provenance graph from a consistent read of execution history, then use the same schema for the API, CLI export, and offline trace. This avoids a second mutable graph store and event/file synchronization. Imported resume IDs must be remapped or left unresolved, because blindly treating an old manifest ID as a local execution ID could create false provenance.

@@ -34,7 +34,7 @@ def get_job(job: str, context: ServerContext = Depends(get_context), brief: bool
         text = source.decode("utf-8", errors="replace")
     except OSError as error:
         raise NotFoundError(f"Cannot read {path.name}: {error.strerror}") from error
-    details = read_details(path, context.global_config, context.paths)
+    details = read_details(path, context.global_config, context.paths, backends=context.executor.backends)
     if details.job is not None:
         detail = job_detail(details.job, text, sha256=hashlib.sha256(source).hexdigest())
         if brief:
@@ -46,7 +46,7 @@ def get_job(job: str, context: ServerContext = Depends(get_context), brief: bool
 @router.get("/v1/jobs/{job}/preview")
 def get_job_preview(job: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
     path = resolve_job_reference(context.catalog, job)
-    details = read_details(path, context.global_config, context.paths)
+    details = read_details(path, context.global_config, context.paths, backends=context.executor.backends)
     if details.job is None:
         raise InputError(details.error or f"{path.name} is not a valid job", path=path)
     try:

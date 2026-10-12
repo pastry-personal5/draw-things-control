@@ -12,6 +12,8 @@ from draw_things_control.core.clock import local_timestamp
 from draw_things_control.core.errors import InputError, NotFoundError
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths, linked_component
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.files import job_files, read_job
 from draw_things_control.services.job_details import error_text
@@ -75,11 +77,12 @@ class JobCatalog:
     write browsing makes. ``read`` never raises, since a failed front-end worker closes the app, and with it a running job.
     """
 
-    def __init__(self, directory: Path, settings: GlobalConfig, paths: ProjectPaths, store: StoreProvider) -> None:
+    def __init__(self, directory: Path, settings: GlobalConfig, paths: ProjectPaths, store: StoreProvider, *, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self.directory = directory
         self.settings = settings
         self._paths = paths
         self._store = store
+        self._backends = backends
         self._lock = threading.Lock()
         # Each listed file: its signature, its inputs' signatures (None for an invalid job), and its row.
         self._cache: dict[Path, tuple[Signature, tuple[tuple[Path, Signature], ...] | None, JobRow]] = {}
@@ -185,7 +188,7 @@ class JobCatalog:
             return cached[2]
         changed = own[0] / 1e9
         try:
-            job = read_job(path, self.settings, self._paths, decode_input=False)[0]
+            job = read_job(path, self.settings, self._paths, decode_input=False, backends=self._backends)[0]
         except Exception as error:
             # Not only ValueError and OSError: a job file that breaks the loader must not end the worker.
             row, dependencies = JobRow(path, None, error_text(path, error), error_field=getattr(error, "field", None), changed=changed), None

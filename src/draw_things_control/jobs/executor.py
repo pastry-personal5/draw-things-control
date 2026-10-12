@@ -150,6 +150,11 @@ class JobExecutor:
         """Validate that the job can start and describe every run without running anything (see ``JobPlanner.preview``)."""
         return self._planner.preview(job, executable=executable, seed=seed)
 
+    @property
+    def backends(self) -> BackendRegistry:
+        """The installed adapters shared by parsing, previews, and execution."""
+        return self._backends
+
     def run(self, job: JobDefinition, options: JobRunOptions) -> JobOutcome:
         """Run the job's runs in order; stop at the first failed, timed-out, or interrupted run.
 
@@ -209,7 +214,7 @@ class JobExecutor:
         """An i2v job's first input, and its resized copy, checked before the run that reads them; a resume's input,
         the chain's own last frame, is checked as a handoff."""
         checker = self._media.checker
-        if checker is None or chain.job.mode is not GenerationMode.I2V or run_input is None:
+        if checker is None or chain.job.mode not in (GenerationMode.I2V, GenerationMode.I2AV) or run_input is None:
             return
         if chain.options.resume is not None:
             self._report_check(run, checker.handoff(run_input))
@@ -488,7 +493,7 @@ class JobExecutor:
         return EXIT_PARKED
 
     def _finish_run(self, number: int, record: RunRecord, exit_code: int | None, *, output: str | None) -> None:
-        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames, corrected_output=record.corrected_output))
+        self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames, output_frame_rate=record.output_frame_rate, output_duration=record.output_duration, audio_codec=record.audio_codec, audio_sample_rate=record.audio_sample_rate, audio_channels=record.audio_channels, audio_duration=record.audio_duration, corrected_output=record.corrected_output))
 
     def _output_callback(self, number: int) -> MessageCallback | None:
         """A callback that turns each child line of run ``number`` into a RunOutput, or None without an observer."""

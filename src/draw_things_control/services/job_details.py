@@ -7,6 +7,8 @@ from pathlib import Path
 
 from draw_things_control.core.global_config import GlobalConfig
 from draw_things_control.core.paths import ProjectPaths
+from draw_things_control.jobs.backend import BackendRegistry
+from draw_things_control.jobs.backends import DEFAULT_BACKENDS
 from draw_things_control.jobs.definition import JobDefinition
 from draw_things_control.jobs.files import read_job
 from draw_things_control.jobs.text import PLACEHOLDER_SEED, PlanStep, plan_header, plan_steps
@@ -31,10 +33,10 @@ def error_text(path: Path, error: Exception) -> str:
     return message.removeprefix(prefix)
 
 
-def read_details(path: Path, settings: GlobalConfig, paths: ProjectPaths) -> JobDetails:
+def read_details(path: Path, settings: GlobalConfig, paths: ProjectPaths, *, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDetails:
     """Load the job, decoding its input, without its plan."""
     try:
-        return JobDetails(read_job(path, settings, paths)[0])
+        return JobDetails(read_job(path, settings, paths, backends=backends)[0])
     except (ValueError, OSError) as error:
         return JobDetails(None, error_text(path, error))
 

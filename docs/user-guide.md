@@ -27,7 +27,7 @@ the project root as `uv run dtc <command>`.
 
 You need Python 3.12 or later, [uv](https://docs.astral.sh/uv/), and the
 [Draw Things CLI](https://github.com/drawthingsai/draw-things-community)
-installed locally. Video jobs also need `ffmpeg` on your `PATH` to extract
+installed locally for Draw Things jobs. Video jobs also need `ffmpeg` on your `PATH` to extract
 last frames, and `ffprobe` (installed with `ffmpeg`, beside it or on your
 `PATH`) to measure each video's actual size and frame count; a video job
 without it does not start.
@@ -195,10 +195,10 @@ last frame, for video). Each run uses one of your named prompt pairs.
 Validate the file, start the server, then submit it:
 
 ```bash
-uv run dtc validate-job data/jobs/example-job.yaml
+uv run dtc validate-job data/jobs/example-job-for-backend-draw-things-cli.yaml
 uv run dtc serve
 # In another terminal:
-uv run dtc queue add example-job.yaml --wait
+uv run dtc queue add example-job-for-backend-draw-things-cli.yaml --wait
 ```
 
 1. `validate-job` reports any problem, naming the field, and shows the
@@ -207,8 +207,9 @@ uv run dtc queue add example-job.yaml --wait
 2. `dtc serve` holds the run lock and starts the queue worker.
 3. `queue add --wait` submits the file and follows its runs.
 
-Start from `data/jobs/example-job.yaml`, which is commented line by line. Invalid
-jobs are rejected before any generation starts.
+Start from `data/jobs/example-job-for-backend-draw-things-cli.yaml` or
+`data/jobs/example-job-for-backend-h3.yaml`, which are commented line by line.
+Invalid jobs are rejected before any generation starts.
 
 ## Job file reference
 
@@ -216,9 +217,9 @@ jobs are rejected before any generation starts.
 |-----|---------|
 | `version` | Format version, `1` |
 | `name` | Base of output file names; `a-z`, `0-9`, `-` only |
-| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; no other production backend is installed yet |
-| `backend_settings` | Backend-specific mapping. Omit it or use an empty mapping for Draw Things; nonempty Draw Things settings are rejected |
-| `mode` | `i2i` (image to image), `t2v` (text to video), or `i2v` (image to video) |
+| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; use `h3` only with `i2av` |
+| `backend_settings` | Empty or absent for Draw Things. H3 requires exactly `width`, `height`, `frames`, `seconds`, `steps`, and `seed` |
+| `mode` | `i2i` (image to image), `t2v` (text to video), `i2v` (image to video), or H3-only `i2av` (image to audio-video) |
 | `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
 | `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
@@ -240,15 +241,60 @@ Things' recommended one in effect.
 
 Job files written before the rename used `batch_count` and `batches`; they now
 fail validation with a message naming the new key (`run_count`, `runs`).
-Existing jobs with no `backend` keep the Draw Things behavior. `backend: h3`
-is reserved for the next milestone and currently fails validation. A job
-cannot switch backends between runs. Queue submissions store the backend and
-the validated job and base-configuration text; editing those files later does
-not change queued or resumed work.
+Existing jobs with no `backend` keep the Draw Things behavior. A job cannot
+switch backends between runs. Queue submissions store the backend and the
+validated job and base-configuration text; editing those files later does not
+change queued or resumed work.
 Job, queue, and execution details show a safe summary of effective backend
 settings. For Draw Things it includes the resolved model, output extension,
 video format when relevant, and any explicitly requested size; the job file's
 `backend_settings` mapping must still be empty.
+
+### H3 image-to-audio-video
+
+H3 is installed project-wide at `contrib/backends/h3.c/h3`, with its model
+snapshot at `contrib/backends/h3.c/MiniMax-H3`; a job cannot provide either
+path. H3 needs an Apple Silicon Metal-capable installation plus `ffmpeg` and
+`ffprobe`. `--executable` still selects Draw Things only.
+
+```yaml
+version: 1
+name: autumn-audio
+backend: h3
+mode: i2av
+input: opening.png
+run_count: 2
+prompt_pairs:
+  - name: street
+    positive: "A calm autumn street; wind in leaves; distant city ambience."
+    default: true
+backend_settings:
+  width: 768
+  height: 1344
+  frames: 96
+  seconds: 4
+  steps: 30
+  seed: 42
+output:
+  extension: mp4
+cooldown:
+  mode: off
+```
+
+Width and height are multiples of 32, at least 32, and together no larger
+than 768×1344. `seconds` is 1–15 and `frames` must be exactly
+`llround(seconds * 24)` (24–360); H3 aligns this to its effective frame count,
+which is stored separately. H3 rejects Draw Things configuration and sizing
+keys, `color`, negative prompts (including an empty or null value), and
+`output.video_format`. It receives an 8-bit sRGB PNG cropped centrally to the
+requested dimensions. Every successful run generates native H.264/AAC MP4
+audio and video; the final frame is verified and becomes the next run's first
+frame. History, manifests, and API responses retain measured video and audio
+properties. H3 writes a hidden partial MP4 and only promotes it after media checks
+pass. Changing local H3 weights can change queued or resumed results because
+the model snapshot is intentionally not copied into the queue. Once an H3 run
+has saved a verified handoff, a resume validates that handoff's decoded PNG
+dimensions and does not require the original run-1 input to remain available.
 
 ### Configuration overrides
 
@@ -418,7 +464,7 @@ The anchor is the first image, as `draw-things-cli` saw it for run 1. With
 `reanchor: prompt_pair` (the default), a run whose prompt pair differs from the
 previous run's makes its own input the anchor from then on, so an intended
 change of scene is not pulled back past it. Every change counts: a job whose
-pairs alternate, as `example-job.yaml`'s walk and wave do, re-anchors at every
+pairs alternate, as the Draw Things example's walk and wave do, re-anchors at every
 run, and `first` and `blend` then act as `previous`. `reanchor: never` holds
 such a job to the first image. A resume takes the anchor of the run it
 continues after, or the first image, with a warning, when that file is gone.
@@ -1457,4 +1503,8 @@ keeps any partial output, and exits with that run's exit code.
 - **`Could not find 'ffprobe'`:** a video job needs `ffprobe` to measure its
   outputs. It comes with `ffmpeg` (`brew install ffmpeg`); put it beside
   `ffmpeg` or on your `PATH`.
+- **`h3: no Metal device available`:** H3 runs only where the local h3.c build
+  can access an Apple Silicon Metal device. A sandboxed or remote process that
+  cannot expose that device can validate the job but cannot run it; start the
+  queue worker on the local Apple Silicon host instead.
 - **Unsure what will run:** add `--dry-run`.
