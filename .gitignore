@@ -75,3 +75,5 @@ data/jobs/.backups/
 # Execution history database and run lock (created at run time)
 /state/
 
+# Contribution
+/contrib
