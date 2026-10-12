@@ -68,6 +68,21 @@ class DeleteTests(HistoryCase):
         self.assertIn("Deleted 1 execution", self.said)
         self.assertEqual(self.server.deletions, [(["E0002"], True), (["E0002"], False)])
 
+    async def test_question_mark_does_not_open_shortcut_help_during_delete_confirmation(self) -> None:
+        self.add("walk", 0)
+        app = self.app()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self.settle(pilot)
+            await self.focus_history(pilot)
+            await pilot.press("d")
+            await self.dialog(pilot)
+            await pilot.press("question_mark")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, DeleteDialog)
+            await self.answer(pilot, "n")
+            await self.finished(pilot)
+        self.assertEqual(self.server.deletions, [(["E0001"], True)])
+
     async def test_marks_are_kept_by_execution_across_a_re_read_and_cleared_by_a_filter(self) -> None:
         for minutes in (0, 10, 20):
             self.add("walk", minutes)

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import DataTable
@@ -18,6 +18,7 @@ from draw_things_control.services.history import PAGE_SIZE, HistoryFilter, Histo
 from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.tui.panes.base import SidewaysTable
 from draw_things_control.tui.reader import PaneHistory
+from draw_things_control.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from draw_things_control.tui.text.history import history_cells
 
 # How often the history is checked while another process runs a job, and the data directory for changed job files when
@@ -27,6 +28,17 @@ HISTORY_POLL_SECONDS = 5
 
 # The history's height with its border and header: 5 rows show (owner decision); a horizontal scrollbar adds a line.
 HISTORY_LINES = 8
+EXECUTION_HISTORY_SHORTCUTS = (
+    ("Up/Down", "Move the selected execution"),
+    ("PageUp/PageDown, Home/End", "Move selection further"),
+    ("Enter", "Open the selected execution"),
+    ("Space", "Mark or unmark the selected execution"),
+    ("d", "Delete marked or selected executions"),
+    ("Tab / Shift-Tab", "Move focus"),
+    ("Escape", "Focus the command field"),
+    ("Ctrl-C", "Press twice to quit"),
+    ("?", "Show shortcut help"),
+)
 
 
 class ExecutionHistoryList(SidewaysTable):
@@ -39,6 +51,7 @@ class ExecutionHistoryList(SidewaysTable):
     # The history's height with its border and header: 5 rows show (owner decision).
     HEIGHT_LINES = HISTORY_LINES
     BINDINGS = [
+        Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("escape", "leave", "Command line", show=False),
         Binding("space", "toggle_mark", "Mark", show=False),
         Binding("d", "delete", "Delete", show=False),
@@ -99,6 +112,12 @@ class ExecutionHistoryList(SidewaysTable):
     def action_leave(self) -> None:
         # Not focus_next: the Execution detail follows the history in the Tab order.
         self.leave()
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
+
+    def action_show_shortcut_help(self) -> None:
+        show_shortcut_help(self, "Execution History list", EXECUTION_HISTORY_SHORTCUTS)
 
     def action_toggle_mark(self) -> None:
         """``Space``: mark the selected row for deletion, or unmark it."""

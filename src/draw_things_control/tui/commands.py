@@ -88,6 +88,7 @@ KEYS = (
     ("s / r", "Sort by the next column / reverse the order (Jobs list)"),
     ("Space", "Mark or unmark the selected row for deletion (Execution History list)"),
     ("d", "Delete the marked rows, or the selected row when none is marked, asking first (Execution History list)"),
+    ("?", "Show shortcut help for the focused list or detail"),
     ("Escape", "Clear the command field, or go back to it (the widgets)"),
     ("Ctrl-C", "Clear the command field, or press twice to quit"),
 )

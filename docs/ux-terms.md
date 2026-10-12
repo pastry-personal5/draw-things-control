@@ -55,6 +55,7 @@ canonical term.
 | Canonical term | Visible label | Purpose |
 |---|---|---|
 | **delete confirmation** | deletion question with buttons | A modal confirmation before irreversible execution-history deletion. It blocks the main screen until a choice is made. |
+| **shortcut help overlay** | centered shortcut reference | A modal, centered reference that lists the keyboard shortcuts available in the focused list or detail. |
 | **Delete** | `Delete` button | Deletes the execution currently named in the confirmation. |
 | **Skip** | `Skip` button | Keeps the current execution and continues a multi-execution deletion. |
 | **Delete all** | `Delete all` button | Deletes the current and all remaining selected executions. |
@@ -72,7 +73,8 @@ canonical term.
 | **command** | A slash command entered in the command field, such as `/queue hold`. It is not a keyboard shortcut. |
 | **keyboard shortcut** | A key or key combination that performs a named action. State both its action and scope, for example, “`c` cancels the selected entry in the Queue list.” |
 | **global shortcut** | A shortcut the TUI handles before a focused component’s shortcut. Reserve it for a small number of app-wide, predictable actions. |
-| **modal** | A temporary interaction that blocks the main screen until it is completed or cancelled. The delete confirmation is currently the only modal. |
+| **shortcut help** | The contextual shortcut reference opened with `?` from a focused list or detail. It closes with `?` or Escape and restores the prior focus. |
+| **modal** | A temporary interaction that blocks the main screen until it is completed or cancelled. The shortcut help overlay and delete confirmation are modals. |
 | **feedback** | Information that confirms an action, reports progress, warns of a consequence, or explains an error. State what changed, its outcome, and a useful next action when one exists. |
 
 ## Writing and shortcut rules

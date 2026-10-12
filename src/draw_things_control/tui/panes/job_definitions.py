@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.binding import Binding
 from textual.timer import Timer
 from textual.widgets import DataTable
@@ -18,6 +18,7 @@ from draw_things_control.tui.commands import SORT_KEYS
 from draw_things_control.tui.job_sort import SortPreference
 from draw_things_control.tui.job_watch import JobWatcher
 from draw_things_control.tui.panes.base import SidewaysTable
+from draw_things_control.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from draw_things_control.tui.text.jobs import job_definition_cells, job_display_names, sort_job_rows
 
 JOBS_POLL_SECONDS = 5
@@ -29,6 +30,17 @@ JOBS_WATCH_PAUSE_SECONDS = 0.3
 
 # The Jobs list's height with its border and header: eight job rows show.
 JOBS_LIST_LINES = 11
+JOBS_LIST_SHORTCUTS = (
+    ("Up/Down", "Move the selected job"),
+    ("PageUp/PageDown, Home/End", "Move selection further"),
+    ("Enter", "Open the selected job"),
+    ("a", "Submit the selected job"),
+    ("s / r", "Change the sort column / reverse the order"),
+    ("Tab / Shift-Tab", "Move focus"),
+    ("Escape", "Focus the command field"),
+    ("Ctrl-C", "Press twice to quit"),
+    ("?", "Show shortcut help"),
+)
 
 
 class JobsList(SidewaysTable):
@@ -42,6 +54,7 @@ class JobsList(SidewaysTable):
 
     HEIGHT_LINES = JOBS_LIST_LINES
     BINDINGS = [
+        Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("s", "next_sort", "Sort by the next column", show=False),
         Binding("r", "reverse_sort", "Reverse the order", show=False),
         Binding("a", "run_selected", "Run the job", show=False),
@@ -96,6 +109,12 @@ class JobsList(SidewaysTable):
 
     def on_unmount(self) -> None:
         self.watcher.stop()
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
+
+    def action_show_shortcut_help(self) -> None:
+        show_shortcut_help(self, "Jobs list", JOBS_LIST_SHORTCUTS)
 
     def files_changed(self) -> None:
         """On the watcher's thread: read the directory once the events stop."""

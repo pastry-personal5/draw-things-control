@@ -21,8 +21,6 @@ from draw_things_control.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
-NOW = datetime(2026, 9, 27, 15, 30, 12)
-
 # Holds the "serve" lock and records another process as its child, as a real dtc serve would; killed with SIGKILL so
 # the flock is released (the OS does that) but the file still names the child, which survives independently.
 HOLDER = """
@@ -54,7 +52,7 @@ class QueueHostTests(JobTestCase):
         self.executor = job_executor(runner_factory=create_runner, find_executable=lambda name: name, frame_extractor=extract_frame, require_ffmpeg=lambda: "ffmpeg", handle_signals=False, cooldown=lambda seconds: seconds)
 
     def host(self, *, child_check: Callable[[int, str], bool] = is_draw_things_process) -> QueueHost:
-        return QueueHost(self.paths, self.executor, self.global_config, executable="draw-things-cli", shutdown_grace=1, clock=lambda: NOW, child_check=child_check)
+        return QueueHost(self.paths, self.executor, self.global_config, executable="draw-things-cli", shutdown_grace=1, clock=datetime.now, child_check=child_check)
 
     def submit_ahead_of_time(self) -> None:
         """Submit a job through a store opened before the host starts, as an owner queueing work while the server is down would."""
@@ -127,7 +125,7 @@ class QueueHostTests(JobTestCase):
         path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         crashed = submit_job(path, self.global_config, self.params, store)
         second = submit_job(path, self.global_config, self.params, store)
-        claimed = store.queue.claim_oldest(NOW)
+        claimed = store.queue.claim_oldest(datetime.now())
         assert claimed is not None
         # A crash after JobStarted: the execution row exists and was itself left 'running'.
         execution_id = store.executions.start(NewExecution(job_name="sunset-walk", job_file="job.yaml", mode="i2v", started_at="2026-09-27T10:00:00+00:00"))

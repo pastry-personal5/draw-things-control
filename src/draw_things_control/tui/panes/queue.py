@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from textual import work
+from textual import events, work
 from textual.binding import Binding
 from textual.widgets import DataTable
 from textual.worker import get_current_worker
@@ -15,6 +15,7 @@ from textual.worker import get_current_worker
 from draw_things_control.services.queue_hold import HoldState
 from draw_things_control.services.queue_reader import QueueReader
 from draw_things_control.tui.panes.base import SidewaysTable
+from draw_things_control.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from draw_things_control.tui.text.queue import queue_cells, queue_row_to_dict
 
 if TYPE_CHECKING:
@@ -26,6 +27,17 @@ QUEUE_POLL_SECONDS = 5
 # The pane's height with its border and header: 5 rows show (owner decision), a horizontal scrollbar adds a line.
 QUEUE_LINES = 8
 MAX_FINISHED_ROWS = 5
+QUEUE_LIST_SHORTCUTS = (
+    ("Up/Down", "Move the selected entry"),
+    ("PageUp/PageDown, Home/End", "Move selection further"),
+    ("Enter", "Open the selected entry"),
+    ("c", "Cancel the selected entry"),
+    ("p / u", "Park / unpark the selected entry"),
+    ("Tab / Shift-Tab", "Move focus"),
+    ("Escape", "Focus the command field"),
+    ("Ctrl-C", "Press twice to quit"),
+    ("?", "Show shortcut help"),
+)
 
 
 class QueueList(SidewaysTable):
@@ -33,6 +45,7 @@ class QueueList(SidewaysTable):
 
     HEIGHT_LINES = QUEUE_LINES
     BINDINGS = [
+        Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("escape", "leave", "Command line", show=False),
         Binding("c", "cancel_selected", "Cancel", show=False),
         Binding("p", "park_selected", "Park", show=False),
@@ -55,6 +68,12 @@ class QueueList(SidewaysTable):
 
     def action_leave(self) -> None:
         self.leave()
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
+
+    def action_show_shortcut_help(self) -> None:
+        show_shortcut_help(self, "Queue list", QUEUE_LIST_SHORTCUTS)
 
     def action_cancel_selected(self) -> None:
         """``c``: the same as /queue cancel on the selected row's ID, no confirmation, as that command has none."""

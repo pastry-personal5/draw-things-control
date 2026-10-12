@@ -36,6 +36,7 @@ from draw_things_control.tui.text.arguments import parameters_text
 from draw_things_control.tui.text.execution import execution_text
 from draw_things_control.tui.text.jobs import details_text, jobs_text
 from draw_things_control.tui.text.prompts import prompts_text
+from draw_things_control.tui.text.status import status_line_text
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField, SteadyText
 
 if TYPE_CHECKING:
@@ -156,6 +157,17 @@ class MainScreen(Screen[None]):
 
     def focus_command_field(self) -> None:
         self.command_field.focus()
+
+    def shortcut_help_available(self) -> bool:
+        """Whether the focused main-screen component can show shortcut help."""
+        return self.focused in (self.jobs_list, self.queue_list, self.execution_history, self.execution_detail)
+
+    def refresh_status_line(self) -> None:
+        """Render the focus-sensitive footer without waiting for the periodic job tick."""
+        if not self.is_mounted:
+            return
+        dtc = self.dtc
+        self.query_one("#status-line", SteadyText).show_text(status_line_text(dtc.data_directory, dtc.live, dtc.job_running, dtc.quit_armed, shortcut_help=self.shortcut_help_available()))
 
     # Commands
 

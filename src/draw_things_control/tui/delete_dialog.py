@@ -1,6 +1,8 @@
-"""The delete dialog (Milestone 06): the TUI's one dialog, since deleting an execution is its one action that cannot
-be undone. Its own module, not ``screens.py``: ``tui/deletion.py`` pushes it, and ``screens.py`` already imports the
-controller that imports ``deletion.py``."""
+"""The delete dialog (Milestone 06), for the TUI action that cannot be undone.
+
+Its own module, not ``screens.py``: ``tui/deletion.py`` pushes it, and
+``screens.py`` already imports the controller that imports ``deletion.py``.
+"""
 
 from __future__ import annotations
 

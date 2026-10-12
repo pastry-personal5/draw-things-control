@@ -125,6 +125,31 @@ Rule.command-rule {
     height: 1;
 }
 
+/* Shortcut help is a centered reference overlay: it offers no action of its own. */
+ShortcutHelpOverlay {
+    align: center middle;
+}
+
+#shortcut-help {
+    width: 58;
+    max-width: 100%;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#shortcut-help-title {
+    margin-bottom: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#shortcut-help-dismiss {
+    margin-top: 1;
+    color: $text-muted;
+}
+
 /* The delete dialog (Milestone 06): a bordered box in the middle of the dimmed screen. */
 DeleteDialog {
     align: center middle;

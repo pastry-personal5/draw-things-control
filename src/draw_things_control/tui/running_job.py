@@ -13,8 +13,6 @@ from draw_things_control.state.ids import EXECUTION_LETTER, parse_typed_id
 from draw_things_control.tui.preferences import LOW_STATUS_REFRESH_SECONDS
 from draw_things_control.tui.text.arguments import run_arguments
 from draw_things_control.tui.text.events import event_text, result_text
-from draw_things_control.tui.text.status import status_line_text
-from draw_things_control.tui.widgets import SteadyText
 
 if TYPE_CHECKING:
     from draw_things_control.tui.screens import MainScreen
@@ -103,4 +101,4 @@ class RunningJobView:
         self._last_render = self.clock()
         self.screen.generation_output.tick(dtc.live, dtc.verbose_level)
         self.render_status()
-        self.screen.query_one("#status-line", SteadyText).show_text(status_line_text(dtc.data_directory, dtc.live, dtc.job_running, dtc.quit_armed))
+        self.screen.refresh_status_line()

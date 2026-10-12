@@ -18,9 +18,13 @@ from draw_things_control.jobs.parsing import load_job
 from draw_things_control.jobs.text import plan_header, plan_steps
 from draw_things_control.tui.app import DrawThingsApp
 from draw_things_control.tui.commands import usage
+from draw_things_control.tui.panes.execution import ExecutionDetailPane
+from draw_things_control.tui.panes.history import ExecutionHistoryList
 from draw_things_control.tui.panes.job_definitions import JobsList
+from draw_things_control.tui.panes.queue import QueueList
 from draw_things_control.tui.panes.status import WorkStatus
 from draw_things_control.tui.screens import MainScreen
+from draw_things_control.tui.shortcut_help import ShortcutHelpOverlay
 from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField
 from tests.fixtures import JobTestCase, TestExecutor, job_executor
 from tests.tui.tui_case import TuiTestCase
@@ -128,6 +132,44 @@ class TuiTests(TuiTestCase):
             self.assertIsInstance(app.screen, MainScreen)
             self.assertEqual(app.screen.query_one(CommandField).value, "qxlsr?jk")
             self.assertIsNone(app.live)
+
+    async def test_help_capable_components_show_the_shortcut_hint_in_the_status_line(self) -> None:
+        app = self.app()
+        async with app.run_test() as pilot:
+            await self.settle(pilot)
+            field = app.screen.query_one(CommandField)
+            self.assertNotIn("Press ? for shortcut help", self.text(app, "status-line"))
+            for component in (app.screen.query_one(JobsList), app.screen.query_one(QueueList), app.screen.query_one(ExecutionHistoryList), app.screen.query_one(ExecutionDetailPane)):
+                with self.subTest(component=type(component).__name__):
+                    component.focus()
+                    await pilot.pause()
+                    self.assertIn("Press ? for shortcut help", self.text(app, "status-line"))
+            field.focus()
+            await pilot.pause()
+            self.assertNotIn("Press ? for shortcut help", self.text(app, "status-line"))
+
+    async def test_question_mark_opens_and_closes_contextual_shortcut_help(self) -> None:
+        app = self.app()
+        async with app.run_test() as pilot:
+            await self.settle(pilot)
+            cases = (
+                (app.screen.query_one(JobsList), "Jobs list", "Submit the selected job", "question_mark"),
+                (app.screen.query_one(QueueList), "Queue list", "Cancel the selected entry", "escape"),
+                (app.screen.query_one(ExecutionHistoryList), "Execution History list", "Delete marked or selected executions", "question_mark"),
+                (app.screen.query_one(ExecutionDetailPane), "Execution detail", "Reveal the selected run in Finder", "escape"),
+            )
+            for component, title, action, close_key in cases:
+                with self.subTest(component=title):
+                    component.focus()
+                    await pilot.press("question_mark")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ShortcutHelpOverlay)
+                    self.assertEqual(self.text(app, "shortcut-help-title"), f"{title} shortcuts")
+                    self.assertIn(action, self.text(app, "shortcut-help-rows"))
+                    await pilot.press(close_key)
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, MainScreen)
+                    self.assertIs(app.focused, component)
 
     async def test_jobs_lists_every_job_file_and_its_status(self) -> None:
         self.write_data_job("b-walk.yaml")

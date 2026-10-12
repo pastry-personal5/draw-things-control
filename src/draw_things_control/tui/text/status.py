@@ -232,8 +232,8 @@ def _details_line(live: LiveRun, now: float) -> Text:
     return Text("  ".join(parts))
 
 
-def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False) -> Text:
-    """The status line: the running or last job, the data directory, and where help is; or, after one Ctrl-C, how to quit."""
+def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False, *, shortcut_help: bool = False) -> Text:
+    """The status line: job state, data directory, and help; or, after one Ctrl-C, how to quit."""
     if quit_armed:
         return Text(" Press Ctrl-C again to quit", style="bold yellow")
     text = Text(" ")
@@ -248,5 +248,7 @@ def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, 
             text.append(f" ({live.finished.status})", style=STATUS_STYLE.get(live.finished.status, ""))
     text.append("  |  ", style="dim")
     text.append(str(data_directory))
+    if shortcut_help:
+        text.append("  |  Press ? for shortcut help", style="dim")
     text.append("  |  /help: commands, Ctrl-C twice: quit", style="dim")
     return text

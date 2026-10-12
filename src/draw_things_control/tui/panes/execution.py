@@ -18,6 +18,7 @@ from draw_things_control.state.executions import ExecutionRow
 from draw_things_control.tui.desktop import reveal_run
 from draw_things_control.tui.panes.base import Reads
 from draw_things_control.tui.reader import PaneHistory
+from draw_things_control.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from draw_things_control.tui.text.common import STATUS_STYLE
 from draw_things_control.tui.text.execution import ExecutionDetail, execution_detail, execution_detail_text
 
@@ -30,6 +31,15 @@ DETAIL_HEAD_LINES = 4
 
 
 DETAIL_RUN_LINES = 2
+EXECUTION_DETAIL_SHORTCUTS = (
+    ("Up/Down", "Move the selected run"),
+    ("PageUp/PageDown, Home/End", "Move selection further"),
+    ("Enter", "Reveal the selected run in Finder"),
+    ("Tab / Shift-Tab", "Move focus"),
+    ("Escape", "Focus the command field"),
+    ("Ctrl-C", "Press twice to quit"),
+    ("?", "Show shortcut help"),
+)
 
 
 class ExecutionDetailBody(Static):
@@ -50,6 +60,7 @@ class ExecutionDetailPane(VerticalScroll, Reads):
     """
 
     BINDINGS = [
+        Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("up", "move(-1)", "Earlier run", show=False),
         Binding("down", "move(1)", "Later run", show=False),
         Binding("pageup", "page(-1)", "Page up", show=False),
@@ -85,6 +96,12 @@ class ExecutionDetailPane(VerticalScroll, Reads):
 
     def on_mount(self) -> None:
         self.border_title = "Execution detail"
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
+
+    def action_show_shortcut_help(self) -> None:
+        show_shortcut_help(self, "Execution detail", EXECUTION_DETAIL_SHORTCUTS)
 
     def follow(self, execution_id: int | None, *, pause: bool = True) -> None:
         """Show ``execution_id``, after DETAIL_PAUSE_SECONDS unless ``pause`` is false; None shows the message instead."""

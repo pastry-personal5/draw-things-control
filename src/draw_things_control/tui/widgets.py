@@ -6,9 +6,12 @@ from datetime import datetime
 from typing import Any, Self
 
 from rich.text import Text
+from textual import events
 from textual.binding import Binding
 from textual.visual import VisualType
 from textual.widgets import Input, RichLog, Static
+
+from draw_things_control.tui.shortcut_help import refresh_status_line
 
 MAX_MESSAGE_LINES = 5000
 
@@ -55,6 +58,9 @@ class CommandField(Input):
         self.recalled: list[str] = []
         # The position in ``recalled`` shown now; its length means the line being typed.
         self.recall_index = 0
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
 
     def remember(self, line: str) -> None:
         """Keep an entered line for recall, once when it repeats the one before it."""

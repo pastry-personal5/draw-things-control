@@ -607,7 +607,8 @@ The screen, top to bottom:
   history cursor (see [Execution detail](#execution-detail)).
 - **The command field**, between two lines, showing `> ` and a white block
   cursor, then the **status line**: the running or last job, the data
-  directory, and a reminder of `/help` and Ctrl-C.
+  directory, a reminder of `/help` and Ctrl-C, and, when a list or detail
+  has focus, `Press ? for shortcut help`.
 
 On a terminal shorter than 32 lines, the generation output shrinks (down
 to 7 lines) to leave the Activity log at least 6. The smallest usable size is 80x34,
@@ -866,6 +867,7 @@ they succeed, unless you are in the history or the detail at that moment.
 | PageUp/PageDown, Home/End | In a focused list or detail, move further |
 | `a` | In Jobs list, ask to run the selected job |
 | `s` / `r` | In Jobs list, sort by the next column / reverse the order |
+| `?` | In a focused list or detail, show shortcut help; `?` or Escape closes it |
 | Escape | Clear the command field; in a focused list or detail, return to the command field |
 | Ctrl-C | Clear the command field; on an empty field, press twice within 2 seconds to quit |
 
