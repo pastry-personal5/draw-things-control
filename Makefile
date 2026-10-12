@@ -17,10 +17,10 @@ run:
 	uv run dtc --help
 
 proto:
-	for out in $(PROTO_OUTS); do \
+	@for out in $(PROTO_OUTS); do \
 		rm -rf $$out; \
 		mkdir -p $$out; \
-		uv run --extra dev python -m grpc_tools.protoc \
+		uv run -q --extra dev python -m grpc_tools.protoc \
 			-Isrc/draw_things_control/server/proto \
 			--python_out=$$out \
 			--grpc_python_out=$$out \
@@ -41,13 +41,13 @@ typecheck:
 	uv run --extra dev pyright
 
 test:
-	uv run python -m unittest discover -s tests -t .
+	@uv run -q python -m unittest discover -s tests -t . -q
 
 test-verbose:
 	uv run python -m unittest discover -s tests -t . -v
 
 test-tui:
-	uv run python -m unittest discover -s tests/tui -t .
+	@uv run -q python -m unittest discover -s tests/tui -t . -q
 
 test-tui-verbose:
 	uv run python -m unittest discover -s tests/tui -t . -v
