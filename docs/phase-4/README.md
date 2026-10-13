@@ -11,7 +11,7 @@ Improve the product experience, make chained generation support multiple backend
 - TUI terminology, shortcuts, and status feedback in Milestone 01.
 - A backend boundary for `draw-things-cli`, H3, and future generators in Milestone 02.
 - H3 image-to-audio-video (`i2av`) jobs through the existing front ends in Milestone 03.
-- Producing and consuming graph-based metadata in Milestone 04.
+- Producing and consuming graph-based metadata in Milestone 10.
 
 ## Non-goals
 
@@ -24,7 +24,7 @@ Improve the product experience, make chained generation support multiple backend
 1. [Milestone 01: TUI interaction and contextual shortcut help](milestone-01-tui-interaction.md) — done
 2. [Milestone 02: Refactor for multiple backends](milestone-02-multiple-backends.md) — done
 3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — in progress
-4. [Milestone 04: Graph-based metadata](milestone-04-graph-metadata.md) — planned
+4. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
 
 ## Depends on
 
@@ -41,4 +41,4 @@ Decisions and notable changes are recorded in
 - Milestone 01's canonical interaction terminology, consistent visible TUI names, and contextual shortcut help are complete and documented.
 - Existing Draw Things jobs continue to work through the backend boundary, including queued and resumed work.
 - `i2av` jobs use H3 from every existing front end, with native audio preserved in their outputs and run history.
-- Graph-based metadata is produced, consumed, and documented as defined in Milestone 04.
+- Graph-based metadata is produced, consumed, and documented as defined in Milestone 10.

@@ -1,4 +1,4 @@
-# Milestone 04: Graph-based metadata
+# Milestone 10: Graph-based metadata
 
 **Phase:** [Phase 4](README.md)
 **Status:** planned
@@ -33,7 +33,7 @@ Out of scope:
 - Run 1's original input and any recorded temporary normalized copy are separate artifacts connected by `derived_from`; the run consumes the file it actually received when recorded. An `i2i` successor consumes its predecessor's output; a video successor consumes its predecessor's verified handoff. A corrected video copy and its handoff are separate artifacts derived from their recorded source. For `t2v` run 1 there is no input artifact. A retained first image or color anchor is represented only when recorded, with its source relationship when that source is recorded.
 - A cross-run or cross-execution `consumes`/`follows` edge requires both the recorded resume or run order and matching recorded handoff/output identity. Path equality by itself never joins unrelated runs. If the parent execution, source artifact, or necessary identity is absent or inconsistent, keep the known nodes and put a reasoned reference in `unresolved`; never fabricate an edge. The graph can therefore be partial while still valid.
 - A graph for `E0013` includes that execution and the chain of `resumes` ancestors needed to trace its inputs; it does not speculate about future descendants. The document is a snapshot of history at one consistent SQLite read transaction. Canonical ordering makes two exports of unchanged history byte-identical. Deleting or pruning an ancestor can make a later export partial; an already saved JSON artifact remains a self-contained record of what was known at export time.
-- Version 1 readers reject unknown major versions and malformed documents with a field-specific error. New optional properties may be added within version 1 only when old readers can ignore them safely; changing node identity, edge meaning, or required structure requires version 2. M04 need not emulate an earlier graph format, because none exists. Existing history and manifests are represented with gaps where their recorded facts are absent.
+- Version 1 readers reject unknown major versions and malformed documents with a field-specific error. New optional properties may be added within version 1 only when old readers can ignore them safely; changing node identity, edge meaning, or required structure requires version 2. M10 need not emulate an earlier graph format, because none exists. Existing history and manifests are represented with gaps where their recorded facts are absent.
 
 ## Production and consumption
 

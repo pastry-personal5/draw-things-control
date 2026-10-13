@@ -5,6 +5,7 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-13
 
+- **Owner decision** [M10]: Move the graph-based metadata milestone from M04 to M10; the milestone document and Phase 4 plan now use M10.
 - **Change**: The API creates job files and replacement backups with private permissions. The server refuses linked, non-regular, or malformed token files and reads an existing token from one checked file descriptor.
 
 ## 2026-10-12
