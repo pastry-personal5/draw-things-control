@@ -100,7 +100,7 @@ class CapabilitiesTests(ReadRoutesTestCase):
     def test_capabilities_reports_the_limits_in_force(self) -> None:
         body = self.get("/v1/capabilities").json()
         self.assertEqual(body["allow_write"], False)
-        self.assertEqual(body["limits"], {"max_queued_jobs": 20, "max_job_runs": 100, "max_job_seconds": 172800, "max_job_file_bytes": 65536, "max_reference_file_bytes": 4 * 1024 * 1024 * 1024, "max_reference_bytes": 32 * 1024 * 1024 * 1024})
+        self.assertEqual(body["limits"], {"max_queued_jobs": 20, "max_job_runs": 100, "max_job_seconds": 172800, "max_job_file_bytes": 65536, "max_reference_file_bytes": 4 * 1024 * 1024 * 1024, "max_reference_bytes": 32 * 1024 * 1024 * 1024, "max_job_output_bytes": 32 * 1024 * 1024 * 1024})
 
 
 class JobRoutesTests(ReadRoutesTestCase):
@@ -207,6 +207,16 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
         self.assertEqual((detail["runs"][0]["anchor"], detail["runs"][0]["corrected_output"]), (first_image, "a-cc.mov"))
         [output] = self.get(f"/v1/executions/E{number:04d}/outputs").json()["outputs"]
         self.assertEqual((output["corrected_output"], output["corrected_output_exists"]), (str(self.output_directory / "a-cc.mov"), True))
+
+    def test_h3_execution_exposes_anchor_basename(self) -> None:
+        anchor = str(self.output_directory / "private-segment-anchor.png")
+        execution_id = self.store.executions.start(NewExecution(job_name="h3", job_file="h3.yaml", mode="i2av", started_at="2026-09-30T09:00:00+00:00", backend="h3", settings=ExecutionSettings(output_directory=str(self.output_directory))))
+        self.store.executions.start_run(execution_id, 1, NewRun(pair="p", positive="text", started_at="2026-09-30T09:00:00+00:00", output="a.mp4", anchor=anchor))
+        number = self.store.executions.number_of(execution_id)
+        detail = self.get(f"/v1/executions/E{number:04d}").json()
+        one_run = self.get(f"/v1/executions/E{number:04d}/runs/1").json()
+        self.assertEqual(detail["runs"][0]["anchor"], "private-segment-anchor.png")
+        self.assertEqual(one_run["anchor"], "private-segment-anchor.png")
 
     def test_an_unknown_execution_id_is_not_found(self) -> None:
         self.assertEqual(self.get("/v1/executions/E9999").status_code, 404)

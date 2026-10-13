@@ -145,7 +145,7 @@ def _delete_executions(arguments: Arguments) -> ApiRequest:
 
 
 READ_AND_RUN = (
-    Tool("get_capabilities", "Whether writes are on, and the limits every job must meet (max_job_runs, max_job_seconds, max_queued_jobs, max_job_file_bytes, max_reference_file_bytes, max_reference_bytes). The write tools (create_job, replace_job, delete_job, delete_executions) are listed only while fc serve runs with --allow-write.", _get(lambda _a: "/v1/capabilities"), READ),
+    Tool("get_capabilities", "Whether writes are on, and the limits every job must meet (max_job_runs, max_job_seconds, max_queued_jobs, max_job_file_bytes, max_reference_file_bytes, max_reference_bytes, max_job_output_bytes). The write tools (create_job, replace_job, delete_job, delete_executions) are listed only while fc serve runs with --allow-write.", _get(lambda _a: "/v1/capabilities"), READ),
     Tool("list_jobs", "The job files in data/jobs/: ID, file name, name, backend, mode, runs, and validity.", _get(lambda _a: "/v1/jobs", _page), READ, {"limit": LIMIT, "cursor": CURSOR}),
     Tool(
         "get_job",

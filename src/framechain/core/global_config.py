@@ -16,13 +16,14 @@ DEFAULT_HISTORY_RETENTION_DAYS = 14
 MAX_HISTORY_RETENTION_DAYS = 3650
 REQUIRED_GLOBAL_CONFIG_KEYS = ("input_directory", "output_directory", "version")
 
-API_LIMITS_KEYS = {"max_queued_jobs", "max_job_runs", "max_job_seconds", "max_job_file_bytes", "max_reference_file_bytes", "max_reference_bytes"}
+API_LIMITS_KEYS = {"max_queued_jobs", "max_job_runs", "max_job_seconds", "max_job_file_bytes", "max_reference_file_bytes", "max_reference_bytes", "max_job_output_bytes"}
 DEFAULT_MAX_QUEUED_JOBS = 20
 DEFAULT_MAX_JOB_RUNS = 100
 DEFAULT_MAX_JOB_SECONDS = 172800
 DEFAULT_MAX_JOB_FILE_BYTES = 65536
 DEFAULT_MAX_REFERENCE_FILE_BYTES = 4 * 1024 * 1024 * 1024
 DEFAULT_MAX_REFERENCE_BYTES = 32 * 1024 * 1024 * 1024
+DEFAULT_MAX_JOB_OUTPUT_BYTES = 32 * 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class ApiLimits:
     max_job_file_bytes: int = DEFAULT_MAX_JOB_FILE_BYTES
     max_reference_file_bytes: int = DEFAULT_MAX_REFERENCE_FILE_BYTES
     max_reference_bytes: int = DEFAULT_MAX_REFERENCE_BYTES
+    max_job_output_bytes: int = DEFAULT_MAX_JOB_OUTPUT_BYTES
 
 
 DEFAULT_API_LIMITS = ApiLimits()
@@ -104,10 +106,11 @@ def _api_limits(path: Path, data: Any) -> ApiLimits:
     max_job_file_bytes = _positive_int(path, data, "max_job_file_bytes", DEFAULT_MAX_JOB_FILE_BYTES)
     max_reference_file_bytes = _positive_int(path, data, "max_reference_file_bytes", DEFAULT_MAX_REFERENCE_FILE_BYTES)
     max_reference_bytes = _positive_int(path, data, "max_reference_bytes", DEFAULT_MAX_REFERENCE_BYTES)
+    max_job_output_bytes = _positive_int(path, data, "max_job_output_bytes", DEFAULT_MAX_JOB_OUTPUT_BYTES)
     seconds = data.get("max_job_seconds", DEFAULT_MAX_JOB_SECONDS)
     if not is_number(seconds) or seconds <= 0:
         raise ValueError(f"{path}: 'api_limits.max_job_seconds' must be a positive number")
-    return ApiLimits(max_queued_jobs=max_queued_jobs, max_job_runs=max_job_runs, max_job_seconds=seconds, max_job_file_bytes=max_job_file_bytes, max_reference_file_bytes=max_reference_file_bytes, max_reference_bytes=max_reference_bytes)
+    return ApiLimits(max_queued_jobs=max_queued_jobs, max_job_runs=max_job_runs, max_job_seconds=seconds, max_job_file_bytes=max_job_file_bytes, max_reference_file_bytes=max_reference_file_bytes, max_reference_bytes=max_reference_bytes, max_job_output_bytes=max_job_output_bytes)
 
 
 def _positive_int(path: Path, data: dict[str, Any], key: str, default: int) -> int:

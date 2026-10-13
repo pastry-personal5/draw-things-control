@@ -1,0 +1,78 @@
+# Two H3 runs: Ref2VA from two still images, then first-frame i2av.
+# Both paths are relative to global-config.yaml's input_directory, not data/jobs/.
+# Replace the filenames with images inside that directory before validating.
+# Each image identifies a different person; both people are video subjects.
+# Run 2 receives run 1's verified last-frame PNG automatically; no input is set here.
+# Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml
+
+version: 1
+name: two-image-subjects-chain
+backend: h3
+mode: h3av
+run_count: 2
+
+h3_runs:
+  - run: 1
+    pipeline: r2av
+    reference_pair: two-subjects
+  - run: 2
+    pipeline: i2av
+
+reference_pairs:
+  - name: two-subjects
+    references:
+      - kind: image
+        path: ./person-1.png
+      - kind: image
+        path: ./person-2.png
+
+prompt_pairs:
+  - name: establish-subjects
+    runs: [1]
+    positive: |
+      subject_definitions:
+      <Subject 1> is the person in <Picture 1>, using that image for identity, face, hair, clothing, and proportions.
+      <Subject 2> is a different person in <Picture 2>, using that image for identity, face, hair, clothing, and proportions.
+
+      summary:
+      [reference generation] A steady shot shows the two people, <Subject 1> and <Subject 2>, together for approximately four seconds. Each image defines one person's appearance rather than a first frame.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - keep the person's recognizable identity, face, hair, clothing, and proportions from <Picture 1>.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - keep the second person's recognizable identity, face, hair, clothing, and proportions from <Picture 2>.
+
+      detailed_description:
+      The target video has one continuous shot and a natural photographic appearance.
+      [Shot 1] From 00:00 to 00:04, a fixed medium shot holds both people in view together. <Subject 1> retains the face, hair, clothing, and proportions from <Picture 1>, blinks, and turns slightly toward <Subject 2>. <Subject 2> retains the separate face, hair, clothing, and proportions from <Picture 2> and returns the glance with a small head movement. Keep dark areas and saturated colors from the references without adding another person. Both movements settle before the last frame, leaving a clear composition for continuation.
+
+      overall_soundscape:
+      Quiet natural ambience with soft clothing rustles as both people move. No dialogue.
+
+      non_diegetic_music:
+      N/A
+  - name: continue-from-handoff
+    runs: [2]
+    positive: |
+      integrated_multimodal_description:
+      Continue directly from the supplied first frame, which is the verified final frame of the preceding video. From 00:00 to 00:04, keep the same two people, their distinct faces, hair, clothing, proportions, positions, lighting, and background. The first person makes one small head movement while the second person blinks and settles again. Hold the same fixed camera and avoid a cut, an additional person, or a change of setting. The opening frame should match the supplied image; motion develops smoothly from it.
+
+      overall_soundscape:
+      Continue the quiet natural ambience with faint clothing rustles. No dialogue.
+
+      non_diegetic_music:
+      N/A
+
+backend_settings:
+  width: 768
+  height: 1344
+  frames: 96
+  seconds: 4
+  steps: 30
+  seed: 42
+
+output:
+  extension: mp4
+
+run_timeout_seconds: 3600
+cooldown:
+  mode: off

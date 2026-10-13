@@ -64,6 +64,10 @@ class DrawThingsBackend:
     def finishing_seconds(self, job: JobDefinition) -> float:
         return job.drift_seconds() + job.correction_seconds()
 
+    def estimated_output_bytes(self, job: JobDefinition, runs: int) -> int:
+        # The Phase 4 M06 output quota applies to H3's known MP4 copy roles.
+        return 0
+
     def check_tools(self, job: JobDefinition, executable: str, media: MediaTools, find_executable: Callable[[str], str | None]) -> None:
         require_executable(find_executable, executable)
         if job.mode.is_video:

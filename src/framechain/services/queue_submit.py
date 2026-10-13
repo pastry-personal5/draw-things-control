@@ -93,7 +93,7 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
 
 
 def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None, reference_assets: list[dict[str, object]] | None = None) -> NewQueueEntry:
-    snapshot = {"version": 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
+    snapshot = {"version": 5 if job.backend == "h3" else 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
     if reference_assets:
         snapshot["reference_assets"] = reference_assets
     return NewQueueEntry(
@@ -161,9 +161,9 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 snapshot = json.loads(entry.snapshot)
             except (TypeError, ValueError) as error:
                 raise InputError(f"{entry.label}: invalid queue snapshot") from error
-            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3, 4):
+            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3, 4, 5):
                 raise InputError(f"{entry.label}: unsupported job snapshot")
-            if snapshot["version"] in (2, 3, 4):
+            if snapshot["version"] in (2, 3, 4, 5):
                 if snapshot.get("backend") != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between the queue row and snapshot", field="backend")
                 if not all(isinstance(snapshot.get(key), str) for key in ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory")):
@@ -174,7 +174,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 if snapshot.get("cooldown_default") != entry.cooldown_default or snapshot.get("settings") != json.loads(entry.settings.to_json()):
                     raise InputError(f"{entry.label}: settings differ between the queue row and snapshot", field="settings")
                 config = GlobalConfig(input_directory=Path(snapshot["input_directory"]), output_directory=Path(snapshot["output_directory"]), write_job_records=live.write_job_records, cooldown=_cooldown_of(snapshot["cooldown_default"]) if snapshot.get("cooldown_default") is not None else None, history_retention_days=live.history_retention_days)
-                reference_assets = snapshot.get("reference_assets", []) if snapshot["version"] == 4 else []
+                reference_assets = snapshot.get("reference_assets", []) if snapshot["version"] in (4, 5) else []
                 if not isinstance(reference_assets, list) or any(not isinstance(item, dict) for item in reference_assets):
                     raise InputError(f"{entry.label}: invalid reference asset snapshot")
                 if snapshot["version"] == 4 and not reference_assets:
@@ -201,16 +201,19 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 except ValueError as error:
                     raise InputError(f"{entry.label}: {error}") from error
                 reference_overrides = {key: Path(str(item["snapshot_path"])) for key, item in reference_facts.items()}
-                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=snapshot["version"] == 4, inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, backends=backends)
-                if snapshot["version"] != 4 and job.backend == "h3":
+                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=bool(reference_assets), inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, backends=backends)
+                if not reference_assets and job.backend == "h3":
                     from framechain.jobs.backends.h3 import H3JobData
 
                     if isinstance(job.backend_data, H3JobData) and job.backend_data.reference_pairs:
-                        raise InputError(f"{entry.label}: H3 references require a version 4 snapshot")
+                        raise InputError(f"{entry.label}: H3 references require a reference asset snapshot")
                 if job.backend != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between job text and queue snapshot", field="backend")
-                if snapshot["version"] in (3, 4):
-                    if json.loads(_execution_settings(job).to_json()) != snapshot["settings"]:
+                if snapshot["version"] in (3, 4, 5):
+                    validated_settings = json.loads(_execution_settings(job).to_json())
+                    if snapshot["version"] in (3, 4) and job.backend == "h3":
+                        validated_settings["backend_settings"].pop("color_policy", None)
+                    if validated_settings != snapshot["settings"]:
                         raise InputError(f"{entry.label}: validated settings differ from the queue snapshot", field="settings")
                     if entry.total_runs is not None and job.run_count != entry.total_runs:
                         raise InputError(f"{entry.label}: run count differs from the queue row", field="run_count")

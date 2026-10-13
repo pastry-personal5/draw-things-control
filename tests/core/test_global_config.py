@@ -171,8 +171,8 @@ class GlobalConfigTests(unittest.TestCase):
         self.assertEqual(load_global_config(self.path).api_limits, DEFAULT_API_LIMITS)
 
     def test_api_limits_overridden(self) -> None:
-        self.write(self.base() + "api_limits:\n  max_queued_jobs: 5\n  max_job_runs: 10\n  max_job_seconds: 3600\n  max_job_file_bytes: 1024\n  max_reference_file_bytes: 2048\n  max_reference_bytes: 4096\n")
-        self.assertEqual(load_global_config(self.path).api_limits, ApiLimits(max_queued_jobs=5, max_job_runs=10, max_job_seconds=3600, max_job_file_bytes=1024, max_reference_file_bytes=2048, max_reference_bytes=4096))
+        self.write(self.base() + "api_limits:\n  max_queued_jobs: 5\n  max_job_runs: 10\n  max_job_seconds: 3600\n  max_job_file_bytes: 1024\n  max_reference_file_bytes: 2048\n  max_reference_bytes: 4096\n  max_job_output_bytes: 8192\n")
+        self.assertEqual(load_global_config(self.path).api_limits, ApiLimits(max_queued_jobs=5, max_job_runs=10, max_job_seconds=3600, max_job_file_bytes=1024, max_reference_file_bytes=2048, max_reference_bytes=4096, max_job_output_bytes=8192))
 
     def test_api_limits_rejects_unknown_key_and_bad_values(self) -> None:
         cases = {
@@ -185,6 +185,7 @@ class GlobalConfigTests(unittest.TestCase):
             "zero file bytes": ("api_limits:\n  max_job_file_bytes: 0\n", "api_limits.max_job_file_bytes"),
             "zero reference file bytes": ("api_limits:\n  max_reference_file_bytes: 0\n", "api_limits.max_reference_file_bytes"),
             "zero total reference bytes": ("api_limits:\n  max_reference_bytes: 0\n", "api_limits.max_reference_bytes"),
+            "zero output bytes": ("api_limits:\n  max_job_output_bytes: 0\n", "api_limits.max_job_output_bytes"),
         }
         for label, (text, field) in cases.items():
             with self.subTest(label):

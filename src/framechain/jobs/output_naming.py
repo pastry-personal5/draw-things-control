@@ -30,13 +30,23 @@ def last_frame_path(output: Path) -> Path:
 
 
 def raw_last_frame_path(output: Path) -> Path:
-    """The uncorrected last frame of a video whose job corrects its colors (Milestone 09), beside the handoff."""
+    """The uncorrected last frame of a video whose job corrects its colors, beside the handoff."""
     return output.with_name(f"{output.stem}-last-frame-raw.png")
 
 
 def corrected_output_path(output: Path) -> Path:
-    """The corrected copy of a video, in the original's format and container (Milestone 09)."""
+    """The corrected copy of a video, in the original's format and container."""
     return output.with_name(f"{output.stem}-cc{output.suffix}")
+
+
+def raw_output_path(output: Path) -> Path:
+    """The byte-identical H3 child MP4 retained for an opt-in correcting run."""
+    return output.with_name(f"{output.stem}-raw{output.suffix}")
+
+
+def uncorrected_output_path(output: Path) -> Path:
+    """The H3 uncorrected delivery retained when the main output is corrected."""
+    return output.with_name(f"{output.stem}-uncorrected{output.suffix}")
 
 
 def first_image_path(manifest: Path) -> Path:
@@ -49,7 +59,7 @@ def next_output_path(directory: Path, base: str, extension: str, clock: Clock, r
     the uncorrected last frame, and the corrected copy."""
     for _ in range(MAX_ATTEMPTS):
         candidate = directory / output_name(base, extension, clock(), random_number())
-        if not any(_taken(path, reserved) for path in (candidate, last_frame_path(candidate), raw_last_frame_path(candidate), corrected_output_path(candidate))):
+        if not any(_taken(path, reserved) for path in (candidate, last_frame_path(candidate), raw_last_frame_path(candidate), corrected_output_path(candidate), raw_output_path(candidate), uncorrected_output_path(candidate))):
             return candidate
     raise ValueError(f"Could not find an unused output name in {directory}")
 

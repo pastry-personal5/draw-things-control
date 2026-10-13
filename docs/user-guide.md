@@ -209,6 +209,12 @@ uv run fc queue add example-job-for-backend-draw-things-cli.yaml --wait
 
 Start from `data/jobs/example-job-for-backend-draw-things-cli.yaml` or
 `data/jobs/example-job-for-backend-h3.yaml`, which are commented line by line.
+For two still-image H3 references and one `r2av` run, use
+`data/jobs/example-job-for-backend-h3-r2av-two-images.yaml` after replacing its
+`./person-1.png` and `./person-2.png` paths with paths relative to
+`input_directory`.
+For a second `i2av` run that starts from the verified last frame of that
+`r2av` run, use `data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml`.
 Invalid jobs are rejected before any generation starts.
 
 ## Job file reference
@@ -285,11 +291,42 @@ Width and height are multiples of 32, at least 32, and together no larger
 than 768×1344. `seconds` is 1–15 and `frames` must be exactly
 `llround(seconds * 24)` (24–360); H3 aligns this to its effective frame count,
 which is stored separately. H3 rejects Draw Things configuration and sizing
-keys, `color`, negative prompts (including an empty or null value), and
+keys, negative prompts (including an empty or null value), and
 `output.video_format`. It receives an 8-bit sRGB PNG cropped centrally to the
-requested dimensions. Every successful run generates native H.264/AAC MP4
-audio and video; the final frame is verified and becomes the next run's first
-frame. History, manifests, and API responses retain measured video and audio
+requested dimensions. H3 accepts its own closed top-level `color` policy with
+`anchor: none` by default. A positive `i2av` correction retains the byte-identical
+raw child MP4 and the uncorrected delivery MP4; when correction succeeds, the
+verified corrected MP4 is the main output and supplies the next handoff. On
+optional correction failure, the uncorrected MP4 is the main output.
+For example, an `i2av` chain can blend toward its current segment's first
+input while correcting each run toward its prepared input:
+
+```yaml
+color:
+  anchor: blend
+  strength: 0.5
+  first_weight: 0.25
+  reanchor: prompt_pair
+  regions: false
+```
+
+H3 also accepts `anchor: none`, `previous`, and `first`; `strength: 0` measures
+drift without writing a corrected copy. `regions: true` measures and corrects
+people and background separately when Apple Vision finds a person in enough
+frames; detected skin gets narrower lightness, chroma, hue, and cast caps.
+When segmentation is unavailable or insufficient, H3 reports and uses the
+whole-frame fallback. An `r2av` run is measured but never corrected,
+and starts a new color segment for a later `i2av` run.
+Every successful run generates H.264/AAC MP4 audio and video. For the
+characterized H3 executable fingerprint, the finisher applies the documented
+sRGB source convention and attempts verified limited-range Rec.709 delivery;
+it preserves the child MP4 on unknown or conflicting color declarations and
+reports a warning. When a later `i2av` run needs a first frame, H3 extracts and
+verifies the preceding run's final frame only when its pixel interpretation is
+known. If extraction fails or the interpretation is unknown, that MP4 remains
+a successful output with a warning; a dependent `i2av` run stops before launch
+because it has no verified handoff. An independent `r2av` run can continue.
+History, manifests, and API responses retain measured video and audio
 properties. H3 writes a hidden partial MP4 and only promotes it after media checks
 pass. Changing local H3 weights can change queued or resumed results because
 the model snapshot is intentionally not copied into the queue. Once an H3 run
@@ -1245,10 +1282,11 @@ and use.
 |-----|---------|---------|
 | `max_queued_jobs` | Entries `queued` at once | 20 |
 | `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
-| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; a video job adds its color drift check's 300 s to each run, and a correcting one the correction's time limit (10 s plus 1 s per frame). The other media checks are not counted | 172800 (48 h) |
+| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; Draw Things video adds its drift and correction deadlines, while H3 adds media verification, color delivery, drift, correction, and handoff finishing time | 172800 (48 h) |
 | `max_job_file_bytes` | Maximum job YAML size loaded by the CLI, TUI, or API | 65536 |
 | `max_reference_file_bytes` | Maximum size of one H3 reference asset | 4294967296 (4 GiB) |
 | `max_reference_bytes` | Maximum total size of H3 reference assets in one job | 34359738368 (32 GiB) |
+| `max_job_output_bytes` | Planning limit for H3 output storage, including retained and staged MP4 copies and a PNG handoff per remaining run; estimated from raw RGB frame size, AAC, and container overhead | 34359738368 (32 GiB) |
 
 An existing job file is read only up to `max_job_file_bytes + 1` bytes; a named
 base configuration is bounded to the larger of 1 MiB and that job limit.

@@ -13,6 +13,7 @@ from framechain.jobs.media.stream_color import StreamColor
 if TYPE_CHECKING:
     from framechain.jobs.color_run import Corrector
     from framechain.jobs.media.checks import MediaChecker
+    from framechain.jobs.media.regions import Segmenter
 
 # Writes the last frame of a video to a PNG, decoded with the color its stream states; raises ValueError when it cannot.
 FrameExtractor = Callable[[Path, Path, StreamColor], None]
@@ -37,5 +38,7 @@ class MediaTools:
     color_reader: ColorReader | None = None
     # Checks each file of a video job and says what it holds; None makes no checks (tests with fake tools).
     checker: MediaChecker | None = None
-    # Corrects a run's colors when its job asks (Milestone 09); None corrects nothing (tests with fake tools).
+    # Corrects a run's colors when its job asks; None corrects nothing (tests with fake tools).
     corrector: Corrector | None = None
+    # Apple Vision's optional backend-neutral person/skin segmenter, made only when requested.
+    segmenter_factory: Callable[[], Segmenter | None] | None = None

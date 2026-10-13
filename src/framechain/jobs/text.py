@@ -149,6 +149,9 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
     """The (label, value) rows validate-job prints under ``Valid job:``; ``random_seed_text``, if given, is the whole seed value when the job sets none."""
     seed, source = job.configured_seed()
     seed_value = random_seed_text if seed is None and random_seed_text is not None else f"{seed if seed is not None else '(random, drawn when the job starts)'} ({source})"
+    color_summary = color_text(job.color) if job.color.corrects else "none, measure only"
+    if job.backend == "h3":
+        color_summary += " (H3 policy v1)"
     rows = [
         ("name", job.name),
         ("backend", job.backend),
@@ -158,7 +161,7 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
         ("input", str(job.input or "(none, text only)")),
         ("output directory", str(job.output_directory)),
         *([("output format", f"{job.video_format} (.{job.extension})")] if job.video_format is not None else []),
-        *([("color", color_text(job.color))] if job.color.corrects else []),
+        *([("color", color_summary)] if job.color.corrects or job.backend == "h3" else []),
         ("config file", job.config_file),
         ("model", job.model),
         ("seed", seed_value),

@@ -3,6 +3,7 @@ stored, and are redacted again as they are served (``redact_command``), so an ol
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from framechain.core.arguments import redact_command
@@ -83,7 +84,7 @@ def audit_entry(row: AuditRow) -> dict[str, Any]:
     return {"at": row.at, "action": row.action, "target": row.target, "outcome": row.outcome, "caller": row.caller}
 
 
-def run_summary(run: RunRow, *, brief: bool = False) -> dict[str, Any]:
+def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things-cli") -> dict[str, Any]:
     """One run, as ``GET /executions/{id}`` and ``GET /executions/{id}/runs/{run}`` give it; ``brief`` (Milestone 10)
     leaves out its command and gives each check as its stage and verdict alone."""
     return {
@@ -106,7 +107,7 @@ def run_summary(run: RunRow, *, brief: bool = False) -> dict[str, Any]:
         "audio_duration": run.audio_duration,
         # The corrected copy's file name, and the file the run's colors were held to (Milestone 09).
         "corrected_output": run.corrected_output,
-        "anchor": run.anchor,
+        "anchor": Path(run.anchor).name if backend == "h3" and run.anchor is not None else run.anchor,
         **({} if brief else {"command": redact_command(run.command)}),
         "checks": [brief_check(check) if brief else media_check(check) for check in run.checks],
     }
@@ -165,7 +166,7 @@ def execution_detail(row: ExecutionRow, *, brief: bool = False) -> dict[str, Any
         "log": row.log_path,
         # The chain's first image, which its color checks compare with (Milestone 09); None before it was kept.
         "first_image": row.first_image,
-        "runs": [run_summary(run, brief=brief) for run in row.runs],
+        "runs": [run_summary(run, brief=brief, backend=row.backend) for run in row.runs],
         # Checks made before a run that never started (a stop during the input checks); each names its run.
         "checks": [unstarted_check(check, brief=brief) for check in row.checks],
     }

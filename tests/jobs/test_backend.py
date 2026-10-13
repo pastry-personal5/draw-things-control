@@ -47,6 +47,9 @@ class FakeBackend:
     def finishing_seconds(self, job: JobDefinition) -> float:
         return 0.0
 
+    def estimated_output_bytes(self, job: JobDefinition, runs: int) -> int:
+        return 0
+
     def parse_job(self, parser: JobParser, data: dict[str, Any], source_text: str) -> JobDefinition:
         common = parser.parse_common(data)
         if common.mode != GenerationMode.I2I:

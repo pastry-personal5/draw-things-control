@@ -274,19 +274,22 @@ def mcp_command(
 
     # Stdout carries the protocol over stdio and nothing else: main()'s sinks send child output there, so only stderr remains.
     logger.remove()
-    logger.add(sys.stderr, format="{message}", level="INFO", colorize=False, diagnose=False, backtrace=False)
-    token_path = token_file or services.paths.server_token
-    if transport == "stdio":
-        run_mcp(server_url, token_path)
-        return
-    listen_port = DEFAULT_MCP_PORT if port is None else port
-    if allow_remote_bind:
-        logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
-    with errors_exit():
-        try:
-            run_mcp_http(server_url, token_path, listen_host, listen_port)
-        except BindError as error:
-            raise InputError(str(error), field="port") from error
+    sink = logger.add(sys.stderr, format="{message}", level="INFO", colorize=False, diagnose=False, backtrace=False)
+    try:
+        token_path = token_file or services.paths.server_token
+        if transport == "stdio":
+            run_mcp(server_url, token_path)
+            return
+        listen_port = DEFAULT_MCP_PORT if port is None else port
+        if allow_remote_bind:
+            logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
+        with errors_exit():
+            try:
+                run_mcp_http(server_url, token_path, listen_host, listen_port)
+            except BindError as error:
+                raise InputError(str(error), field="port") from error
+    finally:
+        logger.remove(sink)
 
 
 def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:

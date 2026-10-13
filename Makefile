@@ -41,13 +41,21 @@ typecheck:
 	uv run --extra dev pyright
 
 test:
-	@uv run -q python -m unittest discover -s tests -t . -q
+	@output=$$(mktemp); \
+	uv run -q python -m unittest discover -s tests -t . -q >"$$output" 2>&1; status=$$?; \
+	if [ "$$status" -ne 0 ]; then cat "$$output"; fi; \
+	rm -f "$$output"; \
+	exit "$$status"
 
 test-verbose:
 	uv run python -m unittest discover -s tests -t . -v
 
 test-tui:
-	@uv run -q python -m unittest discover -s tests/tui -t . -q
+	@output=$$(mktemp); \
+	uv run -q python -m unittest discover -s tests/tui -t . -q >"$$output" 2>&1; status=$$?; \
+	if [ "$$status" -ne 0 ]; then cat "$$output"; fi; \
+	rm -f "$$output"; \
+	exit "$$status"
 
 test-tui-verbose:
 	uv run python -m unittest discover -s tests/tui -t . -v

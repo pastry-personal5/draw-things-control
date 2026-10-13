@@ -34,7 +34,8 @@ class SubmitJobTests(JobTestCase):
         path = self.write_job(job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
         entry = submit_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
-        self.assertEqual(snapshot["version"], 4)
+        self.assertEqual(snapshot["version"], 5)
+        self.assertEqual(snapshot["settings"]["backend_settings"]["color_policy"], {"version": 1, "anchor": "none"})
         asset = snapshot["reference_assets"][0]
         self.assertEqual((asset["pair"], asset["ordinal"], asset["field"], asset["basename"], len(asset["sha256"])), ("voice", 0, "path", "singer.png", 64))
         source = self.input_directory / "singer.png"
@@ -46,6 +47,29 @@ class SubmitJobTests(JobTestCase):
         self.assertTrue(copied.is_file())
         self.assertFalse(copied.is_relative_to(self.input_directory))
         self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+
+    def test_h3_color_policy_survives_snapshot_and_tampering_is_rejected(self) -> None:
+        path = self.write_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "first", "strength": 0.4, "regions": False}))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        self.assertEqual(snapshot["version"], 5)
+        self.assertEqual(parse_snapshot(entry, self.global_config, self.params)().color.strength, 0.4)
+        changed_settings = json.loads(json.dumps(snapshot["settings"]))
+        changed_settings["backend_settings"]["color_policy"]["strength"] = 0.9
+        changed_snapshot = {**snapshot, "settings": changed_settings}
+        changed = replace(entry, settings=replace(entry.settings, backend_settings=changed_settings["backend_settings"]), snapshot=json.dumps(changed_snapshot))
+        with self.assertRaises(InputError) as caught:
+            parse_snapshot(changed, self.global_config, self.params)()
+        self.assertEqual(caught.exception.field, "settings")
+
+    def test_legacy_h3_snapshot_without_color_policy_resumes_as_none(self) -> None:
+        path = self.write_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        snapshot["version"] = 3
+        snapshot["settings"]["backend_settings"].pop("color_policy")
+        previous = replace(entry, settings=replace(entry.settings, backend_settings=snapshot["settings"]["backend_settings"]), snapshot=json.dumps(snapshot))
+        self.assertEqual(parse_snapshot(previous, self.global_config, self.params)().color.anchor, "none")
 
     def test_version_three_snapshot_refuses_a_conflicting_backend_or_legacy_copy(self) -> None:
         path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))

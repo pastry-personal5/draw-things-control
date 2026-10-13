@@ -3,8 +3,41 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 4](README.md). Newest first.
 
+## 2026-10-14
+
+- **Design decision** [M08]: Replace backend-specific run lists with one authoritative `runs` list. Each run selects its backend, pipeline, named prompt pair, and backend settings profile; mixed H3 and Draw Things chains use visual frame handoffs and do not require audio continuity.
+- **Owner decision** [M08]: Use `draw-things` as the job backend identifier while retaining `draw-things-cli` for the executable, keep named top-level prompt-pair definitions, and select them from each run with `prompt_pair`.
+- **Owner decision** [M06]: The Apple Silicon real mixed-chain review remains valuable release validation, but is not a Milestone 06 completion or exit gate.
+- **Change** [M06]: Completed fingerprint-gated H3 color delivery, truthful-tag fallback, drift reporting, bounded optional correction, artifact-role persistence, output-limit enforcement, and front-end/history exposure. Synthetic coverage and `make check` pass; M06 is done.
+
 ## 2026-10-13
 
+- **Change** [M06]: Added an H3 output storage planning limit for staged and retained MP4 copies and PNG handoffs, exposed through `api_limits.max_job_output_bytes` and enforced on submission and resume alongside the finishing time budget.
+
+- **Change** [M06]: Enabled optional Apple Vision person, background, and skin drift measurements and bounded H3 region correction, with narrower skin caps and an explicit whole-frame fallback when segmentation is unavailable or insufficient. Synthetic H.264/AAC checks cover regional correction and fallback; real mixed-chain validation remains pending.
+
+- **Change** [M06]: Added opt-in H3 whole-frame color correction with bounded Oklab lightness, contrast, chroma, hue, cast, and gamut-edge limits; it encodes a verified Rec.709 H.264 main output while copying native AAC. A successful correction retains separate raw and uncorrected MP4s; a failed optional correction keeps the verified uncorrected main output and raw child. Synthetic tests cover caps, cancellation, audio packet identity, artifact promotion, and fallback. Human mixed-chain validation remains pending.
+
+- **Owner decision** [M06]: Adopt display-referred sRGB transfer and BT.709 primaries as an explicit engineering convention for the generated RGB of the characterized h3.c executable. This supersedes the transfer/primaries measurement gate in the earlier M06 entries for that fingerprint only; the convention is not a measured property of H3 or a promise for another executable.
+
+- **Change** [M06]: Added fingerprint-gated, staged H3 BT.601-limited to BT.709-limited conversion with separate container, H.264 VUI, and stream declaration checks; verified AAC packet and timestamp copying, native-tag fallback, sRGB final-frame handoff, and per-run whole-frame drift facts. A positive correction request currently records a byte-identical raw child and an explicit skip warning while the correction path is being completed.
+
+- **Change** [M06]: Verified a provisional BT.601/sRGB-to-Rec.709 finishing route with explicit bitstream/container tags, unchanged native AAC, and close RGB round trips on real PPM frames and saturated synthetic patches. The H3 source RGB transfer and primaries still need confirmation before automatic conversion or tagging.
+
+- **Change** [M06]: Compared 124 same-run pre-encode H3 RGB PPM frames with their `r2av` MP4; sampled YUV errors verify the current limited-range BT.601 encode path. Transfer and primaries remain unproven, so automatic tagging and correction stay gated.
+
+- **Change** [M06]: Recorded the owner-supplied real `r2av` child MP4, its matching h3.c fingerprint, absent bitstream/container color declarations, and portrait-size limited-range BT.601 encode-path evidence. Automatic tagging and correction remain gated on transfer/primaries and conversion verification.
+
+- **Change** [M06]: A verified H3 MP4 now remains a successful run when optional handoff extraction fails, with a warning; a dependent `i2av` run stops before launch. Initial real `i2av` and synthetic encode-path color evidence is recorded in the H3 research note. Tagging and correction remain gated on full characterization, including an `r2av` child sample.
+- **Owner decision** [M06]: Supersede the earlier M06 “untagged” fallback wording: retain the original H3 MP4 without adding tags when tagging or pixel interpretation is uncertain. Pre-existing conflicting child tags may remain if they cannot be removed safely, and the warning must identify them.
+- **Owner decision** [M07]: Rename the product and app from Framechain to Framecontrol across the active package, interfaces, and documentation, superseding M04's name. Keep `fc` as the only command and version `3.0.0`; replace old public identities without aliases. Migrate `framechain.db` or `dtc.db` to `framecontrol.db` with verified backup and cleanup, preserve completed plans and past changelog entries, and name M10's planned schema `framecontrol-provenance-graph`.
+- **Owner decision** [M06]: If the H3 child MP4 already contains conflicting color tags that cannot be removed safely, retain the original MP4 and warn explicitly about those tags rather than fail the run or re-encode solely to remove them.
+- **Owner decision** [M06]: If conversion to the preferred Rec.709 delivery fails but the original H3 pixels are understood and the MP4 verifies, keep the original unconverted MP4 with a warning rather than fail the run.
+- **Owner decision** [M06]: H3 correction defaults to whole-frame processing (`regions: false`). If optional drift measurement fails after the MP4 verifies, the run succeeds with a warning and reports measurement as unavailable.
+- **Owner decision** [M06]: If the video pixels' color interpretation cannot be established, let that generated run succeed untagged with a warning, skip correction, and omit any handoff that would be unsafe. A dependent `i2av` run must not start without a verified handoff.
+- **Owner decision** [M06]: When correction succeeds, the corrected MP4 is the main output shown in history and returned by the API; retain the uncorrected delivery MP4 and byte-identical H3 child MP4 separately.
+- **Owner decision** [M06]: Retain both corrected and uncorrected MP4s and always retain a byte-identical H3 child MP4 for a correcting run. If color tagging cannot be verified, keep the run's MP4 untagged and report a warning instead of failing solely because of the tag.
+- **Design decision** [M06]: Require real H3 `i2av` and `r2av` color characterization before selecting output tags. Keep a byte-identical child artifact for correcting runs, preserve AAC in corrected MP4s, derive corrected handoffs from the verified encode, and reset color anchors when an `r2av` run breaks an `i2av` segment. A failed optional correction falls back to a verified uncorrected handoff; cancellation does not.
 - **Change** [M05]: Resume now checks a handoff only when the next H3 run uses `i2av`, including chains that began with `r2av`. Reference snapshots are opened beneath the configured input root without following links, copied within a 600-second submission limit, and verified only for pairs needed by unfinished runs; a missing descriptor cannot fall back to a live source. Retention gives unpublished submissions one hour before removing unreferenced copies. H3 preflight reads checkpoint counts and the `Metal 4` yes/no value from `--info`.
 - **Owner decision** [M05, M06]: Defer H3 color characterization, tagging, and pixel conversion from M05 to M06. The sandbox's retry from the H3 checkout directory still reports no Metal device, so M05 will leave color handling unchanged.
 - **Owner decision** [M05]: Configure reference snapshot byte caps as `api_limits.max_reference_file_bytes` and `api_limits.max_reference_bytes`, with factory defaults of 4 GiB per file and 32 GiB total per job.

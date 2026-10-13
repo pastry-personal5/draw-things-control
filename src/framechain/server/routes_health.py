@@ -32,5 +32,6 @@ def capabilities(context: ServerContext = Depends(get_context)) -> dict[str, obj
             "max_job_file_bytes": limits.max_job_file_bytes,
             "max_reference_file_bytes": limits.max_reference_file_bytes,
             "max_reference_bytes": limits.max_reference_bytes,
+            "max_job_output_bytes": limits.max_job_output_bytes,
         },
     }

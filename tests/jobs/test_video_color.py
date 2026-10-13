@@ -12,7 +12,7 @@ from unittest import mock
 
 from framechain.jobs.definition import JobDefinition
 from framechain.jobs.media.stream_color import StreamColor
-from framechain.jobs.media.video_color import read_colr, tag_video_colors
+from framechain.jobs.media.video_color import read_colr, tag_video_color_codes, tag_video_colors
 from framechain.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
@@ -84,6 +84,17 @@ class TagVideoColorsTests(unittest.TestCase):
         video = self.make("clip.mp4", "libx264", "yuv420p")
         self.check_tagged_only_by_the_new_box(video, 19)
         self.assertEqual(probe(video, "stream=color_range"), ["tv"])
+
+    def test_explicit_h3_codes_preserve_packets_and_media_data(self) -> None:
+        video = self.make("h3.mp4", "libx264", "yuv420p", "-movflags", "+faststart")
+        before_packets, before_media, before_frames = packets(video), top_level(video)["mdat"], frames(video)
+        self.assertTrue(tag_video_color_codes(video, primaries=1, transfer=13, matrix=5, full_range=False))
+        colr = read_colr(video)
+        assert colr is not None
+        self.assertEqual(colr.text(), "nclx 1/13/5, limited range")
+        self.assertEqual(probe(video, "stream=color_primaries,color_transfer,color_space,color_range"), ["tv", "bt470bg", "iec61966-2-1", "bt709"])
+        self.assertEqual((packets(video), top_level(video)["mdat"], frames(video)), (before_packets, before_media, before_frames))
+        self.assertFalse(tag_video_color_codes(video, primaries=1, transfer=1, matrix=1, full_range=False))
 
     def test_the_box_states_the_matrix_and_the_range_the_stream_states(self) -> None:
         prores = self.make("stated.mov", "prores_ks", "yuva444p12le", "-colorspace", "smpte170m", "-color_range", "tv")

@@ -95,9 +95,35 @@ class JobDefinitionTests(JobTestCase):
             "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42},
             "output": {"extension": "mp4"},
         }
-        for field, change in (("config_override", {"config_override": {}}), ("color", {"color": {}}), ("prompt_pairs[0].negative", {"prompt_pairs": [{"name": "scene", "positive": "wind", "negative": None, "default": True}]})):
+        for field, change in (("config_override", {"config_override": {}}), ("prompt_pairs[0].negative", {"prompt_pairs": [{"name": "scene", "positive": "wind", "negative": None, "default": True}]})):
             with self.subTest(field=field), self.assertRaises(InputError) as caught:
                 load_job(self.write_job(job_data(**(base | change))), self.global_config, self.params)
+            self.assertEqual(caught.exception.field, field)
+
+    def test_h3_color_policy_has_a_closed_schema_and_backend_defaults(self) -> None:
+        base = {"backend": "h3", "mode": "i2av", "config_file": None, "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}], "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, "output": {"extension": "mp4"}}
+        plain = load_job(self.write_job(job_data(**base)), self.global_config, self.params)
+        self.assertEqual(plain.backend_settings["color_policy"], {"version": 1, "anchor": "none"})
+        self.assertFalse(plain.color.regions)
+        from framechain.jobs.text import job_summary
+
+        self.assertEqual(dict(job_summary(plain))["color"], "none, measure only (H3 policy v1)")
+        blend = load_job(self.write_job(job_data(**(base | {"color": {"anchor": "blend", "strength": 0.5, "first_weight": 0, "reanchor": "never", "regions": True}}))), self.global_config, self.params)
+        self.assertEqual(blend.backend_settings["color_policy"], {"version": 1, "anchor": "blend", "strength": 0.5, "regions": True, "first_weight": 0.0, "reanchor": "never"})
+        self.assertEqual(dict(job_summary(blend))["color"], "blend, first 0, never reanchor, strength 0.5, regions (H3 policy v1)")
+        invalid = [
+            ("color", "invalid"),
+            ("color.anchor", {"anchor": "last"}),
+            ("color.strength", {"anchor": "previous", "strength": float("inf")}),
+            ("color.first_weight", {"anchor": "first", "first_weight": 0.2}),
+            ("color.reanchor", {"anchor": "previous", "reanchor": "never"}),
+            ("color.regions", {"anchor": "none", "regions": False}),
+            ("color.regions", {"anchor": "previous", "regions": "yes"}),
+            ("color.skin", {"anchor": "blend", "skin": True}),
+        ]
+        for field, color in invalid:
+            with self.subTest(field=field, color=color), self.assertRaises(InputError) as caught:
+                load_job(self.write_job(job_data(**(base | {"color": color}))), self.global_config, self.params)
             self.assertEqual(caught.exception.field, field)
 
     def test_h3_rejects_temporal_disagreement(self) -> None:

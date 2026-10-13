@@ -60,6 +60,7 @@ def default_media_tools() -> MediaTools:
         output_measurer=measure_output,
         checker=checker,
         corrector=_lazy_corrector(checker, segmenter),
+        segmenter_factory=segmenter,
     )
 
 

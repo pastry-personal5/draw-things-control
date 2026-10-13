@@ -22,13 +22,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from framechain.core.errors import InputError
-from framechain.core.numbers import is_int, is_number
+from framechain.core.exit_codes import exit_code_for_signal
+from framechain.core.numbers import is_int, is_number, setting_number
 from framechain.core.paths import linked_component
 from framechain.jobs.backend import H3_BACKEND, OutputPaths, RunContext, RunPreparation
-from framechain.jobs.definition import GenerationMode, JobDefinition
+from framechain.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, GenerationMode, JobDefinition
 from framechain.jobs.inputs.size import ResizePlan, decode_image, read_image_info
 from framechain.jobs.media.checks import MediaCheck
+from framechain.jobs.media.h3_color import DELIVERY, DELIVERY_TO_SRGB_FILTER, H3_RGB_CONVENTION_SHA256, NATIVE, NATIVE_TO_SRGB_FILTER, H3ColorCancelled, convert_h3_delivery, declarations_match, inspect_h3_declarations, measure_h3_drift, packet_facts
 from framechain.jobs.media.toolkit import MediaTools
+from framechain.jobs.media.video_color import read_colr, tag_video_color_codes
+from framechain.jobs.output_naming import raw_output_path, uncorrected_output_path
 from framechain.jobs.overrides import MAX_SEED
 
 if TYPE_CHECKING:
@@ -39,6 +43,7 @@ if TYPE_CHECKING:
 
 H3_FPS = 24
 H3_INFO_TIMEOUT_SECONDS = 30
+H3_COLOR_POLICY_VERSION = 1
 _COMPATIBILITY_FLAGS = {"bf16_mlp": "--use-slower-bf16-mlp", "bf16_qkv": "--use-slower-bf16-qkv", "bf16_attention_output": "--use-slower-bf16-attention-output", "row_major_attention_output": "--use-slower-row-major-attention-output", "unfused_int8_inputs": "--use-slower-unfused-int8-inputs", "unfused_qkv_rope": "--use-slower-unfused-qkv-rope", "scalar_qkv_rms": "--use-slower-scalar-qkv-rms", "uncached_int8_scales": "--use-slower-uncached-int8-scales", "dynamic_fc1_k": "--use-slower-dynamic-fc1-k", "grouped_quantizer": "--use-slower-grouped-quantizer"}
 
 
@@ -81,6 +86,13 @@ class H3JobData:
     input_directory: Path
     max_reference_file_bytes: int = 4 * 1024 * 1024 * 1024
     max_reference_bytes: int = 32 * 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class H3ColorState:
+    run_input: Path | None
+    segment_anchor: Path | None
+    reanchor_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -187,6 +199,37 @@ def _integer_setting(parser: JobParser, value: dict[str, Any], key: str, minimum
     return result
 
 
+def _color_policy(parser: JobParser, value: Any, has_i2av: bool) -> ColorPolicy:
+    if not isinstance(value, dict):
+        parser.fail("color", "must be a mapping")
+    keys = {"anchor", "strength", "first_weight", "reanchor", "regions"}
+    extra = sorted(set(value) - keys)
+    if extra:
+        parser.fail(f"color.{extra[0]}", "is not a known H3 color key")
+    anchor = value.get("anchor", "none")
+    if anchor not in COLOR_ANCHORS:
+        parser.fail("color.anchor", "must be none, previous, first, or blend")
+    if anchor != "none" and not has_i2av:
+        parser.fail("color.anchor", "requires at least one i2av run")
+    allowed = {"none": {"anchor"}, "previous": {"anchor", "strength", "regions"}, "first": {"anchor", "strength", "reanchor", "regions"}, "blend": keys}[anchor]
+    for key in value:
+        if key not in allowed:
+            parser.fail(f"color.{key}", f"is not applicable with anchor: {anchor}")
+    strength = value.get("strength", 1)
+    if not is_number(strength) or (finite_strength := setting_number(strength)) is None or not 0 <= finite_strength <= 1:
+        parser.fail("color.strength", "must be a finite number from 0 to 1")
+    first_weight = value.get("first_weight", 0.25)
+    if not is_number(first_weight) or (finite_weight := setting_number(first_weight)) is None or not 0 <= finite_weight <= 1:
+        parser.fail("color.first_weight", "must be a finite number from 0 to 1")
+    reanchor = value.get("reanchor", "prompt_pair")
+    if reanchor not in REANCHOR_RULES:
+        parser.fail("color.reanchor", "must be prompt_pair or never")
+    regions = value.get("regions", False)
+    if not isinstance(regions, bool):
+        parser.fail("color.regions", "must be true or false")
+    return ColorPolicy(anchor=anchor, strength=finite_strength, first_weight=finite_weight, reanchor=reanchor, regions=regions)
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -283,7 +326,7 @@ class H3Backend:
         common = parser.parse_common(data)
         if common.mode not in (GenerationMode.I2AV, GenerationMode.H3AV):
             parser.fail("mode", "is not supported by h3")
-        for key in ("config_file", "config_override", "color", "desired_input_width", "desired_input_height", "max_input_crop_percent"):
+        for key in ("config_file", "config_override", "desired_input_width", "desired_input_height", "max_input_crop_percent"):
             if key in data:
                 parser.fail(key, "is not supported by h3")
         for index, pair in enumerate(data["prompt_pairs"]):
@@ -297,6 +340,7 @@ class H3Backend:
             if "h3_runs" in data or "reference_pairs" in data:
                 parser.fail("h3_runs", "and reference_pairs are only supported in h3av jobs")
             runs, reference_pairs = tuple(H3Run(run, "i2av") for run in range(1, common.run_count + 1)), ()
+        color = _color_policy(parser, data["color"], any(run.pipeline == "i2av" for run in runs)) if "color" in data else ColorPolicy(regions=False)
         if settings.reference_image_size == "max" and not any(run.pipeline == "r2av" for run in runs):
             parser.fail("backend_settings.reference_image_size", "max requires at least one r2av run")
         output = data.get("output", {})
@@ -320,7 +364,7 @@ class H3Backend:
             plan = ResizePlan(settings.width, settings.height, None, (settings.width, settings.height), None, (settings.width, settings.height), "none", (settings.width, settings.height), None)
         elif first_is_i2av:
             parser.fail("input", f"file does not exist: {common.input}")
-        return JobDefinition(path=parser.path, name=common.name, mode=common.mode, input=common.input, run_count=common.run_count, prompt_pairs=common.prompt_pairs, output_directory=directory.resolve(), extension="mp4", run_timeout_seconds=common.run_timeout_seconds, requested_seed=settings.seed, requested_seed_source="backend_settings", backend=self.id, backend_data=H3JobData(settings, runs, reference_pairs, parser._global_config.input_directory.resolve(), parser._global_config.api_limits.max_reference_file_bytes, parser._global_config.api_limits.max_reference_bytes), input_resize=plan, cooldown=common.cooldown, cooldown_source=common.cooldown_source, source_text=source_text)
+        return JobDefinition(path=parser.path, name=common.name, mode=common.mode, input=common.input, run_count=common.run_count, prompt_pairs=common.prompt_pairs, output_directory=directory.resolve(), extension="mp4", run_timeout_seconds=common.run_timeout_seconds, requested_seed=settings.seed, requested_seed_source="backend_settings", backend=self.id, backend_data=H3JobData(settings, runs, reference_pairs, parser._global_config.input_directory.resolve(), parser._global_config.api_limits.max_reference_file_bytes, parser._global_config.api_limits.max_reference_bytes), input_resize=plan, color=color, cooldown=common.cooldown, cooldown_source=common.cooldown_source, source_text=source_text)
 
     @staticmethod
     def _settings(parser: JobParser, value: Any) -> H3Settings:
@@ -534,7 +578,7 @@ class H3Backend:
         switches.extend(flag for key, flag in _COMPATIBILITY_FLAGS.items() if dict(settings.compatibility).get(key, False))
         if any(run.pipeline == "r2av" for run in value.runs):
             switches.append("--ref-image-size")
-        return {"backend": self.id, "width": settings.width, "height": settings.height, "requested_frames": settings.frames, "requested_seconds": settings.seconds, "effective_frames": settings.effective_frames, "effective_seconds": settings.effective_seconds, "steps": settings.steps, "seed": settings.seed, "seed_source": "backend_settings", "output_extension": "mp4", "render_width": settings.render_width, "render_height": settings.render_height, "denoise_reuse": settings.denoise_reuse, "dit_layers": settings.dit_layers, "core_reuse": settings.core_reuse, "token_reduction": settings.token_reduction, "ssd_streaming": settings.ssd_streaming, "int8_row_fc2": settings.int8_row_fc2, "reference_rope": settings.reference_rope, "reference_image_size": settings.reference_image_size, "compatibility": dict(settings.compatibility), "explicit_controls": sorted(settings.explicit), "cli_switches": switches, "h3_runs": [{"run": run.run, "pipeline": run.pipeline, **({"reference_pair": run.reference_pair} if run.reference_pair is not None else {})} for run in value.runs], "reference_pairs": [{"name": pair.name, "references": [{"kind": ref.kind, "path": ref.basename or ref.path.name, "sha256": ref.sha256, **({"audio": ref.audio_basename or ref.audio.name, "audio_sha256": ref.audio_sha256} if ref.audio else {})} for ref in pair.references]} for pair in value.reference_pairs]}
+        return {"backend": self.id, "width": settings.width, "height": settings.height, "requested_frames": settings.frames, "requested_seconds": settings.seconds, "effective_frames": settings.effective_frames, "effective_seconds": settings.effective_seconds, "steps": settings.steps, "seed": settings.seed, "seed_source": "backend_settings", "output_extension": "mp4", "render_width": settings.render_width, "render_height": settings.render_height, "denoise_reuse": settings.denoise_reuse, "dit_layers": settings.dit_layers, "core_reuse": settings.core_reuse, "token_reduction": settings.token_reduction, "ssd_streaming": settings.ssd_streaming, "int8_row_fc2": settings.int8_row_fc2, "reference_rope": settings.reference_rope, "reference_image_size": settings.reference_image_size, "compatibility": dict(settings.compatibility), "explicit_controls": sorted(settings.explicit), "cli_switches": switches, "h3_runs": [{"run": run.run, "pipeline": run.pipeline, **({"reference_pair": run.reference_pair} if run.reference_pair is not None else {})} for run in value.runs], "reference_pairs": [{"name": pair.name, "references": [{"kind": ref.kind, "path": ref.basename or ref.path.name, "sha256": ref.sha256, **({"audio": ref.audio_basename or ref.audio.name, "audio_sha256": ref.audio_sha256} if ref.audio else {})} for ref in pair.references]} for pair in value.reference_pairs], "color_policy": {"version": H3_COLOR_POLICY_VERSION, **job.color.as_dict()}}
 
     def snapshot_config(self, job: JobDefinition, params_directory: Path, max_bytes: int) -> str:
         return ""
@@ -542,7 +586,23 @@ class H3Backend:
     def finishing_seconds(self, job: JobDefinition) -> float:
         data = cast(H3JobData, job.backend_data)
         asset_count = sum(1 + (reference.audio is not None) for pair in data.reference_pairs for reference in pair.references)
-        return 45.0 + asset_count * 40.0
+        # Structural checks, separate color probes, preferred conversion and its
+        # fallback, two drift decodes, and handoff all have bounded deadlines.
+        correction = 600.0 if job.color.corrects and job.color.strength > 0 else 0.0
+        return 900.0 + correction + asset_count * 40.0
+
+    def estimated_output_bytes(self, job: JobDefinition, runs: int) -> int:
+        """Conservative planning bound for retained and in-flight H3 MP4 copies and a PNG handoff."""
+        if runs <= 0:
+            return 0
+        data = cast(H3JobData, job.backend_data)
+        settings = data.settings
+        pixels = settings.width * settings.height
+        # RGB24 per video frame exceeds the usual H.264 payload. Add a MiB
+        # per MP4 for AAC and container overhead, then count staged copies.
+        mp4 = pixels * 3 * settings.effective_frames + 1024 * 1024 + int(settings.effective_seconds * 24_000)
+        correcting = job.color.corrects and job.color.strength > 0
+        return sum(((4 if correcting and run.pipeline == "i2av" else 2) * mp4 + pixels * 4 + 1024 * 1024) for run in data.runs[-runs:])
 
     def check_tools(self, job: JobDefinition, executable: str, media: MediaTools, find_executable: Callable[[str], str | None]) -> None:
         if os.environ.get("H3_FFMPEG") or os.environ.get("H3_FFPROBE"):
@@ -644,7 +704,19 @@ class H3Backend:
         return H3Arguments(self.runtime.executable, self.runtime.model_directory, pair.positive, run.pipeline, refs, run_input if run.pipeline == "i2av" else None, _partial_path(output), settings, self._ffmpeg, self._ffprobe)
 
     def prepare_run(self, job: JobDefinition, context: RunContext) -> RunPreparation:
-        return RunPreparation(chain_anchor=context.chain_anchor)
+        data = cast(H3JobData, job.backend_data)
+        if data.runs[context.number - 1].pipeline == "r2av":
+            return RunPreparation(finish_state=H3ColorState(None, None, "r2av boundary"), chain_anchor=None)
+        previous_r2av = context.number > 1 and data.runs[context.number - 2].pipeline == "r2av"
+        changed_pair = context.previous_pair is not None and context.previous_pair.name != context.pair.name
+        if context.chain_anchor is None or previous_r2av:
+            anchor = context.first_image if context.number == 1 and context.first_image is not None else context.input
+            reason = "initial i2av input" if context.number == 1 else "after r2av boundary"
+        elif changed_pair and job.color.reanchor == "prompt_pair":
+            anchor, reason = context.input, "prompt pair changed"
+        else:
+            anchor, reason = context.chain_anchor, None
+        return RunPreparation(finish_state=H3ColorState(context.input, anchor, reason), record_anchor=anchor, chain_anchor=anchor)
 
     def redact(self, command: Sequence[str]) -> tuple[str, ...]:
         reference_flags = {"--ref-image", "--ref-video", "--ref-silent-video", "--ref-audio", "--ref-video-audio"}
@@ -670,24 +742,166 @@ class H3Backend:
 
     def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], finish_state: object | None, media: MediaTools, report: Callable[[int, MediaCheck], None] | None) -> tuple[RunStatus, int] | None:
         partial = _partial_path(run.output)
+        staged_handoff = run.last_frame.with_name(f".{run.last_frame.name}.partial.png") if run.last_frame is not None else None
+        staged_delivery = run.output.with_name(f".{run.output.name}.delivery.partial.mp4")
+        staged_native = run.output.with_name(f".{run.output.name}.native.partial.mp4")
+        staged_raw = run.output.with_name(f".{run.output.name}.raw.partial.mp4")
+        staged_corrected = run.output.with_name(f".{run.output.name}.corrected.partial.mp4")
+        from framechain.jobs.events import RunStatus
+
         try:
-            if stop_requested() is not None:
-                raise ValueError("cancelled while verifying H3 output")
             if self._ffmpeg is None or self._ffprobe is None:
                 raise ValueError("H3 media tools were not resolved")
+            if (stop := stop_requested()) is not None:
+                partial.unlink(missing_ok=True)
+                return RunStatus.INTERRUPTED, exit_code_for_signal(stop)
             facts = _verify_h3_mp4(partial, cast(H3JobData, job.backend_data).settings, self._ffprobe)
-            if stop_requested() is not None:
-                raise ValueError("cancelled while verifying H3 output")
-            os.replace(partial, run.output)
-            handoff = run.last_frame
-            if handoff is not None:
-                if stop_requested() is not None:
-                    raise ValueError("cancelled before H3 handoff extraction")
-                _extract_h3_frame(run.output, handoff, self._ffmpeg)
-                decode_image(handoff)
-                if stop_requested() is not None:
-                    raise ValueError("cancelled while extracting H3 handoff")
-                record.last_frame = handoff.name
+        except (OSError, ValueError, subprocess.SubprocessError):
+            partial.unlink(missing_ok=True)
+            return RunStatus.FAILED, 1
+
+        warnings: list[str] = []
+        color_facts: dict[str, Any] = {"policy_version": H3_COLOR_POLICY_VERSION, "policy": job.color.as_dict(), "source_executable_sha256": None, "source_declarations": None, "source_interpretation": "unavailable", "delivery": "original"}
+        color_state = finish_state if isinstance(finish_state, H3ColorState) else H3ColorState(run.input, None, None)
+        color_facts["segment_anchor"] = color_state.segment_anchor.name if color_state.segment_anchor is not None else None
+        color_facts["reanchor_reason"] = color_state.reanchor_reason
+        delivery = partial
+        main_output = partial
+        known_color = False
+        h3_pipeline = cast(H3JobData, job.backend_data).runs[run.number - 1].pipeline
+        raw_output = raw_output_path(run.output) if job.color.corrects and job.color.strength > 0 and h3_pipeline == "i2av" else None
+        uncorrected_output = uncorrected_output_path(run.output) if raw_output is not None else None
+        try:
+            try:
+                fingerprint = _file_sha256(self.runtime.executable)
+                color_facts["source_executable_sha256"] = fingerprint
+                declarations = inspect_h3_declarations(partial, self._ffmpeg, self._ffprobe)
+                color_facts["source_declarations"] = declarations.facts()
+                declared = ", ".join(part for part in (f"container {declarations.container.text()}" if declarations.container else f"container {declarations.unsupported_container_kind}" if declarations.unsupported_container_kind else "", f"H.264 {declarations.bitstream.text()}" if declarations.bitstream else "") if part)
+                if fingerprint != H3_RGB_CONVENTION_SHA256:
+                    warnings.append("H3 color interpretation is unavailable for this executable fingerprint; original MP4 retained" + (f" with existing {declared}" if declared else " without new tags"))
+                elif not declarations_match(declarations, NATIVE, require_explicit=False):
+                    warnings.append(f"H3 child has conflicting color declarations ({declared or 'stream tags'}); original MP4 and those tags retained, with no safe handoff")
+                else:
+                    known_color = True
+                    color_facts["source_interpretation"] = "assumed sRGB transfer/BT.709 primaries, measured BT.601 limited matrix/range"
+            except (OSError, ValueError, subprocess.SubprocessError):
+                warnings.append("H3 color interpretation is unavailable: executable or declaration inspection failed; original MP4 retained")
+
+            if raw_output is not None:
+                shutil.copyfile(partial, staged_raw)
+                if _file_sha256(staged_raw) != _file_sha256(partial):
+                    raise ValueError("H3 raw child copy did not match the child MP4")
+                color_facts["raw_output"] = raw_output.name
+
+            if known_color:
+                try:
+                    convert_h3_delivery(partial, staged_delivery, self._ffmpeg, stop_requested)
+                    converted_facts = _verify_h3_mp4(staged_delivery, cast(H3JobData, job.backend_data).settings, self._ffprobe)
+                    converted_tags = inspect_h3_declarations(staged_delivery, self._ffmpeg, self._ffprobe)
+                    if not declarations_match(converted_tags, DELIVERY, require_explicit=True):
+                        raise ValueError("Rec.709 delivery declarations are absent or conflicting")
+                    if packet_facts(partial, self._ffprobe, "a:0") != packet_facts(staged_delivery, self._ffprobe, "a:0"):
+                        raise ValueError("Rec.709 delivery changed native AAC packets or timing")
+                    delivery, facts = staged_delivery, converted_facts
+                    color_facts["delivery"] = "converted_rec709"
+                    color_facts["delivery_declarations"] = converted_tags.facts()
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    staged_delivery.unlink(missing_ok=True)
+                    warnings.append("H3 Rec.709 delivery conversion or verification failed")
+                    try:
+                        shutil.copyfile(partial, staged_native)
+                        added_tag = tag_video_color_codes(staged_native, primaries=1, transfer=13, matrix=5, full_range=False)
+                        if not added_tag and read_colr(staged_native) != NATIVE:
+                            raise ValueError("H3 native color tag could not be added")
+                        native_tags = inspect_h3_declarations(staged_native, self._ffmpeg, self._ffprobe)
+                        if native_tags.container != NATIVE or not declarations_match(native_tags, NATIVE, require_explicit=False):
+                            raise ValueError("H3 native color tag failed verification")
+                        if any(packet_facts(partial, self._ffprobe, stream) != packet_facts(staged_native, self._ffprobe, stream) for stream in ("v:0", "a:0")):
+                            raise ValueError("H3 native tagging changed media packets or timing")
+                        delivery = staged_native
+                        color_facts["delivery"] = "native_tagged"
+                        color_facts["delivery_declarations"] = native_tags.facts()
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        staged_native.unlink(missing_ok=True)
+                        warnings.append("H3 native color tagging or verification failed; original MP4 retained")
+
+            main_output = delivery
+            drift_warning: str | None = None
+            if known_color:
+                try:
+                    color_facts["drift"] = measure_h3_drift(delivery, facts["frames"], facts["width"], facts["height"], self._ffmpeg, rec709_delivery=delivery == staged_delivery, run_input=color_state.run_input, segment_anchor=color_state.segment_anchor, stop_requested=stop_requested, regions=job.color.regions, segmenter_factory=media.segmenter_factory)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    drift_warning = "H3 color drift measurement is unavailable: frame decode or measurement failed"
+                    color_facts["drift"] = {"unavailable": "frame decode or measurement failed"}
+            else:
+                drift_warning = "H3 color drift measurement is unavailable: source pixel interpretation is unknown"
+                color_facts["drift"] = {"unavailable": "source pixel interpretation is unknown"}
+            if drift_warning is not None:
+                warnings.append(drift_warning)
+
+            color_facts["correction"] = {"status": "not_applicable", "reason": "r2av has no first-frame input"} if h3_pipeline == "r2av" else {"status": "off"}
+            if h3_pipeline == "i2av" and job.color.corrects and job.color.strength == 0:
+                color_facts["correction"] = {"status": "measured_identity", "strength": 0}
+            if raw_output is not None:
+                if not known_color:
+                    color_facts["correction"] = {"status": "skipped", "reason": "unknown source pixel interpretation"}
+                    warnings.append("H3 color correction was skipped: source pixel interpretation is unknown")
+                elif color_state.run_input is None:
+                    color_facts["correction"] = {"status": "skipped", "reason": "prepared i2av input unavailable"}
+                    warnings.append("H3 color correction was skipped: prepared i2av input unavailable")
+                else:
+                    try:
+                        # Import numerical correction only for an opt-in correcting run.
+                        from framechain.jobs.media.h3_correction import correct_h3_video
+
+                        correction_facts = correct_h3_video(delivery, staged_corrected, self._ffmpeg, frames=facts["frames"], width=facts["width"], height=facts["height"], run_input=color_state.run_input, segment_anchor=color_state.segment_anchor, pull=job.color.pull, strength=job.color.strength, rec709_delivery=delivery == staged_delivery, stop_requested=stop_requested, regions=job.color.regions, segmenter_factory=media.segmenter_factory)
+                        corrected_facts = _verify_h3_mp4(staged_corrected, cast(H3JobData, job.backend_data).settings, self._ffprobe)
+                        corrected_tags = inspect_h3_declarations(staged_corrected, self._ffmpeg, self._ffprobe)
+                        if not declarations_match(corrected_tags, DELIVERY, require_explicit=True):
+                            raise ValueError("corrected H3 MP4 has missing or conflicting Rec.709 declarations")
+                        if packet_facts(delivery, self._ffprobe, "a:0") != packet_facts(staged_corrected, self._ffprobe, "a:0"):
+                            raise ValueError("corrected H3 MP4 changed native AAC packets or timing")
+                        main_output, facts = staged_corrected, corrected_facts
+                        color_facts["correction"] = {"status": "succeeded", **correction_facts}
+                        color_facts["corrected_declarations"] = corrected_tags.facts()
+                        if correction_facts.get("region_fallback") is not None:
+                            warnings.append("H3 region correction is unavailable; verified whole-frame fallback used")
+                        color_facts["corrected_output"] = run.output.name
+                        if uncorrected_output is not None:
+                            color_facts["uncorrected_output"] = uncorrected_output.name
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        staged_corrected.unlink(missing_ok=True)
+                        color_facts["correction"] = {"status": "failed", "reason": "correction or audiovisual verification failed"}
+                        warnings.append("H3 color correction failed; verified uncorrected delivery retained")
+
+            if staged_handoff is not None and known_color:
+                try:
+                    _extract_h3_frame(main_output, staged_handoff, self._ffmpeg)
+                    decode_image(staged_handoff)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    warnings.append("H3 handoff is unavailable: extraction or image validation failed")
+                    staged_handoff.unlink(missing_ok=True)
+            if (stop := stop_requested()) is not None:
+                return RunStatus.INTERRUPTED, exit_code_for_signal(stop)
+            if raw_output is not None:
+                os.replace(staged_raw, raw_output)
+                record.raw_output = raw_output.name
+            if main_output == staged_corrected and uncorrected_output is not None:
+                os.replace(delivery, uncorrected_output)
+                record.uncorrected_output = uncorrected_output.name
+                record.corrected_output = run.output.name
+            os.replace(main_output, run.output)
+            if staged_handoff is not None and staged_handoff.is_file() and run.last_frame is not None:
+                try:
+                    os.replace(staged_handoff, run.last_frame)
+                    record.last_frame = run.last_frame.name
+                except OSError:
+                    warnings.append("H3 handoff is unavailable: promotion failed")
+                    staged_handoff.unlink(missing_ok=True)
+            corrected = record.corrected_output is not None
+            color_facts["artifacts"] = {"main": {"basename": run.output.name, "role": "corrected" if corrected else "uncorrected"}, "raw_child": raw_output.name if record.raw_output is not None and raw_output is not None else None, "uncorrected_delivery": uncorrected_output.name if record.uncorrected_output is not None and uncorrected_output is not None else None, "handoff": record.last_frame}
+            color_facts["handoff_source"] = "corrected_main" if corrected and record.last_frame is not None else "uncorrected_main" if record.last_frame is not None else None
             record.output_width, record.output_height, record.output_frames = facts["width"], facts["height"], facts["frames"]
             record.output_frame_rate, record.output_duration = facts["frame_rate"], facts["video_duration"]
             record.audio_codec, record.audio_sample_rate, record.audio_channels, record.audio_duration = facts["audio_codec"], facts["audio_sample_rate"], facts["audio_channels"], facts["audio_duration"]
@@ -698,17 +912,33 @@ class H3Backend:
                 facts["pipeline"] = h3_run.pipeline
                 facts["reference_pair"] = h3_run.reference_pair
                 facts["references"] = [{"ordinal": ordinal, "kind": item.kind, "basename": item.basename or item.path.name, "sha256": item.sha256, **({"audio_basename": item.audio_basename or item.audio.name, "audio_sha256": item.audio_sha256} if item.audio else {})} for ordinal, item in enumerate(selected.references, 1)] if selected is not None else []
-                facts["handoff_for_run"] = run.number + 1 if run.last_frame is not None else None
-                report(run.number, MediaCheck("output", run.output.name, "H3 MP4 video and audio verified", facts=facts))
+                facts["handoff_for_run"] = run.number + 1 if record.last_frame is not None else None
+                facts["color"] = color_facts
+                role_notes = tuple(f"{label}: {name}" for label, name in (("raw child", record.raw_output), ("uncorrected delivery", record.uncorrected_output), ("main corrected output", run.output.name if corrected else None), ("next handoff", record.last_frame)) if name is not None)
+                summary = "H3 corrected H.264/AAC MP4 verified" if corrected else "H3 H.264/AAC MP4 verified"
+                report(run.number, MediaCheck("output", run.output.name, summary, warnings=tuple(warnings), notes=role_notes, facts=facts))
+                report(run.number, MediaCheck("color_drift", run.output.name, "H3 within-run and segment color drift", warnings=(drift_warning,) if drift_warning is not None else (), facts={"drift": color_facts["drift"], "segment_anchor": color_facts["segment_anchor"], "reanchor_reason": color_facts["reanchor_reason"]}))
+                if job.color.corrects:
+                    correction_status = color_facts["correction"]["status"]
+                    correction_warnings = tuple(warning for warning in warnings if "color correction" in warning or "region correction" in warning)
+                    report(run.number, MediaCheck("color_correction", run.output.name, f"H3 color correction {correction_status}", warnings=correction_warnings, facts={"correction": color_facts["correction"], "artifacts": color_facts["artifacts"], "handoff_source": color_facts["handoff_source"]}))
             return None
+        except H3ColorCancelled as cancelled:
+            return RunStatus.INTERRUPTED, exit_code_for_signal(cancelled.received_signal)
         except (OSError, ValueError, subprocess.SubprocessError):
-            partial.unlink(missing_ok=True)
             run.output.unlink(missing_ok=True)
+            if raw_output is not None:
+                raw_output.unlink(missing_ok=True)
+            if uncorrected_output is not None:
+                uncorrected_output.unlink(missing_ok=True)
             if run.last_frame is not None:
                 run.last_frame.unlink(missing_ok=True)
-            from framechain.jobs.events import RunStatus
-
             return (RunStatus.FAILED, 1)
+        finally:
+            for staged in (partial, staged_delivery, staged_native, staged_raw, staged_corrected):
+                staged.unlink(missing_ok=True)
+            if staged_handoff is not None:
+                staged_handoff.unlink(missing_ok=True)
 
 
 def _partial_path(output: Path) -> Path:
@@ -760,6 +990,9 @@ def _verify_h3_mp4(path: Path, settings: H3Settings, ffprobe: str) -> dict[str, 
 def _extract_h3_frame(video: Path, target: Path, ffmpeg: str) -> None:
     if target.exists():
         raise ValueError(f"handoff already exists: {target}")
-    result = subprocess.run([ffmpeg, "-v", "error", "-n", "-sseof", "-1", "-i", str(video), "-frames:v", "1", "-vf", "format=rgb24", str(target)], capture_output=True, text=True, errors="replace", timeout=30, check=False)
+    tag = read_colr(video)
+    color_filter = DELIVERY_TO_SRGB_FILTER if tag == DELIVERY else NATIVE_TO_SRGB_FILTER
+    color_filter += ",setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=gbr:range=pc"
+    result = subprocess.run([ffmpeg, "-v", "error", "-n", "-sseof", "-1", "-i", str(video), "-update", "1", "-vf", color_filter, str(target)], capture_output=True, text=True, errors="replace", timeout=30, check=False)
     if result.returncode or not target.is_file():
         raise ValueError(result.stderr.strip() or "could not extract H3 final frame")

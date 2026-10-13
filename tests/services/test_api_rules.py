@@ -6,6 +6,7 @@ import shutil
 
 from framechain.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
 from framechain.core.global_config import ApiLimits
+from framechain.jobs.backends import DEFAULT_BACKENDS
 from framechain.jobs.parsing import load_job
 from framechain.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
 from tests.fixtures import JobTestCase, job_data
@@ -81,6 +82,19 @@ class ApiRulesTests(JobTestCase):
         check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_289))
         with self.assertRaises(LimitExceededError):
             check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_288))
+
+    def test_h3_output_limit_counts_staged_correction_copies_and_remaining_runs(self) -> None:
+        data = job_data(backend="h3", mode="i2av", run_count=2, run_timeout_seconds=60, config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "previous"})
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        backend = DEFAULT_BACKENDS.get("h3")
+        estimated = backend.estimated_output_bytes(job, 2)
+        self.assertGreater(estimated, backend.estimated_output_bytes(job, 1))
+        self.assertEqual(estimated, 2 * backend.estimated_output_bytes(job, 1))
+        check_job_limits(job, ApiLimits(max_job_seconds=10_000_000, max_job_output_bytes=estimated))
+        with self.assertRaises(LimitExceededError) as context:
+            check_job_limits(job, ApiLimits(max_job_seconds=10_000_000, max_job_output_bytes=estimated - 1))
+        self.assertEqual(context.exception.key, "max_job_output_bytes")
+        check_job_limits(job, ApiLimits(max_job_seconds=10_000_000, max_job_output_bytes=backend.estimated_output_bytes(job, 1)), remaining_runs=1)
 
     def test_queue_not_full_at_the_limit_is_accepted_and_one_over_is_refused(self) -> None:
         check_queue_not_full(19, ApiLimits(max_queued_jobs=20))

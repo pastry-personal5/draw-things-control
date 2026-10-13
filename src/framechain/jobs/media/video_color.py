@@ -66,6 +66,20 @@ def tag_video_colors(video: Path, color: StreamColor | None = None) -> bool:
     if matrix is None:
         logger.warning("Not tagging {}: its stream states the matrix {}, which this cannot tag", video.name, color.matrix)
         return False
+    changed = tag_video_color_codes(video, primaries=PRIMARIES_BT709, transfer=TRANSFER_SRGB, matrix=matrix, full_range=color.decode_range == "pc")
+    if changed:
+        logger.info("Tagged {} as BT.709 primaries, sRGB transfer, {} matrix", video.name, color.matrix or "bt709")
+    return changed
+
+
+def tag_video_color_codes(video: Path, *, primaries: int, transfer: int, matrix: int, full_range: bool) -> bool:
+    """Add an explicit H.273 ``nclx`` declaration to an MP4 without changing media payloads or timestamps.
+
+    The caller establishes that these codes describe the encoded pixels and checks any H.264 bitstream declaration
+    before calling. An existing ``colr`` box is never replaced. QuickTime receives ``nclc``, which lacks range.
+    """
+    if any(type(code) is not int or not 0 <= code <= 65535 for code in (primaries, transfer, matrix)) or not isinstance(full_range, bool):
+        raise ValueError("invalid H.273 color declaration")
     with video.open("rb") as file:
         size = os.fstat(file.fileno()).st_size
         top = _boxes(file, 0, size)
@@ -77,12 +91,10 @@ def tag_video_colors(video: Path, color: StreamColor | None = None) -> bool:
         brand = _major_brand(file, top)
         file.seek(moov.start)
         old = file.read(moov.end - moov.start)
-        patched = _patch_moov(old, moov, _colr_box(brand, matrix, full_range=color.decode_range == "pc"), media_after_moov=any(box.kind == b"mdat" and box.start > moov.start for box in top))
+        patched = _patch_moov(old, moov, _colr_box(brand, primaries, transfer, matrix, full_range=full_range), media_after_moov=any(box.kind == b"mdat" and box.start > moov.start for box in top))
     if patched is None:
         return False
-    added = len(patched) - len(old)
     _replace(video, moov, patched, size)
-    logger.info("Tagged {} as BT.709 primaries, sRGB transfer, {} matrix ({} bytes added)", video.name, color.matrix or "bt709", added)
     return True
 
 
@@ -128,6 +140,24 @@ class ColrTag:
 def read_colr(video: Path) -> ColrTag | None:
     """The first video track's ``colr`` box, or None when it has none (or states its color with an ICC profile);
     raises ValueError when the file is not an MP4 or QuickTime file this can read."""
+    payload = _read_colr_payload(video)
+    if payload is None:
+        return None
+    kind = payload[:4]
+    if kind not in (b"nclc", b"nclx") or len(payload) < 10:
+        return None
+    primaries, transfer, matrix = struct.unpack(">HHH", payload[4:10])
+    full_range = bool(payload[10] & 0x80) if kind == b"nclx" and len(payload) >= 11 else None
+    return ColrTag(kind.decode(), primaries, transfer, matrix, full_range)
+
+
+def read_colr_kind(video: Path) -> str | None:
+    """Return any first video ``colr`` box kind, including unsupported ICC/profile kinds."""
+    payload = _read_colr_payload(video)
+    return payload[:4].decode("latin1") if payload is not None and len(payload) >= 4 else "<truncated>" if payload is not None else None
+
+
+def _read_colr_payload(video: Path) -> bytes | None:
     with video.open("rb") as file:
         size = os.fstat(file.fileno()).st_size
         moov = next((box for box in _boxes(file, 0, size) if box.kind == b"moov"), None)
@@ -139,12 +169,7 @@ def read_colr(video: Path) -> ColrTag | None:
     colr = _child(data, tree[-1], b"colr") if tree is not None else None
     if colr is None:
         return None
-    kind = bytes(data[colr.body : colr.body + 4])
-    if kind not in (b"nclc", b"nclx") or colr.end - colr.body < 10:
-        return None
-    primaries, transfer, matrix = struct.unpack(">HHH", data[colr.body + 4 : colr.body + 10])
-    full_range = bool(data[colr.body + 10] & 0x80) if kind == b"nclx" and colr.end - colr.body >= 11 else None
-    return ColrTag(kind.decode(), primaries, transfer, matrix, full_range)
+    return bytes(data[colr.body : colr.end])
 
 
 def _major_brand(file, top: list[Box]) -> bytes:
@@ -178,9 +203,9 @@ def _patch_moov(moov: bytes, box: Box, colr: bytes, *, media_after_moov: bool) -
     return bytes(data)
 
 
-def _colr_box(brand: bytes, matrix: int, *, full_range: bool) -> bytes:
+def _colr_box(brand: bytes, primaries: int, transfer: int, matrix: int, *, full_range: bool) -> bytes:
     """A QuickTime ``nclc`` box for ``qt`` files (it has no range field), an ISO ``nclx`` box for the rest."""
-    codes = struct.pack(">HHH", PRIMARIES_BT709, TRANSFER_SRGB, matrix)
+    codes = struct.pack(">HHH", primaries, transfer, matrix)
     if brand == b"qt  ":
         return struct.pack(">I4s4s", 8 + 4 + len(codes), b"colr", b"nclc") + codes
     return struct.pack(">I4s4s", 8 + 4 + len(codes) + 1, b"colr", b"nclx") + codes + (b"\x80" if full_range else b"\x00")

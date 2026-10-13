@@ -1,0 +1,64 @@
+# One H3 Ref2VA run from two still-image references.
+# Both paths are relative to global-config.yaml's input_directory, not data/jobs/.
+# Replace the filenames with images inside that directory before validating.
+# Each image identifies a different person; both people are video subjects.
+# Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-r2av-two-images.yaml
+
+version: 1
+name: two-image-subjects
+backend: h3
+mode: h3av
+run_count: 1
+
+h3_runs:
+  - run: 1
+    pipeline: r2av
+    reference_pair: two-subjects
+
+reference_pairs:
+  - name: two-subjects
+    references:
+      - kind: image
+        path: ./person-1.png
+      - kind: image
+        path: ./person-2.png
+
+prompt_pairs:
+  - name: two-subjects
+    positive: |
+      subject_definitions:
+      <Subject 1> is the person in <Picture 1>, using that image for identity, face, hair, clothing, and proportions.
+      <Subject 2> is a different person in <Picture 2>, using that image for identity, face, hair, clothing, and proportions.
+
+      summary:
+      [reference generation] A single steady shot shows the two people, <Subject 1> and <Subject 2>, together for approximately four seconds. Each image defines one person's appearance; neither image is a required first frame.
+
+      retention_analysis:
+      <Subject 1> (appears in [Shot 1]): fully_preserved - keep the person's recognizable identity, face, hair, clothing, and proportions from <Picture 1>.
+      <Subject 2> (appears in [Shot 1]): fully_preserved - keep the second person's recognizable identity, face, hair, clothing, and proportions from <Picture 2>.
+
+      detailed_description:
+      The target video has a natural photographic appearance and one continuous shot.
+      [Shot 1] From 00:00 to 00:04, a steady medium shot shows <Subject 1> beside <Subject 2>, with both people visible throughout. <Subject 1> retains the face, hair, clothing, and proportions from <Picture 1>. <Subject 2> retains the separate face, hair, clothing, and proportions from <Picture 2>. <Subject 1> blinks once and turns slightly toward <Subject 2>; <Subject 2> returns the glance with a small head movement. Both remain in place, and the camera stays fixed. Keep any dark areas and saturated colors present in the references; do not invent additional people or foreground objects. Their motion settles by the last frame.
+
+      overall_soundscape:
+      Quiet, natural ambience with faint clothing rustles as the two people move. No dialogue.
+
+      non_diegetic_music:
+      N/A
+    default: true
+
+backend_settings:
+  width: 768
+  height: 1344
+  frames: 96
+  seconds: 4
+  steps: 30
+  seed: 42
+
+output:
+  extension: mp4
+
+run_timeout_seconds: 3600
+cooldown:
+  mode: off

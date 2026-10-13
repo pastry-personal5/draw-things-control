@@ -109,7 +109,7 @@ def get_execution_run(execution_id: str, run: str, context: ServerContext = Depe
     found = next((candidate for candidate in row.runs if str(candidate.number) == number), None)
     if found is None:
         raise NotFoundError(f"{row.label} has no run {number}")
-    return run_summary(found)
+    return run_summary(found, backend=row.backend)
 
 
 @router.get("/v1/executions/{execution_id}/outputs")

@@ -331,6 +331,15 @@ class JobExecutor:
                 break
             completed += 1
             chain.records.save()
+            if job.backend == "h3" and number < total and record.last_frame is None:
+                from framechain.jobs.backends.h3 import H3JobData
+
+                data = job.backend_data
+                if isinstance(data, H3JobData) and data.runs[number].pipeline == "i2av":
+                    logger.error("Run {} succeeded, but run {} requires a verified H3 handoff that is unavailable", number, number + 1)
+                    manifest.status = JobStatus.FAILED
+                    exit_code = 1
+                    break
             current_input = run.last_frame or run.output
             # The park takes effect only here, after the run's finish (its last frame, measuring) and RunFinished, and
             # never after the last run. A stop that landed first wins: until the park is taken, a cancel stops the job.

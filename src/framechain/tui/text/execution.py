@@ -89,7 +89,9 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     prompt_block(text, "positive", "green", run.positive)
     prompt_block(text, "negative", "red", run.negative)
     text.append("\n")
-    _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None), ("corrected copy", file_text(execution, run.corrected_output) if run.corrected_output else None), ("anchor", run.anchor)))
+    corrected_label = "corrected main" if run.corrected_output is not None and run.corrected_output == run.output else "corrected copy"
+    anchor = Path(run.anchor).name if execution.backend == "h3" and run.anchor is not None else run.anchor
+    _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None), (corrected_label, file_text(execution, run.corrected_output) if run.corrected_output else None), ("anchor", anchor)))
     if run.cooldown_after_seconds is not None:
         _fields(text, (("cooldown after", seconds_text(run.cooldown_after_seconds)),))
     _check_lines(text, run.checks)

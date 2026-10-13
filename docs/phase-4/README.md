@@ -13,7 +13,9 @@ Improve the product experience, make chained generation support multiple backend
 - H3 image-to-audio-video (`i2av`) jobs through the existing front ends in Milestone 03.
 - Framechain product, package, command, and state database naming in Milestone 04.
 - H3 performance controls and mixed `i2av`/reference-to-audio-video (`r2av`, H3's Ref2VA model family) pipelines in Milestone 05.
-- H3 generated-video color tags and opt-in `i2av` color drift correction in Milestone 06.
+- H3 generated-video color characterization, truthful tags where verified, warning-based fallback, and opt-in `i2av` color drift correction in Milestone 06.
+- Framecontrol product, app, package, interface, and state database naming in Milestone 07.
+- Unified per-run job definitions and mixed backend chains in Milestone 08.
 - Producing and consuming graph-based metadata in Milestone 10.
 
 ## Non-goals
@@ -29,7 +31,9 @@ Improve the product experience, make chained generation support multiple backend
 3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — in progress
 4. [Milestone 04: Rename to Framechain](milestone-04-framechain-rename.md) — done
 5. [Milestone 05: H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) — in progress
-6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — planned
+6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — done
+7. [Milestone 07: Rename to Framecontrol](milestone-07-framecontrol-rename.md) — planned
+8. [Milestone 08: Unified job definitions](milestone-08-job-definition.md) — planned
 10. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
 
 ## Depends on
@@ -38,6 +42,7 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 03 depends on Milestone 02's backend boundary and the local [h3.c](https://github.com/antirez/h3.c) executable and model snapshot. See the [H3 research notes](../research/h3-c.md).
 - Milestone 05 depends on Milestone 03's H3 runtime, staged MP4 finishing, and queue snapshot contract.
 - Milestone 06 depends on Milestone 03's H3 `i2av` output and handoff contract, and Milestone 05's mixed `i2av`/`r2av` pipeline; M06 applies color tags to both pipelines.
+- Milestone 08 depends on the backend contracts, H3 handoff behavior, and reference-pipeline validation from Milestones 02, 03, and 05.
 
 ## Changelog
 
@@ -50,5 +55,6 @@ Decisions and notable changes are recorded in
 - Existing Draw Things jobs continue to work through the backend boundary, including queued and resumed work.
 - `i2av` jobs use H3 from every existing front end, with native audio preserved in their outputs and run history.
 - H3 jobs expose reproducible rendering controls and safely mix first-frame `i2av` runs with ordered-reference `r2av` Ref2VA runs.
-- H3 generated videos carry truthful color tags; `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
+- H3 generated videos carry truthful color tags when verified; otherwise a warning identifies the original output and any conflicting tags it retains. `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
+- Framecontrol is the product and app name, with `fc` as its installed command and existing state safely migrated.
 - Graph-based metadata is produced, consumed, and documented as defined in Milestone 10.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import socket
 import subprocess
@@ -10,12 +11,14 @@ import tempfile
 import time
 import unittest
 from collections.abc import MutableMapping
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import httpx
 import httpx2
+from loguru import logger
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from typer.testing import CliRunner
@@ -219,6 +222,10 @@ class CommandTests(unittest.TestCase):
             result = self.invoke("--transport", "streamable-http", "--port", str(port))
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn(f"127.0.0.1:{port}", result.output)
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            logger.info("After the MCP command's captured stderr closes")
+        self.assertEqual(errors.getvalue(), "")
 
 
 if __name__ == "__main__":

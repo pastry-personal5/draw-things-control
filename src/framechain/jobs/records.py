@@ -52,9 +52,12 @@ class RunRecord:
     audio_sample_rate: int | None = None
     audio_channels: int | None = None
     audio_duration: float | None = None
-    # The file the run's colors were held to, and the corrected copy of its video (Milestone 09); see RunStarted.
+    # The file the run's colors were held to, and the corrected copy of its video; see RunStarted.
     anchor: str | None = None
     corrected_output: str | None = None
+    # A byte-identical H3 child MP4, retained when a positive color correction was requested.
+    raw_output: str | None = None
+    uncorrected_output: str | None = None
 
 
 @dataclass
@@ -95,7 +98,13 @@ class JobManifest:
 
 def write_manifest(path: Path, manifest: JobManifest) -> None:
     """Write the manifest atomically, so a crash never leaves a partial file."""
-    text = json.dumps(asdict(manifest), indent=2, ensure_ascii=False) + "\n"
+    data = asdict(manifest)
+    for run in data["runs"]:
+        if run["raw_output"] is None:
+            del run["raw_output"]
+        if run["uncorrected_output"] is None:
+            del run["uncorrected_output"]
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as file:

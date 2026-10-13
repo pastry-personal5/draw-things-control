@@ -14,7 +14,7 @@ from framechain.core.generation import GenerationOutcome, require_executable
 from framechain.core.process.output import MessageCallback
 from framechain.core.process.runner import ChildStartCallback, JobRunnerFactory, RunResult, StoppableRunner
 from framechain.core.process.signals import CancelToken
-from framechain.jobs.backend import BackendRegistry
+from framechain.jobs.backend import H3_BACKEND, BackendRegistry
 from framechain.jobs.definition import JobDefinition
 from framechain.jobs.events import RunStatus
 from framechain.jobs.media.checks import MediaCheck
@@ -55,7 +55,7 @@ class RunLauncher:
             logger.error("{} exited with 0 but did not write {}", job.backend, child_output)
             return RunStatus.FAILED, 1
         failed = backend.finish(job, run, record, lambda: self._token.requested, finish_state, self._media, self._report)
-        if failed is None and run.last_frame is not None and not run.last_frame.is_file():
+        if failed is None and job.backend != H3_BACKEND and run.last_frame is not None and not run.last_frame.is_file():
             logger.error("{} did not produce the handoff {}", job.backend, run.last_frame)
             return RunStatus.FAILED, 1
         return failed if failed is not None else (RunStatus.SUCCEEDED, 0)

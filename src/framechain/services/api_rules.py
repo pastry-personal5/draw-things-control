@@ -19,10 +19,8 @@ def check_job_rules(job: JobDefinition, global_config: GlobalConfig) -> None:
 
 
 def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
-    """``max_job_runs`` and ``max_job_seconds``, the job's worst case: its runs times ``run_timeout_seconds``, for a
-    video job the ``color_drift`` check's time limit, and for a job that corrects its colors the correction's (Milestone
-    09), plus the longest wait between runs (the job's cooldown applied to ``run_timeout_seconds``, since a wait follows
-    only a run that succeeded within it) times one less than its runs. A job exactly at a limit is accepted.
+    """Check run count, worst-case duration, and estimated H3 output storage. Duration includes each backend's
+    finishing budget and the longest cooldown between runs. A job exactly at a limit is accepted.
     ``remaining_runs``, for a resume, is the runs it has left, not the whole chain's (owner decision)."""
     runs = remaining_runs if remaining_runs is not None else job.run_count
     if runs > limits.max_job_runs:
@@ -31,6 +29,9 @@ def check_job_limits(job: JobDefinition, limits: ApiLimits, *, remaining_runs: i
     worst_case = _worst_case_seconds(job.run_timeout_seconds, job.cooldown, runs) + runs * backends.get(job.backend).finishing_seconds(job)
     if worst_case > limits.max_job_seconds:
         raise LimitExceededError(f"a worst case of {worst_case:g} seconds is over the max_job_seconds limit of {limits.max_job_seconds:g}", key="max_job_seconds", limit=limits.max_job_seconds, value=worst_case)
+    estimated_output = backends.get(job.backend).estimated_output_bytes(job, runs)
+    if estimated_output > limits.max_job_output_bytes:
+        raise LimitExceededError(f"an estimated output of {estimated_output} bytes is over the max_job_output_bytes limit of {limits.max_job_output_bytes}", key="max_job_output_bytes", limit=limits.max_job_output_bytes, value=estimated_output)
 
 
 def _worst_case_seconds(run_timeout_seconds: float, cooldown: CooldownPolicy, runs: int) -> float:
