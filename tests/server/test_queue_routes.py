@@ -14,19 +14,19 @@ import yaml
 from fastapi.testclient import TestClient
 from loguru import logger
 
-from draw_things_control.core.global_config import ApiLimits
-from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.server import routes_queue
-from draw_things_control.server.app import create_app
-from draw_things_control.server.context import ServerContext
-from draw_things_control.server.event_backlog import EventBacklog
-from draw_things_control.services.history_delete import DeleteReport, delete_executions
-from draw_things_control.services.queue_events import QueueEventPublisher
-from draw_things_control.services.queue_hold import HoldState, QueueHold
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import QueueRow, QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.global_config import ApiLimits
+from framechain.jobs.executor import JobExecutor
+from framechain.server import routes_queue
+from framechain.server.app import create_app
+from framechain.server.context import ServerContext
+from framechain.server.event_backlog import EventBacklog
+from framechain.services.history_delete import DeleteReport, delete_executions
+from framechain.services.queue_events import QueueEventPublisher
+from framechain.services.queue_hold import HoldState, QueueHold
+from framechain.services.queue_submit import submit_job
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.queue import QueueRow, QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 
 TOKEN = "a" * 64
@@ -158,7 +158,7 @@ class QueueRoutesTestCase(JobTestCase):
 
     def submit(self, name: str = "job.yaml", *, caller: str | None = None, **changes: Any) -> dict[str, Any]:
         self.write_job_in_catalog(name, **changes)
-        response = self.request("post", "/v1/queue", json={"job": name}, headers={"X-Dtc-Caller": caller} if caller is not None else {})
+        response = self.request("post", "/v1/queue", json={"job": name}, headers={"X-Framechain-Caller": caller} if caller is not None else {})
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -321,9 +321,9 @@ class SubmitTests(QueueRoutesTestCase):
 
     def test_a_malformed_submission_with_a_known_caller_records_that_caller_not_api(self) -> None:
         """Headers are parsed independently of the body: a malformed body's own audit row still names the real
-        caller when ``X-Dtc-Caller`` itself is valid, not the default it falls back to only when that header
+        caller when ``X-Framechain-Caller`` itself is valid, not the default it falls back to only when that header
         isn't."""
-        self.request("post", "/v1/queue", json={}, headers={"X-Dtc-Caller": "tui"})
+        self.request("post", "/v1/queue", json={}, headers={"X-Framechain-Caller": "tui"})
         self.assertEqual(self.request("get", "/v1/audit").json()["audit"][0]["caller"], "tui")
 
     def test_body_that_is_not_json_at_all_is_still_audited_when_authenticated(self) -> None:
@@ -360,15 +360,15 @@ class SubmitTests(QueueRoutesTestCase):
 class CallerHeaderTests(QueueRoutesTestCase):
     def test_a_known_caller_is_recorded_and_an_unknown_one_is_refused(self) -> None:
         self.write_job_in_catalog("job.yaml")
-        response = self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Dtc-Caller": "tui"})
+        response = self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Framechain-Caller": "tui"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.request("get", "/v1/audit").json()["audit"][0]["caller"], "tui")
-        bad = self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Dtc-Caller": "browser"})
+        bad = self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Framechain-Caller": "browser"})
         self.assertEqual(bad.status_code, 422)
 
     def test_an_unknown_caller_is_audited_with_the_default_caller_not_the_bad_value(self) -> None:
         self.write_job_in_catalog("job.yaml")
-        self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Dtc-Caller": "browser"})
+        self.request("post", "/v1/queue", json={"job": "job.yaml"}, headers={"X-Framechain-Caller": "browser"})
         row = self.request("get", "/v1/audit").json()["audit"][0]
         self.assertEqual((row["action"], row["target"], row["outcome"], row["caller"]), ("submit", None, "invalid_input", "api"))
         self.assertEqual(self.store.queue.list(), [])
@@ -564,7 +564,7 @@ class ParkAndHoldTests(QueueRoutesTestCase):
 
     def test_parking_a_running_entry_holds_the_queue_and_returns_the_entry(self) -> None:
         queue_id = self.running_entry()["queue_id"]
-        response = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"})
+        response = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Framechain-Caller": "tui"})
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual((body["queue_id"], body["state"], body["park_requested"], body["current_run"], body["total_runs"]), (queue_id, "running", True, 2, 3))
@@ -613,7 +613,7 @@ class ParkAndHoldTests(QueueRoutesTestCase):
         self.assertEqual([(action, target) for action, target, _outcome, _caller in self.audit()], [("release", None), ("release", None), ("hold", None), ("hold", None)])
 
     def test_hold_and_release_refuse_an_unknown_caller_and_audit_it(self) -> None:
-        response = self.request("post", "/v1/queue/hold", headers={"X-Dtc-Caller": "nope"})
+        response = self.request("post", "/v1/queue/hold", headers={"X-Framechain-Caller": "nope"})
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.audit()[0][:3], ("hold", None, "invalid_input"))
         self.assertFalse(self.request("get", "/v1/queue").json()["held"])
@@ -634,9 +634,9 @@ class ParkAndHoldTests(QueueRoutesTestCase):
 
 class AgentLimitTests(QueueRoutesTestCase):
     """Milestone 10: each entry records its submitter and the hold its caller, and the API keeps an agent
-    (``X-Dtc-Caller: mcp``) off the entries and holds a person made."""
+    (``X-Framechain-Caller: mcp``) off the entries and holds a person made."""
 
-    AGENT = {"X-Dtc-Caller": "mcp"}
+    AGENT = {"X-Framechain-Caller": "mcp"}
 
     def running(self, entry: dict[str, Any]) -> str:
         claimed = self.store.queue.claim_oldest(datetime.now())
@@ -656,7 +656,7 @@ class AgentLimitTests(QueueRoutesTestCase):
 
     def test_a_resume_records_its_resumer_as_the_new_entrys_submitter(self) -> None:
         queue_id = self.seed_resumable_entry(caller="mcp")
-        resumed = self.request("post", f"/v1/queue/{queue_id}/resume", headers={"X-Dtc-Caller": "cli"})
+        resumed = self.request("post", f"/v1/queue/{queue_id}/resume", headers={"X-Framechain-Caller": "cli"})
         self.assertEqual(resumed.json()["submitted_by"], "cli", resumed.text)
 
     def test_each_entry_records_its_submitter(self) -> None:
@@ -672,7 +672,7 @@ class AgentLimitTests(QueueRoutesTestCase):
         self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/cancel"), f"{queue_id} was submitted by tui; an agent may cancel only an entry an agent submitted")
         self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/park"), "an agent may park only")
         self.assertEqual((self.worker.cancelled, self.worker.parking), ([], set()))
-        self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"})
+        self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Framechain-Caller": "tui"})
         self.assert_not_permitted(self.agent(f"/v1/queue/{queue_id}/unpark"), "an agent may unpark only")
         self.assert_not_permitted(self.agent("/v1/queue/release"), f"The queue was held with {queue_id}'s park by tui; an agent may release only a hold an agent made")
         detail = self.request("get", f"/v1/queue/{queue_id}").json()
@@ -705,11 +705,11 @@ class AgentLimitTests(QueueRoutesTestCase):
     def test_a_persons_commands_on_an_agents_entry_and_hold_work(self) -> None:
         queue_id = self.running(self.submit(caller="mcp", run_count=3))
         self.agent("/v1/queue/hold")
-        self.assertEqual(self.request("post", f"/v1/queue/{queue_id}/cancel", headers={"X-Dtc-Caller": "cli"}).status_code, 200)
-        self.assertEqual(self.request("post", "/v1/queue/release", headers={"X-Dtc-Caller": "cli"}).json()["changed"], True)
+        self.assertEqual(self.request("post", f"/v1/queue/{queue_id}/cancel", headers={"X-Framechain-Caller": "cli"}).status_code, 200)
+        self.assertEqual(self.request("post", "/v1/queue/release", headers={"X-Framechain-Caller": "cli"}).json()["changed"], True)
 
     def test_an_agents_direct_hold_over_a_persons_leaves_it_the_persons(self) -> None:
-        self.request("post", "/v1/queue/hold", headers={"X-Dtc-Caller": "tui"})
+        self.request("post", "/v1/queue/hold", headers={"X-Framechain-Caller": "tui"})
         body = self.agent("/v1/queue/hold").json()
         self.assertEqual((body["changed"], body["hold_caller"]), (False, "tui"))
         self.assert_not_permitted(self.agent("/v1/queue/release"), "The queue was held by tui")
@@ -718,7 +718,7 @@ class AgentLimitTests(QueueRoutesTestCase):
     def test_a_persons_park_on_a_queue_an_agent_holds_makes_the_hold_the_persons(self) -> None:
         queue_id = self.running(self.submit(caller="mcp", run_count=3))
         self.agent("/v1/queue/hold")
-        parked = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Dtc-Caller": "tui"}).json()
+        parked = self.request("post", f"/v1/queue/{queue_id}/park", headers={"X-Framechain-Caller": "tui"}).json()
         self.assertEqual((parked["held"], parked["held_by"], parked["hold_caller"]), (True, None, "tui"))
         self.assert_not_permitted(self.agent("/v1/queue/release"), "The queue was held by tui")
         self.assertTrue(self.request("get", "/v1/queue").json()["held"])

@@ -14,12 +14,12 @@ import httpx
 import yaml
 from fastapi.testclient import TestClient
 
-from draw_things_control.core.global_config import ApiLimits
-from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.server import routes_job_files
-from draw_things_control.server.app import create_app
-from draw_things_control.server.context import ServerContext
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.global_config import ApiLimits
+from framechain.jobs.executor import JobExecutor
+from framechain.server import routes_job_files
+from framechain.server.app import create_app
+from framechain.server.context import ServerContext
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 
 TOKEN = "b" * 64

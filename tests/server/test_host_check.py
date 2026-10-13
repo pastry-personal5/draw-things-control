@@ -2,7 +2,7 @@
 
 import unittest
 
-from draw_things_control.server.host_check import host_header_is_allowed, is_loopback_host
+from framechain.server.host_check import host_header_is_allowed, is_loopback_host
 
 
 class IsLoopbackHostTests(unittest.TestCase):

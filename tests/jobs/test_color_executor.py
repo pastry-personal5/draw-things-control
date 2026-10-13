@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from draw_things_control.jobs.color_run import CorrectionRequest, CorrectionResult
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import FirstImageDropped, JobStarted, MediaChecked, RunFinished, RunStarted, RunStatus
-from draw_things_control.jobs.executor import ResumePoint
-from draw_things_control.jobs.media.checks import MediaCheck
-from draw_things_control.jobs.parsing import load_job
+from framechain.jobs.color_run import CorrectionRequest, CorrectionResult
+from framechain.jobs.definition import JobDefinition
+from framechain.jobs.events import FirstImageDropped, JobStarted, MediaChecked, RunFinished, RunStarted, RunStatus
+from framechain.jobs.executor import ResumePoint
+from framechain.jobs.media.checks import MediaCheck
+from framechain.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 from tests.jobs.test_media_checks import FakeChecker, write_frame
@@ -159,7 +159,7 @@ class CorrectingJobTests(JobTestCase):
         cases: dict[str, tuple[Callable[[], Any], str]] = {
             "run 1 fails": (lambda: mock.patch.object(self.service._launcher, "launch", return_value=(RunStatus.FAILED, 1)), "Run 1 failed, so no first image is kept."),
             "run 1 raises": (lambda: mock.patch.object(self.service._launcher, "launch", side_effect=RuntimeError("broken")), "Run 1 failed, so no first image is kept."),
-            "the copy fails": (lambda: mock.patch("draw_things_control.jobs.executor.shutil.copyfile", side_effect=OSError("disk full")), "The first image could not be kept (disk full), so drift since it is left out."),
+            "the copy fails": (lambda: mock.patch("framechain.jobs.executor.shutil.copyfile", side_effect=OSError("disk full")), "The first image could not be kept (disk full), so drift since it is left out."),
         }
         for name, (patch, reason) in cases.items():
             with self.subTest(name):

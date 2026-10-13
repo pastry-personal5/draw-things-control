@@ -11,11 +11,11 @@ from unittest import mock
 
 import numpy as np
 
-from draw_things_control.jobs.media import frames as frame_extraction
-from draw_things_control.jobs.media import stream_color, tools
-from draw_things_control.jobs.media.frames import extract_last_frame
-from draw_things_control.jobs.media.stream_color import StreamColor, read_stream_color, resolve_video_color
-from draw_things_control.jobs.media.video_color import tag_video_colors
+from framechain.jobs.media import frames as frame_extraction
+from framechain.jobs.media import stream_color, tools
+from framechain.jobs.media.frames import extract_last_frame
+from framechain.jobs.media.stream_color import StreamColor, read_stream_color, resolve_video_color
+from framechain.jobs.media.video_color import tag_video_colors
 
 
 def png_chunks(path: Path) -> list[str]:

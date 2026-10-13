@@ -11,22 +11,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from draw_things_control.core.errors import BusyError
-from draw_things_control.core.run_lock import is_draw_things_process, run_lock_is_free
-from draw_things_control.services.queue_host import QueueHost
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.state.executions import NewExecution
-from draw_things_control.state.queue import QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.errors import BusyError
+from framechain.core.run_lock import is_draw_things_process, run_lock_is_free
+from framechain.services.queue_host import QueueHost
+from framechain.services.queue_submit import submit_job
+from framechain.state.executions import NewExecution
+from framechain.state.queue import QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
-# Holds the "serve" lock and records another process as its child, as a real dtc serve would; killed with SIGKILL so
+# Holds the "serve" lock and records another process as its child, as a real fc serve would; killed with SIGKILL so
 # the flock is released (the OS does that) but the file still names the child, which survives independently.
 HOLDER = """
 import sys
 from pathlib import Path
-from draw_things_control.core.run_lock import RunLock
+from framechain.core.run_lock import RunLock
 lock = RunLock("serve", directory=Path(sys.argv[1]))
 lock.acquire()
 lock.record_child(int(sys.argv[2]), "draw-things-cli")
@@ -72,7 +72,7 @@ class QueueHostTests(JobTestCase):
         self.assertTrue(run_lock_is_free(directory=self.paths.state))
 
     def test_start_worker_false_builds_the_worker_without_running_it(self) -> None:
-        """``dtc serve``'s own startup-order fix (Milestone 02, phase-3 changelog 2026-09-28): the worker is built,
+        """``fc serve``'s own startup-order fix (Milestone 02, phase-3 changelog 2026-09-28): the worker is built,
         but not started, until whatever else can still refuse to start (binding its ports) has already succeeded."""
         self.submit_ahead_of_time()
         host = self.host()

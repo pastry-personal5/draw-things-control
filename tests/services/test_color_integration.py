@@ -12,10 +12,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.jobs.events import JobStarted, MediaChecked, RunFinished
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.services.toolkit import Toolkit
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.jobs.events import JobStarted, MediaChecked, RunFinished
+from framechain.jobs.parsing import load_job
+from framechain.services.toolkit import Toolkit
 from tests.fixtures import JobTestCase, job_data, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 from tests.jobs.test_media_correction import drifted, scene

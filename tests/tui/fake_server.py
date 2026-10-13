@@ -1,4 +1,4 @@
-"""A fake ``dtc serve`` for the TUI's tests: an HTTP ``MockTransport`` and a gRPC stub factory, never a network.
+"""A fake ``fc serve`` for the TUI's tests: an HTTP ``MockTransport`` and a gRPC stub factory, never a network.
 
 ``WatchEvents`` behaves as the real service does where the TUI depends on it: a call opened with ``FORCE_RESET_ID`` (or
 after ``explain_gap`` is turned off) begins with ``Reset``; otherwise the events after ``last_event_id`` are replayed
@@ -17,14 +17,14 @@ from typing import Any
 
 import httpx
 
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, event_to_dict
-from draw_things_control.server.serializers import delete_report
-from draw_things_control.services.history_delete import delete_executions
-from draw_things_control.state.ids import EXECUTION_LETTER, parse_typed_id
-from draw_things_control.state.store import Store, StoreMode
-from draw_things_control.tui.feed import FORCE_RESET_ID
-from draw_things_control.tui.generated import monitor_pb2
+from framechain.core.cooldown import CooldownPolicy
+from framechain.jobs.events import CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, event_to_dict
+from framechain.server.serializers import delete_report
+from framechain.services.history_delete import delete_executions
+from framechain.state.ids import EXECUTION_LETTER, parse_typed_id
+from framechain.state.store import Store, StoreMode
+from framechain.tui.feed import FORCE_RESET_ID
+from framechain.tui.generated import monitor_pb2
 
 GRPC_PORT = 18766
 FIRST_EVENT_ID = 1000

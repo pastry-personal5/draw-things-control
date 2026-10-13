@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "dtc": {
+    "framechain": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "dtc", "mcp"]
+      "args": ["run", "fc", "mcp"]
     }
   }
 }

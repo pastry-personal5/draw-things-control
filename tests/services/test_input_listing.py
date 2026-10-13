@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from draw_things_control.jobs.inputs.size import read_image_info as real_read_image_info
-from draw_things_control.services.input_listing import Cache, InputCatalog, list_inputs
+from framechain.jobs.inputs.size import read_image_info as real_read_image_info
+from framechain.services.input_listing import Cache, InputCatalog, list_inputs
 
 
 class ListInputsTests(unittest.TestCase):
@@ -76,7 +76,7 @@ class ListInputsCacheTests(unittest.TestCase):
         self.write_image("a.png", (10, 10))
         cache: Cache = {}
         list_inputs(self.directory, cache=cache)
-        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+        with patch("framechain.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
             images = list_inputs(self.directory, cache=cache)
         spy.assert_not_called()
         self.assertEqual([image.path for image in images], ["a.png"])
@@ -86,7 +86,7 @@ class ListInputsCacheTests(unittest.TestCase):
         cache: Cache = {}
         list_inputs(self.directory, cache=cache)
         Image.new("RGB", (20, 20), "orange").save(path)
-        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+        with patch("framechain.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
             images = list_inputs(self.directory, cache=cache)
         spy.assert_called_once()
         self.assertEqual((images[0].width, images[0].height), (20, 20))
@@ -103,7 +103,7 @@ class ListInputsCacheTests(unittest.TestCase):
         self.write_image("a.png", (10, 10))
         catalog = InputCatalog(self.directory)
         catalog.list()
-        with patch("draw_things_control.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
+        with patch("framechain.services.input_listing.read_image_info", wraps=real_read_image_info) as spy:
             images = catalog.list()
         spy.assert_not_called()
         self.assertEqual([image.path for image in images], ["a.png"])

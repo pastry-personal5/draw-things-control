@@ -11,17 +11,17 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.cooldown import DEFAULT_COOLDOWN
-from draw_things_control.core.run_lock import RunLock
-from draw_things_control.services.generation_submit import GenerationSnapshot
-from draw_things_control.services.job_runs import JobRunSession
-from draw_things_control.services.queue_resume import resume_entry
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.services.queue_worker import QueueWorker
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import NewQueueEntry, QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.core.cooldown import DEFAULT_COOLDOWN
+from framechain.core.run_lock import RunLock
+from framechain.services.generation_submit import GenerationSnapshot
+from framechain.services.job_runs import JobRunSession
+from framechain.services.queue_resume import resume_entry
+from framechain.services.queue_submit import submit_job
+from framechain.services.queue_worker import QueueWorker
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.queue import NewQueueEntry, QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
 
@@ -94,7 +94,7 @@ class QueueWorkerCase(JobTestCase):
     def blocked_start(self):
         """Patches ``parse_snapshot`` in ``queue_worker`` so a claim blocks right after it (before the executor's
         ``begin()``); returns the events a test waits on and sets to release it."""
-        from draw_things_control.services.queue_submit import parse_snapshot as real_parse_snapshot
+        from framechain.services.queue_submit import parse_snapshot as real_parse_snapshot
 
         claimed = threading.Event()
         release = threading.Event()
@@ -109,7 +109,7 @@ class QueueWorkerCase(JobTestCase):
 
             return parse
 
-        return mock.patch("draw_things_control.services.queue_worker.parse_snapshot", side_effect=blocking), claimed, release
+        return mock.patch("framechain.services.queue_worker.parse_snapshot", side_effect=blocking), claimed, release
 
 
 class QueueWorkerTests(QueueWorkerCase):

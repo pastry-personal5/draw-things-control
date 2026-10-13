@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from draw_things_control.core.errors import InputError
-from draw_things_control.services.generation_submit import GenerationSnapshot
+from framechain.core.errors import InputError
+from framechain.services.generation_submit import GenerationSnapshot
 from tests.server.test_queue_routes import QueueRoutesTestCase
 
 

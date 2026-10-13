@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import shutil
 
-from draw_things_control.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
-from draw_things_control.core.global_config import ApiLimits
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
+from framechain.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
+from framechain.core.global_config import ApiLimits
+from framechain.jobs.parsing import load_job
+from framechain.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
 from tests.fixtures import JobTestCase, job_data
 
 ONE_PAIR = [{"name": "only", "positive": "text"}]

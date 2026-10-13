@@ -7,9 +7,9 @@ from unittest import mock
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import CliServices, app
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.text import job_summary
+from framechain.cli.app import CliServices, app
+from framechain.jobs.parsing import load_job
+from framechain.jobs.text import job_summary
 from tests.fixtures import BASE_CONFIG, FakeToolkit, JobTestCase, job_data, job_executor
 
 IGNORED = [

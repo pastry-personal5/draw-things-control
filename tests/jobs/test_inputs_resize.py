@@ -17,8 +17,8 @@ import numpy as np
 from loguru import logger
 from PIL import Image, ImageChops, ImageCms, ImageDraw, ImageOps, ImageStat
 
-from draw_things_control.jobs.inputs.resize import TemporaryInput, read_srgb, resize_image
-from draw_things_control.jobs.inputs.size import ResizePlan, decode_image, resize_plan
+from framechain.jobs.inputs.resize import TemporaryInput, read_srgb, resize_image
+from framechain.jobs.inputs.size import ResizePlan, decode_image, resize_plan
 
 DISPLAY_P3 = Path("/System/Library/ColorSync/Profiles/Display P3.icc")
 
@@ -172,7 +172,7 @@ class InputResizeTests(unittest.TestCase):
         # Pillow opens a YCbCr TIFF or JPEG as RGB, so the YCbCr image is handed over as a format that keeps it would.
         ycbcr = Image.new("RGB", (32, 16), (200, 100, 50)).convert("YCbCr")
         ycbcr.info["icc_profile"] = profile
-        with mock.patch("draw_things_control.jobs.inputs.resize.Image.open", return_value=ycbcr):
+        with mock.patch("framechain.jobs.inputs.resize.Image.open", return_value=ycbcr):
             values, report = read_srgb(self.root / "ycbcr.jpg")
         self.assertEqual((report.profile, report.conversion), ("Display P3", "matrix"))
         np.testing.assert_allclose(values[8, 16] * 255, read_srgb(rgb)[0][8, 16] * 255, atol=2)
@@ -186,7 +186,7 @@ class InputResizeTests(unittest.TestCase):
     def test_srgb_profile_is_not_converted(self) -> None:
         profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
         source = self.save(Image.new("RGB", (256, 128), (1, 2, 3)), "srgb.png", icc_profile=profile)
-        with mock.patch("draw_things_control.jobs.inputs.resize.ImageCms.profileToProfile") as convert:
+        with mock.patch("framechain.jobs.inputs.resize.ImageCms.profileToProfile") as convert:
             image = self.resized(source, resize_plan("srgb.png", (256, 128), None, 128, 64))
         convert.assert_not_called()
         self.assertEqual(image.getpixel((64, 32)), (1, 2, 3))
@@ -295,7 +295,7 @@ class InputResizeTests(unittest.TestCase):
 
     def test_unconvertible_mode_reports_the_input(self) -> None:
         source = self.save(Image.new("RGB", (256, 128), "white"))
-        with mock.patch("draw_things_control.jobs.inputs.resize.read_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
+        with mock.patch("framechain.jobs.inputs.resize.read_srgb", side_effect=ValueError("conversion from LAB to RGB not supported")):
             with self.assertRaisesRegex(ValueError, "Could not resize input .*input.png: conversion from LAB"):
                 TemporaryInput(source, resize_plan("input.png", (256, 128), None, 128, None))
 
@@ -321,7 +321,7 @@ class InputResizeTests(unittest.TestCase):
             return created[-1]
 
         source = self.save(Image.new("RGB", (1920, 1080), "white"))
-        with mock.patch("draw_things_control.jobs.inputs.resize.tempfile.mkdtemp", tracking_mkdtemp), mock.patch("draw_things_control.jobs.inputs.resize.resize_image", side_effect=OSError("disk full")):
+        with mock.patch("framechain.jobs.inputs.resize.tempfile.mkdtemp", tracking_mkdtemp), mock.patch("framechain.jobs.inputs.resize.resize_image", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(ValueError, "Could not resize input .*disk full"):
                 TemporaryInput(source, resize_plan("input.png", (1920, 1080), None, 850, None))
         self.assertFalse(Path(created[0]).exists())

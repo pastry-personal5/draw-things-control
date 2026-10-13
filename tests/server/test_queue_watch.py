@@ -13,11 +13,11 @@ from typing import Any
 
 import httpx
 
-from draw_things_control.server.context import ServerContext
-from draw_things_control.server.event_backlog import EventBacklog
-from draw_things_control.server.generated import monitor_pb2
-from draw_things_control.server.grpc_service import MonitorServicer
-from draw_things_control.state.store import Store
+from framechain.server.context import ServerContext
+from framechain.server.event_backlog import EventBacklog
+from framechain.server.generated import monitor_pb2
+from framechain.server.grpc_service import MonitorServicer
+from framechain.state.store import Store
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
 

@@ -1,4 +1,4 @@
-"""Headless tests of following a job from the TUI: events arrive over the gRPC feed from a fake ``dtc serve``; the TUI
+"""Headless tests of following a job from the TUI: events arrive over the gRPC feed from a fake ``fc serve``; the TUI
 never runs a job itself (Milestone 03), so nothing here starts draw-things-cli."""
 
 from __future__ import annotations
@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from draw_things_control.core.arguments import redact_command
-from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.events import MediaChecked
-from draw_things_control.services.history import HistoryReader
-from draw_things_control.state.executions import ExecutionRow, NewExecution, NewRun
-from draw_things_control.state.store import Store
-from draw_things_control.tui.live_run import MAX_OUTPUT_LINES, PastRun
-from draw_things_control.tui.panes.execution import ExecutionDetailPane
-from draw_things_control.tui.panes.history import ExecutionHistoryList
+from framechain.core.arguments import redact_command
+from framechain.core.run_lock import RunLock
+from framechain.jobs.events import MediaChecked
+from framechain.services.history import HistoryReader
+from framechain.state.executions import ExecutionRow, NewExecution, NewRun
+from framechain.state.store import Store
+from framechain.tui.live_run import MAX_OUTPUT_LINES, PastRun
+from framechain.tui.panes.execution import ExecutionDetailPane
+from framechain.tui.panes.history import ExecutionHistoryList
 from tests.tui.fake_server import job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -148,7 +148,7 @@ class LiveRunTests(FeedTestCase):
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.make_app()
-        wanted = f"The dtc server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand."
+        wanted = f"The Framechain server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand."
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             await self.wait_for(pilot, lambda: self.text(app, "work-status").split("\n")[0] == wanted, "the server's lock line")
@@ -158,7 +158,7 @@ class StoreBackedTests(FeedTestCase):
     """What the running job does to the panes that read the state store, driven through the feed."""
 
     def store(self) -> Store:
-        from draw_things_control.state.store import ensure_state_directory
+        from framechain.state.store import ensure_state_directory
 
         ensure_state_directory(self.state)
         store = Store.open(self.paths.database)

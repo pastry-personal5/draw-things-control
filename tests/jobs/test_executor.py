@@ -19,17 +19,17 @@ from unittest import mock
 from loguru import logger
 from PIL import Image
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments, redact_command
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.process.output import OutputStream, ProcessMessage
-from draw_things_control.core.process.signals import install_signal_handlers, restore_signal_handlers
-from draw_things_control.jobs import launcher as launcher_module
-from draw_things_control.jobs import records
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
-from draw_things_control.jobs.executor import JobOutcome, ResumePoint
-from draw_things_control.jobs.media.info import MediaInfo
-from draw_things_control.jobs.parsing import load_job
+from framechain.core.arguments import DrawThingsGenerateArguments, redact_command
+from framechain.core.cooldown import CooldownPolicy
+from framechain.core.process.output import OutputStream, ProcessMessage
+from framechain.core.process.signals import install_signal_handlers, restore_signal_handlers
+from framechain.jobs import launcher as launcher_module
+from framechain.jobs import records
+from framechain.jobs.definition import JobDefinition
+from framechain.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
+from framechain.jobs.executor import JobOutcome, ResumePoint
+from framechain.jobs.media.info import MediaInfo
+from framechain.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
@@ -400,7 +400,7 @@ class JobExecutorTests(JobTestCase):
             raise KeyboardInterrupt
 
         self.service._handle_signals = True
-        with mock.patch("draw_things_control.jobs.executor.install_signal_handlers", interrupted), mock.patch("draw_things_control.jobs.records.remove_job_log", wraps=records.remove_job_log) as remove:
+        with mock.patch("framechain.jobs.executor.install_signal_handlers", interrupted), mock.patch("framechain.jobs.records.remove_job_log", wraps=records.remove_job_log) as remove:
             with self.assertRaises(KeyboardInterrupt):
                 self.run_job(self.job())
         remove.assert_called_once()
@@ -538,7 +538,7 @@ class JobExecutorTests(JobTestCase):
 
     def test_resize_failure_leaves_no_output_directory_or_manifest(self) -> None:
         job = self.resize_job()
-        with mock.patch("draw_things_control.jobs.inputs.resize.resize_image", side_effect=OSError("disk full")):
+        with mock.patch("framechain.jobs.inputs.resize.resize_image", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(ValueError, "Could not resize input"):
                 self.run_job(job)
         self.assertFalse(job.output_directory.exists())
@@ -546,7 +546,7 @@ class JobExecutorTests(JobTestCase):
 
     def test_preview_shows_a_placeholder_and_writes_nothing(self) -> None:
         job = self.resize_job()
-        with mock.patch("draw_things_control.jobs.inputs.resize.resize_image") as resize:
+        with mock.patch("framechain.jobs.inputs.resize.resize_image") as resize:
             preview = self.service.preview(job, executable="draw-things-cli")
         resize.assert_not_called()
         command = preview.command_previews[0]

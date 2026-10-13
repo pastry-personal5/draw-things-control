@@ -1,10 +1,10 @@
 """Tests for the store a browsing front end shares: opened when needed, kept, and never created by a read."""
 
-from draw_things_control.core.errors import StateUnavailableError
-from draw_things_control.services.history import HistoryFilter, HistoryReader
-from draw_things_control.services.store_provider import StoreProvider
-from draw_things_control.state.database import StateError
-from draw_things_control.tui.job_sort import DEFAULT_SORT, SortPreference
+from framechain.core.errors import StateUnavailableError
+from framechain.services.history import HistoryFilter, HistoryReader
+from framechain.services.store_provider import StoreProvider
+from framechain.state.database import StateError
+from framechain.tui.job_sort import DEFAULT_SORT, SortPreference
 from tests.fixtures import JobTestCase
 
 

@@ -1,10 +1,10 @@
 # User guide
 
-How to use the `draw-things-control` command line, whose mission is long-horizon
+How to use the `framechain` command line, whose mission is long-horizon
 video generation by autoregressive image-to-video chaining on top of the Draw
 Things app. Jobs ([Jobs: chained runs](#jobs-chained-runs)) are the main way to
 do that; `generate` covers a single image or video. Every command is run from
-the project root as `uv run dtc <command>`.
+the project root as `uv run fc <command>`.
 
 ## Contents
 
@@ -34,7 +34,7 @@ without it does not start.
 
 ```bash
 uv sync
-uv run dtc --help
+uv run fc --help
 ```
 
 If `draw-things-cli` is not on your `PATH`, add
@@ -63,29 +63,29 @@ different file.
 
 | Command | Purpose |
 |---------|---------|
-| `generate` | Queue one bounded image or video through `dtc serve` |
+| `generate` | Queue one bounded image or video through `fc serve` |
 | `validate-config FILE` | Check a Draw Things YAML configuration |
 | `validate-job FILE` | Check a job file; runs nothing |
-| `queue add JOB` | Submit a job to `dtc serve`; `--wait` watches it finish |
+| `queue add JOB` | Submit a job to `fc serve`; `--wait` watches it finish |
 | `import-history` | Import phase 1 job manifests into the execution history |
 | `tui` | Browse, run, and watch jobs in a terminal UI |
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
-| `queue` | Submit, list, cancel, resume, park, and hold queue entries through `dtc serve` |
-| `history delete` | Delete executions from the history through `dtc serve` |
-| `mcp` | Give AI agents typed tools over `dtc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
+| `queue` | Submit, list, cancel, resume, park, and hold queue entries through `fc serve` |
+| `history delete` | Delete executions from the history through `fc serve` |
+| `mcp` | Give AI agents typed tools over `fc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
 
 ## Generate one image or video
 
-`generate` is a client of `dtc serve`: start the server first. It submits one
+`generate` is a client of `fc serve`: start the server first. It submits one
 bounded request and prints its queue ID; add `--wait` to follow it through its
 final state. The server worker is the only process that starts Draw Things.
 
 Text to image needs a model, prompt, output, and timeout:
 
 ```bash
-uv run dtc generate \
+uv run fc generate \
   --model flux_2_klein_4b_q6p.ckpt \
   --prompt "a small red cube on a table" \
   --output cube.png \
@@ -95,7 +95,7 @@ uv run dtc generate \
 Image to video with a bundled configuration:
 
 ```bash
-uv run dtc generate \
+uv run fc generate \
   --config image-to-video-wan-2-2.example.yaml \
   --image source.png \
   --output clip.mov \
@@ -147,7 +147,7 @@ shift: 3.99
 loras: []
 ```
 
-`draw-things-cli` reads only JSON, so `dtc` converts the YAML and passes it
+`draw-things-cli` reads only JSON, so `fc` converts the YAML and passes it
 inline with `--config-json`. It never writes a JSON file.
 
 YAML is read strictly, and a file that breaks a rule is rejected (exit code 2)
@@ -179,7 +179,7 @@ are read by the same strict rules.
 Check a file before use:
 
 ```bash
-uv run dtc validate-config data/params/image-to-video-wan-2-2.example.yaml
+uv run fc validate-config data/params/image-to-video-wan-2-2.example.yaml
 ```
 
 The files in `data/params/`, YAML and JSON alike, are yours: this tool reads
@@ -195,16 +195,16 @@ last frame, for video). Each run uses one of your named prompt pairs.
 Validate the file, start the server, then submit it:
 
 ```bash
-uv run dtc validate-job data/jobs/example-job-for-backend-draw-things-cli.yaml
-uv run dtc serve
+uv run fc validate-job data/jobs/example-job-for-backend-draw-things-cli.yaml
+uv run fc serve
 # In another terminal:
-uv run dtc queue add example-job-for-backend-draw-things-cli.yaml --wait
+uv run fc queue add example-job-for-backend-draw-things-cli.yaml --wait
 ```
 
 1. `validate-job` reports any problem, naming the field, and shows the
    settings the job resolves to, including the cooldown and where it came
    from.
-2. `dtc serve` holds the run lock and starts the queue worker.
+2. `fc serve` holds the run lock and starts the queue worker.
 3. `queue add --wait` submits the file and follows its runs.
 
 Start from `data/jobs/example-job-for-backend-draw-things-cli.yaml` or
@@ -583,7 +583,7 @@ adds to each run of every video job.
   warning, and the run still succeeds.
 
 - A video job checks each file it passes through and says what the file
-  holds, in a line of its own: on `dtc serve`'s console, in the job log, in
+  holds, in a line of its own: on `fc serve`'s console, in the job log, in
   the TUI's Messages (a warning in yellow), and as a `media_checked` event on
   the gRPC event stream. Each run's checks are also kept in the execution
   history: under each run in the TUI's execution detail, and as `checks`
@@ -593,7 +593,7 @@ adds to each run of every video job.
   the TUI, and as the execution's own `checks` in the API, each with its `run`.
   A check that cannot be stored (a locked database, say) is skipped with one
   error in the log, and the rest of the execution is still recorded. `ffmpeg`
-  and `ffprobe` are looked up at each check, so a `dtc serve` started before
+  and `ffprobe` are looked up at each check, so a `fc serve` started before
   they were installed finds them without a restart. A check only reads the file; a warning never
   changes or fails a run (owner decision). A `t2v` job has no input, so it
   gets the last three. The checks:
@@ -625,13 +625,13 @@ adds to each run of every video job.
 
 ## Browse and run jobs in the terminal UI
 
-`dtc tui` shows your jobs, submits them to the server while you watch, and shows what ran
+`fc tui` shows your jobs, submits them to the server while you watch, and shows what ran
 before, all on one screen in a dark theme. You drive it by typing commands
 that begin with `/`:
 
 ```bash
-uv run dtc tui
-uv run dtc tui --data-dir /path/to/jobs --server-url http://127.0.0.1:8765
+uv run fc tui
+uv run fc tui --data-dir /path/to/jobs --server-url http://127.0.0.1:8765
 ```
 
 The screen, top to bottom:
@@ -699,7 +699,7 @@ so the Execution detail keeps about 9 lines under the other two.
 | `/delete all` | Delete the whole history, asking first |
 | `/verbose [high\|medium\|low]` | Show, or set, how much output and status detail the TUI shows (see [Verbose levels](#verbose-levels)) |
 | `/clear` | Clear the messages |
-| `/quit` | Quit; `dtc serve` keeps running whatever it is running |
+| `/quit` | Quit; `fc serve` keeps running whatever it is running |
 
 `/get prompts`, `/get positive`, and `/get negative` show each `positive:`
 or `negative:` label on its own line, with the prompt starting on the next
@@ -728,7 +728,7 @@ terminal does.
   executable, which the table leaves out. For a job that sets no seed, the plan uses the placeholder seed `0`, so it is the
   same each time; a run draws a real seed. If `draw-things-cli` or `ffmpeg`
   is missing, the plan says why and the rest still shows.
-- `--server-url` points the TUI at `dtc serve`; `--token-file` selects the
+- `--server-url` points the TUI at `fc serve`; `--token-file` selects the
   shared bearer token. The server's `--executable` and `--shutdown-grace`
   control its worker.
 - `/apply` asks to confirm, showing the job, mode, runs, cooldown, seed,
@@ -792,7 +792,7 @@ terminal does.
 ### Verbose levels
 
 `/verbose high|medium|low` (any letter case) trades the generation output's detail for less noise and less
-traffic from `dtc serve`; `/verbose` alone says the current level. The level is kept in
+traffic from `fc serve`; `/verbose` alone says the current level. The level is kept in
 `config/tui-preferences.yaml` (a per-machine file, ignored by git) and is the level of the next session too; a
 missing or unreadable file means `high`. If the file cannot be written, the level still applies to this session and
 The Activity log says it could not be saved.
@@ -801,11 +801,11 @@ The Activity log says it could not be saved.
 |-------|--------------------------|--------------------------------------|
 | `high` (default) | Every output line, live | Refreshed every second |
 | `medium` | Every line is streamed, but the pane shows only each run's first minute (`(output hidden: verbose medium, after 1 min)` marks the end, once per run) | Every second |
-| `low` | No output: `dtc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run summary nor the work status shows step progress |
+| `low` | No output: `fc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run summary nor the work status shows step progress |
 
 - Typing `/verbose medium` while a run is going opens a fresh minute at that moment, so output shows at once. A line
   medium or low hides is never shown later, and `high` shows only the lines that arrive after the switch.
-- Switching into or out of `low` reconnects the TUI to `dtc serve` (the Activity log says so). Going back out of low may
+- Switching into or out of `low` reconnects the TUI to `fc serve` (the Activity log says so). Going back out of low may
   replay the output that arrived meanwhile as one burst, or, after a very chatty run, reread the running job's state
   and show `(earlier output not shown)`. `high` and `medium` differ only in what the pane shows, so switching between
   them reconnects nothing. Without a running server the level still applies and takes effect on the next connection.
@@ -844,7 +844,7 @@ The Activity log says it could not be saved.
 - After a stop is requested, the bars stop moving and the end times read
   `stopping`. When the job ends, the widget shows its result, the runs that
   succeeded, and how long the job took, until the next job starts.
-- While another process holds the run lock (for example, `dtc serve` in
+- While another process holds the run lock (for example, `fc serve` in
   another terminal), it says `A job is running in another process`, from
   the moment the TUI opens.
 - While the queue is held and no job runs, it says `Queue held since 12:04
@@ -887,7 +887,7 @@ why.
   such as `j1` when `j1.yaml` exists and `J0001` is `walk.yaml`, runs
   nothing and says so: type the full file name (`j1.yaml`) or the ID in
   another form (`J0001`).
-- Job IDs and execution IDs live in `state/dtc.db` only. Deleting `state/`
+- Job IDs and execution IDs live in `state/framechain.db` only. Deleting `state/`
   starts both numberings over, and nothing rebuilds them, so keep it.
 
 ### Execution detail
@@ -930,18 +930,18 @@ they succeed, unless you are in the history or the detail at that moment.
 
 - Ctrl-C twice while a job runs asks whether to stop the job and quit; the
   TUI quits only once the job has stopped. Ctrl-C does nothing while a
-  confirmation is open. If `dtc tui` receives `SIGTERM`, `SIGHUP` (the
+  confirmation is open. If `fc tui` receives `SIGTERM`, `SIGHUP` (the
   terminal closed), or `SIGINT`, it stops the job the same way and exits
   with 128+N (143 for `SIGTERM`). A signal while the job is already stopping
   changes nothing.
 - Browsing only reads files. A queued job writes its
   outputs and last frames, its manifest and log when `write_job_records` is
-  true, `state/dtc.db`, and `state/run.lock`) and nothing else. The TUI never
+  true, `state/framechain.db`, and `state/run.lock`) and nothing else. The TUI never
   changes a job file, `data/params/`, or the global configuration, and it
-  does not create `state/dtc.db` just to show an empty history. Browsing
-  writes to `state/dtc.db` only to give job IDs to the files in
+  does not create `state/framechain.db` just to show an empty history. Browsing
+  writes to `state/framechain.db` only to give job IDs to the files in
   `data/jobs/`, to keep the Jobs list's sort, and to upgrade an
-  existing database to the current schema, which any `dtc` command does the
+  existing database to the current schema, which any `fc` command does the
   first time it opens an older one.
 - An invalid global configuration is reported before the TUI starts, and the
   command exits with 2. If the TUI itself fails, it prints the error and the
@@ -950,10 +950,18 @@ they succeed, unless you are in the history or the detail at that moment.
 ## Execution history and the run lock
 
 Every queued job that starts is recorded in a SQLite database,
-`state/dtc.db` in the project, whatever `write_job_records` says: the job
+`state/framechain.db` in the project, whatever `write_job_records` says: the job
 file's exact text, backend, the settings it ran with, and each run's prompts, files,
 redacted command, timing, and result. `state/` is git-ignored, created on first
 use, and readable only by you. `generate` is not recorded.
+
+On first open after upgrading, Framechain copies an existing `state/dtc.db`
+through SQLite's backup API into `state/framechain.db`, checks the copy, then
+removes the old file and its sidecars. Stop the old server before starting
+Framechain. If the run lock is held, stop its server or job and retry. If both
+database names exist, inspect both and move the unwanted one aside before
+retrying; Framechain will not select one automatically. A fresh history browse
+does not create a database.
 
 Each execution gets an **execution ID**, `E` and at least four digits
 (`E0012`), before it starts; it is named in the job log line, in the
@@ -974,7 +982,7 @@ execution IDs existed were numbered by start time, oldest first.
 - If a run is killed, its record stays `running` until the next run starts,
   which closes it as `interrupted`.
 - To bring in manifests written before the database existed (jobs run with
-  `write_job_records: true`), run `uv run dtc import-history`. It searches the
+  `write_job_records: true`), run `uv run fc import-history`. It searches the
   output directory, or `--directory PATH`, for `*.json` manifests, skips any
   already imported or past the retention period, and reports how many it
   imported, skipped, and could not read. It is safe to repeat and never changes
@@ -983,33 +991,33 @@ execution IDs existed were numbered by start time, oldest first.
   execution was pruned, or `state/` was deleted), both are named:
   `E0040: /path/walk-job.json (its manifest says E0003)`.
 
-Only one run drives the GPU at a time. `dtc serve` holds `state/run.lock` for
+Only one run drives the GPU at a time. `fc serve` holds `state/run.lock` for
 its lifetime; `generate` submits to that server and never takes the lock itself.
 If another process holds it, the command exits with 75 and
 says who does, and nothing starts:
 
 ```text
-Another run is in progress (dtc serve, PID 4123). Try again when it finishes.
+Another run is in progress (fc serve, PID 4123). Try again when it finishes.
 ```
 
 The operating system releases the lock when its holder exits, however it
-exits. If `dtc` itself was killed with `SIGKILL` while `draw-things-cli` was
+exits. If `fc` itself was killed with `SIGKILL` while `draw-things-cli` was
 running, the next start also refuses (exit 75) until that `draw-things-cli`
 ends, and never stops it for you. `--dry-run`, `validate-job`,
 `validate-config`, and `import-history` never take the lock. If `state/` cannot
 be used (unwritable, a filesystem without SQLite WAL support, or a database
-written by a newer version), `dtc serve` exits with 1 and the reason, and starts
+written by a newer version), `fc serve` exits with 1 and the reason, and starts
 nothing.
 
 ### Delete executions
 
 Failed experiments, test runs, and duplicates can be deleted from the history
 instead of waiting for `history_retention_days`. A deletion is final and goes
-through `dtc serve`'s API, so the server must be up. It removes the
+through `fc serve`'s API, so the server must be up. It removes the
 execution's row, its runs, its `.log` file, and its manifest (so
-`dtc import-history` cannot bring it back). Its outputs stay, and its number
+`fc import-history` cannot bring it back). Its outputs stay, and its number
 is never given again. A manifest that cannot be deleted (a permission error,
-a read-only volume) is named, since `dtc import-history` would bring the
+a read-only volume) is named, since `fc import-history` would bring the
 execution back under a new number; the row is deleted anyway.
 
 Refused, with the reason:
@@ -1050,9 +1058,9 @@ server down, no dialog opens and the Activity log says it cannot be reached.
 From the command field:
 
 ```bash
-uv run dtc history delete E0012 E0013
-uv run dtc history delete --status failed --name walk
-uv run dtc history delete --all --yes
+uv run fc history delete E0012 E0013
+uv run fc history delete --status failed --name walk
+uv run fc history delete --all --yes
 ```
 
 It lists what it will delete, with any resume each ends, and asks
@@ -1065,19 +1073,19 @@ rest are deleted, and the exit code is 2.
 
 ## Server: HTTP API and gRPC monitoring
 
-`dtc serve` runs an HTTP API and a gRPC monitoring service in one foreground
-process, for an AI agent (over MCP, with [`dtc mcp`](#ai-agents-over-mcp)) or any local program to list jobs
+`fc serve` runs an HTTP API and a gRPC monitoring service in one foreground
+process, for an AI agent (over MCP, with [`fc mcp`](#ai-agents-over-mcp)) or any local program to list jobs
 and inputs, queue and watch runs, and read history — without running
 `draw-things-cli` itself.
 
 ```bash
-uv run dtc serve
+uv run fc serve
 ```
 
 It reads `config/global-config.yaml` (or `--global-config PATH`) once at
 start; edit and restart to pick up a change. It takes the run
 lock (`state/run.lock`) and holds it for as long as it runs; the TUI and
-`dtc queue` submit to its worker, and a second `dtc serve`
+`fc queue` submit to its worker, and a second `fc serve`
 refuses to start (exit 75) — see
 [Execution history and the run lock](#execution-history-and-the-run-lock). A
 queue submitted through the API runs on the server's own worker, one entry at
@@ -1092,7 +1100,7 @@ Options: `--host` (default `127.0.0.1`), `--port` (default `8765`),
 `--grpc-port` (default `8766`), `--executable`, `--shutdown-grace`,
 `--global-config`, `--allow-remote-bind`, and `--allow-write`. Writes are off by default;
 `--allow-write` enables the authenticated job-file endpoints described below, and lets agents delete executions
-through MCP (the endpoint itself is always on, for `dtc history delete` and the TUI). A `--host` that is not loopback
+through MCP (the endpoint itself is always on, for `fc history delete` and the TUI). A `--host` that is not loopback
 (`127.0.0.1`, `::1`, `localhost`) is refused (exit 2) unless
 `--allow-remote-bind` is given, since beyond loopback the bearer token below
 crosses the network in plain HTTP; an SSH tunnel is the safer way in from
@@ -1153,7 +1161,7 @@ between two queued jobs, null while a job runs).
 Watching for change (the event stream, and "tell me when this entry changes")
 is gRPC, and, for one entry, also SSE: `GET /queue/{id}/watch` sends the snapshots
 `WatchQueueEntry` sends, with the same field names (an unset one as null), for a
-client that speaks HTTP alone, as `dtc mcp` does. An unknown entry is 404 before
+client that speaks HTTP alone, as `fc mcp` does. An unknown entry is 404 before
 the stream starts; it ends when the client disconnects, the entry is gone, or the
 server shuts down, and a client that reconnects gets a new snapshot first. A
 browser's `EventSource` cannot send the token, so it serves clients that send
@@ -1193,7 +1201,7 @@ permitted request gets HTTP 422.
 A refusal names the `code` (`timeout_required`, `outside_directory`,
 `limit_exceeded`), the field, and, for a limit, the limit and the job's
 value. These limits
-apply to every caller, `dtc queue` (Milestone 03) included: the API cannot
+apply to every caller, `fc queue` (Milestone 03) included: the API cannot
 tell a person from an agent.
 
 **Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. For a local file with invalid UTF-8, `text` contains replacement characters and the hash still covers its original bytes. A stale value returns `409 conflict` with `current_sha256`.
@@ -1207,7 +1215,7 @@ cp -n data/jobs/.trash/NAME-YYYYMMDD-HHMMSS.yaml data/jobs/NAME.yaml
 Use the corresponding file under `.backups/NAME/` for a backup. `cp -n` refuses to overwrite an existing destination.
 
 **People's entries and holds.** The queue is shared, so the API keeps agents
-off what people started: a request whose `X-Dtc-Caller` is `mcp` may cancel,
+off what people started: a request whose `X-Framechain-Caller` is `mcp` may cancel,
 park, unpark, or resume only an entry an agent submitted, and release only a
 hold an agent made; the rest are refused, 403 `not_permitted`, naming who made
 them, and change nothing. An entry made before callers were recorded, and a
@@ -1240,20 +1248,20 @@ run, with the original seed, from that run's output (its last frame, for a
 video), and reruns nothing.
 
 ```bash
-uv run dtc queue park Q0007
-uv run dtc queue resume Q0007
+uv run fc queue park Q0007
+uv run fc queue resume Q0007
 ```
 
 - Parking also *holds* the queue: nothing else starts until you release it
-  (`dtc queue release`, `/queue release`, or `/release`). The hold is saved
-  in the state store, so it survives a `dtc serve` restart, which logs
-  `Queue held since ... ; 'dtc queue release' starts it`. A release starts
+  (`fc queue release`, `/queue release`, or `/release`). The hold is saved
+  in the state store, so it survives a `fc serve` restart, which logs
+  `Queue held since ... ; 'fc queue release' starts it`. A release starts
   the oldest queued entry at once, even when the last job's cooldown has not
   passed.
-- While the entry's run goes on, it reads `parking`: in `dtc queue list`,
+- While the entry's run goes on, it reads `parking`: in `fc queue list`,
   the Queue list's State column, and the work status (`parking after
   run 3/7`, or `parking on its last run`, with `parking` on the Job bar). A
-  reservation made from another TUI or from `dtc queue` shows too.
+  reservation made from another TUI or from `fc queue` shows too.
 - A park during the cooldown between two runs ends the cooldown at once, and
   the job parks. A park during the job's last run lets it finish
   `succeeded`, and the queue is still held. A parking run that fails ends
@@ -1282,62 +1290,62 @@ uv run dtc queue resume Q0007
 
 | Where | Park | Withdraw | Hold | Release |
 |-------|------|----------|------|---------|
-| `dtc queue` | `park <Queue ID>` | `unpark <Queue ID>` | `hold` | `release` |
+| `fc queue` | `park <Queue ID>` | `unpark <Queue ID>` | `hold` | `release` |
 | The TUI | `/queue park <Queue ID>`, `/park`, `p` on the Queue list | `/queue unpark <Queue ID>`, `/unpark`, `u` | `/queue hold`, `/hold` | `/queue release`, `/release` |
 
 `/park` and `/unpark` act on the entry the generation output is
 following. None of these asks to confirm. The Queue list's title reads
 `Queue list (held)` while the queue is held, from the state store too while the
-server is down. `dtc queue add --wait` says when its entry starts parking or
+server is down. `fc queue add --wait` says when its entry starts parking or
 runs on, and when it waits behind a hold; an entry that parks prints
-`Q0007 parked after run 5/7; 'dtc queue resume Q0007' continues at run 6`
+`Q0007 parked after run 5/7; 'fc queue resume Q0007' continues at run 6`
 (the chain's run number) and exits 3.
 
 ## AI agents over MCP
 
-`dtc mcp` is an MCP server, on stdio or over Streamable HTTP, that gives an AI agent typed tools over
-`dtc serve`'s API, so the agent can draft, create, queue, watch, cancel, and
+`fc mcp` is an MCP server, on stdio or over Streamable HTTP, that gives an AI agent typed tools over
+`fc serve`'s API, so the agent can draft, create, queue, watch, cancel, and
 resume a long chain without knowing HTTP. It is a client of the API, as
-`dtc queue` is: it runs nothing itself, and `dtc serve` stays the only process
+`fc queue` is: it runs nothing itself, and `fc serve` stays the only process
 that runs a job. Several MCP sessions can share one server.
 
 ```bash
-uv run dtc mcp
+uv run fc mcp
 ```
 
-It takes `dtc queue`'s three options, with the same defaults: `--server-url`
+It takes `fc queue`'s three options, with the same defaults: `--server-url`
 (default `http://127.0.0.1:8765`; one that is not loopback is refused, exit 2,
 unless `--allow-remote-server` is given) and `--token-file` (default the
 project's `config/server-token`, found from the package's own place, not from
-the directory a client starts it in). It starts whether or not `dtc serve` is
+the directory a client starts it in). It starts whether or not `fc serve` is
 up, reads the token at the first call, and reads it again after any failure, so
-a regenerated token or a restarted server needs no restart of `dtc mcp`. Its
+a regenerated token or a restarted server needs no restart of `fc mcp`. Its
 stdout carries the protocol alone; it logs to stderr, and never logs the token.
 
 **Registering it.** The project's `.mcp.json` registers it with Claude Code as
-`dtc`, running `uv run dtc mcp`, so every Claude Code session in this
+`framechain`, running `uv run fc mcp`, so every Claude Code session in this
 repository is offered the tools: an interactive session asks once before it
 uses them, while `claude -p` runs, Agent SDK sessions, and cloud sessions load
 them without asking (`disabledMcpjsonServers` keeps it out of any session). The
-tools act on your real queue and history whenever `dtc serve` runs. For a
+tools act on your real queue and history whenever `fc serve` runs. For a
 client started from anywhere else, give the project's directory:
 
 ```json
 {
   "mcpServers": {
-    "dtc": {"type": "stdio", "command": "uv", "args": ["run", "--directory", "/path/to/draw-things-control", "dtc", "mcp"]}
+    "framechain": {"type": "stdio", "command": "uv", "args": ["run", "--directory", "/path/to/framechain", "fc", "mcp"]}
   }
 }
 ```
 
 **Over HTTP, for a client that cannot start it.** A client in a virtual machine,
-such as OpenClaw, cannot start `dtc mcp` here, and `dtc serve`'s port is the
+such as OpenClaw, cannot start `fc mcp` here, and `fc serve`'s port is the
 REST API, not an MCP endpoint: a client's `--url` pointed at it gets a 404 for
-`/`, `/sse`, and `/mcp`. Run `dtc mcp` as a listener instead (`./run-mcp-server.sh`
+`/`, `/sse`, and `/mcp`. Run `fc mcp` as a listener instead (`./run-mcp-server.sh`
 does this for the `192.168.64.1` bridge):
 
 ```bash
-uv run dtc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bind --server-url http://192.168.64.1:8765 --allow-remote-server
+uv run fc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bind --server-url http://192.168.64.1:8765 --allow-remote-server
 ```
 
 It serves the same tools and resources at `http://HOST:PORT/mcp` (`--port`
@@ -1346,7 +1354,7 @@ same server token as the REST API, the text of `config/server-token`, as
 `Authorization: Bearer TOKEN`; any other is 401, and the token is read again for each request, so a
 regenerated one counts at once. A `--host` beyond loopback is refused (exit 2)
 without `--allow-remote-bind`, and then the token crosses the network in plain
-HTTP, as `dtc serve --allow-remote-bind` warns; an SSH tunnel is the safer way
+HTTP, as `fc serve --allow-remote-bind` warns; an SSH tunnel is the safer way
 in from elsewhere. `--host`, `--port`, and `--allow-remote-bind` with the default
 `--transport stdio` are refused, not ignored. Register it in the client with
 the URL, the transport `streamable-http` (not `sse`), and the header; for
@@ -1356,16 +1364,16 @@ OpenClaw:
 #!/usr/bin/env bash
 
 if [[ -z "${TOKEN:-}" ]]; then
-  echo "Set the server token from draw-things-control (config/server-token) as a shell variable TOKEN."
+  echo "Set the server token from framechain (config/server-token) as a shell variable TOKEN."
   exit 1
 fi
 
-openclaw mcp add draw-things-control-mcp \
+openclaw mcp add framechain-mcp \
   --url http://192.168.64.1:8767/mcp \
   --transport streamable-http \
   --header "Authorization=Bearer ${TOKEN}" \
   --timeout 1600
-openclaw mcp probe draw-things-control-mcp
+openclaw mcp probe framechain-mcp
 ```
 
 The HTTP listener bounds each authenticated JSON-RPC request at 8 MiB before
@@ -1378,7 +1386,7 @@ forwarded writes are audited there.
 `--timeout 1600` is OpenClaw's per-request timeout, 60 seconds by default, which
 would end a `get_queue_entry` wait of more than 50 seconds (see
 "Waiting for a change" below); 1600 covers a wait of up to the 1500
-seconds `dtc mcp` allows a client that sends no progress token.
+seconds `fc mcp` allows a client that sends no progress token.
 
 `openclaw mcp add` connects before it saves, so a wrong URL, transport, or token
 saves nothing and says why. It writes the header, token included, to
@@ -1419,8 +1427,8 @@ All MCP sessions share the caller `mcp`, so this keeps agents off people's
 entries, not one agent off another's.
 
 **The write tools.** `create_job`, `replace_job`, `delete_job`, and
-`delete_executions` are listed only while `dtc serve` runs with
-`--allow-write`. `dtc mcp` reads `GET /capabilities` when a client asks for the
+`delete_executions` are listed only while `fc serve` runs with
+`--allow-write`. `fc mcp` reads `GET /capabilities` when a client asks for the
 tool list, and again before a call when its last read is over 5 seconds old,
 and when the setting has changed, it tells the client the tool list changed (on
 a `subscriptions/listen` stream for a 2026-07-28 client, and as
@@ -1438,7 +1446,7 @@ execution, an error, a park, the hold, the between-jobs wait, or a run's end —
 or the time is up, with `changed` (`true` or `false`) added to the entry. A
 run's next start and its steps do not end a wait, so following a chain takes
 about one call a run. A finished entry is answered at once with
-`changed: false`. While it waits, `dtc mcp` sends a progress notification every
+`changed: false`. While it waits, `fc mcp` sends a progress notification every
 15 seconds when the client asked for progress; a call without a progress token
 waits at most 1500 seconds, under Claude Code's 30-minute idle limit for a stdio
 server. A call can wait as long as a run, but never for a whole job.
@@ -1452,13 +1460,13 @@ A client on the MCP TypeScript SDK's defaults ends a call after 60 seconds, so
 an agent in one should pass 50 or less.
 
 **Its own errors.** With the API down, the read, run, and queue control tools
-are still listed, and each call answers an error, and `dtc mcp` keeps running:
+are still listed, and each call answers an error, and `fc mcp` keeps running:
 
 | Code | When |
 |------|------|
-| `server_unreachable` | The connection fails, or a watch drops or sends nothing, not even its keep-alive, for 60 seconds; names `--server-url` and `dtc serve` |
+| `server_unreachable` | The connection fails, or a watch drops or sends nothing, not even its keep-alive, for 60 seconds; names `--server-url` and `fc serve` |
 | `server_timeout` | The API took the request but did not answer within 30 seconds; it may have taken effect, so read the state again before you retry |
-| `unauthorized` | The token file is missing, empty, or unreadable, or the API refuses the token; names the token file and `dtc serve` |
+| `unauthorized` | The token file is missing, empty, or unreadable, or the API refuses the token; names the token file and `fc serve` |
 | `invalid_input` | An argument it refuses before any request |
 | `writes_off` | `delete_executions` while writes are off |
 
@@ -1469,7 +1477,7 @@ MCP tool list guides an agent that uses it; it does not restrict a token holder.
 `--allow-write` enables job-file creation, replacement, and deletion and
 advertises MCP's execution deletion tool. `run-server.sh` enables it. Replaced
 files stay in `data/jobs/.backups/`, deleted files in `data/jobs/.trash/`, and
-the audit rows in `state/dtc.db`. The [API limits](#server-http-api-and-grpc-monitoring)
+the audit rows in `state/framechain.db`. The [API limits](#server-http-api-and-grpc-monitoring)
 bound each submission and request. Cancel and server stop lose the current
 partial run; resume starts again from the last successful run. The token,
 loopback bind, and audit log protect and record API use, while MCP refusals
@@ -1486,7 +1494,7 @@ keeps any partial output, and exits with that run's exit code.
 | 0 | Success |
 | 1 | A run exited with 0 but wrote no output, last-frame extraction failed, or the `state/` database or lock cannot be used |
 | 2 | Invalid input: options, configuration, or job file |
-| 3 | `dtc queue add --wait`: the entry parked; `dtc queue resume` continues it |
+| 3 | `fc queue add --wait`: the entry parked; `fc queue resume` continues it |
 | 75 | Another run holds the run lock; try again when it finishes |
 | 124 | A run exceeded `--timeout` or `run_timeout_seconds` |
 | 130 | Stopped with Ctrl-C (`128 + signal`; 143 for `SIGTERM`, 129 for `SIGHUP`) |

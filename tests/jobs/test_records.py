@@ -8,9 +8,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from draw_things_control.jobs.events import JobStatus
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.records import JobManifest, JobRecords, RunRecord, write_manifest
+from framechain.jobs.events import JobStatus
+from framechain.jobs.parsing import load_job
+from framechain.jobs.records import JobManifest, JobRecords, RunRecord, write_manifest
 from tests.fixtures import JobTestCase, job_data
 
 

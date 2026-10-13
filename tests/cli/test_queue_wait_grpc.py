@@ -1,4 +1,4 @@
-"""``dtc queue add --wait`` against a real gRPC server (``MonitorServicer``, not a fake stub): the only test that
+"""``fc queue add --wait`` against a real gRPC server (``MonitorServicer``, not a fake stub): the only test that
 exercises ``queue_wait._run``'s real ``grpc.aio.insecure_channel`` -> ``MonitorStub`` -> ``call.cancel()`` path, and
 the auth metadata it sends."""
 
@@ -12,19 +12,19 @@ import grpc
 import grpc.aio
 import httpx
 
-from draw_things_control.cli.queue_wait import _run, wait_for_entry
-from draw_things_control.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
-from draw_things_control.server.generated import monitor_pb2_grpc
-from draw_things_control.server.grpc_auth import TokenAuthInterceptor
-from draw_things_control.server.grpc_service import MonitorServicer
-from draw_things_control.state.queue import QueueState
+from framechain.cli.queue_wait import _run, wait_for_entry
+from framechain.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from framechain.server.generated import monitor_pb2_grpc
+from framechain.server.grpc_auth import TokenAuthInterceptor
+from framechain.server.grpc_service import MonitorServicer
+from framechain.state.queue import QueueState
 from tests.server.test_grpc_service import TOKEN, GrpcServiceTestCase
 
 
 class QueueWaitRealGrpcTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase):
     """Its own ``asyncSetUp``, not the base class's: that one builds a channel and stub for the *server's* own
     tests to read from directly, but keeps the port it bound to itself; ``_run`` below dials its own channel from a
-    target string, exactly as ``dtc queue add --wait`` does from ``GET /v1/health``'s ``grpc_port``, so this test
+    target string, exactly as ``fc queue add --wait`` does from ``GET /v1/health``'s ``grpc_port``, so this test
     needs the port kept, not a channel already open."""
 
     async def asyncSetUp(self) -> None:

@@ -1,7 +1,7 @@
 """The layers of the package, as import rules: cli, tui, server -> services -> state -> jobs -> core.
 
-Front ends never import each other (``dtc tui`` starts the TUI app, ``dtc serve`` starts the HTTP API and gRPC
-service, and ``dtc mcp`` starts the MCP server, the three exceptions), ``mcp_server`` reaches the rest only over HTTP,
+Front ends never import each other (``fc tui`` starts the TUI app, ``fc serve`` starts the HTTP API and gRPC
+service, and ``fc mcp`` starts the MCP server, the three exceptions), ``mcp_server`` reaches the rest only over HTTP,
 with no gRPC, and no layer below the front ends imports a terminal, web, MCP, or gRPC framework.
 """
 
@@ -11,7 +11,7 @@ import ast
 import unittest
 from pathlib import Path
 
-PACKAGE = "draw_things_control"
+PACKAGE = "framechain"
 SOURCE = Path(__file__).resolve().parents[1] / "src" / PACKAGE
 
 # What each subpackage may import from this package, besides itself.
@@ -25,8 +25,8 @@ ALLOWED = {
     "server": {"core", "jobs", "state", "services"},
     "mcp_server": set(),
 }
-# The three imports between front ends, each by `cli/app.py` alone: `dtc tui` starts the TUI app, `dtc serve` the HTTP
-# API and gRPC service, and `dtc mcp` the MCP server.
+# The three imports between front ends, each by `cli/app.py` alone: `fc tui` starts the TUI app, `fc serve` the HTTP
+# API and gRPC service, and `fc mcp` the MCP server.
 FRONT_END_EXCEPTIONS = {(f"{PACKAGE}.cli.app", f"{PACKAGE}.tui.app"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.server.serve"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.mcp_server.app")}
 # The frameworks a front end owns; the layers below never import them.
 FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "mcp_types", "httpx", "rich", "grpc"}
@@ -129,7 +129,7 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(len(self.bad("cli.app", f"from {PACKAGE}.tui.screens import MainScreen")), 1)
 
     def test_dtc_tui_may_start_the_tui_app(self) -> None:
-        self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.tui.app import DrawThingsApp"), [])
+        self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.tui.app import FramechainApp"), [])
 
     def test_jobs_may_not_import_state_or_services(self) -> None:
         self.assertEqual(len(self.bad("jobs.executor", f"from {PACKAGE}.state.store import Store")), 1)
@@ -137,7 +137,7 @@ class RuleTests(unittest.TestCase):
 
     def test_core_may_import_nothing_else_of_the_package(self) -> None:
         self.assertEqual(len(self.bad("core.paths", f"from {PACKAGE}.jobs.events import JobEvent")), 1)
-        self.assertEqual(self.bad("core.paths", f"from {PACKAGE}.core.errors import DtcError"), [])
+        self.assertEqual(self.bad("core.paths", f"from {PACKAGE}.core.errors import FramechainError"), [])
 
     def test_state_may_not_import_services(self) -> None:
         self.assertEqual(len(self.bad("state.store", f"from {PACKAGE}.services.history import HistoryReader")), 1)
@@ -150,7 +150,7 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.mcp_server.app import run"), [])
         self.assertEqual(len(self.bad("cli.app", f"from {PACKAGE}.mcp_server.tools import TOOLS")), 1)
         self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.mcp_server.app import run")), 1)
-        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.tui.app import DrawThingsApp")), 1)
+        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.tui.app import FramechainApp")), 1)
 
     def test_the_lower_layers_import_no_framework(self) -> None:
         for framework in ("typer", "textual.app", "fastapi", "rich.text"):

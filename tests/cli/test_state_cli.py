@@ -3,7 +3,7 @@
 The run-lock and execution-recording behaviors this file used to exercise through the now-removed ``run-job``
 command (a busy lock, a crash-left-running row, history retention, an unreachable state directory, a newer schema, a
 failed execution ID reservation) are ``JobRunSession``'s own contract, not the CLI's: they are covered directly
-against it in ``tests/services/test_job_runs.py``, the layer ``dtc serve``'s worker and the TUI now share (Milestone
+against it in ``tests/services/test_job_runs.py``, the layer ``fc serve``'s worker and the TUI now share (Milestone
 03) instead of a CLI command running a job itself.
 """
 
@@ -16,14 +16,14 @@ from unittest import mock
 import httpx
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import CliServices, app
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.run_lock import RunLock
-from draw_things_control.jobs.files import read_job
-from draw_things_control.services.job_runs import JobRunSession
-from draw_things_control.services.toolkit import create_job_runner
-from draw_things_control.state.store import Store
+from framechain.cli.app import CliServices, app
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.core.global_config import GlobalConfig
+from framechain.core.run_lock import RunLock
+from framechain.jobs.files import read_job
+from framechain.services.job_runs import JobRunSession
+from framechain.services.toolkit import create_job_runner
+from framechain.state.store import Store
 from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
@@ -63,7 +63,7 @@ class StateCliTests(JobTestCase):
         return self.runner.invoke(app, [*arguments, "--global-config", str(self.global_path)], obj=self.services)
 
     def seed_execution(self) -> GlobalConfig:
-        """Runs ``self.job_path`` through ``JobRunSession`` directly (the same use case ``dtc serve``'s worker and
+        """Runs ``self.job_path`` through ``JobRunSession`` directly (the same use case ``fc serve``'s worker and
         the TUI now share), recording a real execution -- and, with ``write_job_records: true``, a real manifest --
         for ``import-history`` to read, without a CLI command that runs a job itself any more."""
         job, settings = read_job(self.job_path, self.global_path, self.paths)
@@ -77,7 +77,7 @@ class StateCliTests(JobTestCase):
 
     def store(self) -> Store:
         self.state.mkdir(exist_ok=True)
-        store = Store.open(self.state / "dtc.db")
+        store = Store.open(self.state / "framechain.db")
         self.addCleanup(store.close)
         return store
 
@@ -86,7 +86,7 @@ class StateCliTests(JobTestCase):
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")], obj=self.services).exit_code, 0)
             # None of those touched the database.
-            self.assertFalse((self.state / "dtc.db").exists())
+            self.assertFalse((self.state / "framechain.db").exists())
             self.output_directory.mkdir()
             self.assertEqual(self.invoke("import-history").exit_code, 0)
 
@@ -105,7 +105,7 @@ class StateCliTests(JobTestCase):
         self.assertEqual((result.exit_code, result.stdout), (0, "Q0001 queued: cube.png\n"))
         self.assertEqual((requests[0].method, requests[0].url.path, json.loads(requests[0].content)), ("POST", "/v1/generations", {"model": "m.ckpt", "prompt": "x", "image": [], "avc": False, "output": "cube.png", "timeout": 60.0}))
         self.assertEqual(self.runs_started, 0)
-        self.assertFalse((self.state / "dtc.db").exists())
+        self.assertFalse((self.state / "framechain.db").exists())
 
     def test_generate_treats_a_server_without_the_endpoint_as_unavailable(self) -> None:
         token = self.root / "token"
@@ -130,7 +130,7 @@ class StateCliTests(JobTestCase):
         # The live-recorded manifest is already in the store.
         self.assertIn("Imported 0, skipped 1 already imported, 0 older than the retention period, 1 unreadable", self.invoke("import-history").stdout)
         # A fresh database imports it once.
-        (self.state / "dtc.db").unlink()
+        (self.state / "framechain.db").unlink()
         first = self.invoke("import-history")
         second = self.invoke("import-history")
         self.assertIn("Imported 1, skipped 0", first.stdout)
@@ -147,7 +147,7 @@ class StateCliTests(JobTestCase):
         self.seed_execution()
         [manifest] = self.output_directory.rglob("*-job.json")
         # A fresh database whose numbering has moved on: the import takes the next free number and names the old one.
-        (self.state / "dtc.db").unlink()
+        (self.state / "framechain.db").unlink()
         store = self.store()
         for _ in range(4):
             store.executions.reserve_number()
@@ -162,5 +162,5 @@ class StateCliTests(JobTestCase):
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root)).exit_code, 0)
 
     def test_import_history_takes_no_write_flag(self) -> None:
-        # --allow-write belongs to `dtc serve`; Milestone 07's commit added it here too by mistake.
+        # --allow-write belongs to `fc serve`; Milestone 07's commit added it here too by mistake.
         self.assertEqual(self.invoke("import-history", "--allow-write").exit_code, 2)

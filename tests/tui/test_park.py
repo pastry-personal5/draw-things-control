@@ -1,5 +1,5 @@
 """Headless tests of parking and holding from the TUI (Milestone 05): the commands, the aliases, the Queue widget's keys
-and title, and the Status widget, against a fake ``dtc serve``."""
+and title, and the Status widget, against a fake ``fc serve``."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import Any
 import httpx
 from rich.text import Text
 
-from draw_things_control.jobs.events import JobFinished, JobStatus
-from draw_things_control.services.queue_hold import HOLD_KEY
-from draw_things_control.state.store import Store, StoreMode
-from draw_things_control.tui.commands import help_text
-from draw_things_control.tui.panes.queue import QueueList
-from draw_things_control.tui.text.queue import queue_entry_detail_text
+from framechain.jobs.events import JobFinished, JobStatus
+from framechain.services.queue_hold import HOLD_KEY
+from framechain.state.store import Store, StoreMode
+from framechain.tui.commands import help_text
+from framechain.tui.panes.queue import QueueList
+from framechain.tui.text.queue import queue_entry_detail_text
 from tests.tui.fake_server import AT, job_started, run_finished, run_started
 from tests.tui.feed_case import FeedTestCase
 

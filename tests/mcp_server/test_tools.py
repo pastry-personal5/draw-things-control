@@ -10,8 +10,8 @@ from urllib.parse import quote
 import httpx
 from mcp.shared.exceptions import MCPError
 
-from draw_things_control.core.global_config import ApiLimits
-from draw_things_control.mcp_server.tools import TOOLS
+from framechain.core.global_config import ApiLimits
+from framechain.mcp_server.tools import TOOLS
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.test_queue_routes import TOKEN
 
@@ -177,7 +177,7 @@ class ErrorTests(McpCase):
             refused = await self.error(client, "get_queue")
             self.assertEqual(refused["code"], "server_unreachable")
             self.assertIn("--server-url", refused["message"])
-            self.assertIn("dtc serve", refused["message"])
+            self.assertIn("fc serve", refused["message"])
             self.transport.app = app
             await self.ok(client, "get_queue")
 
@@ -193,7 +193,7 @@ class ErrorTests(McpCase):
                     refused = await self.error(client, "get_queue")
                     self.assertEqual(refused["code"], "unauthorized")
                     self.assertIn(str(token_path), refused["message"])
-                    self.assertIn("dtc serve", refused["message"])
+                    self.assertIn("fc serve", refused["message"])
                     self.assertEqual(self.transport.sent(), [])
             token_path.write_text(TOKEN, encoding="ascii")
             await self.ok(client, "get_queue")

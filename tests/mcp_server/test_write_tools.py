@@ -1,4 +1,4 @@
-"""The MCP server's write tools (Milestone 10): listed only while ``dtc serve`` has writes on, a list-changed
+"""The MCP server's write tools (Milestone 10): listed only while ``fc serve`` has writes on, a list-changed
 notification in each protocol era when that changes, a job file's whole life, and ``delete_executions`` behind a fresh
 read of the capabilities and a required dry run."""
 
@@ -78,7 +78,7 @@ class WriteToolTests(McpCase):
         async with self.client() as client:
             self.now += 1
             refused = await self.error(client, "delete_executions", {"executions": ["E0001"], "dry_run": True})
-            self.assertEqual(refused, {"code": "writes_off", "message": "Deleting executions through MCP requires dtc serve --allow-write"})
+            self.assertEqual(refused, {"code": "writes_off", "message": "Deleting executions through MCP requires fc serve --allow-write"})
             self.assertEqual(self.transport.sent(), [])
             self.assertEqual(self.transport.requests[-1], ("GET", "/v1/capabilities"))
 
@@ -118,13 +118,13 @@ class WriteToolTests(McpCase):
 
 
 class ToolListChangeTests(McpCase):
-    """A server restarted with the other ``--allow-write`` setting, without restarting ``dtc mcp``."""
+    """A server restarted with the other ``--allow-write`` setting, without restarting ``fc mcp``."""
 
     async def names(self, client: Any) -> list[str]:
         return [tool.name for tool in (await client.list_tools()).tools]
 
     async def restart(self, client: Any, *, allow_write: bool) -> None:
-        """Restart ``dtc serve`` with ``allow_write``, and make a call once the MCP server's last read is stale."""
+        """Restart ``fc serve`` with ``allow_write``, and make a call once the MCP server's last read is stale."""
         self.serve(allow_write=allow_write)
         self.now += 6
         await self.ok(client, "get_queue")

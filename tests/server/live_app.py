@@ -1,7 +1,7 @@
 """Runs the API under uvicorn on a loopback port, in a thread of its own, for what an in-process client cannot test:
 ``httpx.ASGITransport`` and Starlette's ``TestClient`` collect a whole response before they return it, which an
-endless SSE watch never finishes (Milestone 10). The server is ``dtc serve``'s own ``UvicornServer``, so stopping it
-ends every open watch as ``dtc serve``'s shutdown does."""
+endless SSE watch never finishes (Milestone 10). The server is ``fc serve``'s own ``UvicornServer``, so stopping it
+ends every open watch as ``fc serve``'s shutdown does."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import time
 
 import uvicorn
 
-from draw_things_control.server.app import create_app
-from draw_things_control.server.context import ServerContext
-from draw_things_control.server.serve import UvicornServer
+from framechain.server.app import create_app
+from framechain.server.context import ServerContext
+from framechain.server.serve import UvicornServer
 
 
 def loopback_socket() -> socket.socket:

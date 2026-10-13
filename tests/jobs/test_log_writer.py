@@ -6,9 +6,9 @@ import unittest
 
 from loguru import logger
 
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import JobFinished, JobStarted, JobStatus
-from draw_things_control.jobs.log_writer import JobLogWriter
+from framechain.core.cooldown import CooldownPolicy
+from framechain.jobs.events import JobFinished, JobStarted, JobStatus
+from framechain.jobs.log_writer import JobLogWriter
 
 
 class JobLogWriterResumeTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""``dtc mcp --transport streamable-http`` (Milestone 13): the bearer token every request needs, the server as a process driven by the SDK's client over real HTTP, and the command's refusals. Never starts ``draw-things-cli`` or ``dtc serve``."""
+"""``fc mcp --transport streamable-http`` (Milestone 13): the bearer token every request needs, the server as a process driven by the SDK's client over real HTTP, and the command's refusals. Never starts ``draw-things-cli`` or ``fc serve``."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import app
-from draw_things_control.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBodyLimit, http_app
+from framechain.cli.app import app
+from framechain.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBodyLimit, http_app
 from tests.mcp_server.test_process import PROJECT_ROOT, unused_port
 from tests.server.test_queue_routes import TOKEN
 
@@ -121,7 +121,7 @@ class BearerAuthTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
-    """``dtc mcp --transport streamable-http`` on a loopback port, over a ``dtc serve`` that is down."""
+    """``fc mcp --transport streamable-http`` on a loopback port, over a ``fc serve`` that is down."""
 
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -131,7 +131,7 @@ class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
         self.port = unused_port()
         self.url = f"http://127.0.0.1:{self.port}/mcp"
         self.server_url = f"http://127.0.0.1:{unused_port()}"
-        self.process = subprocess.Popen([sys.executable, "-m", "draw_things_control", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
+        self.process = subprocess.Popen([sys.executable, "-m", "framechain", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         self.addCleanup(self.stop)
         self.wait_until_listening()
 
@@ -149,13 +149,13 @@ class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
-            self.assertIsNone(self.process.poll(), "dtc mcp exited before it listened")
+            self.assertIsNone(self.process.poll(), "fc mcp exited before it listened")
             try:
                 socket.create_connection(("127.0.0.1", self.port), timeout=1).close()
                 return
             except OSError:
                 time.sleep(0.1)
-        self.fail("dtc mcp did not listen in 60 seconds")
+        self.fail("fc mcp did not listen in 60 seconds")
 
     def authorized(self, token: str = TOKEN) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(30.0))

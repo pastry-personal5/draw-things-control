@@ -5,13 +5,13 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from draw_things_control.core.errors import NotFoundError, StateUnavailableError
-from draw_things_control.core.run_lock import RunLock
-from draw_things_control.services.history import NO_HISTORY, HistoryFilter, HistoryReader
-from draw_things_control.services.store_provider import StoreProvider
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.store import Store, StoreMode
-from draw_things_control.tui.reader import PaneHistory
+from framechain.core.errors import NotFoundError, StateUnavailableError
+from framechain.core.run_lock import RunLock
+from framechain.services.history import NO_HISTORY, HistoryFilter, HistoryReader
+from framechain.services.store_provider import StoreProvider
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.store import Store, StoreMode
+from framechain.tui.reader import PaneHistory
 from tests.fixtures import JobTestCase
 
 STARTED = "2026-09-24T10:00:00+00:00"
@@ -82,7 +82,7 @@ class HistoryReaderTests(JobTestCase):
         store = self.provider.get(create=False)
         assert store is not None
         with mock.patch.object(store.executions, "page", side_effect=ValueError("bad JSON")):
-            with self.assertRaisesRegex(StateUnavailableError, r"Cannot read the state database .*dtc\.db: bad JSON"):
+            with self.assertRaisesRegex(StateUnavailableError, r"Cannot read the state database .*framechain\.db: bad JSON"):
                 self.reader.page(HistoryFilter(), 0)
 
 

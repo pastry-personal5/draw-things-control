@@ -1,7 +1,7 @@
 # Testing the API with curl
 
-`dtc mcp` speaks MCP over stdio, not HTTP, so there is no MCP port to curl
-directly. What curl *can* reach is `dtc serve`'s HTTP API, which `dtc mcp`
+`fc mcp` speaks MCP over stdio, not HTTP, so there is no MCP port to curl
+directly. What curl *can* reach is `fc serve`'s HTTP API, which `fc mcp`
 drives: every MCP tool is one call to one endpoint, listed in
 [the user guide's AI agents over MCP section](user-guide.md#ai-agents-over-mcp).
 Curling the API exercises the same requests the MCP tools make, endpoint for
@@ -12,7 +12,7 @@ for the full endpoint table, limits, and error shapes.
 ## Start the server
 
 ```bash
-uv run dtc serve
+uv run fc serve
 # add --allow-write to also exercise PUT/DELETE job-file endpoints
 ```
 
@@ -42,7 +42,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/openapi.json 
 
 This is the live, authoritative list straight from the running server,
 including whether the write endpoints are present (they only register when
-`dtc serve` runs with `--allow-write`).
+`fc serve` runs with `--allow-write`).
 
 ## Read-only calls
 
@@ -80,10 +80,10 @@ curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/queue/Q0001/w
 ```
 
 A browser's `EventSource` cannot send the token, so this endpoint serves
-clients that send headers, `curl` and `dtc mcp` included; see
+clients that send headers, `curl` and `fc mcp` included; see
 [MCP token use and events](research/mcp-tokens-and-events.md).
 
-## Write endpoints (`dtc serve --allow-write` only)
+## Write endpoints (`fc serve --allow-write` only)
 
 ```bash
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -105,7 +105,7 @@ Without `--allow-write`, `PUT` and `DELETE` answer `405 writes_off`.
   by the same `max_queued_jobs`, `max_job_seconds`, and other
   `api_limits:` as any other caller (see
   [Server: HTTP API and gRPC monitoring](user-guide.md#server-http-api-and-grpc-monitoring)).
-- A running `dtc serve` is almost always a real local queue, not a sandbox.
+- A running `fc serve` is almost always a real local queue, not a sandbox.
   Read-only calls (`health`, `capabilities`, `GET /jobs`, `GET /queue`, and
   similar) are safe to try freely; treat write, cancel, park, and hold calls
   with the same care you would give the MCP tools themselves.

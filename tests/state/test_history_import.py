@@ -6,9 +6,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from draw_things_control.state.executions import ExecutionRow, NewExecution
-from draw_things_control.state.history_import import import_history
-from draw_things_control.state.store import Store
+from framechain.state.executions import ExecutionRow, NewExecution
+from framechain.state.history_import import import_history
+from framechain.state.store import Store
 
 NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -46,7 +46,7 @@ class ImportHistoryTests(unittest.TestCase):
         self.root = Path(self._temporary.name)
         self.outputs = self.root / "output"
         (self.outputs / "walk").mkdir(parents=True)
-        self.store = Store.open(self.root / "dtc.db", retention_days=14, clock=lambda: NOW)
+        self.store = Store.open(self.root / "framechain.db", retention_days=14, clock=lambda: NOW)
         self.addCleanup(self.store.close)
 
     def stored(self, execution_id: int) -> ExecutionRow:

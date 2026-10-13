@@ -16,13 +16,13 @@ from rich.text import Text
 from textual.widgets import RichLog, Static
 from watchdog.observers.polling import PollingObserver
 
-from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.state.executions import ExecutionRow
-from draw_things_control.state.store import Store
-from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.panes.history import ExecutionHistoryList
-from draw_things_control.tui.widgets import ActivityLog, CommandField
+from framechain.core.global_config import GlobalConfig
+from framechain.jobs.executor import JobExecutor
+from framechain.state.executions import ExecutionRow
+from framechain.state.store import Store
+from framechain.tui.app import FramechainApp
+from framechain.tui.panes.history import ExecutionHistoryList
+from framechain.tui.widgets import ActivityLog, CommandField
 from tests.fixtures import FakeToolkit, JobTestCase, job_data
 from tests.tui.fake_server import TOKEN, FakeServer
 
@@ -42,11 +42,11 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.data = self.root / "jobs-elsewhere"
         self.data.mkdir()
         self.state = self.paths.state
-        # A fake dtc serve, and the token file the app reads before it connects to it (nothing is ever reached over a network).
+        # A fake fc serve, and the token file the app reads before it connects to it (nothing is ever reached over a network).
         self.server = FakeServer()
         self.paths.server_token.parent.mkdir(parents=True, exist_ok=True)
         self.paths.server_token.write_text(TOKEN, encoding="ascii")
-        # As dtc tui leaves it: no sink writes to the terminal while the app runs.
+        # As fc tui leaves it: no sink writes to the terminal while the app runs.
         logger.remove()
         # Every message as plain text, in order, across apps.
         self.said: list[str] = []
@@ -60,7 +60,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         patcher = mock.patch.object(ActivityLog, "say", say)
         patcher.start()
         self.addCleanup(patcher.stop)
-        observer_patcher = mock.patch("draw_things_control.tui.job_watch.Observer", PollingObserver)
+        observer_patcher = mock.patch("framechain.tui.job_watch.Observer", PollingObserver)
         observer_patcher.start()
         self.addCleanup(observer_patcher.stop)
 
@@ -69,9 +69,9 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         path.write_text(yaml.safe_dump(job_data(**changes), sort_keys=False), encoding="utf-8")
         return path
 
-    def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> DrawThingsApp:
+    def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> FramechainApp:
         """The app, talking only to ``self.server``; ``service`` is the executor the Job Definition widget's dry-run plan builds."""
-        return DrawThingsApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, server_url=SERVER_URL, token_file=self.paths.server_token, toolkit=FakeToolkit(service), http_transport=self.server.transport(), grpc_stub_factory=self.server.stub_factory)
+        return FramechainApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, server_url=SERVER_URL, token_file=self.paths.server_token, toolkit=FakeToolkit(service), http_transport=self.server.transport(), grpc_stub_factory=self.server.stub_factory)
 
     async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
         deadline = time.monotonic() + timeout
@@ -106,20 +106,20 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         return self.said[index + 1 :]
 
     @staticmethod
-    def text(app: DrawThingsApp, widget_id: str) -> str:
+    def text(app: FramechainApp, widget_id: str) -> str:
         return str(app.screen.query_one(f"#{widget_id}", Static).content)
 
     @staticmethod
-    def pane(app: DrawThingsApp) -> list[str]:
+    def pane(app: FramechainApp) -> list[str]:
         return [strip.text.rstrip() for strip in app.screen.query_one("#output-log", RichLog).lines]
 
     @staticmethod
-    def history(app: DrawThingsApp) -> list[list[str]]:
+    def history(app: FramechainApp) -> list[list[str]]:
         table = app.screen.query_one(ExecutionHistoryList)
         return [[str(cell) for cell in table.get_row_at(index)] for index in range(table.row_count)]
 
     @staticmethod
-    def marks_of(app: DrawThingsApp) -> list[str]:
+    def marks_of(app: FramechainApp) -> list[str]:
         """The IDs of the history's marked rows, in order."""
         table = app.screen.query_one(ExecutionHistoryList)
         return [str(table.get_row_at(index)[0]).removeprefix("*") for index in range(table.row_count) if str(table.get_row_at(index)[0]).startswith("*")]

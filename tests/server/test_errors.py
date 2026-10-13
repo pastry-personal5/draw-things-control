@@ -1,14 +1,14 @@
-"""Tests for the DtcError-to-HTTP-status table and the API's JSON error shape."""
+"""Tests for the FramechainError-to-HTTP-status table and the API's JSON error shape."""
 
 import unittest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from draw_things_control.core.errors import BusyError, InputError, LimitExceededError, NotFoundError, StateUnavailableError, TimeoutRequiredError, ToolMissingError
-from draw_things_control.server.errors import error_body, install_error_handler, status_for_error
-from draw_things_control.services.queue_cancel import CancelRefusedError
-from draw_things_control.services.queue_resume import ResumeRefusedError
+from framechain.core.errors import BusyError, InputError, LimitExceededError, NotFoundError, StateUnavailableError, TimeoutRequiredError, ToolMissingError
+from framechain.server.errors import error_body, install_error_handler, status_for_error
+from framechain.services.queue_cancel import CancelRefusedError
+from framechain.services.queue_resume import ResumeRefusedError
 
 
 class StatusForErrorTests(unittest.TestCase):
@@ -31,8 +31,8 @@ class StatusForErrorTests(unittest.TestCase):
 
 class ErrorBodyTests(unittest.TestCase):
     def test_a_plain_error_has_a_code_and_message_only(self) -> None:
-        body = error_body(BusyError("The dtc server holds the lock"))
-        self.assertEqual(body, {"code": "busy", "message": "The dtc server holds the lock"})
+        body = error_body(BusyError("The fc server holds the lock"))
+        self.assertEqual(body, {"code": "busy", "message": "The fc server holds the lock"})
 
     def test_a_field_error_includes_the_field(self) -> None:
         body = error_body(TimeoutRequiredError("required", field="run_timeout_seconds"))

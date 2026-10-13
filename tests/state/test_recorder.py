@@ -11,15 +11,15 @@ from unittest import mock
 
 from loguru import logger
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import JobObserver, combine_observers
-from draw_things_control.jobs.media.info import MediaInfo
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.planning import PlannedRun
-from draw_things_control.state.executions import ExecutionRow
-from draw_things_control.state.recorder import ExecutionRecorder
-from draw_things_control.state.store import Store
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.jobs.definition import JobDefinition
+from framechain.jobs.events import JobObserver, combine_observers
+from framechain.jobs.media.info import MediaInfo
+from framechain.jobs.parsing import load_job
+from framechain.jobs.planning import PlannedRun
+from framechain.state.executions import ExecutionRow
+from framechain.state.recorder import ExecutionRecorder
+from framechain.state.store import Store
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner, saved_manifest
 
@@ -27,7 +27,7 @@ from tests.jobs.test_executor import NOW, FakeResult, FakeRunner, saved_manifest
 class RecorderTests(JobTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.store = Store.open(self.root / "dtc.db")
+        self.store = Store.open(self.root / "framechain.db")
         self.addCleanup(self.store.close)
         self.results: dict[int, FakeResult] = {}
         self.calls = 0
@@ -93,8 +93,8 @@ class RecorderTests(JobTestCase):
         self.assertIsNone(failed.first_image)
 
     def test_each_runs_media_checks_are_kept_with_it_shown_and_deleted_with_the_execution(self) -> None:
-        from draw_things_control.server.serializers import run_summary
-        from draw_things_control.tui.text.execution import execution_text
+        from framechain.server.serializers import run_summary
+        from framechain.tui.text.execution import execution_text
         from tests.jobs.test_media_checks import FakeChecker
 
         self.service = job_executor(runner_factory=self.create_runner, find_executable=lambda executable: executable, frame_extractor=self.extract, require_ffmpeg=lambda: "ffmpeg", checker=FakeChecker(), clock=lambda: NOW, handle_signals=False, cooldown=lambda seconds: seconds)
@@ -110,9 +110,9 @@ class RecorderTests(JobTestCase):
         self.assertEqual(self.store._database.connection().execute("SELECT COUNT(*) FROM media_checks").fetchone()[0], 0)
 
     def test_checks_of_a_run_that_never_started_are_shown_on_the_execution(self) -> None:
-        from draw_things_control.server.serializers import execution_detail
-        from draw_things_control.state.executions import MediaCheckRow
-        from draw_things_control.tui.text.execution import execution_text
+        from framechain.server.serializers import execution_detail
+        from framechain.state.executions import MediaCheckRow
+        from framechain.tui.text.execution import execution_text
 
         self.run_recorded(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], cooldown={"mode": "off"}), write_records=False)
         [row] = self.store.executions.page()
@@ -190,14 +190,14 @@ class RecorderTests(JobTestCase):
         self.assertNotIn(secret, "\n".join(self.store._database.connection().iterdump()))
 
     def test_a_recording_failure_is_logged_once_and_the_job_completes(self) -> None:
-        with mock.patch.object(self.store.executions, "start", side_effect=RuntimeError("database is locked")), mock.patch("draw_things_control.state.recorder.logger") as log:
+        with mock.patch.object(self.store.executions, "start", side_effect=RuntimeError("database is locked")), mock.patch("framechain.state.recorder.logger") as log:
             outcome = self.run_recorded(self.job(), write_records=False)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 5))
         self.assertEqual(log.exception.call_count, 1)
         self.assertEqual(self.store.executions.page(), [])
 
     def test_a_later_failure_stops_recording_without_touching_earlier_rows(self) -> None:
-        with mock.patch.object(self.store.executions, "start_run", side_effect=RuntimeError("disk full")), mock.patch("draw_things_control.state.recorder.logger"):
+        with mock.patch.object(self.store.executions, "start_run", side_effect=RuntimeError("disk full")), mock.patch("framechain.state.recorder.logger"):
             outcome = self.run_recorded(self.job(), write_records=False)
         self.assertEqual(outcome.exit_code, 0)
         [execution] = self.store.executions.page()
@@ -209,7 +209,7 @@ class RecorderTests(JobTestCase):
         self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False, recorder=recorder)
         self.assertEqual(recorder.execution_id, self.store.executions.page()[0].id)
         failing = ExecutionRecorder(self.store)
-        with mock.patch.object(self.store.executions, "start_run", side_effect=RuntimeError("disk full")), mock.patch("draw_things_control.state.recorder.logger"):
+        with mock.patch.object(self.store.executions, "start_run", side_effect=RuntimeError("disk full")), mock.patch("framechain.state.recorder.logger"):
             self.run_recorded(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), write_records=False, recorder=failing)
         self.assertIsNone(failing.execution_id)
 

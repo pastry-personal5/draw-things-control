@@ -1,6 +1,6 @@
 # TUI UX terms
 
-This document is the authoritative vocabulary for `dtc tui`. Use these terms
+This document is the authoritative vocabulary for `fc tui`. Use these terms
 in the interface, plans, documentation, tests, and issue reports. Prefer the
 person’s task and visible result over an implementation name.
 
@@ -22,7 +22,7 @@ discoverable. See Apple’s [design principles](https://developer.apple.com/desi
 
 | Canonical term | Visible title or location | Purpose |
 |---|---|---|
-| **TUI** | `dtc tui` | The complete terminal user interface. |
+| **TUI** | `fc tui` | The complete terminal user interface. |
 | **main screen** | normal, non-modal screen | The primary workspace for monitoring and managing jobs. |
 | **activity column** | left side of the main screen | The status and logs for current work. |
 | **management column** | right side of the main screen | The lists and details used to choose and manage jobs and executions. |

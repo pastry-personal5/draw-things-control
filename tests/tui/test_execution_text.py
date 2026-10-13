@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from draw_things_control.tui.text.execution import execution_detail, execution_detail_text, execution_text
+from framechain.tui.text.execution import execution_detail, execution_detail_text, execution_text
 from tests.fixtures import execution_row, run_row
 
 

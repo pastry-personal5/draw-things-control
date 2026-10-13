@@ -15,22 +15,22 @@ import numpy as np
 from loguru import logger
 from PIL import Image, ImageCms, PngImagePlugin
 
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted, event_from_dict, event_to_dict
-from draw_things_control.jobs.executor import JobExecutor, ResumePoint
-from draw_things_control.jobs.inputs.resize import resize_image
-from draw_things_control.jobs.inputs.size import resize_plan
-from draw_things_control.jobs.log_writer import JobLogWriter
-from draw_things_control.jobs.media import checks
-from draw_things_control.jobs.media.checks import MediaCheck, MediaChecker, VideoProbe, check_handoff, check_input, check_last_frame, check_resized_input, image_facts
-from draw_things_control.jobs.media.fingerprint import MatrixFingerprint, can_measure
-from draw_things_control.jobs.media.stream_color import StreamColor, resolve_video_color
-from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.jobs.media.tools import find_ffprobe
-from draw_things_control.jobs.media.video_color import read_colr, tag_video_colors
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.text import media_check_text
-from draw_things_control.tui.text.events import event_text
+from framechain.jobs.definition import JobDefinition
+from framechain.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted, event_from_dict, event_to_dict
+from framechain.jobs.executor import JobExecutor, ResumePoint
+from framechain.jobs.inputs.resize import resize_image
+from framechain.jobs.inputs.size import resize_plan
+from framechain.jobs.log_writer import JobLogWriter
+from framechain.jobs.media import checks
+from framechain.jobs.media.checks import MediaCheck, MediaChecker, VideoProbe, check_handoff, check_input, check_last_frame, check_resized_input, image_facts
+from framechain.jobs.media.fingerprint import MatrixFingerprint, can_measure
+from framechain.jobs.media.stream_color import StreamColor, resolve_video_color
+from framechain.jobs.media.toolkit import MediaTools
+from framechain.jobs.media.tools import find_ffprobe
+from framechain.jobs.media.video_color import read_colr, tag_video_colors
+from framechain.jobs.parsing import load_job
+from framechain.jobs.text import media_check_text
+from framechain.tui.text.events import event_text
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, saved_log
 
@@ -393,7 +393,7 @@ class ExecutorCheckTests(JobTestCase):
         self.assertEqual(json.loads(Path(started.manifest).read_text(encoding="utf-8"))["first_image"], str(first_image))
         output = next(event for event in events if isinstance(event, MediaChecked) and event.stage == "output")
         self.assertEqual((output.run, output.verdict, output.notes), (1, "warning", ("A warning.",)))
-        # The job log file gets the same lines as dtc serve's console.
+        # The job log file gets the same lines as fc serve's console.
         log = saved_log(self.outcome).read_text(encoding="utf-8")
         self.assertIn("Input check (run 1): ", log)
         self.assertIn("Resized input check (run 1): ", log)

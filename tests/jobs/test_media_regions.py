@@ -6,11 +6,11 @@ import unittest
 
 import numpy as np
 
-from draw_things_control.jobs.media import oklab
-from draw_things_control.jobs.media.color_stats import measure
-from draw_things_control.jobs.media.correction import SKIN_CAP, Params, Transform, apply_regions, fit_run, skin_residuals, transform_for
-from draw_things_control.jobs.media.drift import drift_check, measure_regions, sample_frames
-from draw_things_control.jobs.media.regions import Face, FrameMasks, RegionFinder, Segmentation, blend_weights, face_skin, find_regions, region_stats
+from framechain.jobs.media import oklab
+from framechain.jobs.media.color_stats import measure
+from framechain.jobs.media.correction import SKIN_CAP, Params, Transform, apply_regions, fit_run, skin_residuals, transform_for
+from framechain.jobs.media.drift import drift_check, measure_regions, sample_frames
+from framechain.jobs.media.regions import Face, FrameMasks, RegionFinder, Segmentation, blend_weights, face_skin, find_regions, region_stats
 
 WIDTH, HEIGHT = 96, 64
 # The person: a column of the frame; their face at its top, their clothes below.

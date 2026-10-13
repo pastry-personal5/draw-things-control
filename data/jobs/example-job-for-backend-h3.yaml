@@ -2,7 +2,7 @@
 #
 # H3 is project-installed: contrib/backends/h3.c/h3 and its MiniMax-H3 model
 # snapshot must be present. `ffmpeg` and `ffprobe` must also be available.
-# Validate: uv run dtc validate-job data/jobs/example-job-for-backend-h3.yaml
+# Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3.yaml
 
 version: 1
 name: autumn-street-audio

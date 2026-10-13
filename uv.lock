@@ -222,7 +222,7 @@ wheels = [
 ]
 
 [[package]]
-name = "draw-things-control"
+name = "framechain"
 version = "3.0.0"
 source = { editable = "." }
 dependencies = [

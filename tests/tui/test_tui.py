@@ -12,20 +12,20 @@ from rich.text import Text
 from textual.color import Color
 from typer.testing import CliRunner
 
-from draw_things_control.cli import app as cli
-from draw_things_control.core.paths import DEFAULT_PATHS
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.text import plan_header, plan_steps
-from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.commands import usage
-from draw_things_control.tui.panes.execution import ExecutionDetailPane
-from draw_things_control.tui.panes.history import ExecutionHistoryList
-from draw_things_control.tui.panes.job_definitions import JobsList
-from draw_things_control.tui.panes.queue import QueueList
-from draw_things_control.tui.panes.status import WorkStatus
-from draw_things_control.tui.screens import MainScreen
-from draw_things_control.tui.shortcut_help import ShortcutHelpOverlay
-from draw_things_control.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField
+from framechain.cli import app as cli
+from framechain.core.paths import DEFAULT_PATHS
+from framechain.jobs.parsing import load_job
+from framechain.jobs.text import plan_header, plan_steps
+from framechain.tui.app import FramechainApp
+from framechain.tui.commands import usage
+from framechain.tui.panes.execution import ExecutionDetailPane
+from framechain.tui.panes.history import ExecutionHistoryList
+from framechain.tui.panes.job_definitions import JobsList
+from framechain.tui.panes.queue import QueueList
+from framechain.tui.panes.status import WorkStatus
+from framechain.tui.screens import MainScreen
+from framechain.tui.shortcut_help import ShortcutHelpOverlay
+from framechain.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField
 from tests.fixtures import JobTestCase, TestExecutor, job_executor
 from tests.tui.tui_case import TuiTestCase
 
@@ -51,7 +51,7 @@ def make_service(missing: frozenset[str] = frozenset()) -> TestExecutor:
 
 
 class TuiTests(TuiTestCase):
-    def app(self, *, data: Path | None = None, missing: frozenset[str] = frozenset()) -> DrawThingsApp:
+    def app(self, *, data: Path | None = None, missing: frozenset[str] = frozenset()) -> FramechainApp:
         return self.make_app(make_service(missing), data=data)
 
     async def show(self, pilot, name: str) -> str:
@@ -487,7 +487,7 @@ class TuiTests(TuiTestCase):
 
     async def test_a_first_ctrl_c_is_forgotten_after_two_seconds(self) -> None:
         app = self.app()
-        with mock.patch("draw_things_control.tui.app.QUIT_PRESS_SECONDS", 0.2):
+        with mock.patch("framechain.tui.app.QUIT_PRESS_SECONDS", 0.2):
             async with app.run_test() as pilot:
                 await self.settle(pilot)
                 await pilot.press("ctrl+c")
@@ -535,7 +535,7 @@ class TuiCommandTests(JobTestCase):
         self.addCleanup(patcher.stop)
 
     def test_tui_builds_the_app_from_its_options(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run, mock.patch("draw_things_control.tui.app.DrawThingsApp.__init__", return_value=None) as init, mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=0):
+        with mock.patch("framechain.tui.app.FramechainApp.run") as run, mock.patch("framechain.tui.app.FramechainApp.__init__", return_value=None) as init, mock.patch("framechain.tui.app.FramechainApp.return_code", new_callable=mock.PropertyMock, return_value=0):
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--server-url", "http://127.0.0.1:9000", "--token-file", str(self.root / "token")])
             self.assertEqual(result.exit_code, 0, result.output)
             run.assert_called_once_with()
@@ -550,25 +550,25 @@ class TuiCommandTests(JobTestCase):
             self.assertEqual(init.call_args.kwargs["token_file"], DEFAULT_PATHS.server_token)
 
     def test_a_remote_server_url_is_refused_unless_allowed(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run:
+        with mock.patch("framechain.tui.app.FramechainApp.run") as run:
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path), "--server-url", "http://192.0.2.7:8765"])
         self.assertEqual(result.exit_code, 2)
         run.assert_not_called()
 
     def test_the_terminal_sinks_come_back_when_the_app_raises(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run", side_effect=RuntimeError("terminal gone")):
+        with mock.patch("framechain.tui.app.FramechainApp.run", side_effect=RuntimeError("terminal gone")):
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertIsInstance(result.exception, RuntimeError)
         cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_a_failed_app_exits_with_its_return_code_and_logging_is_restored(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run"), mock.patch("draw_things_control.tui.app.DrawThingsApp.return_code", new_callable=mock.PropertyMock, return_value=1):
+        with mock.patch("framechain.tui.app.FramechainApp.run"), mock.patch("framechain.tui.app.FramechainApp.return_code", new_callable=mock.PropertyMock, return_value=1):
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.global_path)])
         self.assertEqual(result.exit_code, 1)
         cli.configure_logging.assert_called_once_with()  # pyright: ignore[reportFunctionMemberAccess]  (patched with a Mock)
 
     def test_an_invalid_global_configuration_exits_with_2_before_the_app_starts(self) -> None:
-        with mock.patch("draw_things_control.tui.app.DrawThingsApp.run") as run:
+        with mock.patch("framechain.tui.app.FramechainApp.run") as run:
             result = self.runner.invoke(cli.app, ["tui", "--global-config", str(self.root / "absent.yaml")])
         self.assertEqual(result.exit_code, 2)
         run.assert_not_called()

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from draw_things_control.state.ids import MAX_NUMBER, parse_bare_number
-from draw_things_control.tui.commands import COMMAND_NAMES, Command, CommandError, CommandSuggester, completions, help_text, parse, usage
+from framechain.state.ids import MAX_NUMBER, parse_bare_number
+from framechain.tui.commands import COMMAND_NAMES, Command, CommandError, CommandSuggester, completions, help_text, parse, usage
 
 
 class ParseTests(unittest.TestCase):

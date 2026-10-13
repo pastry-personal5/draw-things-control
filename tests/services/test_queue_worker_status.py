@@ -7,8 +7,8 @@ import unittest
 from dataclasses import replace
 from datetime import datetime
 
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, RunFinished, RunOutput, RunStarted, RunStatus
-from draw_things_control.services.queue_worker_status import WorkerStatus
+from framechain.jobs.events import CooldownEnded, CooldownStarted, RunFinished, RunOutput, RunStarted, RunStatus
+from framechain.services.queue_worker_status import WorkerStatus
 
 NOW = datetime(2026, 9, 28, 12, 0, 0)
 

@@ -12,16 +12,16 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.errors import NotPermittedError
-from draw_things_control.services.queue_events import QueueEventPublisher
-from draw_things_control.services.queue_hold import HOLD_KEY, HoldState, QueueHold, hold_text, read_hold
-from draw_things_control.services.queue_park import ParkRefusedError, park_entry, unpark_entry
-from draw_things_control.services.queue_recovery import recover_queue
-from draw_things_control.services.queue_resume import resume_entry
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.state.queue import QueueState
-from draw_things_control.state.settings import SettingsRepository
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.core.errors import NotPermittedError
+from framechain.services.queue_events import QueueEventPublisher
+from framechain.services.queue_hold import HOLD_KEY, HoldState, QueueHold, hold_text, read_hold
+from framechain.services.queue_park import ParkRefusedError, park_entry, unpark_entry
+from framechain.services.queue_recovery import recover_queue
+from framechain.services.queue_resume import resume_entry
+from framechain.services.queue_submit import submit_job
+from framechain.state.queue import QueueState
+from framechain.state.settings import SettingsRepository
 from tests.fixtures import job_data
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
 from tests.services.test_queue_worker import NOW, QueueWorkerCase

@@ -6,10 +6,10 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from draw_things_control.state.execution_rows import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import NewQueueEntry, QueueState
-from draw_things_control.state.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_VERSION
-from draw_things_control.state.store import Store, StoreMode
+from framechain.state.execution_rows import ExecutionSettings, NewExecution, NewRun
+from framechain.state.queue import NewQueueEntry, QueueState
+from framechain.state.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_VERSION
+from framechain.state.store import Store, StoreMode
 
 NOW = datetime(2026, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -18,7 +18,7 @@ class QueueCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
-        self.path = Path(self._temporary.name) / "dtc.db"
+        self.path = Path(self._temporary.name) / "framechain.db"
         self.store = Store.open(self.path, mode=StoreMode.RUN, retention_days=14, clock=lambda: NOW)
         self.addCleanup(self.store.close)
 

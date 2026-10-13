@@ -8,14 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from draw_things_control.core.errors import NotFoundError
-from draw_things_control.core.run_lock import RunLock
-from draw_things_control.services.job_runs import JobRunSession
-from draw_things_control.services.queue_cancel import CancelRefusedError, cancel_entry
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.services.queue_worker import QueueWorker
-from draw_things_control.state.queue import QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.errors import NotFoundError
+from framechain.core.run_lock import RunLock
+from framechain.services.job_runs import JobRunSession
+from framechain.services.queue_cancel import CancelRefusedError, cancel_entry
+from framechain.services.queue_submit import submit_job
+from framechain.services.queue_worker import QueueWorker
+from framechain.state.queue import QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
 

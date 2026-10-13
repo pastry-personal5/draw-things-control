@@ -1,4 +1,4 @@
-"""The MCP server's tests' shared case (Milestone 10): ``dtc serve``'s API in process, over a fake worker, reached
+"""The MCP server's tests' shared case (Milestone 10): ``fc serve``'s API in process, over a fake worker, reached
 through ``httpx.ASGITransport`` with a base URL its ``Host`` check accepts, and the MCP server built over it, which the
 SDK's in-memory ``Client`` drives. Never starts ``draw-things-cli``."""
 
@@ -16,16 +16,16 @@ from fastapi import FastAPI
 from mcp import Client
 from mcp_types import TextContent
 
-from draw_things_control.core.global_config import ApiLimits
-from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.mcp_server.app import build_server
-from draw_things_control.server.app import create_app
-from draw_things_control.server.context import ServerContext
-from draw_things_control.server.event_backlog import EventBacklog
-from draw_things_control.state.execution_rows import MediaCheckRow
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.global_config import ApiLimits
+from framechain.jobs.executor import JobExecutor
+from framechain.mcp_server.app import build_server
+from framechain.server.app import create_app
+from framechain.server.context import ServerContext
+from framechain.server.event_backlog import EventBacklog
+from framechain.state.execution_rows import MediaCheckRow
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.queue import QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.server.test_queue_routes import TOKEN, FakeWorker
 
@@ -33,7 +33,7 @@ SERVER_URL = "http://127.0.0.1:8765"
 
 
 class ApiTransport(httpx.AsyncBaseTransport):
-    """``dtc serve`` in process, or, with ``app`` None, a server that is down. Records each request's method and path,
+    """``fc serve`` in process, or, with ``app`` None, a server that is down. Records each request's method and path,
     query included, as sent."""
 
     def __init__(self) -> None:
@@ -70,7 +70,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.server = build_server(SERVER_URL, self.paths.server_token, http_transport=self.transport, clock=lambda: self.now)
 
     def serve(self, *, allow_write: bool = False, api_limits: ApiLimits | None = None) -> None:
-        """Start, or restart, ``dtc serve`` in process, with or without ``--allow-write``."""
+        """Start, or restart, ``fc serve`` in process, with or without ``--allow-write``."""
         global_config = replace(self.global_config, api_limits=api_limits) if api_limits is not None else self.global_config
         self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write, event_backlog=self.event_backlog)  # pyright: ignore[reportArgumentType]  (the fake worker only needs the methods the routes call)
         self.transport.app = create_app(self.context)
@@ -98,7 +98,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     async def api(self, method: str, path: str, *, caller: str | None = None, **options: Any) -> httpx.Response:
         """The API itself, as a person's front end calls it."""
-        headers = {"Authorization": f"Bearer {TOKEN}", **({"X-Dtc-Caller": caller} if caller is not None else {})}
+        headers = {"Authorization": f"Bearer {TOKEN}", **({"X-Framechain-Caller": caller} if caller is not None else {})}
         assert self.transport.app is not None
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.transport.app), base_url=SERVER_URL) as client:
             return await client.request(method, path, headers=headers, **options)

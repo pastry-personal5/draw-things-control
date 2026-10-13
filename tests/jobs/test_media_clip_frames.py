@@ -12,10 +12,10 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from draw_things_control.jobs.media import clip_frames
-from draw_things_control.jobs.media.clip_frames import PRORES_HEADER, ClipEncoder, ClipInfo, EncoderChoice, choose_encoder, encoder_works, iter_frames, probe_clip, read_tool_png
-from draw_things_control.jobs.media.frames import decode_filter, extract_last_frame, handoff_samples, write_handoff_png
-from draw_things_control.jobs.media.stream_color import StreamColor
+from framechain.jobs.media import clip_frames
+from framechain.jobs.media.clip_frames import PRORES_HEADER, ClipEncoder, ClipInfo, EncoderChoice, choose_encoder, encoder_works, iter_frames, probe_clip, read_tool_png
+from framechain.jobs.media.frames import decode_filter, extract_last_frame, handoff_samples, write_handoff_png
+from framechain.jobs.media.stream_color import StreamColor
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")

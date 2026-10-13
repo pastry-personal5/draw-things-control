@@ -1,9 +1,9 @@
-# Example Draw Things job for draw-things-control (job format version 1).
+# Example Draw Things job for framechain (job format version 1).
 # This file intentionally omits `backend`: that remains the Draw Things default.
 #
-# Validate:  uv run dtc validate-job data/jobs/example-job-for-backend-draw-things-cli.yaml
-# Preview:   uv run dtc run-job data/jobs/example-job-for-backend-draw-things-cli.yaml --dry-run
-# Run:       uv run dtc run-job data/jobs/example-job-for-backend-draw-things-cli.yaml
+# Validate:  uv run fc validate-job data/jobs/example-job-for-backend-draw-things-cli.yaml
+# Preview:   uv run fc run-job data/jobs/example-job-for-backend-draw-things-cli.yaml --dry-run
+# Run:       uv run fc run-job data/jobs/example-job-for-backend-draw-things-cli.yaml
 #
 # Relative paths: `input` is read from the global input_directory, and
 # `output.directory` is created under the global output_directory.

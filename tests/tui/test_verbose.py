@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from draw_things_control.tui.app import LOW_NOTICE, DrawThingsApp
-from draw_things_control.tui.commands import completions
-from draw_things_control.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
-from draw_things_control.tui.panes.status import WorkStatus
-from draw_things_control.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
-from draw_things_control.tui.widgets import SteadyText
+from framechain.tui.app import LOW_NOTICE, FramechainApp
+from framechain.tui.commands import completions
+from framechain.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
+from framechain.tui.panes.status import WorkStatus
+from framechain.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
+from framechain.tui.widgets import SteadyText
 from tests.tui.fake_server import cooldown_started, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -62,7 +62,7 @@ class VerboseTestCase(FeedTestCase):
     def preset(self, level: str) -> None:
         save_verbose_level(self.paths.tui_preferences, level)  # type: ignore[arg-type]  # a plain string
 
-    async def running_job(self, pilot: Any, clock: Clock, *, run: int = 1) -> DrawThingsApp:
+    async def running_job(self, pilot: Any, clock: Clock, *, run: int = 1) -> FramechainApp:
         """Connect, start a job, and start its run at ``clock``'s time, on that clock."""
         app = await self.connect(pilot)
         app.main.running.clock = clock  # type: ignore[union-attr]
@@ -130,12 +130,12 @@ class StreamTests(VerboseTestCase):
             last_id = app._feed.last_event_id
             await self.command(pilot, "/verbose low")
             await self.wait_for(pilot, lambda: len(self.server.requests) == 2, "the reconnect")
-            self.assertEqual(self.since("/verbose low"), [LOW_NOTICE, "Reconnecting to dtc serve for verbose low..."])
+            self.assertEqual(self.since("/verbose low"), [LOW_NOTICE, "Reconnecting to fc serve for verbose low..."])
             await self.command(pilot, "/verbose low")
             await self.command(pilot, "/verbose high")
             await self.wait_for(pilot, lambda: len(self.server.requests) == 3, "the second reconnect")
             await pilot.pause()
-            self.assertEqual(self.since("/verbose high"), ["Verbose level: high.", "Reconnecting to dtc serve for verbose high..."])
+            self.assertEqual(self.since("/verbose high"), ["Verbose level: high.", "Reconnecting to fc serve for verbose high..."])
         self.assertEqual([(request.include_output, request.last_event_id) for request in self.server.requests], [(True, 1), (False, last_id), (True, last_id)])
         # Every call was cancelled when its stream was replaced or the app ended.
         self.assertEqual(len(self.server.open_calls), 0)
@@ -373,7 +373,7 @@ class LowTests(VerboseTestCase):
     async def test_the_startup_notice_is_not_repeated_by_a_reconnect(self) -> None:
         self.preset("low")
         app = self.make_app()
-        with mock.patch("draw_things_control.tui.feed.RECONNECT_SECONDS", 0.05):
+        with mock.patch("framechain.tui.feed.RECONNECT_SECONDS", 0.05):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.connect(pilot)
                 self.server.calls[0].cancel()
@@ -437,7 +437,7 @@ class OfflineTests(VerboseTestCase):
     async def test_a_switch_across_low_with_no_server_persists_and_applies_when_it_is_reachable(self) -> None:
         self.server.health_ok = False
         app = self.make_app()
-        with mock.patch("draw_things_control.tui.feed.RECONNECT_SECONDS", 0.05):
+        with mock.patch("framechain.tui.feed.RECONNECT_SECONDS", 0.05):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.settle(pilot)
                 await self.command(pilot, "/verbose low")
@@ -446,7 +446,7 @@ class OfflineTests(VerboseTestCase):
                 self.assertEqual(self.server.requests, [])
                 self.server.health_ok = True
                 await self.wait_for(pilot, lambda: app.feed_connected, "the feed")
-        self.assertEqual(said, ["Verbose level: low. It applies when dtc serve is reachable."])
+        self.assertEqual(said, ["Verbose level: low. It applies when fc serve is reachable."])
         self.assertFalse(any("Reconnecting" in line for line in self.said))
         self.assertEqual(self.requests(), [False])
 

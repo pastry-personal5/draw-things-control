@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from draw_things_control.core.client_config import check_server_host, read_client_token
-from draw_things_control.core.errors import InputError, StateUnavailableError
+from framechain.core.client_config import check_server_host, read_client_token
+from framechain.core.errors import InputError, StateUnavailableError
 
 
 class ReadClientTokenTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class ReadClientTokenTests(unittest.TestCase):
             path = Path(directory) / "missing"
             with self.assertRaises(StateUnavailableError) as caught:
                 read_client_token(path)
-            self.assertIn("dtc serve", str(caught.exception))
+            self.assertIn("fc serve", str(caught.exception))
 
     def test_an_empty_file_is_state_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

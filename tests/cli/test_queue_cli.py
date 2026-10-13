@@ -1,5 +1,5 @@
-"""Tests for `dtc queue`: a client of the HTTP API and (``add --wait``) the gRPC monitoring service, exercised
-against a fake ``httpx`` transport and a fake gRPC stub -- no real ``dtc serve`` process, as no CLI test starts one
+"""Tests for `fc queue`: a client of the HTTP API and (``add --wait``) the gRPC monitoring service, exercised
+against a fake ``httpx`` transport and a fake gRPC stub -- no real ``fc serve`` process, as no CLI test starts one
 (AGENTS.md)."""
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import httpx
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import app
-from draw_things_control.cli.context import CliServices
-from draw_things_control.cli.generated import monitor_pb2
-from draw_things_control.core.client_config import job_argument
-from draw_things_control.services.toolkit import Toolkit
+from framechain.cli.app import app
+from framechain.cli.context import CliServices
+from framechain.cli.generated import monitor_pb2
+from framechain.core.client_config import job_argument
+from framechain.services.toolkit import Toolkit
 from tests.fixtures import JobTestCase
 
 TOKEN = "a" * 64
@@ -98,7 +98,7 @@ class QueueCliTests(JobTestCase):
             assert request.method == "POST" and request.url.path == "/v1/queue"
             assert json.loads(request.content) == {"job": "walk.yaml"}
             assert request.headers["Authorization"] == f"Bearer {TOKEN}"
-            assert request.headers["X-Dtc-Caller"] == "cli"
+            assert request.headers["X-Framechain-Caller"] == "cli"
             return self.json_response(200, {"queue_id": "Q0001", "state": "queued", "job_path": "/jobs/walk.yaml", "total_runs": 3, "succeeded": 0})
 
         self.route(handler)
@@ -167,8 +167,8 @@ class QueueCliTests(JobTestCase):
         self.assertEqual((result.exit_code, result.stdout), (0, "Q0002 queued (resumed from Q0001): walk.yaml\n"))
 
     def logged(self, *arguments: str) -> tuple[int, str]:
-        """Invokes ``dtc queue`` and returns its exit code with everything Loguru logged (never CliRunner's own
-        captured output: ``dtc``'s ``main()``, which routes Loguru to stdout/stderr, is not what CliRunner calls)."""
+        """Invokes ``fc queue`` and returns its exit code with everything Loguru logged (never CliRunner's own
+        captured output: ``fc``'s ``main()``, which routes Loguru to stdout/stderr, is not what CliRunner calls)."""
         messages: list[str] = []
         sink = logger.add(lambda message: messages.append(str(message)), format="{message}", level="ERROR")
         try:
@@ -181,7 +181,7 @@ class QueueCliTests(JobTestCase):
         self.route(lambda request: httpx.Response(401))
         exit_code, messages = self.logged("list")
         self.assertEqual(exit_code, 1)
-        self.assertIn("dtc serve", messages)
+        self.assertIn("fc serve", messages)
         self.assertNotIn(TOKEN, messages)
 
     def test_an_unreachable_server_exits_1_naming_dtc_serve_and_never_prints_the_token(self) -> None:
@@ -191,7 +191,7 @@ class QueueCliTests(JobTestCase):
         self.route(handler)
         exit_code, messages = self.logged("list")
         self.assertEqual(exit_code, 1)
-        self.assertIn("dtc serve", messages)
+        self.assertIn("fc serve", messages)
         self.assertNotIn(TOKEN, messages)
 
     def test_an_api_error_exits_with_its_mapped_code(self) -> None:
@@ -268,8 +268,8 @@ class QueueCliTests(JobTestCase):
 
     def test_park_says_after_which_run_the_entry_parks_and_that_the_queue_is_held(self) -> None:
         for changes, words in (
-            ({}, "Q0001 parks after run 3/7; the queue is held ('dtc queue release' starts it again)"),
-            ({"current_run": 7, "succeeded": 6}, "Q0001 is on its last run and will finish; the queue is held ('dtc queue release' starts it again)"),
+            ({}, "Q0001 parks after run 3/7; the queue is held ('fc queue release' starts it again)"),
+            ({"current_run": 7, "succeeded": 6}, "Q0001 is on its last run and will finish; the queue is held ('fc queue release' starts it again)"),
             ({"current_run": None, "between_runs_after_run": 7, "succeeded": 7}, "Q0001 is on its last run and will finish;"),
             ({"current_run": None, "between_runs_after_run": 3, "succeeded": 3}, "Q0001 parks after run 3/7;"),
             ({"state": "parked", "current_run": None, "succeeded": 3}, "Q0001 parked after run 3/7;"),
@@ -350,13 +350,13 @@ class QueueCliTests(JobTestCase):
         self.assertEqual(
             result.stdout.splitlines()[1:],
             [
-                "Q0001 waits: the queue is held ('dtc queue release' starts it)",
+                "Q0001 waits: the queue is held ('fc queue release' starts it)",
                 "run 4/7 started",
                 "run 4/7 succeeded",
                 "run 5/7 started",
                 "Q0001 parking: it ends after run 5/7",
                 "run 5/7 succeeded",
-                "Q0001 parked after run 5/7; 'dtc queue resume Q0001' continues at run 6",
+                "Q0001 parked after run 5/7; 'fc queue resume Q0001' continues at run 6",
             ],
         )
 

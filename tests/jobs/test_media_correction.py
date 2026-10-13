@@ -6,9 +6,9 @@ import unittest
 
 import numpy as np
 
-from draw_things_control.jobs.media import oklab
-from draw_things_control.jobs.media.color_stats import ColorStats, compare, measure
-from draw_things_control.jobs.media.correction import HEADROOM, LIGHTNESS_CAP, Params, Target, apply, fit, plan_run, ramp, refine_gains, sample_pixels, scaled, target_between, tone_curve, transform_for
+from framechain.jobs.media import oklab
+from framechain.jobs.media.color_stats import ColorStats, compare, measure
+from framechain.jobs.media.correction import HEADROOM, LIGHTNESS_CAP, Params, Target, apply, fit, plan_run, ramp, refine_gains, sample_pixels, scaled, target_between, tone_curve, transform_for
 
 
 def scene(seed: int = 7, size: int = 48) -> np.ndarray:

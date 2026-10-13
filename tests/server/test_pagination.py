@@ -2,8 +2,8 @@
 
 import unittest
 
-from draw_things_control.core.errors import InputError
-from draw_things_control.server.pagination import DEFAULT_LIMIT, MAX_LIMIT, clamp_limit, decode_cursor, encode_cursor, next_cursor
+from framechain.core.errors import InputError
+from framechain.server.pagination import DEFAULT_LIMIT, MAX_LIMIT, clamp_limit, decode_cursor, encode_cursor, next_cursor
 
 
 class CursorTests(unittest.TestCase):

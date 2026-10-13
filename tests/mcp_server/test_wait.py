@@ -10,11 +10,11 @@ from typing import Any
 
 import anyio
 
-from draw_things_control.mcp_server.app import build_server
-from draw_things_control.mcp_server.watch import FINISHED_STATES, WaitTimes
-from draw_things_control.server.context import ServerContext
-from draw_things_control.state.queue import FINISHED_STATES as STORE_FINISHED_STATES
-from draw_things_control.state.queue import QueueState
+from framechain.mcp_server.app import build_server
+from framechain.mcp_server.watch import FINISHED_STATES, WaitTimes
+from framechain.server.context import ServerContext
+from framechain.state.queue import FINISHED_STATES as STORE_FINISHED_STATES
+from framechain.state.queue import QueueState
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN
@@ -215,7 +215,7 @@ class LiveWaitTests(McpCase):
                 group.start_soon(anyio.to_thread.run_sync, self.stop_soon)
                 body, _elapsed = await self.wait(client, queue_id, 60)
         self.assertEqual(body["code"], "server_unreachable")
-        self.assertIn("dtc serve", body["message"])
+        self.assertIn("fc serve", body["message"])
 
     def stop_soon(self) -> None:
         time.sleep(0.3)

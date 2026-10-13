@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
-from draw_things_control.core.arguments import DrawThingsGenerateArguments
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.jobs.planning import PlannedRun
+from framechain.core.arguments import DrawThingsGenerateArguments
+from framechain.core.cooldown import CooldownPolicy
+from framechain.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
+from framechain.jobs.parsing import load_job
+from framechain.jobs.planning import PlannedRun
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 

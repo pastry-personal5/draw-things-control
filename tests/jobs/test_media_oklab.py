@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from draw_things_control.jobs.media import oklab
+from framechain.jobs.media import oklab
 
 
 class SrgbCurveTests(unittest.TestCase):

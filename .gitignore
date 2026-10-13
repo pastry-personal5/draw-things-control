@@ -52,7 +52,7 @@ Thumbs.db
 # Machine-specific global configuration (copy from config/global-config.example.yaml)
 config/global-config.yaml
 
-# The API server's bearer token (generated on first `dtc serve`)
+# The API server's bearer token (generated on first `fc serve`)
 config/server-token
 
 # The terminal UI's own preferences (its verbose level), written by `/verbose`
@@ -61,9 +61,9 @@ config/tui-preferences.yaml
 # gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
 # stays the single source of truth, with no generated code to drift from it. One copy per front end with a gRPC
 # client (server/, cli/, tui/; mcp_server/ has none, watching over SSE), since front ends never import each other.
-src/draw_things_control/server/generated/
-src/draw_things_control/cli/generated/
-src/draw_things_control/tui/generated/
+src/framechain/server/generated/
+src/framechain/cli/generated/
+src/framechain/tui/generated/
 
 # Personal data: everything under data/ except the example files
 data/**

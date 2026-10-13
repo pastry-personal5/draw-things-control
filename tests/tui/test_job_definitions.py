@@ -14,19 +14,19 @@ from unittest import mock
 from rich.text import Text
 from textual.app import App
 
-from draw_things_control.core.errors import DtcError
-from draw_things_control.core.run_lock import RunLockError
-from draw_things_control.jobs.parsing import load_job
-from draw_things_control.services import job_catalog
-from draw_things_control.services.job_catalog import JobCatalog, JobRow
-from draw_things_control.services.store_provider import StoreProvider
-from draw_things_control.state.store import Store
-from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.job_sort import SortPreference
-from draw_things_control.tui.job_watch import JobWatcher
-from draw_things_control.tui.panes.job_definitions import JobsList
-from draw_things_control.tui.text.jobs import changed_text, job_display_names, sort_job_rows
-from draw_things_control.tui.widgets import ActivityLog
+from framechain.core.errors import FramechainError
+from framechain.core.run_lock import RunLockError
+from framechain.jobs.parsing import load_job
+from framechain.services import job_catalog
+from framechain.services.job_catalog import JobCatalog, JobRow
+from framechain.services.store_provider import StoreProvider
+from framechain.state.store import Store
+from framechain.tui.app import FramechainApp
+from framechain.tui.job_sort import SortPreference
+from framechain.tui.job_watch import JobWatcher
+from framechain.tui.panes.job_definitions import JobsList
+from framechain.tui.text.jobs import changed_text, job_display_names, sort_job_rows
+from framechain.tui.widgets import ActivityLog
 from tests.fixtures import job_data
 from tests.tui.test_tui import make_service
 from tests.tui.tui_case import TuiTestCase
@@ -42,7 +42,7 @@ class JobDefinitionTests(TuiTestCase):
         self.data = self.paths.jobs
         self.data.mkdir(parents=True)
 
-    def app(self, *, data: Path | None = None) -> DrawThingsApp:
+    def app(self, *, data: Path | None = None) -> FramechainApp:
         return self.make_app(make_service(frozenset()), data=data)
 
     def touch(self, path: Path, when: float) -> None:
@@ -151,7 +151,7 @@ class JobDefinitionTests(TuiTestCase):
             await self.wait_for(pilot, lambda: self.server.submitted, "the submission")
             await self.settle(pilot)
             # Submitting is not running: this process never starts a job, and nothing was followed yet.
-            running = cast(DrawThingsApp, pilot.app).job_running
+            running = cast(FramechainApp, pilot.app).job_running
             await pilot.press("escape")
             focused = pilot.app.focused
         self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", described)
@@ -245,7 +245,7 @@ class JobCatalogTests(TuiTestCase):
     def find(self, name: str, rows: Sequence[JobRow] = ()) -> Path | str:
         try:
             return self.catalog.find(name, rows)
-        except DtcError as error:
+        except FramechainError as error:
             return str(error)
 
     def valid(self) -> dict[str, bool]:
@@ -379,7 +379,7 @@ class JobWatcherTests(JobDefinitionTests):
 class JobDefinitionWatchTests(JobDefinitionTests):
     async def test_a_new_file_shows_without_a_timer_and_the_timer_pauses_while_all_jobs_are_valid(self) -> None:
         self.write_data_job("walk.yaml")
-        with mock.patch("draw_things_control.tui.panes.job_definitions.JOBS_POLL_SECONDS", 3600):
+        with mock.patch("framechain.tui.panes.job_definitions.JOBS_POLL_SECONDS", 3600):
             async with self.app().run_test(size=(160, 50)) as pilot:
                 await self.settle(pilot)
                 table = pilot.app.screen.query_one(JobsList)

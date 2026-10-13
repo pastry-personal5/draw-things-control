@@ -1,13 +1,13 @@
 # Development rules
 
-The rules for changing `draw-things-control`, for people and AI agents alike.
+The rules for changing `framechain`, for people and AI agents alike.
 [AGENTS.md](../AGENTS.md) is the short entry point for agents and links here.
 
 ## Environment
 
 - Python 3.12 (see `.python-version`), managed with uv.
 - Install with `uv sync`. Never use `pip install` directly.
-- Run code from the project root: `uv run dtc ...` (or `uv run python -m draw_things_control ...`).
+- Run code from the project root: `uv run fc ...` (or `uv run python -m framechain ...`).
 - The Makefile and checked-in shell launchers use the project-local `.cache/uv` cache. For a direct `uv` command, set `UV_CACHE_DIR=.cache/uv` first (or supply another writable cache location).
 - Keep `pyproject.toml` and `uv.lock` in sync when adding a dependency.
 - Before using a library, framework, SDK, or CLI tool, fetch its current
@@ -30,7 +30,7 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
 
 ## Project layout
 
-- No source files in the project root. All code is the `draw_things_control`
+- No source files in the project root. All code is the `framechain`
   package under `src/` (uv src layout), with tests in `tests/` mirroring it.
 - Subpackages: `core/` (paths, errors, arguments, configuration, the runner),
   `jobs/` (job definition and parsing, the executor, records, inputs, media),
@@ -38,10 +38,10 @@ The rules for changing `draw-things-control`, for people and AI agents alike.
   `cli/` (Typer app), `tui/`, and, in phase 3, `server/` and `mcp_server/`.
 - Dependencies point one way: `cli`, `tui`, `server` -> `services` -> `state` ->
   `jobs` -> `core`. `tests/test_architecture.py` fails on an import against it. Front ends never import each other, except that three
-  commands in `cli/app.py` start one: `dtc tui` the TUI app, `dtc serve` the HTTP API and gRPC service, and `dtc mcp` the MCP server (none of those imports `cli`); `mcp_server` imports nothing else from the package and talks to
+  commands in `cli/app.py` start one: `fc tui` the TUI app, `fc serve` the HTTP API and gRPC service, and `fc mcp` the MCP server (none of those imports `cli`); `mcp_server` imports nothing else from the package and talks to
   `server` over HTTP only, with no gRPC.
-- Imports are absolute (`from draw_things_control.core... import ...`).
-- Entry point: the `dtc` console script, or `python -m draw_things_control`.
+- Imports are absolute (`from framechain.core... import ...`).
+- Entry point: the `fc` console script, or `python -m framechain`.
 - No module holds a path of its own: a directory comes from `ProjectPaths`
   (`core/paths.py`) and is passed down, and a test passes its own.
 - Keep modules to at most 3200 lines, classes to at most 1600, and functions to at most 800 (`tests/test_architecture.py` checks it).

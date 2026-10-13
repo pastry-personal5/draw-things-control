@@ -5,6 +5,9 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-13
 
+- **Change** [M04]: Legacy database migration now escapes project paths as SQLite file URIs, preserving history when a directory name contains URI punctuation such as `?` or `#`.
+- **Owner decision** [M04]: Rename the product and app to Framechain, install only `fc` and `framechain`, and keep version `3.0.0`. MCP, caller-header, and gRPC identities change without aliases.
+- **Change** [M04]: State now opens `state/framechain.db`. An existing `state/dtc.db`, including committed WAL data, is copied through SQLite backup, verified, and removed only after a safe migration; conflicting files or a held run lock require recovery before startup.
 - **Owner decision** [M10]: Move the graph-based metadata milestone from M04 to M10; the milestone document and Phase 4 plan now use M10.
 - **Change**: The API creates job files and replacement backups with private permissions. The server refuses linked, non-regular, or malformed token files and reads an existing token from one checked file descriptor.
 

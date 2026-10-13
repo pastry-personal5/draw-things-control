@@ -1,4 +1,4 @@
-"""Tests for `dtc history delete` (Milestone 06), against a fake ``httpx`` transport standing in for dtc serve."""
+"""Tests for `fc history delete` (Milestone 06), against a fake ``httpx`` transport standing in for fc serve."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import httpx
 from loguru import logger
 from typer.testing import CliRunner
 
-from draw_things_control.cli.app import app
-from draw_things_control.cli.context import CliServices
-from draw_things_control.services.toolkit import Toolkit
+from framechain.cli.app import app
+from framechain.cli.context import CliServices
+from framechain.services.toolkit import Toolkit
 from tests.fixtures import JobTestCase
 
 TOKEN = "a" * 64
@@ -157,7 +157,7 @@ class HistoryCliTests(JobTestCase):
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertEqual(self.remaining(), ["E0005", "E0004", "E0002", "E0001"])
         self.assertIn("Not deleted: E0004 is running; it cannot be deleted\nNo execution E0099\n", result.stdout)
-        self.assertIn("E0003's manifest could not be deleted: /out/walk.json; `dtc import-history` would bring it back under a new number", result.stdout)
+        self.assertIn("E0003's manifest could not be deleted: /out/walk.json; `fc import-history` would bring it back under a new number", result.stdout)
 
     def test_nothing_deletable_asks_nothing(self) -> None:
         result = self.invoke("E0099")
@@ -180,4 +180,4 @@ class HistoryCliTests(JobTestCase):
         self.server.down = True
         result = self.invoke("E0001", "--yes")
         self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("is 'dtc serve' running?", self.errors[0])
+        self.assertIn("is 'fc serve' running?", self.errors[0])

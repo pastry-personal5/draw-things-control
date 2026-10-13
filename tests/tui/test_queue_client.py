@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from draw_things_control.tui.queue_client import ApiError, cancel, park, resume, show, unpark
+from framechain.tui.queue_client import ApiError, cancel, park, resume, show, unpark
 
 
 class QueueIdTests(unittest.IsolatedAsyncioTestCase):

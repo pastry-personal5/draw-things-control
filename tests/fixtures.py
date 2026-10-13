@@ -12,15 +12,15 @@ from typing import Any
 import yaml
 from PIL import Image
 
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.global_config import GlobalConfig
-from draw_things_control.core.paths import ProjectPaths
-from draw_things_control.jobs.definition import JobDefinition
-from draw_things_control.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
-from draw_things_control.jobs.media.info import MediaInfo
-from draw_things_control.jobs.media.toolkit import MediaTools
-from draw_things_control.services.toolkit import Toolkit
-from draw_things_control.state.executions import ExecutionRow, ExecutionSettings, RunRow
+from framechain.core.cooldown import CooldownPolicy
+from framechain.core.global_config import GlobalConfig
+from framechain.core.paths import ProjectPaths
+from framechain.jobs.definition import JobDefinition
+from framechain.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
+from framechain.jobs.media.info import MediaInfo
+from framechain.jobs.media.toolkit import MediaTools
+from framechain.services.toolkit import Toolkit
+from framechain.state.executions import ExecutionRow, ExecutionSettings, RunRow
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 

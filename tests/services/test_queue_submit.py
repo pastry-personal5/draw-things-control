@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.core.errors import InputError
-from draw_things_control.services.queue_submit import parse_snapshot, submit_job
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.cooldown import CooldownPolicy
+from framechain.core.errors import InputError
+from framechain.services.queue_submit import parse_snapshot, submit_job
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 

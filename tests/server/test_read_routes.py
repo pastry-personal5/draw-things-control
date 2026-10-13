@@ -7,12 +7,12 @@ from typing import Any
 import yaml
 from fastapi.testclient import TestClient
 
-from draw_things_control.jobs.executor import JobExecutor
-from draw_things_control.server.app import create_app
-from draw_things_control.server.context import ServerContext
-from draw_things_control.state.execution_rows import MediaCheckRow
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.store import Store, StoreMode
+from framechain.jobs.executor import JobExecutor
+from framechain.server.app import create_app
+from framechain.server.context import ServerContext
+from framechain.state.execution_rows import MediaCheckRow
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 
 TOKEN = "a" * 64

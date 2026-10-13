@@ -1,9 +1,9 @@
-"""Tests for the X-Dtc-Caller header."""
+"""Tests for the X-Framechain-Caller header."""
 
 import unittest
 
-from draw_things_control.core.errors import InputError
-from draw_things_control.server.caller import HEADER_NAME, resolve_caller
+from framechain.core.errors import InputError
+from framechain.server.caller import HEADER_NAME, resolve_caller
 
 
 class ResolveCallerTests(unittest.TestCase):

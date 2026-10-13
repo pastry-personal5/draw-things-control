@@ -6,11 +6,11 @@ from datetime import datetime, timedelta
 
 from rich.text import Text
 
-from draw_things_control.core.cooldown import CooldownPolicy
-from draw_things_control.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
-from draw_things_control.tui.estimate import job_estimate, moment, run_estimate
-from draw_things_control.tui.live_run import LiveRun, PastRun
-from draw_things_control.tui.text.status import bar_line, end_text, whole_duration, work_status_lines
+from framechain.core.cooldown import CooldownPolicy
+from framechain.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
+from framechain.tui.estimate import job_estimate, moment, run_estimate
+from framechain.tui.live_run import LiveRun, PastRun
+from framechain.tui.text.status import bar_line, end_text, whole_duration, work_status_lines
 from tests.fixtures import JobTestCase, job_data
 
 WALL = datetime(2026, 9, 26, 14, 0, 0)

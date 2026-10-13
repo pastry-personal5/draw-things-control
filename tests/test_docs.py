@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 from typer.main import get_command
 
-from draw_things_control.cli.app import app
+from framechain.cli.app import app
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = (ROOT / "README.md", ROOT / "docs/user-guide.md", ROOT / "docs/user-guide-for-http-based-mcp.md")
@@ -52,9 +52,9 @@ class DocumentationTests(unittest.TestCase):
                     words = shlex.split(line, comments=True)
                 except ValueError:
                     continue
-                if "dtc" not in words:
+                if "fc" not in words:
                     continue
-                words = words[words.index("dtc") + 1 :]
+                words = words[words.index("fc") + 1 :]
                 if not words:
                     continue
                 options = command_options(root)
@@ -71,7 +71,7 @@ class DocumentationTests(unittest.TestCase):
                         options |= command_options(current)
                     elif current is root and not word.startswith("-"):
                         with self.subTest(document=document.name, line=line):
-                            self.fail(f"Unknown dtc command: {word}")
+                            self.fail(f"Unknown fc command: {word}")
 
     def test_relative_links_resolve(self) -> None:
         for document in DOCUMENTS:

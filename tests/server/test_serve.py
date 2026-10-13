@@ -1,4 +1,4 @@
-"""End-to-end tests for `dtc serve`'s process lifecycle: it actually binds, answers, and — the regression this
+"""End-to-end tests for `fc serve`'s process lifecycle: it actually binds, answers, and — the regression this
 guards against — releases the run lock on a real SIGTERM/SIGINT instead of dying before its cleanup runs (uvicorn's
 own signal handling re-raises the caught signal after its internal shutdown, which raced this project's own
 cleanup in `server/serve.py` until `QueueHost.stop()` was moved inside the same `capture_signals()` block)."""
@@ -15,21 +15,21 @@ import unittest
 
 from loguru import logger
 
-from draw_things_control.core.errors import InputError
-from draw_things_control.server.serve import ServeOptions, _bind_http_socket
-from draw_things_control.server.serve import run as run_server
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.services.toolkit import Toolkit
-from draw_things_control.state.queue import QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.core.errors import InputError
+from framechain.server.serve import ServeOptions, _bind_http_socket
+from framechain.server.serve import run as run_server
+from framechain.services.queue_submit import submit_job
+from framechain.services.toolkit import Toolkit
+from framechain.state.queue import QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 _ENTRY_POINT = """
 from pathlib import Path
-from draw_things_control.core.paths import ProjectPaths
-from draw_things_control.core.global_config import load_global_config
-from draw_things_control.services.toolkit import Toolkit
-from draw_things_control.server.serve import run, ServeOptions
+from framechain.core.paths import ProjectPaths
+from framechain.core.global_config import load_global_config
+from framechain.services.toolkit import Toolkit
+from framechain.server.serve import run, ServeOptions
 
 paths = ProjectPaths(Path({root!r}))
 settings = load_global_config(paths.global_config)
@@ -84,7 +84,7 @@ class ServeProcessTests(JobTestCase):
             self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self.process.kill()
-            self.fail(f"dtc serve did not exit within 10s of {sig.name}; output:\n{self.process.stdout.read() if self.process.stdout else ''}")
+            self.fail(f"fc serve did not exit within 10s of {sig.name}; output:\n{self.process.stdout.read() if self.process.stdout else ''}")
 
     def test_the_server_starts_and_answers_health(self) -> None:
         self.assertTrue(_wait_for_health(self.port, timeout=10.0), "server never answered /v1/health")
@@ -181,7 +181,7 @@ class BindFailureTests(JobTestCase):
             blocker.listen(1)
             with self.assertRaises(InputError):
                 run_server(self.paths, self.global_config, Toolkit(), ServeOptions(host="127.0.0.1", port=blocker.getsockname()[1], grpc_port=_free_port()))
-        self.assertTrue(any(line.startswith("Queue held since ") and line.rstrip().endswith("(by Q0007); 'dtc queue release' starts it") for line in messages), messages)
+        self.assertTrue(any(line.startswith("Queue held since ") and line.rstrip().endswith("(by Q0007); 'fc queue release' starts it") for line in messages), messages)
         self.assert_queued_entry_untouched()
 
     def test_a_taken_grpc_port_is_refused_before_the_worker_starts(self) -> None:

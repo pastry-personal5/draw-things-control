@@ -4,8 +4,8 @@ import json
 import unittest
 from pathlib import Path
 
-from draw_things_control.core.arguments import CONFIG_ONLY_KEYS, FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, OVERRIDE_TARGETS, CommandSettings, DrawThingsGenerateArguments, command_arguments, command_settings, override_arguments
-from draw_things_control.core.numbers import positive_whole, setting_number
+from framechain.core.arguments import CONFIG_ONLY_KEYS, FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, OVERRIDE_TARGETS, CommandSettings, DrawThingsGenerateArguments, command_arguments, command_settings, override_arguments
+from framechain.core.numbers import positive_whole, setting_number
 
 
 class GenerateArgumentsTests(unittest.TestCase):

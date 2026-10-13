@@ -1,5 +1,5 @@
 """Headless tests of deleting executions from the TUI (Milestone 06): ``d`` and ``Space`` on the Execution History
-widget, ``/delete``, and the dialog, against a fake ``dtc serve`` that deletes from the test's store."""
+widget, ``/delete``, and the dialog, against a fake ``fc serve`` that deletes from the test's store."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from typing import Any
 
 from textual.widgets import Button
 
-from draw_things_control.state.executions import ExecutionSettings, NewExecution
-from draw_things_control.state.queue import NewQueueEntry
-from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.delete_dialog import DeleteDialog
-from draw_things_control.tui.panes.execution import ExecutionDetailPane
-from draw_things_control.tui.panes.history import ExecutionHistoryList
-from draw_things_control.tui.screens import MainScreen
+from framechain.state.executions import ExecutionSettings, NewExecution
+from framechain.state.queue import NewQueueEntry
+from framechain.tui.app import FramechainApp
+from framechain.tui.delete_dialog import DeleteDialog
+from framechain.tui.panes.execution import ExecutionDetailPane
+from framechain.tui.panes.history import ExecutionHistoryList
+from framechain.tui.screens import MainScreen
 from tests.tui.test_history import HistoryCase, at
 
 
@@ -22,7 +22,7 @@ class DeleteTests(HistoryCase):
         super().setUp()
         self.server.database = self.paths.database
 
-    def ids(self, app: DrawThingsApp) -> list[str]:
+    def ids(self, app: FramechainApp) -> list[str]:
         return [row[0] for row in self.history(app)]
 
     async def dialog(self, pilot: Any) -> str:

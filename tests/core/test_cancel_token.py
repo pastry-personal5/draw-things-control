@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 
-from draw_things_control.core.process.signals import CancelToken
+from framechain.core.process.signals import CancelToken
 
 
 class FakeRunner:

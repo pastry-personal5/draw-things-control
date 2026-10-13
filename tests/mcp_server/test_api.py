@@ -12,10 +12,10 @@ import mcp_types as types
 from loguru import logger
 from mcp.shared.exceptions import MCPError
 
-from draw_things_control.core.client_config import read_client_token
-from draw_things_control.core.errors import StateUnavailableError
-from draw_things_control.mcp_server.api import ToolError, path_segment, read_token
-from draw_things_control.mcp_server.app import RESOURCE_NOT_FOUND
+from framechain.core.client_config import read_client_token
+from framechain.core.errors import StateUnavailableError
+from framechain.mcp_server.api import ToolError, path_segment, read_token
+from framechain.mcp_server.app import RESOURCE_NOT_FOUND
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.test_queue_routes import TOKEN
 
@@ -50,7 +50,7 @@ class TokenCopyTests(unittest.TestCase):
                         read_token(path)
                     self.assertEqual(caught.exception.code, "unauthorized")
                     self.assertIn(str(path), str(caught.exception))
-                    self.assertIn("dtc serve", str(caught.exception))
+                    self.assertIn("fc serve", str(caught.exception))
 
 
 class PathSegmentTests(unittest.TestCase):

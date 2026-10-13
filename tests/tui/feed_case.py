@@ -1,17 +1,17 @@
-"""A base for TUI tests that drive the draw-things-cli pane through the gRPC feed, with a fake ``dtc serve``."""
+"""A base for TUI tests that drive the draw-things-cli pane through the gRPC feed, with a fake ``fc serve``."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from draw_things_control.jobs.events import JobEvent
-from draw_things_control.tui.app import DrawThingsApp
-from draw_things_control.tui.generated import monitor_pb2
+from framechain.jobs.events import JobEvent
+from framechain.tui.app import FramechainApp
+from framechain.tui.generated import monitor_pb2
 from tests.tui.tui_case import TuiTestCase
 
 
 class FeedTestCase(TuiTestCase):
-    async def connect(self, pilot: Any) -> DrawThingsApp:
+    async def connect(self, pilot: Any) -> FramechainApp:
         """Wait for the feed's first ``Reset`` to be handled: from then on the fake server's events reach the app."""
         app = pilot.app
         await self.wait_for(pilot, lambda: app.feed_connected, "the feed to connect")

@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from draw_things_control.services.history_delete import delete_executions
-from draw_things_control.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
-from draw_things_control.services.queue_submit import submit_job
-from draw_things_control.state.executions import ExecutionSettings, NewExecution, NewRun
-from draw_things_control.state.queue import NewQueueEntry, QueueRow, QueueState
-from draw_things_control.state.store import Store, StoreMode
+from framechain.services.history_delete import delete_executions
+from framechain.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
+from framechain.services.queue_submit import submit_job
+from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
+from framechain.state.queue import NewQueueEntry, QueueRow, QueueState
+from framechain.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 NOW = datetime(2026, 9, 30, 12, 0, 0)

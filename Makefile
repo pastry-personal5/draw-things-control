@@ -10,18 +10,18 @@ export UV_CACHE_DIR
 # copy. server/ is also generated into, since it alone imports the generated *server* code (Servicer, add_..._to_
 # server) the same file carries alongside the client Stub every copy shares. mcp_server/ has none: it watches a queue
 # entry over the HTTP API's SSE watch (Milestone 10).
-PROTO_SRC = src/draw_things_control/server/proto/monitor.proto
-PROTO_OUTS = src/draw_things_control/server/generated src/draw_things_control/cli/generated src/draw_things_control/tui/generated
+PROTO_SRC = src/framechain/server/proto/monitor.proto
+PROTO_OUTS = src/framechain/server/generated src/framechain/cli/generated src/framechain/tui/generated
 
 run:
-	uv run dtc --help
+	uv run fc --help
 
 proto:
 	@for out in $(PROTO_OUTS); do \
 		rm -rf $$out; \
 		mkdir -p $$out; \
 		uv run -q --extra dev python -m grpc_tools.protoc \
-			-Isrc/draw_things_control/server/proto \
+			-Isrc/framechain/server/proto \
 			--python_out=$$out \
 			--grpc_python_out=$$out \
 			--pyi_out=$$out \
