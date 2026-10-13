@@ -52,16 +52,21 @@ The rules for changing `framechain`, for people and AI agents alike.
 
 ## Testing and checks
 
-- Tests use standard-library `unittest` and Typer's `CliRunner`, and live in
-  `tests/`.
+- Tests live in `tests/`, primarily use standard-library `unittest` and
+  Typer's `CliRunner`, and run through pytest with pytest-xdist.
 - No test starts the real `draw-things-cli`; inject a fake runner.
 - Test files live in `tests/<subpackage>/`, each directory has an `__init__.py`, and shared helpers are in `tests/fixtures.py`.
-- `make check` runs Ruff's linter, Ruff's formatter in check mode, pyright
-  (`standard` mode, over `src/` and `tests/`), and the tests. It must pass
-  before a change is committed. An ignore comment for pyright names its rule and
-  says why.
+- `make check` regenerates gRPC stubs first, then runs Ruff's linter, Ruff's
+  formatter in check mode, pyright (`standard` mode, over `src/` and `tests/`),
+  and the tests concurrently where safe. It must pass before a change is
+  committed. Do not use direct `make -j check`: the target manages its own
+  generated-stub barrier and validation parallelism. An ignore comment for
+  pyright names its rule and says why.
 - `make test` and `make test-tui` are silent on success and show failures; use
-  their `-verbose` variants while identifying an individual test.
+  their `-verbose` variants while identifying an individual test. `make test`
+  and `make check` use eight workers by default; set `TEST_WORKERS` to select a
+  safe worker count for CI. `make test-profile` reports the 20 slowest tests;
+  set `TEST_PROFILE_LIMIT` to change that number.
 - `make proto` is silent on success and shows build errors.
 - `make format` applies Ruff's formatter.
 

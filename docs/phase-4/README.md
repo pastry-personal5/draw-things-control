@@ -14,6 +14,7 @@ Improve the product experience, make chained generation support multiple backend
 - Framechain product, package, command, and state database naming in Milestone 04.
 - H3 performance controls and mixed `i2av`/reference-to-audio-video (`r2av`, H3's Ref2VA model family) pipelines in Milestone 05.
 - H3 generated-video color characterization, truthful tags where verified, warning-based fallback, and opt-in `i2av` color drift correction in Milestone 06.
+- Faster, deterministic local and CI validation in Milestone 07.
 - Framecontrol product, app, package, interface, and state database naming in Milestone 08.
 - Unified per-run job definitions and mixed backend chains in Milestone 09.
 - Producing and consuming graph-based metadata in Milestone 10.
@@ -32,6 +33,7 @@ Improve the product experience, make chained generation support multiple backend
 4. [Milestone 04: Rename to Framechain](milestone-04-framechain-rename.md) — done
 5. [Milestone 05: H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) — in progress
 6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — done
+7. [Milestone 07: Check performance](milestone-07-check-performance.md) — done
 8. [Milestone 08: Rename to Framecontrol](milestone-08-framecontrol-rename.md) — planned
 9. [Milestone 09: Unified job definitions](milestone-09-job-definition.md) — planned
 10. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
