@@ -5,6 +5,7 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-14
 
+- **Owner decision** [M08, M09]: Renumber the planned Framecontrol rename from M07 to M08 and the unified job definitions milestone from M08 to M09. Earlier changelog entries retain their original milestone labels.
 - **Design decision** [M08]: Replace backend-specific run lists with one authoritative `runs` list. Each run selects its backend, pipeline, named prompt pair, and backend settings profile; mixed H3 and Draw Things chains use visual frame handoffs and do not require audio continuity.
 - **Owner decision** [M08]: Use `draw-things` as the job backend identifier while retaining `draw-things-cli` for the executable, keep named top-level prompt-pair definitions, and select them from each run with `prompt_pair`.
 - **Owner decision** [M06]: The Apple Silicon real mixed-chain review remains valuable release validation, but is not a Milestone 06 completion or exit gate.

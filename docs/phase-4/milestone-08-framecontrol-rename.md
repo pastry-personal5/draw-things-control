@@ -1,4 +1,4 @@
-# Milestone 07: Rename to Framecontrol
+# Milestone 08: Rename to Framecontrol
 
 **Phase:** [Phase 4](README.md)
 **Status:** planned
