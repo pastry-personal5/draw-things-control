@@ -154,7 +154,7 @@ class H3Arguments:
                 if audio is not None:
                     args.append(str(audio))
             args.extend(("--ref-image-size", self.settings.reference_image_size))
-        args.extend(("--width", str(self.settings.width), "--height", str(self.settings.height), "--seconds", _number(self.settings.seconds), "--steps", str(self.settings.steps), "--seed", str(self.settings.seed), "-o", str(self.output)))
+        args.extend(("--width", str(self.settings.width), "--height", str(self.settings.height), "--seconds", _number(self.settings.effective_seconds), "--steps", str(self.settings.steps), "--seed", str(self.settings.seed), "-o", str(self.output)))
         if self.settings.render_width is not None:
             args.extend(("--render-width", str(self.settings.render_width), "--render-height", str(self.settings.render_height)))
         if "denoise_reuse" in self.settings.explicit or self.settings.denoise_reuse != 1:
@@ -185,7 +185,10 @@ def _number(value: float) -> str:
 
 
 def effective_frames(frames: int) -> int:
-    return min(362, 5 + 17 * math.ceil(max(0, frames - 5) / 17))
+    """Return the nearest H3-supported frame count on its ``17n + 5`` grid."""
+    minimum, maximum = 5, 362
+    grid_index = math.floor((frames - minimum) / 17 + 0.5)
+    return min(maximum, max(minimum, minimum + 17 * grid_index))
 
 
 def _round_half_away(value: float) -> int:

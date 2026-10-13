@@ -289,8 +289,11 @@ cooldown:
 
 Width and height are multiples of 32, at least 32, and together no larger
 than 768×1344. `seconds` is 1–15 and `frames` must be exactly
-`llround(seconds * 24)` (24–360); H3 aligns this to its effective frame count,
-which is stored separately. H3 rejects Draw Things configuration and sizing
+`llround(seconds * 24)` (24–360). H3 snaps the requested count to the nearest
+valid `17n + 5` count and generates at that effective duration, which is stored
+separately: 120 requested frames becomes 124 (about 5.17 seconds), while a
+10-second request (240 frames) becomes 243 frames (10.125 seconds).
+H3 rejects Draw Things configuration and sizing
 keys, negative prompts (including an empty or null value), and
 `output.video_format`. It receives an 8-bit sRGB PNG cropped centrally to the
 requested dimensions. H3 accepts its own closed top-level `color` policy with

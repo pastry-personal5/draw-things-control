@@ -19,7 +19,7 @@ prompt_pairs:
     default: true
 
 # Closed H3 settings. Requested frames must equal llround(seconds * 24).
-# H3 aligns that request to its supported effective frame count internally.
+# H3 snaps that request to its nearest supported 17n + 5 frame count.
 backend_settings:
   width: 768
   height: 1344

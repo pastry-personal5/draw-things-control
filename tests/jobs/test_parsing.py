@@ -11,7 +11,7 @@ from PIL import Image
 
 from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from framecontrol.core.errors import InputError, OutsideDirectoryError
-from framecontrol.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings
+from framecontrol.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings, effective_frames
 from framecontrol.jobs.definition import GenerationMode
 from framecontrol.jobs.parsing import load_job, load_job_text
 from framecontrol.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
@@ -84,7 +84,13 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual((job.backend, job.mode, job.extension, job.requested_seed), ("h3", GenerationMode.I2AV, "mp4", 42))
         assert job.input_resize is not None
         self.assertEqual((job.input_resize.target_size, job.input_resize.fit), ((768, 1344), "crop"))
-        self.assertEqual(job.backend_settings["effective_frames"], 107)
+        self.assertEqual(job.backend_settings["effective_frames"], 90)
+
+    def test_h3_snaps_to_the_nearest_supported_frame_count_and_passes_its_duration(self) -> None:
+        self.assertEqual([effective_frames(frames) for frames in (24, 96, 120, 240, 360)], [22, 90, 124, 243, 362])
+        settings = H3Settings(768, 1344, 240, 10, 30, 42, effective_frames(240))
+        command = H3Arguments(Path("/h3"), Path("/model"), "prompt", "i2av", (), Path("/input.png"), Path("/output.partial.mp4"), settings, "/tools/ffmpeg", "/tools/ffprobe").command
+        self.assertEqual(command[command.index("--seconds") + 1], "10.125")
 
     def test_h3_rejects_draw_things_fields_and_negative_prompt_key(self) -> None:
         base = {
@@ -154,7 +160,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(caught.exception.field, "input")
 
     def test_h3_r2av_arguments_keep_ordered_refs_and_compatible_control_flags(self) -> None:
-        settings = H3Settings(768, 1344, 96, 4, 30, 42, 107, 576, 1008, 2, 45, 1, True, False, True, True, "max", (("bf16_mlp", False),), frozenset({"render_width", "render_height", "denoise_reuse", "dit_layers"}))
+        settings = H3Settings(768, 1344, 96, 4, 30, 42, 90, 576, 1008, 2, 45, 1, True, False, True, True, "max", (("bf16_mlp", False),), frozenset({"render_width", "render_height", "denoise_reuse", "dit_layers"}))
         arguments = H3Arguments(Path("/h3"), Path("/model"), "prompt", "r2av", (("image", Path("/private/ref.png"), None), ("video_audio", Path("/private/stage.mp4"), Path("/private/voice.wav"))), None, Path("/output.partial.mp4"), settings, "/tools/ffmpeg", "/tools/ffprobe")
         command = arguments.command
         self.assertNotIn("--first-frame", command)

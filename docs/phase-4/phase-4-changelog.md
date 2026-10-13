@@ -60,6 +60,10 @@ Owner decisions, design decisions, and notable changes for
 - **Owner decision** [M10]: Move the graph-based metadata milestone from M04 to M10; the milestone document and Phase 4 plan now use M10.
 - **Change**: The API creates job files and replacement backups with private permissions. The server refuses linked, non-regular, or malformed token files and reads an existing token from one checked file descriptor.
 
+## 2026-10-14
+
+- **Change** [M03]: H3 now snaps requested timing to the nearest supported `17n + 5` frame count and passes the resulting effective duration to the child. Requested and measured timing remain recorded separately.
+
 ## 2026-10-12
 
 - **Change** [M03]: H3 is an installed `i2av` backend with a closed job schema, project-owned executable and model paths, first-frame normalization, controlled media-tool environment, staged MP4 promotion, verified final-frame handoffs, and H.264/AAC media validation. Its safe requested/effective timing settings are kept with queue snapshots and run records; local model snapshots are an installation dependency and are rechecked when work starts or resumes.
