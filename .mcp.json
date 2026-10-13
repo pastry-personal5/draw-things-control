@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "framechain": {
+    "framecontrol": {
       "type": "stdio",
       "command": "uv",
       "args": ["run", "fc", "mcp"]

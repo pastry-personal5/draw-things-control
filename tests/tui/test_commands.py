@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from framechain.state.ids import MAX_NUMBER, parse_bare_number
-from framechain.tui.commands import COMMAND_NAMES, Command, CommandError, CommandSuggester, completions, help_text, parse, usage
+from framecontrol.state.ids import MAX_NUMBER, parse_bare_number
+from framecontrol.tui.commands import COMMAND_NAMES, Command, CommandError, CommandSuggester, completions, help_text, parse, usage
 
 
 class ParseTests(unittest.TestCase):

@@ -2,7 +2,7 @@
 
 import unittest
 
-from framechain.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, job_id_text, parse_typed_id
+from framecontrol.state.ids import EXECUTION_LETTER, JOB_LETTER, execution_id_text, job_id_text, parse_typed_id
 
 
 class IdTests(unittest.TestCase):

@@ -13,13 +13,13 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from framechain.jobs.color_run import ColorCorrector, CorrectionRequest
-from framechain.jobs.definition import ColorPolicy
-from framechain.jobs.media.checks import MediaChecker
-from framechain.jobs.media.clip_frames import probe_clip
-from framechain.jobs.media.color_stats import compare, measure
-from framechain.jobs.media.frames import decode_filter, extract_last_frame
-from framechain.jobs.media.stream_color import StreamColor
+from framecontrol.jobs.color_run import ColorCorrector, CorrectionRequest
+from framecontrol.jobs.definition import ColorPolicy
+from framecontrol.jobs.media.checks import MediaChecker
+from framecontrol.jobs.media.clip_frames import probe_clip
+from framecontrol.jobs.media.color_stats import compare, measure
+from framecontrol.jobs.media.frames import decode_filter, extract_last_frame
+from framecontrol.jobs.media.stream_color import StreamColor
 from tests.jobs.test_media_correction import drifted, scene
 from tests.jobs.test_media_regions import PERSON, FakeSegmenter, drift_people, person_frame
 
@@ -109,7 +109,7 @@ class ColorCorrectorTests(unittest.TestCase):
     def test_a_listed_videotoolbox_that_cannot_encode_leaves_the_copy_to_prores_ks_with_a_note(self) -> None:
         video = self.drifting_clip("run.mov", PRORES)
         request = self.request(video, ColorPolicy(anchor="previous"))
-        with mock.patch("framechain.jobs.color_run.available_encoders", return_value={"prores_videotoolbox", "prores_ks"}), mock.patch("framechain.jobs.color_run.encoder_works", return_value=False) as works:
+        with mock.patch("framecontrol.jobs.color_run.available_encoders", return_value={"prores_videotoolbox", "prores_ks"}), mock.patch("framecontrol.jobs.color_run.encoder_works", return_value=False) as works:
             result = ColorCorrector(lambda: FFMPEG, self.checker)(request)
         self.assertTrue(result.succeeded, result.checks)
         self.assertEqual(works.call_args.args[2].encoder, "prores_videotoolbox")
@@ -139,7 +139,7 @@ class ColorCorrectorTests(unittest.TestCase):
     def test_a_failed_correction_leaves_no_copy_and_no_handoff_and_warns(self) -> None:
         video = self.drifting_clip("run.mov", PRORES)
         request = self.request(video, ColorPolicy(anchor="previous"))
-        with mock.patch("framechain.jobs.color_run.available_encoders", return_value=set()):
+        with mock.patch("framecontrol.jobs.color_run.available_encoders", return_value=set()):
             result = ColorCorrector(lambda: FFMPEG, self.checker)(request)
         self.assertFalse(result.succeeded)
         self.assertFalse(request.copy.exists())

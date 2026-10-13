@@ -21,7 +21,7 @@ In scope:
 
 Out of scope:
 
-- h3.c's interactive UI, `--show`, `--zoom`, `--frames-dir`, `--profile`, and user-selected `--info`; Framechain supervises a noninteractive child and owns progress, preflight, and artifacts. Its bounded internal `--info` probe remains required.
+- h3.c's interactive UI, `--show`, `--zoom`, `--frames-dir`, `--profile`, and user-selected `--info`; Framecontrol supervises a noninteractive child and owns progress, preflight, and artifacts. Its bounded internal `--info` probe remains required.
 - Automatic H3 Context-IR prompting or H3 Regenerate-2K. H3 receives the selected positive prompt as written.
 - H3's direct last-frame and first-and-last-frame pipeline. A later `i2av` run can use a prior generated output only as its first frame.
 
@@ -72,7 +72,7 @@ reference_pairs:
 - A reference entry is a closed mapping. `image`, `video`, `silent_video`, and `audio` require `kind` and `path`; `video_audio` additionally requires `audio`. They map, in list order, to `--ref-image`, `--ref-video`, `--ref-silent-video`, `--ref-audio`, and `--ref-video-audio VIDEO AUDIO`.
 - Each pair allows at most 12 entries, 9 images, 3 videos, and 3 audio inputs. `video` and `video_audio` each count as one video and one audio input; `silent_video` counts only as a video. A pair needs at least one image or video. `video` requires a decodable embedded audio stream; `silent_video` ignores any embedded audio; `video_audio` uses its separate audio file instead of the video's soundtrack. Enforce a 2–15 second source-video duration and a 2–15 second duration for each consumed audio input, with at most 15 seconds of total consumed audio per pair. For audio associated with a video, measure the span H3 will decode after its output-frame cap and soundtrack truncation as well as the source duration. A video with audio also requires enough effective output frames for H3's two-second minimum (at least 56 effective frames). Include all these checks in API limits and preflight.
 - Every `path` and `audio` resolves against the snapshotted global input directory, whether or not the job has a top-level `input`. Reject links, nonregular files, and paths outside that directory. Fully decode images and inspect the exact audio/video streams with the resolved FFprobe/FFmpeg pair before queue submission. A field-specific error names the pair, entry, and field that fails. Require every declared pair to be selected by at least one `r2av` run; forbid `reference_pairs` when no run selects `r2av`.
-- Reference labels are numbered in the declared order within the pair, independently by media kind. Documentation provides the six-section Ref2VA prompt structure: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, and `non_diegetic_music`. The prompt for an `r2av` run must use labels that match the pair selected for that run; Framechain documents this contract but does not rewrite prompt text.
+- Reference labels are numbered in the declared order within the pair, independently by media kind. Documentation provides the six-section Ref2VA prompt structure: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, and `non_diegetic_music`. The prompt for an `r2av` run must use labels that match the pair selected for that run; Framecontrol documents this contract but does not rewrite prompt text.
 
 ## H3 controls
 

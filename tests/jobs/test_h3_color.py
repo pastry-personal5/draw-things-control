@@ -14,12 +14,12 @@ from typing import cast
 import numpy as np
 from PIL import Image
 
-from framechain.jobs.backends.h3 import _extract_h3_frame
-from framechain.jobs.media.color_stats import ColorStats, measure
-from framechain.jobs.media.h3_color import DELIVERY, NATIVE, H3ColorCancelled, H3Declarations, convert_h3_delivery, declarations_match, inspect_h3_declarations, measure_h3_drift, packet_facts
-from framechain.jobs.media.h3_correction import CLIPPED_PIXEL_CAP, H3Params, _params, apply_h3_params, correct_h3_video
-from framechain.jobs.media.regions import Segmentation
-from framechain.jobs.media.video_color import ColrTag, read_colr, read_colr_kind, tag_video_color_codes
+from framecontrol.jobs.backends.h3 import _extract_h3_frame
+from framecontrol.jobs.media.color_stats import ColorStats, measure
+from framecontrol.jobs.media.h3_color import DELIVERY, NATIVE, H3ColorCancelled, H3Declarations, convert_h3_delivery, declarations_match, inspect_h3_declarations, measure_h3_drift, packet_facts
+from framecontrol.jobs.media.h3_correction import CLIPPED_PIXEL_CAP, H3Params, _params, apply_h3_params, correct_h3_video
+from framecontrol.jobs.media.regions import Segmentation
+from framecontrol.jobs.media.video_color import ColrTag, read_colr, read_colr_kind, tag_video_color_codes
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg and FFprobe required")

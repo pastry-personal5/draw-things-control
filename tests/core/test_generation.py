@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from framechain.core.arguments import DrawThingsGenerateArguments
-from framechain.core.draw_things_config import load_config
-from framechain.core.errors import ToolMissingError
-from framechain.core.generation import GenerateRequest, GenerationService, require_executable
+from framecontrol.core.arguments import DrawThingsGenerateArguments
+from framecontrol.core.draw_things_config import load_config
+from framecontrol.core.errors import ToolMissingError
+from framecontrol.core.generation import GenerateRequest, GenerationService, require_executable
 
 
 @dataclass(frozen=True)

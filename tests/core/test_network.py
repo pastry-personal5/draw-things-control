@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 
-from framechain.core.network import grpc_target, is_loopback_host
+from framecontrol.core.network import grpc_target, is_loopback_host
 
 
 class LoopbackTests(unittest.TestCase):

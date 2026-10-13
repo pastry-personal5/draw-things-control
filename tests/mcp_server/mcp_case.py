@@ -16,16 +16,16 @@ from fastapi import FastAPI
 from mcp import Client
 from mcp_types import TextContent
 
-from framechain.core.global_config import ApiLimits
-from framechain.jobs.executor import JobExecutor
-from framechain.mcp_server.app import build_server
-from framechain.server.app import create_app
-from framechain.server.context import ServerContext
-from framechain.server.event_backlog import EventBacklog
-from framechain.state.execution_rows import MediaCheckRow
-from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.global_config import ApiLimits
+from framecontrol.jobs.executor import JobExecutor
+from framecontrol.mcp_server.app import build_server
+from framecontrol.server.app import create_app
+from framecontrol.server.context import ServerContext
+from framecontrol.server.event_backlog import EventBacklog
+from framecontrol.state.execution_rows import MediaCheckRow
+from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.server.test_queue_routes import TOKEN, FakeWorker
 
@@ -98,7 +98,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     async def api(self, method: str, path: str, *, caller: str | None = None, **options: Any) -> httpx.Response:
         """The API itself, as a person's front end calls it."""
-        headers = {"Authorization": f"Bearer {TOKEN}", **({"X-Framechain-Caller": caller} if caller is not None else {})}
+        headers = {"Authorization": f"Bearer {TOKEN}", **({"X-Framecontrol-Caller": caller} if caller is not None else {})}
         assert self.transport.app is not None
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.transport.app), base_url=SERVER_URL) as client:
             return await client.request(method, path, headers=headers, **options)

@@ -61,9 +61,9 @@ config/tui-preferences.yaml
 # gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
 # stays the single source of truth, with no generated code to drift from it. One copy per front end with a gRPC
 # client (server/, cli/, tui/; mcp_server/ has none, watching over SSE), since front ends never import each other.
-src/framechain/server/generated/
-src/framechain/cli/generated/
-src/framechain/tui/generated/
+src/framecontrol/server/generated/
+src/framecontrol/cli/generated/
+src/framecontrol/tui/generated/
 
 # Personal data: everything under data/ except the example files
 data/**

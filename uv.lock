@@ -247,7 +247,7 @@ wheels = [
 ]
 
 [[package]]
-name = "framechain"
+name = "framecontrol"
 version = "3.0.0"
 source = { editable = "." }
 dependencies = [

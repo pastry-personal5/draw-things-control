@@ -5,8 +5,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from framechain.core.clock import local_timestamp
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.clock import local_timestamp
+from framecontrol.state.store import Store, StoreMode
 
 NOW = datetime(2026, 9, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -15,7 +15,7 @@ class AuditRepositoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
-        self.store = Store.open(Path(self._temporary.name) / "framechain.db", mode=StoreMode.WRITE, clock=lambda: NOW)
+        self.store = Store.open(Path(self._temporary.name) / "framecontrol.db", mode=StoreMode.WRITE, clock=lambda: NOW)
         self.addCleanup(self.store.close)
 
     def test_a_recorded_entry_round_trips(self) -> None:

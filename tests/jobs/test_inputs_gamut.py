@@ -7,8 +7,8 @@ import unittest
 
 import numpy as np
 
-from framechain.jobs.inputs.gamut import D50, D65, KNEE, GamutMapper, adaptation, compress_chroma, read_matrix_profile
-from framechain.jobs.media import oklab
+from framecontrol.jobs.inputs.gamut import D50, D65, KNEE, GamutMapper, adaptation, compress_chroma, read_matrix_profile
+from framecontrol.jobs.media import oklab
 
 SRGB_PRIMARIES = ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06))
 P3_PRIMARIES = ((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))

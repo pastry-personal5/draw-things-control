@@ -1,0 +1,306 @@
+"""Framecontrol's Typer interface: commands, options, and error exits."""
+
+from __future__ import annotations
+
+import sqlite3
+import sys
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Annotated
+
+import typer
+from loguru import logger
+
+from framecontrol.cli.api_client import AllowRemoteServerOption, ServerUrlOption, TokenFileOption, api_client, api_request
+from framecontrol.cli.context import CliServices, errors_exit, services_of
+from framecontrol.cli.history_app import history_app
+from framecontrol.cli.queue_app import queue_app
+from framecontrol.core.client_config import DEFAULT_SERVER_URL, check_server_host
+from framecontrol.core.draw_things_config import load_config
+from framecontrol.core.errors import InputError, LimitExceededError
+from framecontrol.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from framecontrol.core.global_config import DEFAULT_MAX_JOB_FILE_BYTES, GlobalConfig
+from framecontrol.core.network import is_loopback_host
+from framecontrol.core.paths import DEFAULT_PATHS, ProjectPaths
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.files import read_job, read_settings
+from framecontrol.jobs.text import job_summary, report_ignored_config
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.state.history_import import import_history
+from framecontrol.state.store import StateError, Store, StoreMode
+
+app = typer.Typer(help="Framecontrol: chained image and video generation.", no_args_is_help=True)
+app.add_typer(queue_app, name="queue")
+app.add_typer(history_app, name="history")
+
+
+@contextmanager
+def open_state(paths: ProjectPaths, settings: GlobalConfig) -> Iterator[Store]:
+    """Open the state store for a command and close it afterwards; a database failure exits with code 1."""
+    with errors_exit():
+        try:
+            store = Store.open(paths.database, mode=StoreMode.RUN, retention_days=settings.history_retention_days)
+        except sqlite3.Error as error:
+            raise StateError(f"Cannot use the state database {paths.database}: {error}") from error
+    try:
+        yield store
+    except sqlite3.Error as error:
+        logger.error("Cannot use the state database {}: {}", store.path, error)
+        raise typer.Exit(code=EXIT_STATE_UNAVAILABLE) from error
+    finally:
+        store.close()
+
+
+def read_settings_or_exit(global_config: Path | None, paths: ProjectPaths) -> GlobalConfig:
+    """Load the global configuration (the project's own without a path), exiting with code 2 if it is invalid."""
+    with errors_exit():
+        return read_settings(global_config or paths.global_config, paths)
+
+
+JobFileArgument = Annotated[Path, typer.Argument(help="Job definition file, for example data/example-job.yaml.")]
+GlobalConfigOption = Annotated[Path | None, typer.Option("--global-config", help="Global configuration file; default: config/global-config.yaml in the project.")]
+ExecutableOption = Annotated[str, typer.Option(help="Draw Things CLI executable.")]
+
+
+def configure_logging() -> None:
+    """Route child stdout to stdout and other Loguru messages to stderr."""
+    logger.remove()
+    logger.add(sys.stdout, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") == "stdout", colorize=False, diagnose=False, backtrace=False)
+    logger.add(sys.stderr, format="{message}", level="INFO", filter=lambda record: record["extra"].get("child_stream") != "stdout", colorize=False, diagnose=False, backtrace=False)
+
+
+@app.command()
+def generate(
+    ctx: typer.Context,
+    timeout: Annotated[float, typer.Option(help="Required maximum generation runtime in seconds.")],
+    output: Annotated[str, typer.Option("--output", "-o", help="Required output-relative PNG, MOV, or MP4 path.")],
+    model: Annotated[str | None, typer.Option("--model", "-m", help="Model reference; may also come from a configuration.")] = None,
+    prompt: Annotated[str | None, typer.Option("--prompt", "-p", help="Prompt text.")] = None,
+    prompt_file: Annotated[str | None, typer.Option(help="Prompt file, or - for stdin.")] = None,
+    negative_prompt: Annotated[str | None, typer.Option()] = None,
+    negative_prompt_file: Annotated[str | None, typer.Option()] = None,
+    steps: Annotated[int | None, typer.Option()] = None,
+    cfg: Annotated[float | None, typer.Option()] = None,
+    width: Annotated[int | None, typer.Option()] = None,
+    height: Annotated[int | None, typer.Option()] = None,
+    frames: Annotated[int | None, typer.Option()] = None,
+    strength: Annotated[float | None, typer.Option()] = None,
+    seed: Annotated[int | None, typer.Option("--seed", "-s")] = None,
+    config_file: Annotated[str | None, typer.Option("--config-file", "--config", help="YAML configuration name in data/params/.")] = None,
+    image: Annotated[list[str] | None, typer.Option("--image", help="Repeat for ordered input-relative reference images.")] = None,
+    audio: Annotated[str | None, typer.Option(help="Input-relative audio path.")] = None,
+    avc: Annotated[bool, typer.Option("--avc")] = False,
+    segment_frames: Annotated[int | None, typer.Option()] = None,
+    cond_frames: Annotated[int | None, typer.Option()] = None,
+    video_format: Annotated[str | None, typer.Option()] = None,
+    wait: Annotated[bool, typer.Option("--wait", help="Watch the queued generation until it finishes.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate and print the server command without queueing.")] = False,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+) -> None:
+    """Submit one bounded image or video generation to fc serve's queue."""
+    services = services_of(ctx)
+    with errors_exit():
+        client = api_client(ctx, server_url, token_file, allow_remote_server)
+        body = {name: value for name, value in {"model": model, "prompt": _prompt_text(prompt, prompt_file, "--prompt", "--prompt-file"), "negative_prompt": _prompt_text(negative_prompt, negative_prompt_file, "--negative-prompt", "--negative-prompt-file"), "steps": steps, "cfg": cfg, "width": width, "height": height, "frames": frames, "strength": strength, "seed": seed, "config_file": config_file, "image": image or [], "audio": audio, "avc": avc, "segment_frames": segment_frames, "cond_frames": cond_frames, "output": output, "video_format": video_format, "timeout": timeout}.items() if value is not None}
+    with client:
+        if dry_run:
+            typer.echo(api_request(client, "POST", "/v1/generations/preview", json=body, missing_endpoint_is_unavailable=True).json()["command"])
+            return
+        entry = api_request(client, "POST", "/v1/generations", json=body, missing_endpoint_is_unavailable=True).json()
+        typer.echo(f"{entry['queue_id']} queued: {entry['generation']['output']}")
+        if wait:
+            from framecontrol.cli.queue_wait import wait_for_entry
+
+            exit_code = wait_for_entry(client, entry["queue_id"], services.grpc_stub_factory)
+            if exit_code:
+                raise typer.Exit(code=exit_code)
+
+
+def _prompt_text(value: str | None, file_name: str | None, option: str, file_option: str) -> str | None:
+    """Normalize a prompt file (or stdin) before it crosses the API boundary; the server never sees this path."""
+    if value is not None and file_name is not None:
+        raise InputError(f"{option} and {file_option} are mutually exclusive")
+    if file_name is None:
+        return value
+    try:
+        if file_name == "-":
+            text = sys.stdin.read(DEFAULT_MAX_JOB_FILE_BYTES + 1)
+        else:
+            with Path(file_name).open(encoding="utf-8") as prompt_file:
+                text = prompt_file.read(DEFAULT_MAX_JOB_FILE_BYTES + 1)
+    except (OSError, UnicodeError) as error:
+        raise InputError(f"Cannot read {file_option}: {file_name}: {error}") from error
+    if len(text.encode("utf-8")) > DEFAULT_MAX_JOB_FILE_BYTES:
+        raise LimitExceededError(f"{file_option} is over the limit of {DEFAULT_MAX_JOB_FILE_BYTES} bytes", key="max_job_file_bytes", limit=DEFAULT_MAX_JOB_FILE_BYTES, value=len(text.encode("utf-8")))
+    return text
+
+
+@app.command("validate-config")
+def validate_config(config: Annotated[Path, typer.Argument(help="YAML configuration file to validate.")]) -> None:
+    """Validate a Draw Things YAML configuration file."""
+    with errors_exit():
+        settings = load_config(config.expanduser())
+    typer.echo(f"Valid configuration: {config} (model: {settings.get('model', '(not set)')})")
+
+
+def read_job_or_exit(job_file: Path, global_config: Path | None, paths: ProjectPaths, *, decode_input: bool = True) -> tuple[JobDefinition, GlobalConfig]:
+    """Load the global configuration and the job, exiting with code 2 if either is invalid."""
+    with errors_exit():
+        return read_job(job_file, global_config or paths.global_config, paths, decode_input=decode_input)
+
+
+@app.command("validate-job")
+def validate_job(ctx: typer.Context, job_file: JobFileArgument, global_config: GlobalConfigOption = None) -> None:
+    """Validate a job file without running anything."""
+    job, _settings = read_job_or_exit(job_file, global_config, services_of(ctx).paths)
+    report_ignored_config(job)
+    typer.echo(f"Valid job: {job.path}")
+    for label, value in job_summary(job):
+        typer.echo(f"  {label}: {value}")
+
+
+@app.command("import-history")
+def import_history_command(
+    ctx: typer.Context,
+    directory: Annotated[Path | None, typer.Option(help="Directory to search for job manifests; default: the configured output directory.")] = None,
+    global_config: GlobalConfigOption = None,
+) -> None:
+    """Import phase 1 job manifests into the execution history; safe to repeat."""
+    paths = services_of(ctx).paths
+    settings = read_settings_or_exit(global_config, paths)
+    search = (directory or settings.output_directory).expanduser()
+    if not search.is_dir():
+        logger.error("Not a directory: {}", search)
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    with open_state(paths, settings) as store:
+        report = import_history(store, search)
+    for given, recorded, manifest in report.given:
+        typer.echo(f"  {given}: {manifest}{f' (its manifest says {recorded})' if recorded is not None else ''}")
+    typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
+
+
+@app.command("tui")
+def tui_command(
+    ctx: typer.Context,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir", help="Directory of job files; default: data/jobs in the project.")] = None,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+    global_config: GlobalConfigOption = None,
+) -> None:
+    """Browse the jobs in the data directory, and fc serve's queue and history, in a terminal UI. fc serve is the
+    only thing that ever runs a job now; this reads and submits to it, over the same three flags fc queue takes."""
+    services = services_of(ctx)
+    settings = read_settings_or_exit(global_config, services.paths)
+    with errors_exit():
+        check_server_host(server_url, allow_remote_server=allow_remote_server)
+    # Imported here, so the other commands do not load Textual.
+    from framecontrol.tui.app import FramecontrolApp
+
+    tui = FramecontrolApp(settings=settings, paths=services.paths, data_directory=(data_dir or services.paths.jobs).expanduser(), server_url=server_url, token_file=token_file or services.paths.server_token, allow_remote_server=allow_remote_server, toolkit=services.toolkit)
+    # The app owns the terminal, so the stdout and stderr sinks main() installed must not write into it until it exits.
+    logger.remove()
+    try:
+        tui.run()
+    finally:
+        configure_logging()
+    # Textual sets a nonzero return code when the app ends on an error, after printing the traceback.
+    if tui.return_code:
+        raise typer.Exit(code=tui.return_code)
+
+
+@app.command("serve")
+def serve_command(
+    ctx: typer.Context,
+    host: Annotated[str, typer.Option(help="Address for the HTTP API and the gRPC service; refused unless loopback or --allow-remote-bind is given.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="HTTP API port.")] = 8765,
+    grpc_port: Annotated[int, typer.Option("--grpc-port", help="gRPC monitoring service port.")] = 8766,
+    executable: ExecutableOption = "draw-things-cli",
+    shutdown_grace: Annotated[float, typer.Option(help="Seconds before forcing shutdown of a run.")] = 10.0,
+    global_config: GlobalConfigOption = None,
+    allow_write: Annotated[bool, typer.Option("--allow-write", help="Allow authenticated API clients to create, replace, and trash job files, and agents to delete executions through MCP.")] = False,
+    allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
+) -> None:
+    """Run the HTTP API and the gRPC monitoring service: the only thing that ever starts draw-things-cli."""
+    if shutdown_grace < 0:
+        logger.error("--shutdown-grace must not be negative")
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    services = services_of(ctx)
+    settings = read_settings_or_exit(global_config, services.paths)
+    # Imported here, so the other commands do not load FastAPI, uvicorn, or grpc.
+    from framecontrol.server.serve import ServeOptions
+    from framecontrol.server.serve import run as run_server
+
+    options = ServeOptions(host=host, port=port, grpc_port=grpc_port, executable=executable, shutdown_grace=shutdown_grace, allow_remote_bind=allow_remote_bind, allow_write=allow_write)
+    with errors_exit():
+        run_server(services.paths, settings, services.toolkit, options)
+
+
+MCP_TRANSPORTS = ("stdio", "streamable-http")
+DEFAULT_MCP_PORT = 8767
+
+
+@app.command("mcp")
+def mcp_command(
+    ctx: typer.Context,
+    server_url: ServerUrlOption = DEFAULT_SERVER_URL,
+    token_file: TokenFileOption = None,
+    allow_remote_server: AllowRemoteServerOption = False,
+    transport: Annotated[str, typer.Option(help="stdio, for a client that starts this command, or streamable-http, which listens at http://HOST:PORT/mcp for a client that cannot, such as an agent in a virtual machine.")] = "stdio",
+    host: Annotated[str | None, typer.Option(help="Address to listen on, with --transport streamable-http; default 127.0.0.1, and refused unless loopback or --allow-remote-bind is given.")] = None,
+    port: Annotated[int | None, typer.Option(help=f"Port to listen on, with --transport streamable-http; default {DEFAULT_MCP_PORT}.")] = None,
+    allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
+) -> None:
+    """Run an MCP server that gives AI agents typed tools over fc serve's API: on stdio, or over Streamable HTTP, where
+    every request needs the server token as a bearer token. It starts whether or not fc serve is up, reads the token at
+    the first call, and acts only through the API."""
+    services = services_of(ctx)
+    with errors_exit():
+        if transport not in MCP_TRANSPORTS:
+            raise InputError(f"--transport {transport} is not one of {', '.join(MCP_TRANSPORTS)}", field="transport")
+        if transport == "stdio" and (host is not None or port is not None or allow_remote_bind):
+            raise InputError("--host, --port, and --allow-remote-bind apply only with --transport streamable-http", field="transport")
+        listen_host = host or "127.0.0.1"
+        if transport == "streamable-http" and not allow_remote_bind and not is_loopback_host(listen_host):
+            raise InputError(f"--host {listen_host} is not loopback; pass --allow-remote-bind to bind beyond it (the token then crosses the network in plain HTTP)", field="host")
+        check_server_host(server_url, allow_remote_server=allow_remote_server)
+    # Imported here, so the other commands do not load the MCP SDK.
+    from framecontrol.mcp_server.app import BindError
+    from framecontrol.mcp_server.app import run as run_mcp
+    from framecontrol.mcp_server.app import run_http as run_mcp_http
+
+    # Stdout carries the protocol over stdio and nothing else: main()'s sinks send child output there, so only stderr remains.
+    logger.remove()
+    sink = logger.add(sys.stderr, format="{message}", level="INFO", colorize=False, diagnose=False, backtrace=False)
+    try:
+        token_path = token_file or services.paths.server_token
+        if transport == "stdio":
+            run_mcp(server_url, token_path)
+            return
+        listen_port = DEFAULT_MCP_PORT if port is None else port
+        if allow_remote_bind:
+            logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
+        with errors_exit():
+            try:
+                run_mcp_http(server_url, token_path, listen_host, listen_port)
+            except BindError as error:
+                raise InputError(str(error), field="port") from error
+    finally:
+        logger.remove(sink)
+
+
+def main(argv: Sequence[str] | None = None, *, services: CliServices | None = None) -> int:
+    """Run the Typer app and preserve its command exit status."""
+    configure_logging()
+    try:
+        app(args=list(argv) if argv is not None else None, prog_name="fc", obj=services or CliServices(DEFAULT_PATHS, Toolkit()))
+    except SystemExit as error:
+        return int(error.code or 0)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from framechain.services.queue_recovery import recover_queue
-from framechain.services.queue_submit import submit_job
-from framechain.state.executions import NewExecution
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.services.queue_recovery import recover_queue
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.state.executions import NewExecution
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 NOW = datetime(2026, 9, 27, 15, 30, 12)

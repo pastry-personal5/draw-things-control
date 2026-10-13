@@ -15,16 +15,16 @@ import grpc
 import grpc.aio
 import httpx
 
-from framechain.jobs.executor import JobExecutor
-from framechain.server.app import create_app
-from framechain.server.context import ServerContext
-from framechain.server.generated import monitor_pb2, monitor_pb2_grpc
-from framechain.server.grpc_auth import TokenAuthInterceptor
-from framechain.server.grpc_service import MonitorServicer
-from framechain.services.queue_hold import HoldState
-from framechain.services.queue_submit import submit_job
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.jobs.executor import JobExecutor
+from framecontrol.server.app import create_app
+from framecontrol.server.context import ServerContext
+from framecontrol.server.generated import monitor_pb2, monitor_pb2_grpc
+from framecontrol.server.grpc_auth import TokenAuthInterceptor
+from framecontrol.server.grpc_service import MonitorServicer
+from framecontrol.services.queue_hold import HoldState
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 
 TOKEN = "a" * 64

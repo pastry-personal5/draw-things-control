@@ -13,11 +13,11 @@ from typing import Any
 
 import httpx
 
-from framechain.server.context import ServerContext
-from framechain.server.event_backlog import EventBacklog
-from framechain.server.generated import monitor_pb2
-from framechain.server.grpc_service import MonitorServicer
-from framechain.state.store import Store
+from framecontrol.server.context import ServerContext
+from framecontrol.server.event_backlog import EventBacklog
+from framecontrol.server.generated import monitor_pb2
+from framecontrol.server.grpc_service import MonitorServicer
+from framecontrol.state.store import Store
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
 

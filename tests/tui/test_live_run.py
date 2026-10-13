@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from framechain.core.arguments import redact_command
-from framechain.core.run_lock import RunLock
-from framechain.jobs.events import MediaChecked
-from framechain.services.history import HistoryReader
-from framechain.state.executions import ExecutionRow, NewExecution, NewRun
-from framechain.state.store import Store
-from framechain.tui.live_run import MAX_OUTPUT_LINES, PastRun
-from framechain.tui.panes.execution import ExecutionDetailPane
-from framechain.tui.panes.history import ExecutionHistoryList
+from framecontrol.core.arguments import redact_command
+from framecontrol.core.run_lock import RunLock
+from framecontrol.jobs.events import MediaChecked
+from framecontrol.services.history import HistoryReader
+from framecontrol.state.executions import ExecutionRow, NewExecution, NewRun
+from framecontrol.state.store import Store
+from framecontrol.tui.live_run import MAX_OUTPUT_LINES, PastRun
+from framecontrol.tui.panes.execution import ExecutionDetailPane
+from framecontrol.tui.panes.history import ExecutionHistoryList
 from tests.tui.fake_server import job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -148,7 +148,7 @@ class LiveRunTests(FeedTestCase):
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.make_app()
-        wanted = f"The Framechain server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand."
+        wanted = f"The Framecontrol server (PID {os.getpid()}) holds the run lock while it is up; stop it to generate by hand."
         async with app.run_test(size=(160, 60)) as pilot:
             await self.settle(pilot)
             await self.wait_for(pilot, lambda: self.text(app, "work-status").split("\n")[0] == wanted, "the server's lock line")
@@ -158,7 +158,7 @@ class StoreBackedTests(FeedTestCase):
     """What the running job does to the panes that read the state store, driven through the feed."""
 
     def store(self) -> Store:
-        from framechain.state.store import ensure_state_directory
+        from framecontrol.state.store import ensure_state_directory
 
         ensure_state_directory(self.state)
         store = Store.open(self.paths.database)

@@ -13,23 +13,23 @@ from unittest import mock
 from rich.text import Text
 from textual.content import Content
 
-from framechain.core.run_lock import RunLock, ensure_state_directory
-from framechain.jobs.events import CooldownStarted, FirstImageDropped, RunStarted
-from framechain.services.history import HistoryFilter, HistoryPage
-from framechain.services.store_provider import StoreProvider
-from framechain.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
-from framechain.state.store import Store
-from framechain.tui.app import FramechainApp
-from framechain.tui.desktop import copy_to_pasteboard
-from framechain.tui.panes.execution import ExecutionDetailBody, ExecutionDetailPane
-from framechain.tui.panes.history import ExecutionHistoryList
-from framechain.tui.panes.job_definitions import JobsList
-from framechain.tui.panes.queue import QueueList
-from framechain.tui.screens import MainScreen
-from framechain.tui.text.arguments import argument_rows, override_notes, parameters_text
-from framechain.tui.text.events import event_text
-from framechain.tui.text.execution import reveal_action, stored_cooldown_text
-from framechain.tui.widgets import CommandField
+from framecontrol.core.run_lock import RunLock, ensure_state_directory
+from framecontrol.jobs.events import CooldownStarted, FirstImageDropped, RunStarted
+from framecontrol.services.history import HistoryFilter, HistoryPage
+from framecontrol.services.store_provider import StoreProvider
+from framecontrol.state.executions import ExecutionRow, ExecutionSettings, NewExecution, NewRun
+from framecontrol.state.store import Store
+from framecontrol.tui.app import FramecontrolApp
+from framecontrol.tui.desktop import copy_to_pasteboard
+from framecontrol.tui.panes.execution import ExecutionDetailBody, ExecutionDetailPane
+from framecontrol.tui.panes.history import ExecutionHistoryList
+from framecontrol.tui.panes.job_definitions import JobsList
+from framecontrol.tui.panes.queue import QueueList
+from framecontrol.tui.screens import MainScreen
+from framecontrol.tui.text.arguments import argument_rows, override_notes, parameters_text
+from framecontrol.tui.text.events import event_text
+from framecontrol.tui.text.execution import reveal_action, stored_cooldown_text
+from framecontrol.tui.widgets import CommandField
 from tests.fixtures import execution_row, run_row
 from tests.tui.tui_case import TuiTestCase
 
@@ -55,7 +55,7 @@ class HistoryCase(TuiTestCase):
         self.outputs = self.root / "outputs"
         self.outputs.mkdir()
 
-    def app(self) -> FramechainApp:
+    def app(self) -> FramecontrolApp:
         # No fc serve to reach: the history is read from the store, and polled while another process holds the lock,
         # which is what these tests are about (a connected feed would say the server is up and stop the polling).
         self.server.health_ok = False
@@ -84,7 +84,7 @@ class HistoryCase(TuiTestCase):
             store.executions.finish(execution_id, status=status, exit_code=0 if status == "succeeded" else 1, signal=None, finished_at=at(minutes + 1))
         return execution_id
 
-    def columns(self, app: FramechainApp, *indexes: int) -> list[list[str]]:
+    def columns(self, app: FramecontrolApp, *indexes: int) -> list[list[str]]:
         return [[row[index] for index in indexes] for row in self.history(app)]
 
     async def detail(self, pilot: Any, execution_id: int) -> str:
@@ -143,7 +143,7 @@ class HistoryTests(HistoryCase):
     async def test_pages_load_at_the_last_row_and_a_refresh_keeps_them_and_the_selection(self) -> None:
         ids = [self.add(f"job{number}", number) for number in range(8)]
         app = self.app()
-        with mock.patch("framechain.tui.panes.history.PAGE_SIZE", 3), mock.patch("framechain.services.history.PAGE_SIZE", 3):
+        with mock.patch("framecontrol.tui.panes.history.PAGE_SIZE", 3), mock.patch("framecontrol.services.history.PAGE_SIZE", 3):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 table = app.screen.query_one(ExecutionHistoryList)
@@ -174,7 +174,7 @@ class HistoryTests(HistoryCase):
         lock.acquire()
         self.addCleanup(lock.release)
         app = self.app()
-        with mock.patch("framechain.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
+        with mock.patch("framecontrol.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 held = self.columns(app, 2, 4)
@@ -239,7 +239,7 @@ class HistoryTests(HistoryCase):
         )
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("framechain.tui.desktop.reveal_in_finder", reveal):
+        with mock.patch("framecontrol.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 detail = await self.detail(pilot, execution_id)
@@ -255,7 +255,7 @@ class HistoryTests(HistoryCase):
         (self.outputs / "two.mov").write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("framechain.tui.desktop.reveal_in_finder", reveal):
+        with mock.patch("framecontrol.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 results = {}
@@ -283,7 +283,7 @@ class HistoryTests(HistoryCase):
         for failure in failures:
             with self.subTest(failure=failure):
                 run = mock.Mock(side_effect=failure) if isinstance(failure, Exception) else mock.Mock(return_value=failure)
-                with mock.patch("framechain.tui.desktop.subprocess.run", run):
+                with mock.patch("framecontrol.tui.desktop.subprocess.run", run):
                     async with app.run_test(size=(140, 40)) as pilot:
                         await self.settle(pilot)
                         await self.command(pilot, f"/reveal E{execution_id:04d}")
@@ -310,7 +310,7 @@ class HistoryTests(HistoryCase):
 
     async def test_an_unreadable_row_is_reported_and_the_pane_keeps_working(self) -> None:
         execution_id = self.add("walk", 0)
-        connection = sqlite3.connect(self.state / "framechain.db")
+        connection = sqlite3.connect(self.state / "framecontrol.db")
         connection.execute("UPDATE executions SET settings = '{' WHERE id = ?", (execution_id,))
         connection.commit()
         app = self.app()
@@ -326,7 +326,7 @@ class HistoryTests(HistoryCase):
             await self.command(pilot, "/get history")
             rows = self.columns(app, 1)
         connection.close()
-        self.assertTrue(subtitle.startswith(f"Cannot read the state database {self.state / 'framechain.db'}: "), subtitle)
+        self.assertTrue(subtitle.startswith(f"Cannot read the state database {self.state / 'framecontrol.db'}: "), subtitle)
         self.assertTrue(detail.startswith("Cannot read the state database"), detail)
         self.assertEqual(rows, [["walk"]])
 
@@ -354,7 +354,7 @@ class HistoryTests(HistoryCase):
     async def test_a_job_another_process_starts_later_is_polled_even_when_filtered(self) -> None:
         self.add("old", 0)
         app = self.app()
-        with mock.patch("framechain.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
+        with mock.patch("framecontrol.tui.panes.history.HISTORY_POLL_SECONDS", 0.1):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.command(pilot, "/filter status succeeded")
@@ -374,7 +374,7 @@ class HistoryTests(HistoryCase):
     async def test_one_store_is_opened_and_closed_with_the_screen(self) -> None:
         self.add("walk", 0)
         app = self.app()
-        with mock.patch("framechain.services.store_provider.Store", wraps=Store) as store_class, mock.patch.object(StoreProvider, "close", autospec=True, side_effect=StoreProvider.close) as close:
+        with mock.patch("framecontrol.services.store_provider.Store", wraps=Store) as store_class, mock.patch.object(StoreProvider, "close", autospec=True, side_effect=StoreProvider.close) as close:
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 for line in ("/get history", "/describe execution E0001", "/filter name w", "/filter off"):
@@ -387,10 +387,10 @@ class ExecutionDetailTests(HistoryCase):
     """The detail widget under the history: it follows the cursor, lists successful runs, and reveals their outputs."""
 
     @staticmethod
-    def detail_pane(app: FramechainApp) -> ExecutionDetailPane:
+    def detail_pane(app: FramecontrolApp) -> ExecutionDetailPane:
         return app.screen.query_one(ExecutionDetailPane)
 
-    def detail_text(self, app: FramechainApp) -> list[str]:
+    def detail_text(self, app: FramecontrolApp) -> list[str]:
         return str(app.screen.query_one(ExecutionDetailBody).content).split("\n")
 
     async def shown(self, pilot: Any, execution_id: int) -> None:
@@ -457,7 +457,7 @@ class ExecutionDetailTests(HistoryCase):
             (self.outputs / name).write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("framechain.tui.desktop.reveal_in_finder", reveal):
+        with mock.patch("framecontrol.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.shown(pilot, execution_id)
@@ -509,7 +509,7 @@ class ExecutionDetailTests(HistoryCase):
             (self.outputs / name).write_bytes(b"video")
         app = self.app()
         reveal = mock.Mock(return_value=None)
-        with mock.patch("framechain.tui.desktop.reveal_in_finder", reveal):
+        with mock.patch("framecontrol.tui.desktop.reveal_in_finder", reveal):
             async with app.run_test(size=(140, 40)) as pilot:
                 await self.settle(pilot)
                 await self.shown(pilot, execution_id)
@@ -592,7 +592,7 @@ class GetCommandTests(HistoryCase):
     async def test_the_prompts_of_every_pair_or_of_one_run(self) -> None:
         execution_id = self.add_job()
         copied: list[str] = []
-        with mock.patch("framechain.tui.desktop.copy_to_pasteboard", side_effect=lambda text: copied.append(text)):
+        with mock.patch("framecontrol.tui.desktop.copy_to_pasteboard", side_effect=lambda text: copied.append(text)):
             results = await self.run_lines(f"/get prompts E{execution_id:04d}", f"/get positive E{execution_id:04d}", f"/get negative E{execution_id:04d} 2", f"/get negative E{execution_id:04d} 1", f"/get prompts E{execution_id:04d} 9", "/get positive E0099")
         # Each label on its own line after a blank one, its prompt on the next, and a blank line after the prompt.
         self.assertEqual(results[f"/get prompts E{execution_id:04d}"], f"Execution E{execution_id:04d}: walk\nPair walk (runs 1, 3)\n\npositive:\na walk [slow]\n\nnegative:\nblurry\n\nPair wave (run 2)\n\npositive:\na wave\n\nnegative:\n(none)\nCopied the prompts to the clipboard")
@@ -607,7 +607,7 @@ class GetCommandTests(HistoryCase):
 
     async def test_without_pbcopy_the_terminal_is_asked_to_copy(self) -> None:
         execution_id = self.add_job()
-        with mock.patch("framechain.tui.desktop.copy_to_pasteboard", return_value="pbcopy was not found"), mock.patch.object(FramechainApp, "copy_to_clipboard") as terminal:
+        with mock.patch("framecontrol.tui.desktop.copy_to_pasteboard", return_value="pbcopy was not found"), mock.patch.object(FramecontrolApp, "copy_to_clipboard") as terminal:
             results = await self.run_lines(f"/get positive E{execution_id:04d} 2")
         terminal.assert_called_once_with("a wave")
         self.assertTrue(results[f"/get positive E{execution_id:04d} 2"].endswith("Asked the terminal to copy the positive prompt (pbcopy was not found)"))
@@ -720,11 +720,11 @@ class RunStartedTextTests(unittest.TestCase):
 class PasteboardTests(unittest.TestCase):
     def test_the_text_goes_to_pbcopy_as_utf_8_and_failures_say_why(self) -> None:
         done = subprocess.CompletedProcess(["pbcopy"], 0)
-        with mock.patch("framechain.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framechain.tui.desktop.subprocess.run", return_value=done) as run:
+        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.subprocess.run", return_value=done) as run:
             self.assertIsNone(copy_to_pasteboard("a café [slow]"))
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pbcopy"])
         self.assertEqual((run.call_args.kwargs["input"], run.call_args.kwargs["env"]["LC_CTYPE"]), ("a café [slow]".encode(), "UTF-8"))
-        with mock.patch("framechain.tui.desktop.shutil.which", return_value=None):
+        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value=None):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy was not found")
-        with mock.patch("framechain.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framechain.tui.desktop.subprocess.run", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
+        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.subprocess.run", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy exited with 1")

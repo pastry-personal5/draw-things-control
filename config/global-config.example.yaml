@@ -1,4 +1,4 @@
-# Global configuration for framechain (format version 1).
+# Global configuration for framecontrol (format version 1).
 #
 # Copy this file to config/global-config.yaml and edit the paths:
 #   cp config/global-config.example.yaml config/global-config.yaml
@@ -47,7 +47,7 @@ cooldown:
 # cooldown:
 #   mode: off
 
-# Optional. Execution history in state/framechain.db older than this many days is
+# Optional. Execution history in state/framecontrol.db older than this many days is
 # pruned when a command opens it. Only database rows are removed, never output
 # files, manifests, or logs. 0 keeps history forever; 0 to 3650. Default: 14.
 history_retention_days: 14

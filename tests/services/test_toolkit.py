@@ -5,11 +5,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from framechain.core.arguments import DrawThingsGenerateArguments
-from framechain.core.errors import ToolMissingError
-from framechain.core.generation import GenerationService
-from framechain.jobs.executor import JobExecutor
-from framechain.services.toolkit import Toolkit, _lazy_segmenter, create_job_runner, create_runner
+from framecontrol.core.arguments import DrawThingsGenerateArguments
+from framecontrol.core.errors import ToolMissingError
+from framecontrol.core.generation import GenerationService
+from framecontrol.jobs.executor import JobExecutor
+from framecontrol.services.toolkit import Toolkit, _lazy_segmenter, create_job_runner, create_runner
 
 
 class ToolkitTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class ToolkitTests(unittest.TestCase):
 
     def test_the_segmenter_is_made_once_for_the_process_however_many_threads_ask(self) -> None:
         made = object()
-        with mock.patch("framechain.jobs.media.vision_segmenter.vision_segmenter", return_value=made) as factory:
+        with mock.patch("framecontrol.jobs.media.vision_segmenter.vision_segmenter", return_value=made) as factory:
             segmenter = _lazy_segmenter()
             seen: list[object] = []
             threads = [threading.Thread(target=lambda: seen.append(segmenter())) for _ in range(4)]

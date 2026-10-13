@@ -12,11 +12,11 @@ import httpx
 from loguru import logger
 from typer.testing import CliRunner
 
-from framechain.cli.app import app
-from framechain.cli.context import CliServices
-from framechain.cli.generated import monitor_pb2
-from framechain.core.client_config import job_argument
-from framechain.services.toolkit import Toolkit
+from framecontrol.cli.app import app
+from framecontrol.cli.context import CliServices
+from framecontrol.cli.generated import monitor_pb2
+from framecontrol.core.client_config import job_argument
+from framecontrol.services.toolkit import Toolkit
 from tests.fixtures import JobTestCase
 
 TOKEN = "a" * 64
@@ -98,7 +98,7 @@ class QueueCliTests(JobTestCase):
             assert request.method == "POST" and request.url.path == "/v1/queue"
             assert json.loads(request.content) == {"job": "walk.yaml"}
             assert request.headers["Authorization"] == f"Bearer {TOKEN}"
-            assert request.headers["X-Framechain-Caller"] == "cli"
+            assert request.headers["X-Framecontrol-Caller"] == "cli"
             return self.json_response(200, {"queue_id": "Q0001", "state": "queued", "job_path": "/jobs/walk.yaml", "total_runs": 3, "succeeded": 0})
 
         self.route(handler)

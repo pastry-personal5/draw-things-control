@@ -11,9 +11,9 @@ import time
 
 import uvicorn
 
-from framechain.server.app import create_app
-from framechain.server.context import ServerContext
-from framechain.server.serve import UvicornServer
+from framecontrol.server.app import create_app
+from framecontrol.server.context import ServerContext
+from framecontrol.server.serve import UvicornServer
 
 
 def loopback_socket() -> socket.socket:

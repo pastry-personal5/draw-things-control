@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framechain.server.token_file import TOKEN_BYTES, TokenFileError, load_or_create_token, token_matches
+from framecontrol.server.token_file import TOKEN_BYTES, TokenFileError, load_or_create_token, token_matches
 
 
 class TokenFileTests(unittest.TestCase):

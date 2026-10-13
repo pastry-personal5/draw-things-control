@@ -6,7 +6,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from framechain.server import routes_queue
+from framecontrol.server import routes_queue
 from tests.server.test_queue_routes import QueueRoutesTestCase
 
 
@@ -20,7 +20,7 @@ class DeleteRouteTests(QueueRoutesTestCase):
     def test_each_execution_has_its_outcome_and_its_own_audit_row(self) -> None:
         original = self.seed_resumable_entry()
         self.request("post", f"/v1/queue/{original}/resume")
-        response = self.delete("E0001", "e2", headers={"X-Framechain-Caller": "cli"})
+        response = self.delete("E0001", "e2", headers={"X-Framecontrol-Caller": "cli"})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"dry_run": False, "deleted": [], "refused": [{"execution_id": "E0001", "reason": "Q0002 is queued to resume from E0001"}], "missing": ["E0002"], "resumes_ended": [], "manifests_kept": []})
         self.request("post", "/v1/queue/Q0002/cancel")
@@ -43,14 +43,20 @@ class DeleteRouteTests(QueueRoutesTestCase):
             (self.delete(), "executions"),
             (self.delete(*[f"E{number}" for number in range(1, 202)]), "executions"),
             (self.delete("E0001", "Q0001"), "executions"),
-            (self.delete("E0001", headers={"X-Framechain-Caller": "nobody"}), "X-Framechain-Caller"),
+            (self.delete("E0001", headers={"X-Framecontrol-Caller": "nobody"}), "X-Framecontrol-Caller"),
         ]
         for response, field in cases:
             self.assertEqual((response.status_code, response.json()["code"], response.json()["field"]), (422, "invalid_input", field))
         self.assertEqual(self.audit(), [("delete_execution", None, "invalid_input", "api")] * 4)
 
+    def test_the_old_caller_header_is_not_a_caller_identity(self) -> None:
+        self.seed_resumable_entry()
+        response = self.delete("E0001", headers={"X-Framechain-Caller": "cli"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([row for row in self.audit() if row[0] == "delete_execution"], [("delete_execution", "E0001", "ok", "api")])
+
     def test_a_body_fastapi_refuses_is_audited_and_an_unauthenticated_one_is_not(self) -> None:
-        self.assertEqual(self.request("post", "/v1/executions/delete", json={"executions": "E0001"}, headers={"X-Framechain-Caller": "tui"}).status_code, 422)
+        self.assertEqual(self.request("post", "/v1/executions/delete", json={"executions": "E0001"}, headers={"X-Framecontrol-Caller": "tui"}).status_code, 422)
         self.assertEqual(self.request("post", "/v1/executions/delete", content=b"not json", headers={"Content-Type": "application/json"}).status_code, 422)
         self.client.post("/v1/executions/delete", json={"executions": ["E0001"]})
         self.assertEqual(self.audit(), [("delete_execution", None, "invalid_input", "tui"), ("delete_execution", None, "invalid_input", "api")])

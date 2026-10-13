@@ -1,10 +1,10 @@
 """Tests for the store a browsing front end shares: opened when needed, kept, and never created by a read."""
 
-from framechain.core.errors import StateUnavailableError
-from framechain.services.history import HistoryFilter, HistoryReader
-from framechain.services.store_provider import StoreProvider
-from framechain.state.database import StateError
-from framechain.tui.job_sort import DEFAULT_SORT, SortPreference
+from framecontrol.core.errors import StateUnavailableError
+from framecontrol.services.history import HistoryFilter, HistoryReader
+from framecontrol.services.store_provider import StoreProvider
+from framecontrol.state.database import StateError
+from framecontrol.tui.job_sort import DEFAULT_SORT, SortPreference
 from tests.fixtures import JobTestCase
 
 

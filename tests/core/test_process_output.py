@@ -1,8 +1,8 @@
 import sys
 import unittest
 
-from framechain.core.process.output import OutputProcessor, OutputStream, strip_terminal_codes
-from framechain.core.process.runner import DrawThingsProcessRunner
+from framecontrol.core.process.output import OutputProcessor, OutputStream, strip_terminal_codes
+from framecontrol.core.process.runner import DrawThingsProcessRunner
 from tests.core.test_runner import ProcessCommand
 
 # What draw-things-cli prints through a pipe: a bare newline once, then cursor-up + clear-line before every bar line.

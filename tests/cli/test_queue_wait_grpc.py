@@ -12,12 +12,12 @@ import grpc
 import grpc.aio
 import httpx
 
-from framechain.cli.queue_wait import _run, wait_for_entry
-from framechain.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
-from framechain.server.generated import monitor_pb2_grpc
-from framechain.server.grpc_auth import TokenAuthInterceptor
-from framechain.server.grpc_service import MonitorServicer
-from framechain.state.queue import QueueState
+from framecontrol.cli.queue_wait import _run, wait_for_entry
+from framecontrol.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
+from framecontrol.server.generated import monitor_pb2_grpc
+from framecontrol.server.grpc_auth import TokenAuthInterceptor
+from framecontrol.server.grpc_service import MonitorServicer
+from framecontrol.state.queue import QueueState
 from tests.server.test_grpc_service import TOKEN, GrpcServiceTestCase
 
 

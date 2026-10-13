@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from framechain.jobs.events import RunOutput
-from framechain.tui.live_run import LiveRun
+from framecontrol.jobs.events import RunOutput
+from framecontrol.tui.live_run import LiveRun
 
 
 def line(text: str, *, progress: tuple[int, int] | None = None, percent: int | None = None) -> RunOutput:

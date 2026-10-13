@@ -12,15 +12,15 @@ from typing import Any
 import yaml
 from PIL import Image
 
-from framechain.core.cooldown import CooldownPolicy
-from framechain.core.global_config import GlobalConfig
-from framechain.core.paths import ProjectPaths
-from framechain.jobs.definition import JobDefinition
-from framechain.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
-from framechain.jobs.media.info import MediaInfo
-from framechain.jobs.media.toolkit import MediaTools
-from framechain.services.toolkit import Toolkit
-from framechain.state.executions import ExecutionRow, ExecutionSettings, RunRow
+from framecontrol.core.cooldown import CooldownPolicy
+from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.paths import ProjectPaths
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
+from framecontrol.jobs.media.info import MediaInfo
+from framecontrol.jobs.media.toolkit import MediaTools
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.state.executions import ExecutionRow, ExecutionSettings, RunRow
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 

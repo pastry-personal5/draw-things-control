@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 
-from framechain.core.process.signals import CancelToken
+from framecontrol.core.process.signals import CancelToken
 
 
 class FakeRunner:

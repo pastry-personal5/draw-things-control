@@ -1,0 +1,214 @@
+"""A machine-wide lock that keeps two processes from driving the GPU at once."""
+
+from __future__ import annotations
+
+import fcntl
+import os
+import subprocess
+import time
+from collections.abc import Callable
+from pathlib import Path
+from types import TracebackType
+
+from framecontrol.core.errors import BusyError, StateUnavailableError
+from framecontrol.core.paths import LOCK_FILE_NAME
+from framecontrol.core.process.groups import process_group_alive
+
+# A read-only screen probes the lock by holding it for an instant, so a busy lock is retried this long before it is reported.
+BUSY_RETRY_SECONDS = 0.25
+_RETRY_INTERVAL_SECONDS = 0.025
+CHILD_EXECUTABLE_NAME = "draw-things-cli"
+# The holder name the queue worker's host locks with (phase 3): while it holds the lock, the busy message names it and
+# how to free it, instead of the generic "Another run is in progress" (owner decision, phase-3-changelog.md).
+SERVER_HOLDER_NAME = "serve"
+
+
+class RunLockBusyError(BusyError):
+    """Another run holds the lock, or its draw-things-cli child is still running."""
+
+
+class RunLockError(StateUnavailableError):
+    """The lock file cannot be created or locked, for a reason other than being busy."""
+
+
+def ensure_state_directory(directory: Path) -> Path:
+    """Create the state directory (the project's ``ProjectPaths.state``: every process must share one lock file) if needed and return it."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise RunLockError(f"Cannot create the state directory {directory}: {error.strerror}") from error
+    return directory
+
+
+def is_draw_things_process(pid: int, name: str = CHILD_EXECUTABLE_NAME) -> bool:
+    """Whether ``pid`` is alive and its command is ``name`` (the executable the run started), so a reused PID is not mistaken for one."""
+    try:
+        result = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, check=False, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    command = Path(result.stdout.strip()).name
+    # Some systems truncate the command name to 15 characters.
+    return result.returncode == 0 and bool(command) and (command == name or (len(command) == 15 and name.startswith(command)))
+
+
+class RunLock:
+    """An exclusive ``flock`` on ``state/run.lock``, held for a whole job, cooldowns included.
+
+    The operating system releases the lock when the process exits, however it exits. The file also names the
+    holder (line 1: command and PID) and, while a run's child exists, the child's PID (line 2); a starter
+    that finds an earlier holder's child still running refuses to start, since ``SIGKILL`` on the holder
+    releases the lock but not the GPU.
+    """
+
+    def __init__(self, command: str, *, directory: Path, retry_seconds: float = BUSY_RETRY_SECONDS, child_check: Callable[[int, str], bool] = is_draw_things_process) -> None:
+        self._command = command
+        self._directory = directory
+        self._retry_seconds = retry_seconds
+        self._child_check = child_check
+        self._descriptor: int | None = None
+
+    def acquire(self) -> None:
+        """Take the lock, or raise RunLockBusyError (held, or an earlier run's child is alive) or RunLockError."""
+        if self._descriptor is not None:
+            raise RuntimeError("This run lock is already held")
+        descriptor = self._open()
+        try:
+            if not self._flock(descriptor):
+                raise RunLockBusyError(self._busy_message(descriptor))
+            orphan = self._orphaned_child(descriptor)
+            if orphan is not None:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                raise RunLockBusyError(f"A {orphan[1]} from an earlier run is still running (PID {orphan[0]}). Wait for it to end or stop it.")
+            self._write(descriptor, f"{self._command} {os.getpid()}\n")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._descriptor = descriptor
+
+    def release(self) -> None:
+        """Clear the holder and child lines and drop the lock; safe to call when not held."""
+        descriptor, self._descriptor = self._descriptor, None
+        if descriptor is None:
+            return
+        try:
+            os.ftruncate(descriptor, 0)
+        except OSError:
+            pass
+        finally:
+            os.close(descriptor)
+
+    def record_child(self, pid: int, name: str = CHILD_EXECUTABLE_NAME) -> None:
+        """Note the PID and executable name of the run's child in the lock file."""
+        if self._descriptor is not None:
+            self._write(self._descriptor, f"{self._command} {os.getpid()}\n{pid} {name}\n")
+
+    def __enter__(self) -> RunLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None) -> None:
+        self.release()
+
+    def _open(self) -> int:
+        path = ensure_state_directory(self._directory) / LOCK_FILE_NAME
+        try:
+            return os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as error:
+            raise RunLockError(f"Cannot open the run lock {path}: {error.strerror}") from error
+
+    def _flock(self, descriptor: int) -> bool:
+        deadline = time.monotonic() + self._retry_seconds
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(_RETRY_INTERVAL_SECONDS)
+            except OSError as error:
+                raise RunLockError(f"Cannot lock the run lock file (does this filesystem support flock?): {error.strerror}") from error
+
+    def _orphaned_child(self, descriptor: int) -> tuple[int, str] | None:
+        """The (PID, name) of an earlier holder's child that is still running, or None."""
+        lines = self._read(descriptor).splitlines()
+        parts = lines[1].split(maxsplit=1) if len(lines) >= 2 else []
+        if not parts or not parts[0].isdigit():
+            return None
+        pid, name = int(parts[0]), parts[1].strip() if len(parts) == 2 else CHILD_EXECUTABLE_NAME
+        return (pid, name) if pid > 1 and process_group_alive(pid, denied_means_alive=True) and self._child_check(pid, name) else None
+
+    def _busy_message(self, descriptor: int) -> str:
+        return _busy_message_for(self._read(descriptor))
+
+    @staticmethod
+    def _read(descriptor: int) -> str:
+        return os.pread(descriptor, 4096, 0).decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _write(descriptor: int, text: str) -> None:
+        # Write, then cut to length: the file is never empty in between, so a starter that is refused always reads the holder.
+        data = text.encode("utf-8")
+        os.pwrite(descriptor, data, 0)
+        os.ftruncate(descriptor, len(data))
+
+
+def _busy_message_for(text: str) -> str:
+    """The message ``RunLock.acquire()`` raises for a lock file already holding ``text`` (line 1: command and PID)."""
+    lines = text.splitlines()
+    parts = lines[0].split() if lines else []
+    if len(parts) == 2 and parts[1].isdigit() and parts[0] == SERVER_HOLDER_NAME:
+        return f"The Framecontrol server (PID {parts[1]}) holds the run lock while it is up; stop it to generate by hand."
+    holder = f" ({parts[0]}, PID {parts[1]})" if len(parts) == 2 and parts[1].isdigit() else ""
+    return f"Another run is in progress{holder}. Try again when it finishes."
+
+
+def _lock_text(directory: Path) -> str | None:
+    try:
+        text = (directory / LOCK_FILE_NAME).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return text if text.strip() else None
+
+
+def lock_holder(*, directory: Path) -> str | None:
+    """The command name recorded as the lock's holder (line 1), read without taking it: None when the lock file is
+    missing or empty, and so looks free. For a read-only status display, like ``run_lock_is_free``."""
+    text = _lock_text(directory)
+    if text is None:
+        return None
+    parts = text.splitlines()[0].split()
+    return parts[0] if parts else None
+
+
+def lock_holder_message(*, directory: Path) -> str | None:
+    """The busy message ``RunLock.acquire()`` would raise if the lock were held right now, read without taking it:
+    None when the lock file is missing or empty, and so looks free. For a read-only status display, like
+    ``run_lock_is_free``: the real state can change before or after this read, so this is never a substitute for
+    actually taking the lock."""
+    text = _lock_text(directory)
+    return _busy_message_for(text) if text is not None else None
+
+
+def run_lock_is_free(*, directory: Path) -> bool:
+    """Whether no run holds the lock, for read-only screens; the file is left as it is.
+
+    The probe holds the lock for an instant, which RunLock's retry window absorbs.
+    """
+    try:
+        descriptor = os.open(directory / LOCK_FILE_NAME, os.O_RDWR)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    except OSError:
+        return False
+    else:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(descriptor)

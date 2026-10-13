@@ -1,6 +1,6 @@
 # User guide
 
-How to use the `framechain` command line, whose mission is long-horizon
+How to use the `framecontrol` command line, whose mission is long-horizon
 video generation by autoregressive image-to-video chaining on top of the Draw
 Things app. Jobs ([Jobs: chained runs](#jobs-chained-runs)) are the main way to
 do that; `generate` covers a single image or video. Every command is run from
@@ -981,7 +981,7 @@ why.
   such as `j1` when `j1.yaml` exists and `J0001` is `walk.yaml`, runs
   nothing and says so: type the full file name (`j1.yaml`) or the ID in
   another form (`J0001`).
-- Job IDs and execution IDs live in `state/framechain.db` only. Deleting `state/`
+- Job IDs and execution IDs live in `state/framecontrol.db` only. Deleting `state/`
   starts both numberings over, and nothing rebuilds them, so keep it.
 
 ### Execution detail
@@ -1030,10 +1030,10 @@ they succeed, unless you are in the history or the detail at that moment.
   changes nothing.
 - Browsing only reads files. A queued job writes its
   outputs and last frames, its manifest and log when `write_job_records` is
-  true, `state/framechain.db`, and `state/run.lock`) and nothing else. The TUI never
+  true, `state/framecontrol.db`, and `state/run.lock`) and nothing else. The TUI never
   changes a job file, `data/params/`, or the global configuration, and it
-  does not create `state/framechain.db` just to show an empty history. Browsing
-  writes to `state/framechain.db` only to give job IDs to the files in
+  does not create `state/framecontrol.db` just to show an empty history. Browsing
+  writes to `state/framecontrol.db` only to give job IDs to the files in
   `data/jobs/`, to keep the Jobs list's sort, and to upgrade an
   existing database to the current schema, which any `fc` command does the
   first time it opens an older one.
@@ -1044,17 +1044,17 @@ they succeed, unless you are in the history or the detail at that moment.
 ## Execution history and the run lock
 
 Every queued job that starts is recorded in a SQLite database,
-`state/framechain.db` in the project, whatever `write_job_records` says: the job
+`state/framecontrol.db` in the project, whatever `write_job_records` says: the job
 file's exact text, backend, the settings it ran with, and each run's prompts, files,
 redacted command, timing, and result. `state/` is git-ignored, created on first
 use, and readable only by you. `generate` is not recorded.
 
-On first open after upgrading, Framechain copies an existing `state/dtc.db`
-through SQLite's backup API into `state/framechain.db`, checks the copy, then
+On first open after upgrading, Framecontrol copies an existing `state/framechain.db` or older `state/dtc.db`
+through SQLite's backup API into `state/framecontrol.db`, checks the copy, then
 removes the old file and its sidecars. Stop the old server before starting
-Framechain. If the run lock is held, stop its server or job and retry. If both
-database names exist, inspect both and move the unwanted one aside before
-retrying; Framechain will not select one automatically. A fresh history browse
+Framecontrol. If the run lock is held, stop its server or job and retry. If both
+database files exist, inspect them and move the unwanted one aside before
+retrying; Framecontrol will not select one automatically. A fresh history browse
 does not create a database.
 
 Each execution gets an **execution ID**, `E` and at least four digits
@@ -1312,7 +1312,7 @@ cp -n data/jobs/.trash/NAME-YYYYMMDD-HHMMSS.yaml data/jobs/NAME.yaml
 Use the corresponding file under `.backups/NAME/` for a backup. `cp -n` refuses to overwrite an existing destination.
 
 **People's entries and holds.** The queue is shared, so the API keeps agents
-off what people started: a request whose `X-Framechain-Caller` is `mcp` may cancel,
+off what people started: a request whose `X-Framecontrol-Caller` is `mcp` may cancel,
 park, unpark, or resume only an entry an agent submitted, and release only a
 hold an agent made; the rest are refused, 403 `not_permitted`, naming who made
 them, and change nothing. An entry made before callers were recorded, and a
@@ -1420,7 +1420,7 @@ a regenerated token or a restarted server needs no restart of `fc mcp`. Its
 stdout carries the protocol alone; it logs to stderr, and never logs the token.
 
 **Registering it.** The project's `.mcp.json` registers it with Claude Code as
-`framechain`, running `uv run fc mcp`, so every Claude Code session in this
+`framecontrol`, running `uv run fc mcp`, so every Claude Code session in this
 repository is offered the tools: an interactive session asks once before it
 uses them, while `claude -p` runs, Agent SDK sessions, and cloud sessions load
 them without asking (`disabledMcpjsonServers` keeps it out of any session). The
@@ -1430,7 +1430,7 @@ client started from anywhere else, give the project's directory:
 ```json
 {
   "mcpServers": {
-    "framechain": {"type": "stdio", "command": "uv", "args": ["run", "--directory", "/path/to/framechain", "fc", "mcp"]}
+    "framecontrol": {"type": "stdio", "command": "uv", "args": ["run", "--directory", "/path/to/framecontrol", "fc", "mcp"]}
   }
 }
 ```
@@ -1461,16 +1461,16 @@ OpenClaw:
 #!/usr/bin/env bash
 
 if [[ -z "${TOKEN:-}" ]]; then
-  echo "Set the server token from framechain (config/server-token) as a shell variable TOKEN."
+  echo "Set the server token from framecontrol (config/server-token) as a shell variable TOKEN."
   exit 1
 fi
 
-openclaw mcp add framechain-mcp \
+openclaw mcp add framecontrol-mcp \
   --url http://192.168.64.1:8767/mcp \
   --transport streamable-http \
   --header "Authorization=Bearer ${TOKEN}" \
   --timeout 1600
-openclaw mcp probe framechain-mcp
+openclaw mcp probe framecontrol-mcp
 ```
 
 The HTTP listener bounds each authenticated JSON-RPC request at 8 MiB before
@@ -1574,7 +1574,7 @@ MCP tool list guides an agent that uses it; it does not restrict a token holder.
 `--allow-write` enables job-file creation, replacement, and deletion and
 advertises MCP's execution deletion tool. `run-server.sh` enables it. Replaced
 files stay in `data/jobs/.backups/`, deleted files in `data/jobs/.trash/`, and
-the audit rows in `state/framechain.db`. The [API limits](#server-http-api-and-grpc-monitoring)
+the audit rows in `state/framecontrol.db`. The [API limits](#server-http-api-and-grpc-monitoring)
 bound each submission and request. Cancel and server stop lose the current
 partial run; resume starts again from the last successful run. The token,
 loopback bind, and audit log protect and record API use, while MCP refusals

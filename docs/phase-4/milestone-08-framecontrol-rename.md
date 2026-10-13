@@ -1,7 +1,7 @@
 # Milestone 08: Rename to Framecontrol
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Milestone 04](milestone-04-framechain-rename.md)'s Framechain identities and state migration.
 
 ## Goal

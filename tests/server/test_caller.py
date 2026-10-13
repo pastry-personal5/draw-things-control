@@ -1,9 +1,9 @@
-"""Tests for the X-Framechain-Caller header."""
+"""Tests for the X-Framecontrol-Caller header."""
 
 import unittest
 
-from framechain.core.errors import InputError
-from framechain.server.caller import HEADER_NAME, resolve_caller
+from framecontrol.core.errors import InputError
+from framecontrol.server.caller import HEADER_NAME, resolve_caller
 
 
 class ResolveCallerTests(unittest.TestCase):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from framechain.tui.queue_client import ApiError, cancel, park, resume, show, unpark
+from framecontrol.tui.queue_client import ApiError, cancel, park, resume, show, unpark
 
 
 class QueueIdTests(unittest.IsolatedAsyncioTestCase):

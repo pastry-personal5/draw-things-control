@@ -8,14 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framechain.core.paths import ProjectPaths
-from framechain.core.run_lock import RunLock
-from framechain.services.store_provider import StoreProvider
-from framechain.state.database import StateError
-from framechain.state.database_migration import migrate_legacy_database
-from framechain.state.executions import ExecutionSettings, NewExecution
-from framechain.state.queue import NewQueueEntry
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.paths import ProjectPaths
+from framecontrol.core.run_lock import RunLock
+from framecontrol.services.store_provider import StoreProvider
+from framecontrol.state.database import StateError
+from framecontrol.state.database_migration import migrate_legacy_database
+from framecontrol.state.executions import ExecutionSettings, NewExecution
+from framecontrol.state.queue import NewQueueEntry
+from framecontrol.state.store import Store, StoreMode
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -50,6 +50,25 @@ class DatabaseMigrationTests(unittest.TestCase):
             with self.assertRaisesRegex(StateError, "Stop the running server or job"):
                 Store.open(self.new, mode=StoreMode.BROWSE)
         self.assertTrue(self.old.exists())
+        self.assertFalse(self.new.exists())
+
+    def test_framechain_database_migrates(self) -> None:
+        old = self.paths.state / "framechain.db"
+        old_store = Store.open(old, mode=StoreMode.WRITE)
+        self.addCleanup(old_store.close)
+        old_store.executions.start(NewExecution(job_name="walk", job_file="walk.yaml", mode="i2v", started_at="2026-10-13T00:00:00+00:00", settings=ExecutionSettings(output_directory="/out")))
+        self.assertTrue(old.with_name("framechain.db-wal").exists())
+        migrated = Store.open(self.new, mode=StoreMode.BROWSE)
+        self.addCleanup(migrated.close)
+        self.assertIsNotNone(migrated.executions.by_number(1))
+        self.assertFalse(old.exists())
+        self.assertFalse(old.with_name("framechain.db-wal").exists())
+
+    def test_multiple_legacy_databases_require_manual_choice(self) -> None:
+        Store.open(self.old, mode=StoreMode.WRITE).close()
+        Store.open(self.paths.state / "framechain.db", mode=StoreMode.WRITE).close()
+        with self.assertRaisesRegex(StateError, "move the unwanted one aside"):
+            Store.open(self.new, mode=StoreMode.WRITE)
         self.assertFalse(self.new.exists())
 
     def test_both_files_after_interruption_require_manual_choice(self) -> None:

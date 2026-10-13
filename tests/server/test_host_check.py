@@ -2,7 +2,7 @@
 
 import unittest
 
-from framechain.server.host_check import host_header_is_allowed, is_loopback_host
+from framecontrol.server.host_check import host_header_is_allowed, is_loopback_host
 
 
 class IsLoopbackHostTests(unittest.TestCase):

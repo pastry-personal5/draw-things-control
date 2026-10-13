@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from framechain.state import database as database_module
-from framechain.state.database import Database, StateError
-from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
-from framechain.state.queue import NewQueueEntry
-from framechain.state.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_VERSION
-from framechain.state.store import Store, StoreMode
+from framecontrol.state import database as database_module
+from framecontrol.state.database import Database, StateError
+from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
+from framecontrol.state.queue import NewQueueEntry
+from framecontrol.state.schema import SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_VERSION
+from framecontrol.state.store import Store, StoreMode
 
 NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -29,7 +29,7 @@ class StoreCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
-        self.path = Path(self._temporary.name) / "framechain.db"
+        self.path = Path(self._temporary.name) / "framecontrol.db"
         self.store = self.open()
 
     def open(self, retention_days: int = 14, mode: StoreMode = StoreMode.RUN, path: Path | None = None, now: datetime = NOW) -> Store:
@@ -431,7 +431,7 @@ class SchemaEightTests(StoreCase):
     """Milestone 09's columns: each run's anchor and corrected copy, the execution's first image, and a queued resume's."""
 
     def test_a_version_7_database_gains_the_color_columns_with_its_rows_kept(self) -> None:
-        from framechain.state.schema import MIGRATIONS
+        from framecontrol.state.schema import MIGRATIONS
 
         path = self.path.with_name("v7.db")
         connection = sqlite3.connect(path)
@@ -468,7 +468,7 @@ class SchemaNineTests(StoreCase):
     """Milestone 10's column: each queue entry's submitter."""
 
     def test_a_version_8_database_with_queue_entries_gains_the_submitter_with_its_rows_kept(self) -> None:
-        from framechain.state.schema import MIGRATIONS
+        from framecontrol.state.schema import MIGRATIONS
 
         path = self.path.with_name("v8.db")
         connection = sqlite3.connect(path)
@@ -499,7 +499,7 @@ class SchemaTenTests(StoreCase):
     """Milestone 12's tagged queue snapshots and generated-execution source kind."""
 
     def test_a_version_9_job_and_resume_row_keep_their_meaning_in_a_job_snapshot(self) -> None:
-        from framechain.state.schema import MIGRATIONS
+        from framecontrol.state.schema import MIGRATIONS
 
         path = self.path.with_name("v9.db")
         connection = sqlite3.connect(path)

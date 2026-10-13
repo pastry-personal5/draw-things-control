@@ -10,11 +10,11 @@ from typing import Any
 
 import anyio
 
-from framechain.mcp_server.app import build_server
-from framechain.mcp_server.watch import FINISHED_STATES, WaitTimes
-from framechain.server.context import ServerContext
-from framechain.state.queue import FINISHED_STATES as STORE_FINISHED_STATES
-from framechain.state.queue import QueueState
+from framecontrol.mcp_server.app import build_server
+from framecontrol.mcp_server.watch import FINISHED_STATES, WaitTimes
+from framecontrol.server.context import ServerContext
+from framecontrol.state.queue import FINISHED_STATES as STORE_FINISHED_STATES
+from framecontrol.state.queue import QueueState
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 from PIL import Image
 
-from framechain.jobs.media.vision_segmenter import VisionSegmenter, png_bytes, vision_segmenter
+from framecontrol.jobs.media.vision_segmenter import VisionSegmenter, png_bytes, vision_segmenter
 
 HAS_VISION = sys.platform == "darwin" and importlib.util.find_spec("Vision") is not None
 
@@ -75,7 +75,7 @@ class VisionTests(unittest.TestCase):
 
 class LazyImportTests(unittest.TestCase):
     def test_starting_the_cli_loads_neither_vision_nor_pyobjc(self) -> None:
-        code = "import sys, framechain.cli.app; print(sorted(name for name in ('Vision', 'objc', 'Quartz') if name in sys.modules))"
+        code = "import sys, framecontrol.cli.app; print(sorted(name for name in ('Vision', 'objc', 'Quartz') if name in sys.modules))"
         loaded = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(loaded, "[]")
 

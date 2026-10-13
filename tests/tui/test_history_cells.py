@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from framechain.tui.text.history import delete_summary, history_cells
+from framecontrol.tui.text.history import delete_summary, history_cells
 from tests.fixtures import execution_row
 
 

@@ -2,8 +2,8 @@
 
 import unittest
 
-from framechain.core.errors import InputError
-from framechain.server.pagination import DEFAULT_LIMIT, MAX_LIMIT, clamp_limit, decode_cursor, encode_cursor, next_cursor
+from framecontrol.core.errors import InputError
+from framecontrol.server.pagination import DEFAULT_LIMIT, MAX_LIMIT, clamp_limit, decode_cursor, encode_cursor, next_cursor
 
 
 class CursorTests(unittest.TestCase):

@@ -14,8 +14,8 @@ PYTEST = uv run --extra dev pytest
 # copy. server/ is also generated into, since it alone imports the generated *server* code (Servicer, add_..._to_
 # server) the same file carries alongside the client Stub every copy shares. mcp_server/ has none: it watches a queue
 # entry over the HTTP API's SSE watch (Milestone 10).
-PROTO_SRC = src/framechain/server/proto/monitor.proto
-PROTO_OUTS = src/framechain/server/generated src/framechain/cli/generated src/framechain/tui/generated
+PROTO_SRC = src/framecontrol/server/proto/monitor.proto
+PROTO_OUTS = src/framecontrol/server/generated src/framecontrol/cli/generated src/framecontrol/tui/generated
 
 run:
 	uv run fc --help
@@ -25,7 +25,7 @@ proto:
 		rm -rf $$out; \
 		mkdir -p $$out; \
 		uv run -q --extra dev python -m grpc_tools.protoc \
-			-Isrc/framechain/server/proto \
+			-Isrc/framecontrol/server/proto \
 			--python_out=$$out \
 			--grpc_python_out=$$out \
 			--pyi_out=$$out \

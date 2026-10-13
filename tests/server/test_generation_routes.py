@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from framechain.core.errors import InputError
-from framechain.services.generation_submit import GenerationSnapshot
+from framecontrol.core.errors import InputError
+from framecontrol.services.generation_submit import GenerationSnapshot
 from tests.server.test_queue_routes import QueueRoutesTestCase
 
 

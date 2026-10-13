@@ -8,9 +8,9 @@ import httpx
 from loguru import logger
 from typer.testing import CliRunner
 
-from framechain.cli.app import app
-from framechain.cli.context import CliServices
-from framechain.services.toolkit import Toolkit
+from framecontrol.cli.app import app
+from framecontrol.cli.context import CliServices
+from framecontrol.services.toolkit import Toolkit
 from tests.fixtures import JobTestCase
 
 TOKEN = "a" * 64

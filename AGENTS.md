@@ -10,7 +10,7 @@ project document needed for the task.
   or generated gRPC stubs. Search with `rg` or `git grep`.
 - Never edit, delete, or deduplicate `data/params/*.json`,
   `data/params/*.yaml`, or `config/global-config.yaml`.
-- Use the checked-in `framechain` MCP tools only when the owner asks; they can act on
+- Use the checked-in `framecontrol` MCP tools only when the owner asks; they can act on
   the real queue and history.
 - Use Context7 for current library, framework, SDK, API, CLI, or cloud-service
   documentation; do not use it for project logic or general programming.

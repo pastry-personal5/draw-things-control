@@ -11,13 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from framechain.core.errors import BusyError
-from framechain.core.run_lock import is_draw_things_process, run_lock_is_free
-from framechain.services.queue_host import QueueHost
-from framechain.services.queue_submit import submit_job
-from framechain.state.executions import NewExecution
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.errors import BusyError
+from framecontrol.core.run_lock import is_draw_things_process, run_lock_is_free
+from framecontrol.services.queue_host import QueueHost
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.state.executions import NewExecution
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
@@ -26,7 +26,7 @@ from tests.jobs.test_executor import FakeResult, FakeRunner
 HOLDER = """
 import sys
 from pathlib import Path
-from framechain.core.run_lock import RunLock
+from framecontrol.core.run_lock import RunLock
 lock = RunLock("serve", directory=Path(sys.argv[1]))
 lock.acquire()
 lock.record_child(int(sys.argv[2]), "draw-things-cli")

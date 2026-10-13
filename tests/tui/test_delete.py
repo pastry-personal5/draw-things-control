@@ -7,13 +7,13 @@ from typing import Any
 
 from textual.widgets import Button
 
-from framechain.state.executions import ExecutionSettings, NewExecution
-from framechain.state.queue import NewQueueEntry
-from framechain.tui.app import FramechainApp
-from framechain.tui.delete_dialog import DeleteDialog
-from framechain.tui.panes.execution import ExecutionDetailPane
-from framechain.tui.panes.history import ExecutionHistoryList
-from framechain.tui.screens import MainScreen
+from framecontrol.state.executions import ExecutionSettings, NewExecution
+from framecontrol.state.queue import NewQueueEntry
+from framecontrol.tui.app import FramecontrolApp
+from framecontrol.tui.delete_dialog import DeleteDialog
+from framecontrol.tui.panes.execution import ExecutionDetailPane
+from framecontrol.tui.panes.history import ExecutionHistoryList
+from framecontrol.tui.screens import MainScreen
 from tests.tui.test_history import HistoryCase, at
 
 
@@ -22,7 +22,7 @@ class DeleteTests(HistoryCase):
         super().setUp()
         self.server.database = self.paths.database
 
-    def ids(self, app: FramechainApp) -> list[str]:
+    def ids(self, app: FramecontrolApp) -> list[str]:
         return [row[0] for row in self.history(app)]
 
     async def dialog(self, pilot: Any) -> str:

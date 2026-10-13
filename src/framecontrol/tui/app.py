@@ -1,0 +1,376 @@
+"""The Textual application: its collaborators, the quit key, its one screen, and the queue entry it follows."""
+
+from __future__ import annotations
+
+import signal
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from rich.text import Text
+from textual import work
+from textual.app import App
+from textual.binding import Binding
+
+from framecontrol.core.client_config import job_argument
+from framecontrol.core.exit_codes import exit_code_for_signal
+from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.paths import ProjectPaths
+from framecontrol.services.queue_hold import HoldState, hold_outcome_text, release_outcome_text
+from framecontrol.services.queue_park_text import park_outcome_text, unpark_outcome_text
+from framecontrol.services.store_provider import StoreProvider
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.tui.deletion import DeleteFlow, DeleteSelection
+from framecontrol.tui.feed import QueueFeed
+from framecontrol.tui.live_run import LiveRun, PastRun, latest_past_run
+from framecontrol.tui.panes.cli_output import LOW_MARKER
+from framecontrol.tui.preferences import VerboseLevel, load_verbose_level, save_verbose_level, wants_output
+from framecontrol.tui.queue_client import ApiError, cancel, hold, list_queue, park, release, resume, show, submit, unpark
+from framecontrol.tui.screens import MainScreen
+from framecontrol.tui.signals import QuitPress, SignalGuard
+from framecontrol.tui.text.queue import queue_entry_detail_text, queue_listing_text
+
+if TYPE_CHECKING:
+    import httpx
+
+    from framecontrol.tui.client import GrpcStubFactory
+
+# How long a first Ctrl-C waits for the second that quits.
+QUIT_PRESS_SECONDS = 2.0
+QUEUE_LIST_LIMIT = 5
+LOW_NOTICE = "Verbose level: low. Bare output is hidden and status updates once a minute."
+
+
+class FramecontrolApp(App[None]):
+    """Browse the jobs in a data directory and the server's queue and history; browsing writes nothing.
+
+    Milestone 03: this process never starts ``draw-things-cli`` itself. ``/apply`` (and ``/queue add``) submit to
+    the queue over the HTTP API; the running job's own events, and every queue change, arrive over one gRPC
+    ``WatchEvents`` connection (``tui/feed.py``), fed by the server's worker, the only thing that still runs one.
+    """
+
+    TITLE = "Framecontrol"
+    CSS_PATH = "styles.tcss"
+    # Commands are typed on the command field; the palette would be a second way, and a way to change the theme.
+    ENABLE_COMMAND_PALETTE = False
+    BINDINGS = [
+        # Before any widget can take the key: Textual's own ctrl+c only explains how to quit, and Input's copies.
+        Binding("ctrl+c", "interrupt", "Quit", show=False, priority=True),
+    ]
+
+    def __init__(self, *, settings: GlobalConfig, paths: ProjectPaths, data_directory: Path, server_url: str, token_file: Path, allow_remote_server: bool = False, toolkit: Toolkit | None = None, http_transport: "httpx.AsyncBaseTransport | None" = None, grpc_stub_factory: "GrpcStubFactory | None" = None) -> None:
+        super().__init__()
+        self.settings = settings
+        self.paths = paths
+        self.data_directory = data_directory
+        self.server_url = server_url
+        self.token_file = token_file
+        self.allow_remote_server = allow_remote_server
+        # Only for the Jobs list's offline dry-run plan preview (services/job_details.py's add_plan):
+        # the TUI never runs a job through it any more (Milestone 03), so a test's own FakeToolkit needs no runner.
+        self.toolkit = toolkit or Toolkit()
+        self.http_transport = http_transport
+        self.grpc_stub_factory = grpc_stub_factory
+        self.store_provider = StoreProvider(paths, settings.history_retention_days)
+        # The entry this session follows, or the last one it saw before it ended.
+        self.live: LiveRun | None = None
+        # The queue entry a live JobStarted, when it arrives, belongs to: set from queue_entry_changed's own
+        # ordering guarantee (it always precedes that entry's JobStarted), read once and then cleared.
+        self.pending_queue_id: str | None = None
+        # A park reservation made or withdrawn for pending_queue_id before its JobStarted: applied then, and cleared.
+        self.pending_park_requested = False
+        self.feed_connected = False
+        # The queue's hold (Milestone 05), from every queue read: the API's while the server is up, the store's while
+        # it is down. Shown in the Queue list's title and, while no job runs, the work status.
+        self.queue_hold = HoldState()
+        # How much of draw-things-cli's output the TUI streams and shows (Milestone 04); read once, changed by /verbose.
+        self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
+        # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
+        self._low_notice_due = self.verbose_level == "low"
+        self._feed = QueueFeed(self)
+        # Whether a deletion (Milestone 06) is being asked about or sent.
+        self._deleting = False
+        self.signals = SignalGuard(self.handle_signal)
+        self.quit_press = QuitPress(QUIT_PRESS_SECONDS)
+        self.theme = "textual-dark"
+
+    @property
+    def job_running(self) -> bool:
+        """From a live JobStarted (or a seeding read finding one) until the entry is known to be over."""
+        return self.live is not None and not self.live.ended
+
+    def on_mount(self) -> None:
+        self.signals.install()
+        self.push_screen(MainScreen())
+        self.run_feed()
+
+    def on_unmount(self) -> None:
+        self.store_provider.close()
+
+    @work(exclusive=True, group="feed")
+    async def run_feed(self) -> None:
+        await self._feed.run()
+
+    def on_feed_connection_changed(self) -> None:
+        """The gRPC feed connected or dropped: the work status's busy-lock line reads the run lock only while
+        the feed cannot itself say the server is up (``fc serve`` holds that lock for its whole lifetime, not
+        only while running a job, so a feed that is up already says everything that line otherwise would)."""
+        if self.main is not None:
+            self.main.execution_history.check_lock()
+        if self.feed_connected and self._low_notice_due and self.main is not None:
+            self._low_notice_due = False
+            self.say(LOW_NOTICE)
+
+    def set_verbose_level(self, level: VerboseLevel) -> None:
+        """/verbose LEVEL: apply it for the session, keep it for the next, and reconnect the shared stream when the
+        level crosses the low boundary (``include_output`` differs); high and medium request the same lines."""
+        old = self.verbose_level
+        if level == old:
+            self.say(f"Verbose level: {level}.")
+            return
+        self.verbose_level = level
+        self._low_notice_due = False
+        crossed = wants_output(level) != wants_output(old)
+        connected = self.feed_connected
+        if crossed and not connected:
+            self.say(f"Verbose level: {level}. It applies when fc serve is reachable.")
+        else:
+            self.say(LOW_NOTICE if level == "low" else f"Verbose level: {level}.")
+        if crossed and connected:
+            self.say(f"Reconnecting to fc serve for verbose {level}...")
+            self.run_feed()
+        self._save_verbose_level(level)
+        live, main = self.live, self.main
+        if live is not None and self.job_running:
+            if level == "medium":
+                live.output_window_start = live.now()
+            elif level == "low":
+                live.forget_progress()
+        if main is None:
+            return
+        if level == "low" and self.job_running:
+            main.generation_output.write_marker(LOW_MARKER)
+        # At once, not at low's next once-a-minute refresh: the run summary and the work status change with the level.
+        main.running.tick(force=True)
+
+    def _save_verbose_level(self, level: VerboseLevel) -> None:
+        try:
+            save_verbose_level(self.paths.tui_preferences, level)
+        except OSError as error:
+            self.say(f"The verbose level could not be saved ({error}); it applies to this session only.", "yellow")
+
+    def handle_signal(self, received: signal.Signals) -> None:
+        """SIGHUP, SIGINT, or SIGTERM: exit at once, with the code the CLI would give the same signal. Nothing here
+        needs stopping first -- fc serve is the only thing that ever runs a job now, and quitting the TUI does not
+        touch it (Milestone 03)."""
+        self.exit(return_code=exit_code_for_signal(received))
+
+    @property
+    def main(self) -> MainScreen | None:
+        return next((screen for screen in self.screen_stack if isinstance(screen, MainScreen) and screen.is_mounted), None)
+
+    def say(self, text: Text | str, style: str = "") -> None:
+        """Write a notice to the messages."""
+        if self.main is not None:
+            self.main.say(text, style)
+
+    @property
+    def quit_armed(self) -> bool:
+        """Whether a first Ctrl-C is waiting for the second."""
+        return self.quit_press.armed
+
+    async def action_interrupt(self) -> None:
+        """Ctrl-C: clear the command field if it holds text; otherwise quit on a second press within QUIT_PRESS_SECONDS."""
+        main = self.main
+        if main is not None and main.command_field.value:
+            main.command_field.action_clear_line()
+            return
+        if self.quit_press.armed:
+            self.quit_press.disarm()
+            self.show_status()
+            await self.action_quit()
+            return
+        self.quit_press.arm()
+        self.show_status()
+        self.set_timer(QUIT_PRESS_SECONDS, self.show_status)
+
+    def show_status(self) -> None:
+        if self.main is not None:
+            self.main.running.tick(force=True)
+
+    async def action_quit(self) -> None:
+        """Ends the app at once, whether or not a job is running: fc serve is what runs it, and quitting the TUI
+        does not stop that (Milestone 03, the same change /apply's own retirement makes)."""
+        self.exit()
+
+    def start_flow(self, path: Path) -> None:
+        """/apply <job>: submit it to the queue. No confirmation: queuing is reversible (/queue cancel undoes it),
+        and fc serve, not this process, is what actually runs it."""
+        self.submit_job(job_argument(str(path), self.paths))
+
+    @work(exclusive=True, group="submit")
+    async def submit_job(self, job: str) -> None:
+        try:
+            entry = await submit(self.server_url, self.token_file, self.http_transport, job)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.say(f"{entry['queue_id']} queued: {Path(entry['job_path']).name}{self._held_note()}")
+        self.refresh_queue()
+
+    def _held_note(self) -> str:
+        """What a submission or a resume made while the queue is held adds to its message."""
+        return "; the queue is held ('/queue release' starts it)" if self.queue_hold.held else ""
+
+    @work(exclusive=True, group="queue-refresh")
+    async def refresh_queue(self) -> None:
+        try:
+            entries, queue_hold = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
+        except ApiError:
+            return
+        if self.main is not None:
+            self.main.queue_list.show_entries(entries)
+        self.set_queue_hold(queue_hold)
+
+    def set_queue_hold(self, queue_hold: HoldState) -> None:
+        """Keep the hold, from the API or the store's fallback, and show it at once. The title is set every time, since
+        a read can land before the main screen is mounted; the work status only when the hold changed."""
+        changed = queue_hold != self.queue_hold
+        self.queue_hold = queue_hold
+        if self.main is not None:
+            self.main.queue_list.show_hold(queue_hold)
+            if changed:
+                self.show_status()
+
+    @work(exclusive=True, group="queue-listing")
+    async def show_queue(self) -> None:
+        """/get queue: the entries in activity log, not only the widget's own rows."""
+        try:
+            entries, queue_hold = await list_queue(self.server_url, self.token_file, self.http_transport, limit=QUEUE_LIST_LIMIT)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.say(queue_listing_text(entries, queue_hold))
+
+    @work(exclusive=True, group="cancel")
+    async def cancel_entry(self, queue_id: str) -> None:
+        try:
+            entry = await cancel(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        if self.live is not None and self.live.queue_id == queue_id:
+            self.live.request_stop()
+            # "stopping" shows at once at every level, not at low's next once-a-minute refresh.
+            self.show_status()
+        self.say(f"{entry['queue_id']} {entry['state']}")
+        self.refresh_queue()
+
+    @work(exclusive=True, group="resume")
+    async def resume_entry(self, queue_id: str) -> None:
+        try:
+            entry = await resume(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.say(f"{entry['queue_id']} queued (resumed from {queue_id}): {Path(entry['job_path']).name}{self._held_note()}")
+        self.refresh_queue()
+
+    @work(exclusive=True, group="park")
+    async def park_entry(self, queue_id: str) -> None:
+        """/queue park, /park, and ``p``: no confirmation, as /queue unpark undoes it."""
+        try:
+            entry = await park(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_parking(queue_id, entry["state"] == "running")
+        self.set_queue_hold(HoldState.from_body(entry))
+        self.say(park_outcome_text(entry, "/queue release"))
+        self.refresh_queue()
+
+    @work(exclusive=True, group="park")
+    async def unpark_entry(self, queue_id: str) -> None:
+        """/queue unpark, /unpark, and ``u``."""
+        try:
+            entry = await unpark(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_parking(queue_id, False)
+        self.set_queue_hold(HoldState.from_body(entry))
+        self.say(unpark_outcome_text(entry))
+        self.refresh_queue()
+
+    def set_parking(self, queue_id: str, parking: bool) -> None:
+        """A park reservation made or withdrawn, by this TUI (confirmed by the API) or anywhere else (the feed): shown at
+        once at every verbose level, as a stop is. For the entry claimed but not yet started, it is kept until its
+        JobStarted builds the live run."""
+        if self.live is not None and self.live.queue_id == queue_id and not self.live.ended:
+            self.live.park_requested = parking
+            self.show_status()
+        elif self.pending_queue_id == queue_id:
+            self.pending_park_requested = parking
+
+    @work(exclusive=True, group="hold")
+    async def hold_queue(self) -> None:
+        """/queue hold and /hold."""
+        try:
+            body = await hold(self.server_url, self.token_file, self.http_transport)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_queue_hold(HoldState.from_body(body))
+        self.say(hold_outcome_text(body))
+        self.refresh_queue()
+
+    @work(exclusive=True, group="hold")
+    async def release_queue(self) -> None:
+        """/queue release and /release."""
+        try:
+            body = await release(self.server_url, self.token_file, self.http_transport)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.set_queue_hold(HoldState.from_body(body))
+        self.say(release_outcome_text(body))
+        self.refresh_queue()
+
+    def ask_to_delete(self, numbers: list[int]) -> None:
+        """``d`` on the Execution History list: delete these executions, asking first."""
+        self.delete_executions(DeleteSelection(tuple(numbers)))
+
+    def delete_executions(self, selection: DeleteSelection) -> None:
+        """``d`` and ``/delete`` (Milestone 06), through the API. One deletion is asked about at a time: a second one
+        while a dialog is open is refused rather than stacked on it."""
+        if self._deleting:
+            self.say("A deletion is already being asked about", "yellow")
+            return
+        self._deleting = True
+        self._run_deletion(selection)
+
+    @work(group="delete")
+    async def _run_deletion(self, selection: DeleteSelection) -> None:
+        try:
+            await DeleteFlow(self).run(selection)
+        finally:
+            self._deleting = False
+
+    @work(exclusive=True, group="queue-detail")
+    async def describe_queue_entry(self, queue_id: str) -> None:
+        """/describe Q0007, and Enter on its row (QueueList): over the API, not the store fallback (its own
+        resumability needs a live read: whether some other entry already resumes it can change between polls)."""
+        try:
+            entry = await show(self.server_url, self.token_file, self.http_transport, queue_id)
+        except ApiError as error:
+            self.say(error.text, "red")
+            return
+        self.say(queue_entry_detail_text(entry))
+
+    def read_past_run(self) -> PastRun | None:
+        """The latest successful run of any job, to estimate a newly started (or seeded) one from; called off the
+        event loop (``asyncio.to_thread``), since it is a blocking read. None when the store cannot say."""
+        try:
+            store = self.store_provider.get(create=False)
+        except Exception:
+            return None
+        return latest_past_run(store) if store is not None else None

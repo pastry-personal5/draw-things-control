@@ -17,14 +17,14 @@ from typing import Any
 
 import httpx
 
-from framechain.core.cooldown import CooldownPolicy
-from framechain.jobs.events import CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, event_to_dict
-from framechain.server.serializers import delete_report
-from framechain.services.history_delete import delete_executions
-from framechain.state.ids import EXECUTION_LETTER, parse_typed_id
-from framechain.state.store import Store, StoreMode
-from framechain.tui.feed import FORCE_RESET_ID
-from framechain.tui.generated import monitor_pb2
+from framecontrol.core.cooldown import CooldownPolicy
+from framecontrol.jobs.events import CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, event_to_dict
+from framecontrol.server.serializers import delete_report
+from framecontrol.services.history_delete import delete_executions
+from framecontrol.state.ids import EXECUTION_LETTER, parse_typed_id
+from framecontrol.state.store import Store, StoreMode
+from framecontrol.tui.feed import FORCE_RESET_ID
+from framecontrol.tui.generated import monitor_pb2
 
 GRPC_PORT = 18766
 FIRST_EVENT_ID = 1000

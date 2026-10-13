@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from framechain.jobs.events import JobEvent
-from framechain.tui.app import FramechainApp
-from framechain.tui.generated import monitor_pb2
+from framecontrol.jobs.events import JobEvent
+from framecontrol.tui.app import FramecontrolApp
+from framecontrol.tui.generated import monitor_pb2
 from tests.tui.tui_case import TuiTestCase
 
 
 class FeedTestCase(TuiTestCase):
-    async def connect(self, pilot: Any) -> FramechainApp:
+    async def connect(self, pilot: Any) -> FramecontrolApp:
         """Wait for the feed's first ``Reset`` to be handled: from then on the fake server's events reach the app."""
         app = pilot.app
         await self.wait_for(pilot, lambda: app.feed_connected, "the feed to connect")

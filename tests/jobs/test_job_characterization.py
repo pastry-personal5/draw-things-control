@@ -3,7 +3,7 @@
 Each scenario runs a job with fake tools and a fixed clock, then compares one text snapshot with a file in
 ``tests/jobs/golden/``: the log lines, the job's events in order, the manifest, the job log file, and the rows the
 state store keeps. A change that is meant (a recorded bug fix) is accepted by running the tests once with
-``Framechain_UPDATE_GOLDEN=1`` and reviewing the diff of the golden files.
+``Framecontrol_UPDATE_GOLDEN=1`` and reviewing the diff of the golden files.
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ from unittest import mock
 
 from loguru import logger
 
-from framechain.core.arguments import DrawThingsGenerateArguments
-from framechain.core.process.output import OutputStream
-from framechain.jobs import launcher as launcher_module
-from framechain.jobs.definition import JobDefinition
-from framechain.jobs.events import JobEvent, combine_observers, event_to_dict
-from framechain.jobs.media.info import MediaInfo
-from framechain.jobs.parsing import load_job
-from framechain.state.recorder import ExecutionRecorder
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.arguments import DrawThingsGenerateArguments
+from framecontrol.core.process.output import OutputStream
+from framecontrol.jobs import launcher as launcher_module
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.events import JobEvent, combine_observers, event_to_dict
+from framecontrol.jobs.media.info import MediaInfo
+from framecontrol.jobs.parsing import load_job
+from framecontrol.state.recorder import ExecutionRecorder
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, TalkingRunner
 
@@ -37,7 +37,7 @@ GOLDEN = Path(__file__).parent / "golden"
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 # A timestamp's offset depends on the machine's time zone, and the job log's clock is the real one.
 OFFSET = re.compile(r"(\d{2}:\d{2}:\d{2})[+-]\d{2}:\d{2}")
-TEMPORARY_COPY = re.compile(r"[^\s'\"=]*/framechain-\w+/")
+TEMPORARY_COPY = re.compile(r"[^\s'\"=]*/framecontrol-\w+/")
 LOG_TIME = re.compile(r"(?m)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}")
 NOT_KEPT = {"id", "execution_id", "started_epoch", "finished_epoch"}
 
@@ -74,7 +74,7 @@ class JobCharacterizationTests(JobTestCase):
         self.addCleanup(logger.remove, sink)
         self.state = self.root / "state"
         self.state.mkdir()
-        self.store = Store.open(self.state / "framechain.db", mode=StoreMode.WRITE, clock=lambda: NOW)
+        self.store = Store.open(self.state / "framecontrol.db", mode=StoreMode.WRITE, clock=lambda: NOW)
         self.addCleanup(self.store.close)
 
     def create_runner(self, arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: Any = None, on_start: Any = None) -> FakeRunner:
@@ -117,7 +117,7 @@ class JobCharacterizationTests(JobTestCase):
 
     def database(self) -> str:
         """The rows the store kept, read from the file as they are stored."""
-        connection = sqlite3.connect(self.state / "framechain.db")
+        connection = sqlite3.connect(self.state / "framecontrol.db")
         connection.row_factory = sqlite3.Row
         self.addCleanup(connection.close)
         rows = []
@@ -134,10 +134,10 @@ class JobCharacterizationTests(JobTestCase):
 
     def check(self, name: str, text: str) -> None:
         path = GOLDEN / f"{name}.txt"
-        if os.environ.get("Framechain_UPDATE_GOLDEN"):
+        if os.environ.get("Framecontrol_UPDATE_GOLDEN"):
             GOLDEN.mkdir(exist_ok=True)
             path.write_text(text, encoding="utf-8")
-        self.assertTrue(path.exists(), f"{path} is missing; run the tests once with Framechain_UPDATE_GOLDEN=1")
+        self.assertTrue(path.exists(), f"{path} is missing; run the tests once with Framecontrol_UPDATE_GOLDEN=1")
         self.assertEqual(text, path.read_text(encoding="utf-8"))
 
     def test_a_job_that_succeeds(self) -> None:

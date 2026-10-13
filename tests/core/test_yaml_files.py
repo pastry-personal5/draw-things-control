@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from framechain.core.global_config import load_global_config
-from framechain.core.yaml_files import is_yaml_file, parse_yaml_mapping, read_yaml_file
-from framechain.jobs.parsing import load_job
+from framecontrol.core.global_config import load_global_config
+from framecontrol.core.yaml_files import is_yaml_file, parse_yaml_mapping, read_yaml_file
+from framecontrol.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data
 
 

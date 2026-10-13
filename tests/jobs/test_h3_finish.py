@@ -12,18 +12,18 @@ from unittest import mock
 
 from PIL import Image
 
-from framechain.jobs.backend import BackendRegistry, RunContext
-from framechain.jobs.backends.h3 import H3Backend, H3ColorState, H3JobData, H3Run, H3Runtime, _partial_path
-from framechain.jobs.definition import ColorPolicy
-from framechain.jobs.events import RunStatus
-from framechain.jobs.executor import JobExecutor, JobRunOptions
-from framechain.jobs.media.checks import MediaCheck
-from framechain.jobs.media.h3_color import DELIVERY, H3_RGB_CONVENTION_SHA256, NATIVE, H3Declarations
-from framechain.jobs.media.toolkit import MediaTools
-from framechain.jobs.output_naming import raw_output_path, uncorrected_output_path
-from framechain.jobs.parsing import load_job
-from framechain.jobs.planning import JobPlanner
-from framechain.jobs.records import RunRecord
+from framecontrol.jobs.backend import BackendRegistry, RunContext
+from framecontrol.jobs.backends.h3 import H3Backend, H3ColorState, H3JobData, H3Run, H3Runtime, _partial_path
+from framecontrol.jobs.definition import ColorPolicy
+from framecontrol.jobs.events import RunStatus
+from framecontrol.jobs.executor import JobExecutor, JobRunOptions
+from framecontrol.jobs.media.checks import MediaCheck
+from framecontrol.jobs.media.h3_color import DELIVERY, H3_RGB_CONVENTION_SHA256, NATIVE, H3Declarations
+from framecontrol.jobs.media.toolkit import MediaTools
+from framecontrol.jobs.output_naming import raw_output_path, uncorrected_output_path
+from framecontrol.jobs.parsing import load_job
+from framecontrol.jobs.planning import JobPlanner
+from framecontrol.jobs.records import RunRecord
 from tests.fixtures import JobTestCase, job_data
 
 
@@ -64,10 +64,10 @@ class H3FinishingTests(JobTestCase):
     def _known_source(self) -> Any:
         declarations = H3Declarations(None, None, {"color_range": None, "color_space": None, "color_transfer": None, "color_primaries": None})
         with ExitStack() as stack:
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.inspect_h3_declarations", return_value=declarations))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.convert_h3_delivery", side_effect=ValueError("conversion failed")))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.tag_video_color_codes", side_effect=ValueError("tag failed")))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.inspect_h3_declarations", return_value=declarations))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.convert_h3_delivery", side_effect=ValueError("conversion failed")))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.tag_video_color_codes", side_effect=ValueError("tag failed")))
             yield
 
     def test_failed_handoff_keeps_verified_output_and_reports_warning(self) -> None:
@@ -75,7 +75,7 @@ class H3FinishingTests(JobTestCase):
         _partial_path(run.output).write_bytes(b"verified child")
         record = self._record(run.output)
         checks: list[MediaCheck] = []
-        with self._known_source(), mock.patch("framechain.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framechain.jobs.backends.h3._extract_h3_frame", side_effect=ValueError("decode failed")):
+        with self._known_source(), mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=ValueError("decode failed")):
             result = self.backend.finish(self.job, run, record, lambda: None, None, MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _run, check: checks.append(check))
         self.assertIsNone(result)
         self.assertEqual(run.output.read_bytes(), b"verified child")
@@ -98,7 +98,7 @@ class H3FinishingTests(JobTestCase):
         def extract(_video: Path, target: Path, _ffmpeg: str) -> None:
             Image.new("RGB", (64, 64)).save(target)
 
-        with self._known_source(), mock.patch("framechain.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framechain.jobs.backends.h3._extract_h3_frame", side_effect=extract):
+        with self._known_source(), mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract):
             result = self.backend.finish(self.job, run, record, stop, None, MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), None)
         self.assertEqual(result, (RunStatus.INTERRUPTED, 143))
         self.assertFalse(run.output.exists())
@@ -121,7 +121,7 @@ class H3FinishingTests(JobTestCase):
                 pass
 
         executor = JobExecutor(lambda arguments, *_rest: Runner(arguments), lambda _: "ffmpeg", MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), handle_signals=False, backends=self.backends)
-        with self._known_source(), mock.patch("framechain.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framechain.jobs.backends.h3._extract_h3_frame", side_effect=ValueError("decode failed")):
+        with self._known_source(), mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=ValueError("decode failed")):
             outcome = executor.run(self.job, JobRunOptions(executable="h3", shutdown_grace=1, write_records=True))
         self.assertEqual((outcome.exit_code, outcome.completed_runs, len(seen)), (1, 1, 1))
         assert outcome.manifest is not None
@@ -180,14 +180,14 @@ class H3FinishingTests(JobTestCase):
             Image.new("RGB", (64, 64)).save(target)
 
         with ExitStack() as stack:
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.inspect_h3_declarations", side_effect=[source, rec709] + ([] if correction_fails else [rec709])))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.convert_h3_delivery", side_effect=convert))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.packet_facts", return_value=[(0, 0, 1, "SHA256:equal")]))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.measure_h3_drift", return_value={"first_to_last": {"lightness": 0}}))
-            stack.enter_context(mock.patch("framechain.jobs.media.h3_correction.correct_h3_video", side_effect=correct))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._extract_h3_frame", side_effect=extract))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.inspect_h3_declarations", side_effect=[source, rec709] + ([] if correction_fails else [rec709])))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.convert_h3_delivery", side_effect=convert))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.packet_facts", return_value=[(0, 0, 1, "SHA256:equal")]))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.measure_h3_drift", return_value={"first_to_last": {"lightness": 0}}))
+            stack.enter_context(mock.patch("framecontrol.jobs.media.h3_correction.correct_h3_video", side_effect=correct))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract))
             result = self.backend.finish(job, run, record, lambda: None, H3ColorState(self.job.input, self.job.input, "initial i2av input"), MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _run, check: checks.append(check))
         self.assertIsNone(result)
         return run, record, checks
@@ -220,15 +220,15 @@ class H3FinishingTests(JobTestCase):
             Image.new("RGB", (64, 64)).save(target)
 
         with ExitStack() as stack:
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.inspect_h3_declarations", return_value=native))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.convert_h3_delivery", side_effect=ValueError("conversion unavailable")))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.tag_video_color_codes", return_value=False))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.read_colr", return_value=NATIVE))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.packet_facts", return_value=[(0, 0, 1, "SHA256:equal")]))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3.measure_h3_drift", return_value={"first_to_last": {"lightness": 0}}))
-            stack.enter_context(mock.patch("framechain.jobs.backends.h3._extract_h3_frame", side_effect=extract))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.inspect_h3_declarations", return_value=native))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.convert_h3_delivery", side_effect=ValueError("conversion unavailable")))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.tag_video_color_codes", return_value=False))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.read_colr", return_value=NATIVE))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.packet_facts", return_value=[(0, 0, 1, "SHA256:equal")]))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.measure_h3_drift", return_value={"first_to_last": {"lightness": 0}}))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract))
             result = self.backend.finish(self.job, run, record, lambda: None, H3ColorState(self.job.input, self.job.input, "initial i2av input"), MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _run, check: checks.append(check))
         self.assertIsNone(result)
         self.assertEqual(run.output.read_bytes(), b"native child")

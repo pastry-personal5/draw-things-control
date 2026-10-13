@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from framechain.tui.app import LOW_NOTICE, FramechainApp
-from framechain.tui.commands import completions
-from framechain.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
-from framechain.tui.panes.status import WorkStatus
-from framechain.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
-from framechain.tui.widgets import SteadyText
+from framecontrol.tui.app import LOW_NOTICE, FramecontrolApp
+from framecontrol.tui.commands import completions
+from framecontrol.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
+from framecontrol.tui.panes.status import WorkStatus
+from framecontrol.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
+from framecontrol.tui.widgets import SteadyText
 from tests.tui.fake_server import cooldown_started, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
@@ -62,7 +62,7 @@ class VerboseTestCase(FeedTestCase):
     def preset(self, level: str) -> None:
         save_verbose_level(self.paths.tui_preferences, level)  # type: ignore[arg-type]  # a plain string
 
-    async def running_job(self, pilot: Any, clock: Clock, *, run: int = 1) -> FramechainApp:
+    async def running_job(self, pilot: Any, clock: Clock, *, run: int = 1) -> FramecontrolApp:
         """Connect, start a job, and start its run at ``clock``'s time, on that clock."""
         app = await self.connect(pilot)
         app.main.running.clock = clock  # type: ignore[union-attr]
@@ -373,7 +373,7 @@ class LowTests(VerboseTestCase):
     async def test_the_startup_notice_is_not_repeated_by_a_reconnect(self) -> None:
         self.preset("low")
         app = self.make_app()
-        with mock.patch("framechain.tui.feed.RECONNECT_SECONDS", 0.05):
+        with mock.patch("framecontrol.tui.feed.RECONNECT_SECONDS", 0.05):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.connect(pilot)
                 self.server.calls[0].cancel()
@@ -437,7 +437,7 @@ class OfflineTests(VerboseTestCase):
     async def test_a_switch_across_low_with_no_server_persists_and_applies_when_it_is_reachable(self) -> None:
         self.server.health_ok = False
         app = self.make_app()
-        with mock.patch("framechain.tui.feed.RECONNECT_SECONDS", 0.05):
+        with mock.patch("framecontrol.tui.feed.RECONNECT_SECONDS", 0.05):
             async with app.run_test(size=(160, 60)) as pilot:
                 await self.settle(pilot)
                 await self.command(pilot, "/verbose low")

@@ -9,12 +9,12 @@ from unittest import mock
 
 from PIL import Image
 
-from framechain.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
-from framechain.core.errors import InputError, OutsideDirectoryError
-from framechain.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings
-from framechain.jobs.definition import GenerationMode
-from framechain.jobs.parsing import load_job, load_job_text
-from framechain.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
+from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
+from framecontrol.core.errors import InputError, OutsideDirectoryError
+from framecontrol.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings
+from framecontrol.jobs.definition import GenerationMode
+from framecontrol.jobs.parsing import load_job, load_job_text
+from framecontrol.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
 from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
 
 
@@ -105,7 +105,7 @@ class JobDefinitionTests(JobTestCase):
         plain = load_job(self.write_job(job_data(**base)), self.global_config, self.params)
         self.assertEqual(plain.backend_settings["color_policy"], {"version": 1, "anchor": "none"})
         self.assertFalse(plain.color.regions)
-        from framechain.jobs.text import job_summary
+        from framecontrol.jobs.text import job_summary
 
         self.assertEqual(dict(job_summary(plain))["color"], "none, measure only (H3 policy v1)")
         blend = load_job(self.write_job(job_data(**(base | {"color": {"anchor": "blend", "strength": 0.5, "first_weight": 0, "reanchor": "never", "regions": True}}))), self.global_config, self.params)
@@ -204,7 +204,7 @@ class JobDefinitionTests(JobTestCase):
         for value in ("../outside.png", str(self.root / "missing.png"), "~/missing.png", "~definitely-not-a-real-user/missing.png", "/etc/hosts"):
             path = self.write_job(job_data(input=value))
             source = path.read_text(encoding="utf-8")
-            with self.subTest(value=value), mock.patch.object(Path, "stat", trusted_directory_stat), mock.patch("framechain.jobs.parsing.read_image_info", side_effect=AssertionError("image was read")):
+            with self.subTest(value=value), mock.patch.object(Path, "stat", trusted_directory_stat), mock.patch("framecontrol.jobs.parsing.read_image_info", side_effect=AssertionError("image was read")):
                 with self.assertRaises(OutsideDirectoryError) as caught:
                     load_job_text(source, path, self.global_config, self.params)
                 self.assertEqual(caught.exception.field, "input")
@@ -324,7 +324,7 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("'color' only in video jobs", mode="i2i", color={"anchor": "first"})
 
     def test_a_correcting_job_names_its_raw_frame_and_copy_and_its_summary_shows_the_policy(self) -> None:
-        from framechain.jobs.text import job_summary
+        from framecontrol.jobs.text import job_summary
 
         job = self.load(color={"anchor": "blend"})
         self.assertIn(("color", "blend, first 0.25, reanchor on prompt pair, regions"), job_summary(job))
@@ -332,7 +332,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(dict(job_summary(self.load(color={"anchor": "previous", "strength": 0.5, "regions": False})))["color"], "previous, strength 0.5, whole frame")
 
     def test_the_worst_case_adds_the_correction_limit_to_each_run(self) -> None:
-        from framechain.jobs.definition import correction_limit
+        from framecontrol.jobs.definition import correction_limit
 
         self.assertEqual(self.load().correction_seconds(), 0.0)
         job = self.load(color={"anchor": "first"}, config_override={"frame_count": 17})
@@ -340,7 +340,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual(correction_limit(17), 27.0)
 
     def test_the_worst_case_adds_the_drift_check_limit_to_each_video_run(self) -> None:
-        from framechain.jobs.definition import DRIFT_SECONDS
+        from framecontrol.jobs.definition import DRIFT_SECONDS
 
         self.assertEqual(self.load().drift_seconds(), DRIFT_SECONDS)
         self.assertEqual(self.load(mode="i2i").drift_seconds(), 0.0)
@@ -440,7 +440,7 @@ class JobDefinitionTests(JobTestCase):
         load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.params, decode_input=False)
 
     def test_loading_a_job_does_not_import_the_resizer(self) -> None:
-        code = "import sys, framechain.jobs.parsing; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
+        code = "import sys, framecontrol.jobs.parsing; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"
         self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[2], check=False).returncode, 0)
 
     def test_image_over_the_pixel_limit_is_a_validation_error(self) -> None:

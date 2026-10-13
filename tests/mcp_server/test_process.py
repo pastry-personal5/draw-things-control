@@ -17,7 +17,7 @@ from typing import Any
 from mcp import Client, StdioServerParameters
 from typer.testing import CliRunner
 
-from framechain.cli.app import app
+from framecontrol.cli.app import app
 from tests.server.test_queue_routes import TOKEN
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +37,7 @@ class ProcessCase(unittest.IsolatedAsyncioTestCase):
         self.token_file = Path(directory.name) / "server-token"
         self.token_file.write_text(TOKEN, encoding="ascii")
         self.server_url = f"http://127.0.0.1:{unused_port()}"
-        self.arguments = ["-m", "framechain", "mcp", "--server-url", self.server_url, "--token-file", str(self.token_file)]
+        self.arguments = ["-m", "framecontrol", "mcp", "--server-url", self.server_url, "--token-file", str(self.token_file)]
 
 
 class StdioTests(ProcessCase):
@@ -93,7 +93,7 @@ class CommandTests(unittest.TestCase):
 class RegistrationTests(unittest.TestCase):
     def test_the_checked_in_mcp_json_registers_uv_run_dtc_mcp_and_nothing_else(self) -> None:
         config = json.loads((PROJECT_ROOT / ".mcp.json").read_text(encoding="utf-8"))
-        self.assertEqual(config, {"mcpServers": {"framechain": {"type": "stdio", "command": "uv", "args": ["run", "fc", "mcp"]}}})
+        self.assertEqual(config, {"mcpServers": {"framecontrol": {"type": "stdio", "command": "uv", "args": ["run", "fc", "mcp"]}}})
 
 
 if __name__ == "__main__":

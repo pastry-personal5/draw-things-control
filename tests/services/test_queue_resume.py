@@ -6,12 +6,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from framechain.jobs.definition import JobDefinition
-from framechain.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
-from framechain.services.queue_submit import submit_job
-from framechain.state.executions import ExecutionSettings, NewExecution, NewRun
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.services.queue_resume import ResumeRefusedError, preview_resume, resume_entry
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 NOW = datetime(2026, 9, 27, 15, 30, 12)
@@ -76,7 +76,7 @@ class QueueResumeTests(JobTestCase):
         self.assertEqual((resumed.resume_first_run, resumed.resume_first_image, resumed.resume_anchor), (3, first_image, anchor))
         stored = self.entry(resumed.id)
         self.assertEqual((stored.resume_first_image, stored.resume_anchor), (first_image, anchor))
-        from framechain.services.queue_worker import _resume_point_of
+        from framecontrol.services.queue_worker import _resume_point_of
 
         point = _resume_point_of(stored)
         assert point is not None

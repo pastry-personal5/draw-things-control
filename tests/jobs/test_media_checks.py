@@ -15,22 +15,22 @@ import numpy as np
 from loguru import logger
 from PIL import Image, ImageCms, PngImagePlugin
 
-from framechain.jobs.definition import JobDefinition
-from framechain.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted, event_from_dict, event_to_dict
-from framechain.jobs.executor import JobExecutor, ResumePoint
-from framechain.jobs.inputs.resize import resize_image
-from framechain.jobs.inputs.size import resize_plan
-from framechain.jobs.log_writer import JobLogWriter
-from framechain.jobs.media import checks
-from framechain.jobs.media.checks import MediaCheck, MediaChecker, VideoProbe, check_handoff, check_input, check_last_frame, check_resized_input, image_facts
-from framechain.jobs.media.fingerprint import MatrixFingerprint, can_measure
-from framechain.jobs.media.stream_color import StreamColor, resolve_video_color
-from framechain.jobs.media.toolkit import MediaTools
-from framechain.jobs.media.tools import find_ffprobe
-from framechain.jobs.media.video_color import read_colr, tag_video_colors
-from framechain.jobs.parsing import load_job
-from framechain.jobs.text import media_check_text
-from framechain.tui.text.events import event_text
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.events import JobStarted, MediaChecked, RunFinished, RunStarted, event_from_dict, event_to_dict
+from framecontrol.jobs.executor import JobExecutor, ResumePoint
+from framecontrol.jobs.inputs.resize import resize_image
+from framecontrol.jobs.inputs.size import resize_plan
+from framecontrol.jobs.log_writer import JobLogWriter
+from framecontrol.jobs.media import checks
+from framecontrol.jobs.media.checks import MediaCheck, MediaChecker, VideoProbe, check_handoff, check_input, check_last_frame, check_resized_input, image_facts
+from framecontrol.jobs.media.fingerprint import MatrixFingerprint, can_measure
+from framecontrol.jobs.media.stream_color import StreamColor, resolve_video_color
+from framecontrol.jobs.media.toolkit import MediaTools
+from framecontrol.jobs.media.tools import find_ffprobe
+from framecontrol.jobs.media.video_color import read_colr, tag_video_colors
+from framecontrol.jobs.parsing import load_job
+from framecontrol.jobs.text import media_check_text
+from framecontrol.tui.text.events import event_text
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, saved_log
 

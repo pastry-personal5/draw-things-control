@@ -9,12 +9,12 @@ from typing import Any
 import httpx
 from rich.text import Text
 
-from framechain.jobs.events import JobFinished, JobStatus
-from framechain.services.queue_hold import HOLD_KEY
-from framechain.state.store import Store, StoreMode
-from framechain.tui.commands import help_text
-from framechain.tui.panes.queue import QueueList
-from framechain.tui.text.queue import queue_entry_detail_text
+from framecontrol.jobs.events import JobFinished, JobStatus
+from framecontrol.services.queue_hold import HOLD_KEY
+from framecontrol.state.store import Store, StoreMode
+from framecontrol.tui.commands import help_text
+from framecontrol.tui.panes.queue import QueueList
+from framecontrol.tui.text.queue import queue_entry_detail_text
 from tests.tui.fake_server import AT, job_started, run_finished, run_started
 from tests.tui.feed_case import FeedTestCase
 

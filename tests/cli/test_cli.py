@@ -6,7 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from framechain.cli.app import app, load_config
+from framecontrol.cli.app import app, load_config
 
 
 class DrawThingsCliTests(unittest.TestCase):

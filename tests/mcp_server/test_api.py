@@ -12,10 +12,10 @@ import mcp_types as types
 from loguru import logger
 from mcp.shared.exceptions import MCPError
 
-from framechain.core.client_config import read_client_token
-from framechain.core.errors import StateUnavailableError
-from framechain.mcp_server.api import ToolError, path_segment, read_token
-from framechain.mcp_server.app import RESOURCE_NOT_FOUND
+from framecontrol.core.client_config import read_client_token
+from framecontrol.core.errors import StateUnavailableError
+from framecontrol.mcp_server.api import ToolError, path_segment, read_token
+from framecontrol.mcp_server.app import RESOURCE_NOT_FOUND
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.test_queue_routes import TOKEN
 

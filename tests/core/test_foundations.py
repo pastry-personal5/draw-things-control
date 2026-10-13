@@ -8,14 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from framechain.core import exit_codes
-from framechain.core.clock import local_timestamp
-from framechain.core.errors import BusyError, FramechainError, InputError, NotFoundError, StateUnavailableError, ToolMissingError
-from framechain.core.numbers import is_int, is_number, number_text
-from framechain.core.paths import DEFAULT_PATHS, ProjectPaths
-from framechain.core.process.groups import process_group_alive
-from framechain.core.run_lock import RunLockBusyError, RunLockError
-from framechain.state.store import StateError
+from framecontrol.core import exit_codes
+from framecontrol.core.clock import local_timestamp
+from framecontrol.core.errors import BusyError, FramecontrolError, InputError, NotFoundError, StateUnavailableError, ToolMissingError
+from framecontrol.core.numbers import is_int, is_number, number_text
+from framecontrol.core.paths import DEFAULT_PATHS, ProjectPaths
+from framecontrol.core.process.groups import process_group_alive
+from framecontrol.core.run_lock import RunLockBusyError, RunLockError
+from framecontrol.state.store import StateError
 
 
 class PathsTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class PathsTests(unittest.TestCase):
         paths = ProjectPaths(Path("/project"))
         self.assertEqual(
             (paths.global_config, paths.jobs, paths.params, paths.state, paths.database),
-            (Path("/project/config/global-config.yaml"), Path("/project/data/jobs"), Path("/project/data/params"), Path("/project/state"), Path("/project/state/framechain.db")),
+            (Path("/project/config/global-config.yaml"), Path("/project/data/jobs"), Path("/project/data/params"), Path("/project/state"), Path("/project/state/framecontrol.db")),
         )
 
     def test_the_default_paths_are_this_project(self) -> None:
@@ -32,7 +32,7 @@ class PathsTests(unittest.TestCase):
 
 class ErrorTests(unittest.TestCase):
     def test_each_error_has_its_code(self) -> None:
-        errors = {InputError: "invalid_input", ToolMissingError: "tool_missing", NotFoundError: "not_found", BusyError: "busy", StateUnavailableError: "state_unavailable", FramechainError: "error"}
+        errors = {InputError: "invalid_input", ToolMissingError: "tool_missing", NotFoundError: "not_found", BusyError: "busy", StateUnavailableError: "state_unavailable", FramecontrolError: "error"}
         self.assertEqual({error: error.code for error in errors}, errors)
 
     def test_input_errors_are_still_value_errors(self) -> None:
@@ -73,15 +73,15 @@ class ClockAndNumberTests(unittest.TestCase):
 
 class ProcessGroupTests(unittest.TestCase):
     def test_a_group_we_may_not_signal_is_alive_only_when_asked(self) -> None:
-        with mock.patch("framechain.core.process.groups.os.killpg", side_effect=PermissionError):
+        with mock.patch("framecontrol.core.process.groups.os.killpg", side_effect=PermissionError):
             self.assertTrue(process_group_alive(1234, denied_means_alive=True))
             self.assertFalse(process_group_alive(1234, denied_means_alive=False))
 
     def test_a_missing_group_is_not_alive_either_way(self) -> None:
-        with mock.patch("framechain.core.process.groups.os.killpg", side_effect=ProcessLookupError):
+        with mock.patch("framecontrol.core.process.groups.os.killpg", side_effect=ProcessLookupError):
             self.assertFalse(process_group_alive(1234, denied_means_alive=True))
 
     def test_a_signalable_group_is_alive(self) -> None:
-        with mock.patch("framechain.core.process.groups.os.killpg") as killpg:
+        with mock.patch("framecontrol.core.process.groups.os.killpg") as killpg:
             self.assertTrue(process_group_alive(1234, denied_means_alive=False))
         killpg.assert_called_once_with(1234, 0)

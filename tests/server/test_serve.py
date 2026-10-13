@@ -15,21 +15,21 @@ import unittest
 
 from loguru import logger
 
-from framechain.core.errors import InputError
-from framechain.server.serve import ServeOptions, _bind_http_socket
-from framechain.server.serve import run as run_server
-from framechain.services.queue_submit import submit_job
-from framechain.services.toolkit import Toolkit
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.errors import InputError
+from framecontrol.server.serve import ServeOptions, _bind_http_socket
+from framecontrol.server.serve import run as run_server
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 _ENTRY_POINT = """
 from pathlib import Path
-from framechain.core.paths import ProjectPaths
-from framechain.core.global_config import load_global_config
-from framechain.services.toolkit import Toolkit
-from framechain.server.serve import run, ServeOptions
+from framecontrol.core.paths import ProjectPaths
+from framecontrol.core.global_config import load_global_config
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.server.serve import run, ServeOptions
 
 paths = ProjectPaths(Path({root!r}))
 settings = load_global_config(paths.global_config)

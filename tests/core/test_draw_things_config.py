@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framechain.core.draw_things_config import build_config_json, find_config_file, load_base_config, load_config
+from framecontrol.core.draw_things_config import build_config_json, find_config_file, load_base_config, load_config
 
 
 class GenerationConfigTests(unittest.TestCase):

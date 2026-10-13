@@ -11,7 +11,7 @@ import ast
 import unittest
 from pathlib import Path
 
-PACKAGE = "framechain"
+PACKAGE = "framecontrol"
 SOURCE = Path(__file__).resolve().parents[1] / "src" / PACKAGE
 
 # What each subpackage may import from this package, besides itself.
@@ -129,7 +129,7 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(len(self.bad("cli.app", f"from {PACKAGE}.tui.screens import MainScreen")), 1)
 
     def test_dtc_tui_may_start_the_tui_app(self) -> None:
-        self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.tui.app import FramechainApp"), [])
+        self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.tui.app import FramecontrolApp"), [])
 
     def test_jobs_may_not_import_state_or_services(self) -> None:
         self.assertEqual(len(self.bad("jobs.executor", f"from {PACKAGE}.state.store import Store")), 1)
@@ -137,7 +137,7 @@ class RuleTests(unittest.TestCase):
 
     def test_core_may_import_nothing_else_of_the_package(self) -> None:
         self.assertEqual(len(self.bad("core.paths", f"from {PACKAGE}.jobs.events import JobEvent")), 1)
-        self.assertEqual(self.bad("core.paths", f"from {PACKAGE}.core.errors import FramechainError"), [])
+        self.assertEqual(self.bad("core.paths", f"from {PACKAGE}.core.errors import FramecontrolError"), [])
 
     def test_state_may_not_import_services(self) -> None:
         self.assertEqual(len(self.bad("state.store", f"from {PACKAGE}.services.history import HistoryReader")), 1)
@@ -150,7 +150,7 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(self.bad("cli.app", f"from {PACKAGE}.mcp_server.app import run"), [])
         self.assertEqual(len(self.bad("cli.app", f"from {PACKAGE}.mcp_server.tools import TOOLS")), 1)
         self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.mcp_server.app import run")), 1)
-        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.tui.app import FramechainApp")), 1)
+        self.assertEqual(len(self.bad("cli.queue_app", f"from {PACKAGE}.tui.app import FramecontrolApp")), 1)
 
     def test_the_lower_layers_import_no_framework(self) -> None:
         for framework in ("typer", "textual.app", "fastapi", "rich.text"):

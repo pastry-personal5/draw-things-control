@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 
-from framechain.server.event_backlog import EventBacklog
+from framecontrol.server.event_backlog import EventBacklog
 
 
 class EventBacklogTests(unittest.TestCase):

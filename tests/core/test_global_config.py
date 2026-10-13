@@ -5,8 +5,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from framechain.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, parse_cooldown
-from framechain.core.global_config import DEFAULT_API_LIMITS, ApiLimits, load_global_config
+from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, parse_cooldown
+from framecontrol.core.global_config import DEFAULT_API_LIMITS, ApiLimits, load_global_config
 
 
 class GlobalConfigTests(unittest.TestCase):

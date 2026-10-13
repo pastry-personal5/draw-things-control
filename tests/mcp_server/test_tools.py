@@ -10,8 +10,8 @@ from urllib.parse import quote
 import httpx
 from mcp.shared.exceptions import MCPError
 
-from framechain.core.global_config import ApiLimits
-from framechain.mcp_server.tools import TOOLS
+from framecontrol.core.global_config import ApiLimits
+from framecontrol.mcp_server.tools import TOOLS
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.test_queue_routes import TOKEN
 

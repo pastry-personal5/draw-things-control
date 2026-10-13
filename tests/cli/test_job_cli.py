@@ -7,9 +7,9 @@ from unittest import mock
 from loguru import logger
 from typer.testing import CliRunner
 
-from framechain.cli.app import CliServices, app
-from framechain.core.arguments import DrawThingsGenerateArguments
-from framechain.services.toolkit import create_job_runner, create_runner
+from framecontrol.cli.app import CliServices, app
+from framecontrol.core.arguments import DrawThingsGenerateArguments
+from framecontrol.services.toolkit import create_job_runner, create_runner
 from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 
 

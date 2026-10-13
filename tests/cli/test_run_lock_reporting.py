@@ -6,19 +6,19 @@ import subprocess
 import sys
 import time
 
-from framechain.core.run_lock import RunLock, RunLockBusyError
+from framecontrol.core.run_lock import RunLock, RunLockBusyError
 from tests.fixtures import JobTestCase, job_data
 
 # Holds the lock and runs a one-run job whose executable sleeps; the lock reaches the runner only through run().
 HOLDER = """
 import sys
 from pathlib import Path
-from framechain.core.paths import ProjectPaths
-from framechain.services.toolkit import Toolkit
-from framechain.core.global_config import GlobalConfig
-from framechain.core.run_lock import RunLock
-from framechain.jobs.executor import JobRunOptions
-from framechain.jobs.parsing import load_job
+from framecontrol.core.paths import ProjectPaths
+from framecontrol.services.toolkit import Toolkit
+from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.run_lock import RunLock
+from framecontrol.jobs.executor import JobRunOptions
+from framecontrol.jobs.parsing import load_job
 root, executable = Path(sys.argv[1]), sys.argv[2]
 paths = ProjectPaths(root)
 job = load_job(root / "job.yaml", GlobalConfig(input_directory=root / "input", output_directory=root / "output"), paths.params)

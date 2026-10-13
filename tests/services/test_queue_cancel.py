@@ -8,14 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from framechain.core.errors import NotFoundError
-from framechain.core.run_lock import RunLock
-from framechain.services.job_runs import JobRunSession
-from framechain.services.queue_cancel import CancelRefusedError, cancel_entry
-from framechain.services.queue_submit import submit_job
-from framechain.services.queue_worker import QueueWorker
-from framechain.state.queue import QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.errors import NotFoundError
+from framecontrol.core.run_lock import RunLock
+from framecontrol.services.job_runs import JobRunSession
+from framecontrol.services.queue_cancel import CancelRefusedError, cancel_entry
+from framecontrol.services.queue_submit import submit_job
+from framecontrol.services.queue_worker import QueueWorker
+from framecontrol.state.queue import QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import BlockingRunner, FakeResult, FakeRunner
 

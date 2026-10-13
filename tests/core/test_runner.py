@@ -14,9 +14,9 @@ from unittest import mock
 
 from loguru import logger
 
-from framechain.core.process.output import OutputProcessor, OutputStream, ProcessMessage
-from framechain.core.process.runner import DrawThingsProcessRunner
-from framechain.core.process.signals import interruptible_wait
+from framecontrol.core.process.output import OutputProcessor, OutputStream, ProcessMessage
+from framecontrol.core.process.runner import DrawThingsProcessRunner
+from framecontrol.core.process.signals import interruptible_wait
 
 
 @dataclass(frozen=True)
@@ -125,7 +125,7 @@ class ProcessRunnerTests(unittest.TestCase):
         runner.request_shutdown(signal.SIGTERM)
         runner._kill_sent_at = 0.0
         process = mock.Mock()
-        with mock.patch("framechain.core.process.runner.process_group_alive", return_value=True), mock.patch("framechain.core.process.runner.send_to_process_group") as send:
+        with mock.patch("framecontrol.core.process.runner.process_group_alive", return_value=True), mock.patch("framecontrol.core.process.runner.send_to_process_group") as send:
             runner._cleanup_process_group(12345, process)
         send.assert_not_called()
         process.wait.assert_not_called()

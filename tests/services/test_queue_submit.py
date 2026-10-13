@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-from framechain.core.cooldown import CooldownPolicy
-from framechain.core.errors import InputError
-from framechain.services.queue_submit import parse_snapshot, submit_job
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.cooldown import CooldownPolicy
+from framecontrol.core.errors import InputError
+from framecontrol.services.queue_submit import parse_snapshot, submit_job
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 
@@ -28,7 +28,7 @@ class SubmitJobTests(JobTestCase):
         self.assertEqual((entry.backend, json.loads(entry.snapshot or "")["version"]), ("draw-things-cli", 3))
 
     def test_h3av_reference_is_frozen_and_verified_from_the_queue_snapshot(self) -> None:
-        from framechain.jobs.backends.h3 import H3JobData
+        from framecontrol.jobs.backends.h3 import H3JobData
 
         self.write_image("singer.png", (160, 160))
         path = self.write_job(job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))

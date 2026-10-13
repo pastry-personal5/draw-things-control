@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 from typer.main import get_command
 
-from framechain.cli.app import app
+from framecontrol.cli.app import app
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = (ROOT / "README.md", ROOT / "docs/user-guide.md", ROOT / "docs/user-guide-for-http-based-mcp.md")

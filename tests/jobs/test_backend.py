@@ -9,17 +9,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from framechain.core.errors import InputError
-from framechain.jobs.backend import BackendRegistry, OutputPaths, RunContext, RunPreparation
-from framechain.jobs.backends import DrawThingsBackend
-from framechain.jobs.definition import GenerationMode, JobDefinition
-from framechain.jobs.events import RunStatus
-from framechain.jobs.executor import JobExecutor, JobRunOptions, ResumePoint
-from framechain.jobs.media.toolkit import MediaTools
-from framechain.jobs.parsing import JobParser, load_job
-from framechain.services.api_rules import check_api_rules
-from framechain.services.queue_submit import parse_snapshot, submit_job
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.errors import InputError
+from framecontrol.jobs.backend import BackendRegistry, OutputPaths, RunContext, RunPreparation
+from framecontrol.jobs.backends import DrawThingsBackend
+from framecontrol.jobs.definition import GenerationMode, JobDefinition
+from framecontrol.jobs.events import RunStatus
+from framecontrol.jobs.executor import JobExecutor, JobRunOptions, ResumePoint
+from framecontrol.jobs.media.toolkit import MediaTools
+from framecontrol.jobs.parsing import JobParser, load_job
+from framecontrol.services.api_rules import check_api_rules
+from framecontrol.services.queue_submit import parse_snapshot, submit_job
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data
 
 
@@ -143,7 +143,7 @@ class BackendContractTests(JobTestCase):
         self.assertNotIn("sentinel-secret-label", preview.command_previews[0])
 
     def test_fake_backend_records_only_safe_settings_and_commands(self) -> None:
-        from framechain.jobs.events import event_to_dict
+        from framecontrol.jobs.events import event_to_dict
 
         events: list[Any] = []
         outcome = self._executor([FakeResult(), FakeResult(), FakeResult()], []).run(self._job(), JobRunOptions(executable="draw-things-cli", shutdown_grace=1, write_records=True, observer=events.append))

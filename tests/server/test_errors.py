@@ -1,14 +1,14 @@
-"""Tests for the FramechainError-to-HTTP-status table and the API's JSON error shape."""
+"""Tests for the FramecontrolError-to-HTTP-status table and the API's JSON error shape."""
 
 import unittest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from framechain.core.errors import BusyError, InputError, LimitExceededError, NotFoundError, StateUnavailableError, TimeoutRequiredError, ToolMissingError
-from framechain.server.errors import error_body, install_error_handler, status_for_error
-from framechain.services.queue_cancel import CancelRefusedError
-from framechain.services.queue_resume import ResumeRefusedError
+from framecontrol.core.errors import BusyError, InputError, LimitExceededError, NotFoundError, StateUnavailableError, TimeoutRequiredError, ToolMissingError
+from framecontrol.server.errors import error_body, install_error_handler, status_for_error
+from framecontrol.services.queue_cancel import CancelRefusedError
+from framecontrol.services.queue_resume import ResumeRefusedError
 
 
 class StatusForErrorTests(unittest.TestCase):

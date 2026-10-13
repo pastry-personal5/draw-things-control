@@ -1,6 +1,6 @@
 # Architecture
 
-`framechain` exists for long-horizon video generation by
+`framecontrol` exists for long-horizon video generation by
 autoregressive chaining: each run starts from the previous run's output.
 Chained jobs select a backend: Draw Things through `draw-things-cli`, or H3
 image-to-audio-video through the project-owned h3.c installation. One executor runs the chain; front ends (CLI, TUI,
@@ -28,13 +28,13 @@ CLI (Typer) ─┐   TUI (Textual) ─┐   HTTP API ─┐            MCP serve
 
 ## Source layout
 
-Everything is one package, `src/framechain/`; nothing lives in the
+Everything is one package, `src/framecontrol/`; nothing lives in the
 project root but configuration, data, docs, and tests. Dependencies point one
 way, from front ends down to `core`, and `tests/test_architecture.py` enforces
 it from the imports.
 
 ```
-src/framechain/
+src/framecontrol/
 ├── core/        # paths, errors, exit codes, YAML, configuration, arguments, the runner and its process package
 ├── jobs/        # job definition and parsing, the executor and its parts, events, records, inputs, media
 ├── state/       # SQLite database, repositories, typed rows, recorder, history import
@@ -52,7 +52,7 @@ package. Front ends never import each other, except that three commands in
 `cli/app.py` start one: `fc tui` the TUI app, `fc serve` the server, and
 `fc mcp` the MCP server. Nothing below the front ends imports Typer, Textual, a
 web, MCP, or gRPC framework.
-Launch with `fc` or `python -m framechain`.
+Launch with `fc` or `python -m framecontrol`.
 
 Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 [3](archive/phase-3/README.md). Each phase reuses the layers below it unchanged.
@@ -62,7 +62,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | Module | Responsibility |
 |--------|----------------|
 | `core/paths.py` | `ProjectPaths`: where the project keeps its files, including the project-owned H3 executable and model snapshot, worked out once and passed down; no module holds a path of its own |
-| `core/errors.py`, `core/exit_codes.py` | `FramechainError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`, and, from phase 3, `conflict` and `not_permitted`, among others); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
+| `core/errors.py`, `core/exit_codes.py` | `FramecontrolError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`, and, from phase 3, `conflict` and `not_permitted`, among others); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
 | `core/yaml_files.py` | The one strict YAML reader: duplicate and non-string keys, octal and base-60 numbers are refused |
 | `core/draw_things_config.py` | Draw Things configurations (YAML only), lookup in `data/params/`, and job overrides applied to them |
 | `core/arguments.py` | Validated options and argument-vector building (no shell); one flag table (`GENERATE_FLAGS`) drives the builder, the parser, and redaction; `OVERRIDE_TARGETS` says what each job override becomes; `command_settings` reads a saved command back |
@@ -79,7 +79,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `jobs/events.py` | Typed events, `RunStatus` and `JobStatus`, and `event_to_dict` for a JSON stream |
 | `jobs/files.py`, `jobs/text.py`, `jobs/parsing.py` | Bounded job-file reads, parser validation and path confinement before file access, and the text `validate-job` and the TUI show |
 | `jobs/inputs/`, `jobs/media/`, `jobs/output_naming.py` | Input image check, and run 1's copy of every input (`inputs/resize.py`: upright, 8-bit sRGB, the job's size, made in floating point and rounded once; 16-bit RGB read through `ffmpeg`; a matrix-and-curves ICC profile applied with gamut mapping at constant Oklab lightness and hue, `inputs/gamut.py`, any other through LittleCMS's perceptual intent; Lab values through LittleCMS's Lab transform, profile or not; YCbCr and HSV converted to RGB first); Oklab and gamut edges (`media/oklab.py`); a video's frames as floating-point sRGB raised by the half level Draw Things truncated, and the PNGs the tool wrote read as `draw-things-cli` reads them (`media/clip_frames.py`); color statistics and the `color_drift` check of every video run against its input, its frame 0, and the chain's first image, region by region where a segmenter is given (`media/color_stats.py`, `media/drift.py`); a frame's regions, people, their skin, and the background, from a `Segmenter` (`media/regions.py`: the skin set by each face's own, soft masks kept 8-bit at the segmenter's resolution, feathered for blending, numpy and Pillow only), and Apple Vision's `Segmenter` (`media/vision_segmenter.py`, the only module that imports pyobjc, when `services/toolkit.py` first makes it, once per process, for both the drift check and the correction); the color correction's fit, anchor pull and ramp, caps, smoothing, chroma refinement, skin residual, and applying it to a frame, region by region through soft masks, knowing no files (`media/correction.py`), and the corrected copy's encoder (`media/clip_frames.py`, passing over a listed VideoToolbox that fails a one-frame test encode, kept per process); `ffmpeg` and `ffprobe`; the color a video's stream states, read once before tagging (`stream_color.py`), which both the last frame's decode and the `colr` tag (`video_color.py`) follow; the last frame as the handoff the next run reads (16-bit RGB without alpha, each sample `v * 256 + 128`, with half a level added back and ordered dither, `frames.py`, which also holds the rounding's numpy twin); measuring; the media checks of a video job's input (a resume's as a handoff), resized copy, video, and last frame (`checks.py`, with the matrix measurement in `fingerprint.py`, finding `ffmpeg` and `ffprobe` at each check), reported through `RunFinisher` and the executor as `MediaChecked` events, which `state/recorder.py` keeps in the `media_checks` table (a check it cannot store is skipped; any other failed write stops recording the execution); output names, including the first image named from the manifest's stem |
-| `state/database.py`, `state/database_migration.py`, `state/schema.py` | The `state/framechain.db` SQLite file, its connections and schema migrations, and the one-time verified backup from `state/dtc.db` before opening state |
+| `state/database.py`, `state/database_migration.py`, `state/schema.py` | The `state/framecontrol.db` SQLite file, its connections and schema migrations, and the one-time verified backup from `state/framechain.db` or `state/dtc.db` before opening state |
 | `state/execution_rows.py`, `state/executions.py`, `state/job_ids.py`, `state/settings.py` | `ExecutionRow`, `RunRow`, `NewExecution`, `NewRun`, and `ExecutionSettings`; the `ExecutionRepository` built on them. Runs retain measured video dimensions/rate/duration and native H3 audio facts as additive fields; `JobIdRepository`, the `job_definitions` table behind J0001 |
 | `state/store.py`, `state/recorder.py`, `state/history_import.py`, `state/ids.py` | `Store` (opened as `run`, `write`, or `browse`), the event recorder, the phase 1 import, and `E0012` and `J0001` |
 | `state/queue.py` (phase 3) | `QueueRepository`, `QueueRow`, and `QueueState`: the `queue` table, ordered first in, first out by its public ID (`Q0007`); retention removes queue-owned H3 reference snapshot directories after their final queue reference is gone, with a one-hour grace period for unpublished submissions |

@@ -23,8 +23,8 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from typer.testing import CliRunner
 
-from framechain.cli.app import app
-from framechain.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBodyLimit, http_app
+from framecontrol.cli.app import app
+from framecontrol.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBodyLimit, http_app
 from tests.mcp_server.test_process import PROJECT_ROOT, unused_port
 from tests.server.test_queue_routes import TOKEN
 
@@ -134,7 +134,7 @@ class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
         self.port = unused_port()
         self.url = f"http://127.0.0.1:{self.port}/mcp"
         self.server_url = f"http://127.0.0.1:{unused_port()}"
-        self.process = subprocess.Popen([sys.executable, "-m", "framechain", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
+        self.process = subprocess.Popen([sys.executable, "-m", "framecontrol", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         self.addCleanup(self.stop)
         self.wait_until_listening()
 

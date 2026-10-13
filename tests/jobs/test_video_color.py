@@ -10,10 +10,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from framechain.jobs.definition import JobDefinition
-from framechain.jobs.media.stream_color import StreamColor
-from framechain.jobs.media.video_color import read_colr, tag_video_color_codes, tag_video_colors
-from framechain.jobs.parsing import load_job
+from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.media.stream_color import StreamColor
+from framecontrol.jobs.media.video_color import read_colr, tag_video_color_codes, tag_video_colors
+from framecontrol.jobs.parsing import load_job
 from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
 
@@ -183,7 +183,7 @@ class JobTaggingTests(JobTestCase):
 
     def test_a_video_that_cannot_be_tagged_does_not_fail_the_run(self) -> None:
         self.tagger.side_effect = ValueError("fragmented MP4")
-        with mock.patch("framechain.jobs.run_finisher.logger") as log:
+        with mock.patch("framecontrol.jobs.run_finisher.logger") as log:
             outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))
         self.assertTrue(any("Could not write color tags" in str(call.args[0]) for call in log.warning.call_args_list))

@@ -1,4 +1,4 @@
-# Framechain
+# Framecontrol
 
 Long-horizon video generation by autoregressive image-to-video chaining, powered
 by the locally installed [Draw Things](https://github.com/drawthingsai/draw-things-community)

@@ -34,7 +34,7 @@ Improve the product experience, make chained generation support multiple backend
 5. [Milestone 05: H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) — in progress
 6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — done
 7. [Milestone 07: Check performance](milestone-07-check-performance.md) — done
-8. [Milestone 08: Rename to Framecontrol](milestone-08-framecontrol-rename.md) — planned
+8. [Milestone 08: Rename to Framecontrol](milestone-08-framecontrol-rename.md) — done
 9. [Milestone 09: Unified job definitions](milestone-09-job-definition.md) — planned
 10. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
 

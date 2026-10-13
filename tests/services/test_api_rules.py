@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import shutil
 
-from framechain.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
-from framechain.core.global_config import ApiLimits
-from framechain.jobs.backends import DEFAULT_BACKENDS
-from framechain.jobs.parsing import load_job
-from framechain.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
+from framecontrol.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
+from framecontrol.core.global_config import ApiLimits
+from framecontrol.jobs.backends import DEFAULT_BACKENDS
+from framecontrol.jobs.parsing import load_job
+from framecontrol.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
 from tests.fixtures import JobTestCase, job_data
 
 ONE_PAIR = [{"name": "only", "positive": "text"}]

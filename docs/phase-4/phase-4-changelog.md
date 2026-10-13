@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-14
 
+- **Change** [M08]: Framecontrol now replaces Framechain throughout the active package, distribution, user-facing interfaces, MCP and gRPC identities, and current documentation. `fc` remains the sole command at version 3.0.0. The state store opens `state/framecontrol.db` and safely migrates either `state/framechain.db` or `state/dtc.db`; ambiguous files and held run locks require manual recovery.
+
 - **Owner decision** [M07]: Increase the default parallel test worker count from four to eight; CI continues to select another safe count through `TEST_WORKERS` when needed. The baseline machine's full check completed in 29.65 seconds with eight workers.
 - **Change** [M07]: `make check` now generates gRPC stubs before concurrent linting, type checking, and testing. The test suite runs through pytest-xdist with configurable workers and file-level distribution; the exact child-output test has its own clean pytest process after the parallel suite, avoiding a gRPC fork diagnostic contaminating its assertion. The initial four-worker measurement was 42.24 seconds for `make test` and 43.02 seconds for `make check`, against the 165-second serial-test baseline; `make test-profile` reports the configurable slowest tests.
 - **Owner decision** [M07]: Require `make check` to complete in 60 seconds or less with a warm cache on the baseline machine, default to four configurable workers, and permit a maintained parallel-test dependency such as `pytest-xdist` when it produces the best verified result.

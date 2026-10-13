@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from framechain.core.client_config import check_server_host, read_client_token
-from framechain.core.errors import InputError, StateUnavailableError
+from framecontrol.core.client_config import check_server_host, read_client_token
+from framecontrol.core.errors import InputError, StateUnavailableError
 
 
 class ReadClientTokenTests(unittest.TestCase):

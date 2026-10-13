@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from unittest import mock
 
-from framechain.core.errors import NotFoundError, StateUnavailableError
-from framechain.services import queue_hold
-from framechain.services.queue_hold import HOLD_KEY, HoldState
-from framechain.services.queue_reader import NO_QUEUE, QueueReader
-from framechain.services.store_provider import StoreProvider
-from framechain.state.execution_rows import ExecutionSettings
-from framechain.state.queue import NewQueueEntry, QueueState
-from framechain.state.store import Store, StoreMode
+from framecontrol.core.errors import NotFoundError, StateUnavailableError
+from framecontrol.services import queue_hold
+from framecontrol.services.queue_hold import HOLD_KEY, HoldState
+from framecontrol.services.queue_reader import NO_QUEUE, QueueReader
+from framecontrol.services.store_provider import StoreProvider
+from framecontrol.state.execution_rows import ExecutionSettings
+from framecontrol.state.queue import NewQueueEntry, QueueState
+from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase
 
 

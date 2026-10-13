@@ -6,11 +6,11 @@ from datetime import datetime, timedelta
 
 from rich.text import Text
 
-from framechain.core.cooldown import CooldownPolicy
-from framechain.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
-from framechain.tui.estimate import job_estimate, moment, run_estimate
-from framechain.tui.live_run import LiveRun, PastRun
-from framechain.tui.text.status import bar_line, end_text, whole_duration, work_status_lines
+from framecontrol.core.cooldown import CooldownPolicy
+from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus
+from framecontrol.tui.estimate import job_estimate, moment, run_estimate
+from framecontrol.tui.live_run import LiveRun, PastRun
+from framecontrol.tui.text.status import bar_line, end_text, whole_duration, work_status_lines
 from tests.fixtures import JobTestCase, job_data
 
 WALL = datetime(2026, 9, 26, 14, 0, 0)

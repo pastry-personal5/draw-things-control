@@ -16,14 +16,14 @@ from unittest import mock
 import httpx
 from typer.testing import CliRunner
 
-from framechain.cli.app import CliServices, app
-from framechain.core.arguments import DrawThingsGenerateArguments
-from framechain.core.global_config import GlobalConfig
-from framechain.core.run_lock import RunLock
-from framechain.jobs.files import read_job
-from framechain.services.job_runs import JobRunSession
-from framechain.services.toolkit import create_job_runner
-from framechain.state.store import Store
+from framecontrol.cli.app import CliServices, app
+from framecontrol.core.arguments import DrawThingsGenerateArguments
+from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.run_lock import RunLock
+from framecontrol.jobs.files import read_job
+from framecontrol.services.job_runs import JobRunSession
+from framecontrol.services.toolkit import create_job_runner
+from framecontrol.state.store import Store
 from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
@@ -77,7 +77,7 @@ class StateCliTests(JobTestCase):
 
     def store(self) -> Store:
         self.state.mkdir(exist_ok=True)
-        store = Store.open(self.state / "framechain.db")
+        store = Store.open(self.state / "framecontrol.db")
         self.addCleanup(store.close)
         return store
 
@@ -86,7 +86,7 @@ class StateCliTests(JobTestCase):
             self.assertEqual(self.invoke("validate-job", str(self.job_path)).exit_code, 0)
             self.assertEqual(self.runner.invoke(app, ["validate-config", str(self.params / "base.yaml")], obj=self.services).exit_code, 0)
             # None of those touched the database.
-            self.assertFalse((self.state / "framechain.db").exists())
+            self.assertFalse((self.state / "framecontrol.db").exists())
             self.output_directory.mkdir()
             self.assertEqual(self.invoke("import-history").exit_code, 0)
 
@@ -105,7 +105,7 @@ class StateCliTests(JobTestCase):
         self.assertEqual((result.exit_code, result.stdout), (0, "Q0001 queued: cube.png\n"))
         self.assertEqual((requests[0].method, requests[0].url.path, json.loads(requests[0].content)), ("POST", "/v1/generations", {"model": "m.ckpt", "prompt": "x", "image": [], "avc": False, "output": "cube.png", "timeout": 60.0}))
         self.assertEqual(self.runs_started, 0)
-        self.assertFalse((self.state / "framechain.db").exists())
+        self.assertFalse((self.state / "framecontrol.db").exists())
 
     def test_generate_treats_a_server_without_the_endpoint_as_unavailable(self) -> None:
         token = self.root / "token"
@@ -130,7 +130,7 @@ class StateCliTests(JobTestCase):
         # The live-recorded manifest is already in the store.
         self.assertIn("Imported 0, skipped 1 already imported, 0 older than the retention period, 1 unreadable", self.invoke("import-history").stdout)
         # A fresh database imports it once.
-        (self.state / "framechain.db").unlink()
+        (self.state / "framecontrol.db").unlink()
         first = self.invoke("import-history")
         second = self.invoke("import-history")
         self.assertIn("Imported 1, skipped 0", first.stdout)
@@ -147,7 +147,7 @@ class StateCliTests(JobTestCase):
         self.seed_execution()
         [manifest] = self.output_directory.rglob("*-job.json")
         # A fresh database whose numbering has moved on: the import takes the next free number and names the old one.
-        (self.state / "framechain.db").unlink()
+        (self.state / "framecontrol.db").unlink()
         store = self.store()
         for _ in range(4):
             store.executions.reserve_number()
