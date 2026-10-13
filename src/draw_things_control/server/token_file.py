@@ -6,7 +6,9 @@ from __future__ import annotations
 import errno
 import hmac
 import os
+import re
 import secrets
+import stat
 from pathlib import Path
 
 from draw_things_control.core.errors import StateUnavailableError
@@ -52,20 +54,27 @@ def load_or_create_token(path: Path) -> str:
 
 def _load_existing(path: Path) -> str:
     try:
-        status = path.stat()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as error:
         raise TokenFileError(f"Cannot read the server token file {path}: {error.strerror}") from error
-    if status.st_mode & 0o077:
-        raise TokenFileError(f"The server token file {path} is readable by others (mode {oct(status.st_mode & 0o777)}); chmod it to 600 or delete it to generate a new one")
-    if status.st_uid != os.getuid():
-        raise TokenFileError(f"The server token file {path} is owned by another user; delete it to generate a new one")
     try:
-        token = path.read_text(encoding="ascii").strip()
+        with os.fdopen(descriptor, "rb") as file:
+            status = os.fstat(file.fileno())
+            if not stat.S_ISREG(status.st_mode):
+                raise TokenFileError(f"The server token file {path} is not a regular file")
+            if status.st_mode & 0o077:
+                raise TokenFileError(f"The server token file {path} is readable by others (mode {oct(status.st_mode & 0o777)}); chmod it to 600 or delete it to generate a new one")
+            if status.st_uid != os.getuid():
+                raise TokenFileError(f"The server token file {path} is owned by another user; delete it to generate a new one")
+            raw = file.read(TOKEN_BYTES * 2 + 2)
+        token = raw.decode("ascii").strip()
     except (OSError, UnicodeDecodeError) as error:
         raise TokenFileError(f"Cannot read the server token file {path}: {getattr(error, 'strerror', None) or error}") from error
     if not token:
         # An empty token would match an empty bearer value: refused, never served with.
         raise TokenFileError(f"The server token file {path} is empty; delete it to generate a new one")
+    if len(raw) > TOKEN_BYTES * 2 + 1 or re.fullmatch(r"[0-9a-fA-F]{64}", token) is None:
+        raise TokenFileError(f"The server token file {path} must contain a 64-digit hexadecimal token; delete it to generate a new one")
     return token
 
 

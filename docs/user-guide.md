@@ -1106,8 +1106,8 @@ worker starts, so nothing it may have already queued is disturbed.
 `Authorization: Bearer <token>`; a gRPC call needs the same token in its
 `authorization` metadata. The token is created on first start, 32 random
 bytes as hex, in `config/server-token` (mode 0600, git-ignored); an existing
-file that others can read, that another user owns, or that is empty, is
-refused rather than silently fixed. To change the token, delete the file and restart the server.
+file that others can read, that another user owns, that is not a regular file, or that does not contain a 64-digit hexadecimal token is
+refused rather than silently fixed. Symbolic links are refused. To change the token, delete the file and restart the server.
 The token is never logged, returned, or accepted from a query string. There
 is one level of access: whoever holds the token sees every job file and every
 execution in the history, whichever front end ran it.
@@ -1198,7 +1198,7 @@ tell a person from an agent.
 
 **Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. For a local file with invalid UTF-8, `text` contains replacement characters and the hash still covers its original bytes. A stale value returns `409 conflict` with `current_sha256`.
 
-Every write observes the API's job rules and `max_job_file_bytes`, is serialized with submission, and refuses a queued or running file. A replacement retains the prior text in `data/jobs/.backups/<name>/`; a deletion links the file into `data/jobs/.trash/`. Neither is pruned. To restore a trashed or backed-up file manually without overwriting a newly created job, run from the project root:
+Every write observes the API's job rules and `max_job_file_bytes`, is serialized with submission, and refuses a queued or running file. A new job file and every replacement backup are created with mode 0600; replacing an existing job preserves that file's mode. A replacement retains the prior text in `data/jobs/.backups/<name>/`; a deletion links the file into `data/jobs/.trash/` with its existing mode. Neither is pruned. To restore a trashed or backed-up file manually without overwriting a newly created job, run from the project root:
 
 ```bash
 cp -n data/jobs/.trash/NAME-YYYYMMDD-HHMMSS.yaml data/jobs/NAME.yaml

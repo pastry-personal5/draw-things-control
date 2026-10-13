@@ -244,14 +244,21 @@ class JobFileRoutesTests(JobTestCase):
     def test_create_replace_and_delete_preserve_recovery_copies(self) -> None:
         created = self.request(self.write_client, "PUT", "/v1/jobs/fresh", json={"yaml": self.text})
         self.assertEqual(created.status_code, 201)
+        target = self.paths.jobs / "fresh.yaml"
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
         original_hash = created.json()["sha256"]
         changed = self.text + "# comment\r\n"
         replaced = self.request(self.write_client, "PUT", "/v1/jobs/fresh?overwrite=1", json={"yaml": changed, "expected_sha256": original_hash})
         self.assertEqual(replaced.status_code, 200)
-        self.assertEqual(list((self.paths.jobs_backups / "fresh").glob("*.yaml"))[0].read_text(), self.text)
+        backup = list((self.paths.jobs_backups / "fresh").glob("*.yaml"))[0]
+        self.assertEqual(backup.read_text(), self.text)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
         stale = self.request(self.write_client, "DELETE", "/v1/jobs/fresh?expected_sha256=" + original_hash)
         self.assertEqual((stale.status_code, stale.json()["code"]), (409, "conflict"))
         removed = self.request(self.write_client, "DELETE", "/v1/jobs/fresh?expected_sha256=" + replaced.json()["sha256"])
         self.assertEqual(removed.status_code, 200)
-        self.assertFalse((self.paths.jobs / "fresh.yaml").exists())
-        self.assertTrue(list(self.paths.jobs_trash.glob("fresh-*.yaml")))
+        self.assertFalse(target.exists())
+        trash = list(self.paths.jobs_trash.glob("fresh-*.yaml"))
+        self.assertTrue(trash)
+        self.assertEqual(trash[0].stat().st_mode & 0o777, 0o600)

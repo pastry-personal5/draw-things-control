@@ -57,6 +57,30 @@ class TokenFileTests(unittest.TestCase):
         with self.assertRaisesRegex(TokenFileError, "empty"):
             load_or_create_token(self.path)
 
+    def test_a_symbolic_link_to_a_private_token_is_refused(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        original = self.path.parent / "original-token"
+        original.write_text("a" * (TOKEN_BYTES * 2), encoding="ascii")
+        original.chmod(0o600)
+        self.path.symlink_to(original)
+        with self.assertRaises(TokenFileError):
+            load_or_create_token(self.path)
+
+    def test_a_fifo_is_refused_without_waiting_for_a_writer(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        os.mkfifo(self.path, 0o600)
+        with self.assertRaisesRegex(TokenFileError, "not a regular file"):
+            load_or_create_token(self.path)
+
+    def test_a_weak_or_oversized_token_is_refused(self) -> None:
+        self.path.parent.mkdir(parents=True)
+        for token in ("guessable", "a" * (TOKEN_BYTES * 2 + 10)):
+            with self.subTest(token=token[:12]):
+                self.path.write_text(token, encoding="ascii")
+                self.path.chmod(0o600)
+                with self.assertRaisesRegex(TokenFileError, "64-digit hexadecimal"):
+                    load_or_create_token(self.path)
+
     def test_a_failed_write_leaves_no_token_file_behind(self) -> None:
         real_write = os.write
 

@@ -181,7 +181,7 @@ def _unique_path(directory: Path, suffix: str, *, prefix: str = "") -> Path:
 
 
 def _exclusive_write(path: Path, data: bytes) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as file:
             file.write(data)

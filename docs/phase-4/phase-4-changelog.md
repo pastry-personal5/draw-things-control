@@ -3,6 +3,10 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 4](README.md). Newest first.
 
+## 2026-10-13
+
+- **Change**: The API creates job files and replacement backups with private permissions. The server refuses linked, non-regular, or malformed token files and reads an existing token from one checked file descriptor.
+
 ## 2026-10-12
 
 - **Change** [M03]: H3 is an installed `i2av` backend with a closed job schema, project-owned executable and model paths, first-frame normalization, controlled media-tool environment, staged MP4 promotion, verified final-frame handoffs, and H.264/AAC media validation. Its safe requested/effective timing settings are kept with queue snapshots and run records; local model snapshots are an installation dependency and are rechecked when work starts or resumes.
