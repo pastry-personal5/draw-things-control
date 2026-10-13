@@ -15,6 +15,7 @@ from framechain.core.global_config import GlobalConfig
 from framechain.core.yaml_files import read_yaml_file
 from framechain.jobs.backend import BackendRegistry
 from framechain.jobs.backends import DEFAULT_BACKENDS
+from framechain.jobs.backends.h3_references import cleanup_snapshot, snapshot_references, verify_snapshot
 from framechain.jobs.definition import JobDefinition
 from framechain.jobs.parsing import load_job_text
 from framechain.state.executions import ExecutionSettings
@@ -65,11 +66,36 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     # cannot be captured half-written: what is stored is validated in the form it is stored, the input decoded
     # included, not merely read twice.
     job = load_job_text(job_text, path, global_config, params_directory, decode_input=True, base_config_text=config_text, backends=backends)
-    new = _new_submitted_entry(path, job_text, config_text, job, global_config, local_timestamp(clock()), submitted_by)
-    return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
+    try:
+        _snapshot_root, reference_assets = snapshot_references(job, store.path.parent / "queue-inputs", global_config.api_limits.max_reference_file_bytes, global_config.api_limits.max_reference_bytes)
+    except (OSError, ValueError) as error:
+        raise InputError(f"{path}: {error}") from error
+    if reference_assets:
+        try:
+            overrides = verify_snapshot(reference_assets)
+            copied_job = load_job_text(job_text, path, global_config, params_directory, decode_input=True, base_config_text=config_text, reference_overrides=overrides, require_reference_snapshots=True, backends=backends)
+        except (OSError, ValueError) as error:
+            cleanup_snapshot(reference_assets)
+            if isinstance(error, FramechainError):
+                raise
+            raise InputError(f"{path}: copied H3 references failed verification: {error}") from error
+        if copied_job.backend_settings != job.backend_settings:
+            cleanup_snapshot(reference_assets)
+            raise InputError(f"{path}: H3 reference settings changed while snapshotting", field="reference_pairs", path=path)
+        job = copied_job
+    try:
+        new = _new_submitted_entry(path, job_text, config_text, job, global_config, local_timestamp(clock()), submitted_by, reference_assets)
+        return enqueue(lambda: store.queue.submit(new)) if enqueue is not None else store.queue.submit(new)
+    except BaseException:
+        if reference_assets:
+            cleanup_snapshot(reference_assets)
+        raise
 
 
-def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None) -> NewQueueEntry:
+def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None, reference_assets: list[dict[str, object]] | None = None) -> NewQueueEntry:
+    snapshot = {"version": 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
+    if reference_assets:
+        snapshot["reference_assets"] = reference_assets
     return NewQueueEntry(
         job_path=str(path),
         job_text=job_text,
@@ -83,7 +109,7 @@ def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDe
         total_runs=job.run_count,
         submitted_by=submitted_by,
         backend=job.backend,
-        snapshot=json.dumps({"version": 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}, ensure_ascii=False),
+        snapshot=json.dumps(snapshot, ensure_ascii=False),
     )
 
 
@@ -123,7 +149,7 @@ def _cooldown_of(data: dict[str, object]) -> CooldownPolicy:
     return parse_cooldown(data, "cooldown")
 
 
-def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> Callable[[], JobDefinition]:
+def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_missing_input: bool = False, first_run: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> Callable[[], JobDefinition]:
     """A thunk that parses the entry's snapshot into a ``JobDefinition``, exactly as it was validated at submission.
     ``params_directory`` only names the base configuration in messages: its text comes from the snapshot, never disk.
     ``decode_input=False`` for a caller that only reads the parsed job's fields (not running it), to skip decoding
@@ -135,9 +161,9 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 snapshot = json.loads(entry.snapshot)
             except (TypeError, ValueError) as error:
                 raise InputError(f"{entry.label}: invalid queue snapshot") from error
-            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3):
+            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3, 4):
                 raise InputError(f"{entry.label}: unsupported job snapshot")
-            if snapshot["version"] in (2, 3):
+            if snapshot["version"] in (2, 3, 4):
                 if snapshot.get("backend") != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between the queue row and snapshot", field="backend")
                 if not all(isinstance(snapshot.get(key), str) for key in ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory")):
@@ -148,10 +174,42 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 if snapshot.get("cooldown_default") != entry.cooldown_default or snapshot.get("settings") != json.loads(entry.settings.to_json()):
                     raise InputError(f"{entry.label}: settings differ between the queue row and snapshot", field="settings")
                 config = GlobalConfig(input_directory=Path(snapshot["input_directory"]), output_directory=Path(snapshot["output_directory"]), write_job_records=live.write_job_records, cooldown=_cooldown_of(snapshot["cooldown_default"]) if snapshot.get("cooldown_default") is not None else None, history_retention_days=live.history_retention_days)
-                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], allow_missing_input=allow_missing_input, backends=backends)
+                reference_assets = snapshot.get("reference_assets", []) if snapshot["version"] == 4 else []
+                if not isinstance(reference_assets, list) or any(not isinstance(item, dict) for item in reference_assets):
+                    raise InputError(f"{entry.label}: invalid reference asset snapshot")
+                if snapshot["version"] == 4 and not reference_assets:
+                    raise InputError(f"{entry.label}: missing H3 reference assets")
+                reference_facts: dict[tuple[str, int, str], dict[str, object]] = {}
+                for item in reference_assets:
+                    if not isinstance(item.get("pair"), str) or not isinstance(item.get("ordinal"), int) or item.get("field") not in ("path", "audio") or not isinstance(item.get("snapshot_path"), str) or not isinstance(item.get("sha256"), str) or not isinstance(item.get("size"), int) or not isinstance(item.get("media_facts"), dict):
+                        raise InputError(f"{entry.label}: invalid reference asset descriptor")
+                    key = (item["pair"], item["ordinal"], item["field"])
+                    if key in reference_facts:
+                        raise InputError(f"{entry.label}: duplicate reference asset descriptor")
+                    reference_facts[key] = item
+                inactive_pairs: frozenset[str] = frozenset()
+                start = first_run if first_run is not None else entry.resume_first_run or 1
+                if start > 1 and reference_assets:
+                    settings = snapshot["settings"].get("backend_settings")
+                    runs = settings.get("h3_runs") if isinstance(settings, dict) else None
+                    if not isinstance(runs, list):
+                        raise InputError(f"{entry.label}: missing H3 run plan in reference snapshot")
+                    active = {run.get("reference_pair") for run in runs if isinstance(run, dict) and isinstance(run.get("run"), int) and run["run"] >= start and run.get("pipeline") == "r2av"}
+                    inactive_pairs = frozenset(item["pair"] for item in reference_assets if item["pair"] not in active)
+                try:
+                    verify_snapshot([item for item in reference_assets if item["pair"] not in inactive_pairs])
+                except ValueError as error:
+                    raise InputError(f"{entry.label}: {error}") from error
+                reference_overrides = {key: Path(str(item["snapshot_path"])) for key, item in reference_facts.items()}
+                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=snapshot["config_text"], allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=snapshot["version"] == 4, inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, backends=backends)
+                if snapshot["version"] != 4 and job.backend == "h3":
+                    from framechain.jobs.backends.h3 import H3JobData
+
+                    if isinstance(job.backend_data, H3JobData) and job.backend_data.reference_pairs:
+                        raise InputError(f"{entry.label}: H3 references require a version 4 snapshot")
                 if job.backend != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between job text and queue snapshot", field="backend")
-                if snapshot["version"] == 3:
+                if snapshot["version"] in (3, 4):
                     if json.loads(_execution_settings(job).to_json()) != snapshot["settings"]:
                         raise InputError(f"{entry.label}: validated settings differ from the queue snapshot", field="settings")
                     if entry.total_runs is not None and job.run_count != entry.total_runs:

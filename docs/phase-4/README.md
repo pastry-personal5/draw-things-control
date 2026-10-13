@@ -12,13 +12,15 @@ Improve the product experience, make chained generation support multiple backend
 - A backend boundary for `draw-things-cli`, H3, and future generators in Milestone 02.
 - H3 image-to-audio-video (`i2av`) jobs through the existing front ends in Milestone 03.
 - Framechain product, package, command, and state database naming in Milestone 04.
+- H3 performance controls and mixed `i2av`/reference-to-audio-video (`r2av`, H3's Ref2VA model family) pipelines in Milestone 05.
+- H3 generated-video color tags and opt-in `i2av` color drift correction in Milestone 06.
 - Producing and consuming graph-based metadata in Milestone 10.
 
 ## Non-goals
 
 - Changing generation behavior as part of Milestone 01's TUI work.
 - Adding a third generator as part of the backend refactor or H3 integration.
-- Adding H3 reference-image, video-reference, or last-frame modes in the initial `i2av` integration.
+- Adding H3 reference-image, video-reference, or last-frame modes in the initial `i2av` integration; Ref2VA support follows in Milestone 05.
 
 ## Milestones
 
@@ -26,12 +28,16 @@ Improve the product experience, make chained generation support multiple backend
 2. [Milestone 02: Refactor for multiple backends](milestone-02-multiple-backends.md) — done
 3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — in progress
 4. [Milestone 04: Rename to Framechain](milestone-04-framechain-rename.md) — done
-5. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
+5. [Milestone 05: H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) — in progress
+6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — planned
+10. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
 
 ## Depends on
 
 - Phase 3's TUI, queue, state store, and server event feed.
 - Milestone 03 depends on Milestone 02's backend boundary and the local [h3.c](https://github.com/antirez/h3.c) executable and model snapshot. See the [H3 research notes](../research/h3-c.md).
+- Milestone 05 depends on Milestone 03's H3 runtime, staged MP4 finishing, and queue snapshot contract.
+- Milestone 06 depends on Milestone 03's H3 `i2av` output and handoff contract, and Milestone 05's mixed `i2av`/`r2av` pipeline; M06 applies color tags to both pipelines.
 
 ## Changelog
 
@@ -43,4 +49,6 @@ Decisions and notable changes are recorded in
 - Milestone 01's canonical interaction terminology, consistent visible TUI names, and contextual shortcut help are complete and documented.
 - Existing Draw Things jobs continue to work through the backend boundary, including queued and resumed work.
 - `i2av` jobs use H3 from every existing front end, with native audio preserved in their outputs and run history.
+- H3 jobs expose reproducible rendering controls and safely mix first-frame `i2av` runs with ordered-reference `r2av` Ref2VA runs.
+- H3 generated videos carry truthful color tags; `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
 - Graph-based metadata is produced, consumed, and documented as defined in Milestone 10.

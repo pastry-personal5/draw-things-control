@@ -25,7 +25,7 @@ from framechain.jobs.overrides import MAX_SEED, parse_config_override
 from framechain.jobs.prompt_pairs import NAME_PATTERN, parse_prompt_pairs
 
 SIZE_KEYS = ("desired_input_width", "desired_input_height")
-JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", "backend", "backend_settings", *SIZE_KEYS, "max_input_crop_percent", "cooldown", "color"}
+JOB_KEYS = {"version", "name", "mode", "input", "run_count", "prompt_pairs", "output", "config_file", "config_override", "run_timeout_seconds", "backend", "backend_settings", "h3_runs", "reference_pairs", *SIZE_KEYS, "max_input_crop_percent", "cooldown", "color"}
 REQUIRED_JOB_KEYS = ("version", "name", "mode", "run_count", "prompt_pairs")
 OUTPUT_KEYS = {"directory", "extension", "video_format"}
 COLOR_KEYS = {"anchor", "strength", "first_weight", "reanchor", "regions"}
@@ -65,7 +65,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -81,7 +81,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramechainError):
             raise
@@ -91,13 +91,17 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
         self._decode_input = decode_input
         self._base_config_text = base_config_text
         self._allow_missing_input = allow_missing_input
+        self._reference_overrides = reference_overrides or {}
+        self.require_reference_snapshots = require_reference_snapshots
+        self.inactive_reference_pairs = inactive_reference_pairs
+        self._reference_facts = reference_facts or {}
         self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
@@ -127,6 +131,9 @@ class JobParser:
         return replace(job, backend_settings=safe_settings)
 
     def parse_draw_things(self, data: dict[str, Any], source_text: str) -> JobDefinition:
+        for key in ("h3_runs", "reference_pairs"):
+            if key in data:
+                self._fail(key, "is supported only by the h3 backend")
         if "config_file" not in data:
             self._fail("config_file", "is required")
         settings = data.get("backend_settings", {})
@@ -212,6 +219,12 @@ class JobParser:
 
     def fail(self, field: str, problem: str) -> NoReturn:
         self._fail(field, problem)
+
+    def reference_override(self, pair: str, ordinal: int, field: str) -> Path | None:
+        return self._reference_overrides.get((pair, ordinal, field))
+
+    def reference_fact(self, pair: str, ordinal: int, field: str) -> dict[str, Any] | None:
+        return self._reference_facts.get((pair, ordinal, field))
 
     def output_directory(self, value: Any, name: str, allowed_keys: set[str]) -> Path:
         if not isinstance(value, dict):
@@ -304,6 +317,12 @@ class JobParser:
 
     def _input_path(self, data: dict[str, Any], mode: GenerationMode) -> Path | None:
         value = data.get("input")
+        if mode is GenerationMode.H3AV:
+            if value is None:
+                return None
+            if not isinstance(value, str) or not value.strip():
+                self._fail("input", "must be a file path")
+            return self._confined_path(value.strip(), self._global_config.input_directory, "input")
         if not mode.requires_input:
             if value is not None:
                 self._fail("input", "is not allowed in t2v jobs; run 1 generates from text alone")

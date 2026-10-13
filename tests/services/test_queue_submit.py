@@ -27,6 +27,26 @@ class SubmitJobTests(JobTestCase):
         self.assertIn("model: base.ckpt", entry.config_text)
         self.assertEqual((entry.backend, json.loads(entry.snapshot or "")["version"]), ("draw-things-cli", 3))
 
+    def test_h3av_reference_is_frozen_and_verified_from_the_queue_snapshot(self) -> None:
+        from framechain.jobs.backends.h3 import H3JobData
+
+        self.write_image("singer.png", (160, 160))
+        path = self.write_job(job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        self.assertEqual(snapshot["version"], 4)
+        asset = snapshot["reference_assets"][0]
+        self.assertEqual((asset["pair"], asset["ordinal"], asset["field"], asset["basename"], len(asset["sha256"])), ("voice", 0, "path", "singer.png", 64))
+        source = self.input_directory / "singer.png"
+        source.unlink()
+        job = parse_snapshot(entry, self.global_config, self.params)()
+        self.assertIsInstance(job.backend_data, H3JobData)
+        assert isinstance(job.backend_data, H3JobData)
+        copied = job.backend_data.reference_pairs[0].references[0].path
+        self.assertTrue(copied.is_file())
+        self.assertFalse(copied.is_relative_to(self.input_directory))
+        self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+
     def test_version_three_snapshot_refuses_a_conflicting_backend_or_legacy_copy(self) -> None:
         path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
         entry = submit_job(path, self.global_config, self.params, self.store)

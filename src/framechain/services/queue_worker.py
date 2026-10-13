@@ -44,14 +44,21 @@ _FINAL_QUEUE_STATE = {JobStatus.SUCCEEDED: QueueState.SUCCEEDED, JobStatus.FAILE
 _COOLDOWN_AFTER = (QueueState.SUCCEEDED, QueueState.PARKED)
 
 
-def _resume_point_of(entry: QueueRow) -> ResumePoint | None:
+def _resume_point_of(entry: QueueRow, store: Store | None = None) -> ResumePoint | None:
     if entry.resume_first_run is None:
         return None
     assert entry.resume_input is not None and entry.resume_seed is not None
     resumes_execution = execution_id_text(entry.resumes_execution) if entry.resumes_execution is not None else None
     first_image = Path(entry.resume_first_image) if entry.resume_first_image is not None else None
     anchor = Path(entry.resume_anchor) if entry.resume_anchor is not None else None
-    return ResumePoint(first_run=entry.resume_first_run, input=Path(entry.resume_input), seed=entry.resume_seed, resumes_execution=resumes_execution, first_image=first_image, anchor=anchor)
+    fingerprint = None
+    if store is not None and entry.resumes_execution is not None:
+        previous = store.executions.by_number(entry.resumes_execution)
+        if previous is not None and previous.settings.backend_settings is not None:
+            installation = previous.settings.backend_settings.get("h3_installation")
+            if isinstance(installation, dict) and isinstance(installation.get("executable_sha256"), str):
+                fingerprint = installation["executable_sha256"]
+    return ResumePoint(first_run=entry.resume_first_run, input=Path(entry.resume_input), seed=entry.resume_seed, resumes_execution=resumes_execution, first_image=first_image, anchor=anchor, backend_fingerprint=fingerprint)
 
 
 # Waits ``seconds`` between queued jobs; the default is the worker's own interruptible poll (``_poll_wait``), and a
@@ -313,7 +320,7 @@ class QueueWorker:
         finished = [False]
         try:
             job = parse_snapshot(entry, self._global_config, self._paths.params, allow_missing_input=entry.backend == "h3" and (entry.resume_first_run or 1) > 1, backends=self._backends)()
-            resume = _resume_point_of(entry)
+            resume = _resume_point_of(entry, self._store)
         except Exception as error:
             self._fail_to_start(entry, error)
             return None

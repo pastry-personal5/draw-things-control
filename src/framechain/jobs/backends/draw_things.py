@@ -78,7 +78,7 @@ class DrawThingsBackend:
             return OutputPaths(last_frame_path(output), raw_last_frame_path(output), corrected_output_path(output))
         return OutputPaths(last_frame_path(output))
 
-    def arguments(self, job: JobDefinition, pair: PromptPair, run_input: Path | None, output: Path, seed: int, executable: str) -> DrawThingsGenerateArguments:
+    def arguments(self, job: JobDefinition, pair: PromptPair, run_input: Path | None, output: Path, seed: int, executable: str, run_number: int = 1) -> DrawThingsGenerateArguments:
         settings = cast(DrawThingsJobSettings, job.backend_data)
         override = settings.override
         config = build_config_json(settings.base_config, override.as_dict())

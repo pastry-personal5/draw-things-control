@@ -217,10 +217,10 @@ Invalid jobs are rejected before any generation starts.
 |-----|---------|
 | `version` | Format version, `1` |
 | `name` | Base of output file names; `a-z`, `0-9`, `-` only |
-| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; use `h3` only with `i2av` |
-| `backend_settings` | Empty or absent for Draw Things. H3 requires exactly `width`, `height`, `frames`, `seconds`, `steps`, and `seed` |
-| `mode` | `i2i` (image to image), `t2v` (text to video), `i2v` (image to video), or H3-only `i2av` (image to audio-video) |
-| `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; not allowed for `t2v` |
+| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; use `h3` with `i2av` or `h3av` |
+| `backend_settings` | Empty or absent for Draw Things. H3 requires `width`, `height`, `frames`, `seconds`, `steps`, and `seed`; `h3av` also accepts the controls below |
+| `mode` | `i2i`, `t2v`, `i2v`, H3-only `i2av` (image to audio-video), or H3-only `h3av` (mixed pipelines) |
+| `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; `h3av` requires it when run 1 is `i2av` and forbids it when run 1 is `r2av`; not allowed for `t2v` |
 | `run_count` | Total number of runs |
 | `prompt_pairs` | Named positive/negative prompts; see below |
 | `config_file` | Required for Draw Things: a YAML file name in `data/params/`, the [base configuration](#base-configurations) |
@@ -295,6 +295,63 @@ pass. Changing local H3 weights can change queued or resumed results because
 the model snapshot is intentionally not copied into the queue. Once an H3 run
 has saved a verified handoff, a resume validates that handoff's decoded PNG
 dimensions and does not require the original run-1 input to remain available.
+
+### H3 controls and reference pipelines
+
+An `h3av` job declares one `h3_runs` entry per run. Each entry uses
+`pipeline: i2av` or `pipeline: r2av`; an `r2av` entry also names one
+`reference_pair`. The first run needs `input` only when it uses `i2av`. Later
+`i2av` runs receive the immediately preceding run's verified final frame.
+`r2av` runs receive their named reference pair and never receive a frame
+anchor; consecutive `r2av` runs are independent.
+
+Each `reference_pairs` item has a unique name and an ordered `references` list.
+Kinds are `image`, `video`, `silent_video`, `video_audio` (with separate
+`audio:`), and `audio`. Reference paths are inside `input_directory`. Images
+are decoded before submission. Videos and audio are probed and fully decoded;
+each source video or consumed audio input is limited to 2–15 seconds. A pair
+needs an image or video, with at most 9 images, 3 videos, 3 audio inputs, and
+12 total entries. `video` consumes embedded audio; `silent_video` ignores it;
+`video_audio` uses the separate audio file. The six Ref2VA prompt sections and
+reference-label order are documented in [the H3 research notes](research/h3-c.md).
+
+Queued jobs copy reference assets into private queue storage at submission.
+Changing or removing the source after submission does not alter a queued or
+resumed run. The copies remain while retention can resume or trace the chain.
+`api_limits.max_reference_file_bytes` defaults to 4 GiB and
+`api_limits.max_reference_bytes` defaults to 32 GiB per job. Copying the
+references has a 600-second submission limit. A resume verifies the copies
+selected by unfinished `r2av` runs; an earlier pair can be missing if no
+remaining run uses it.
+
+For H3 jobs, optional `backend_settings` controls include `render_width` and
+`render_height` (together, same aspect ratio, no larger than output),
+`denoise_reuse` (1–3), `dit_layers` (35–50), `core_reuse` (1–6), the Boolean
+switches `token_reduction`, `ssd_streaming`, `int8_row_fc2`, and
+`reference_rope`, plus `reference_image_size` (`match` or `max`, for `r2av`)
+and the closed Boolean `compatibility` mapping. Denoiser reuse and core reuse
+cannot both exceed 1. `int8_row_fc2` conflicts with SSD streaming and slower
+BF16 MLP, and requires an M5-class Metal 4 GPU. Resolved controls and each run's
+pipeline and reference pair appear in job and execution details; private
+snapshot paths are not shown.
+
+```yaml
+mode: h3av
+run_count: 2
+h3_runs:
+  - run: 1
+    pipeline: r2av
+    reference_pair: singer
+  - run: 2
+    pipeline: i2av
+reference_pairs:
+  - name: singer
+    references:
+      - kind: image
+        path: singer.png
+      - kind: audio
+        path: singer-voice.wav
+```
 
 ### Configuration overrides
 
@@ -1190,6 +1247,8 @@ and use.
 | `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
 | `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; a video job adds its color drift check's 300 s to each run, and a correcting one the correction's time limit (10 s plus 1 s per frame). The other media checks are not counted | 172800 (48 h) |
 | `max_job_file_bytes` | Maximum job YAML size loaded by the CLI, TUI, or API | 65536 |
+| `max_reference_file_bytes` | Maximum size of one H3 reference asset | 4294967296 (4 GiB) |
+| `max_reference_bytes` | Maximum total size of H3 reference assets in one job | 34359738368 (32 GiB) |
 
 An existing job file is read only up to `max_job_file_bytes + 1` bytes; a named
 base configuration is bounded to the larger of 1 MiB and that job limit.

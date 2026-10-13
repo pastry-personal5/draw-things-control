@@ -109,5 +109,17 @@ class JobPlanner:
         output = next_output_path(job.output_directory, job.name, job.extension, self._clock, self._random_number, reserved)
         backend = self._backends.get(job.backend)
         paths = backend.output_paths(job, output)
-        arguments = backend.arguments(job, pair, run_input, output, seed, executable)
-        return PlannedRun(number=number, pair=pair, input=run_input, output=output, last_frame=paths.handoff, arguments=arguments, raw_last_frame=paths.raw_handoff, corrected_output=paths.corrected_output)
+        if job.backend == "h3":
+            from framechain.jobs.backend import OutputPaths
+            from framechain.jobs.backends.h3 import H3JobData
+
+            if isinstance(job.backend_data, H3JobData) and (number >= job.run_count or job.backend_data.runs[number].pipeline != "i2av"):
+                paths = OutputPaths()
+        arguments = backend.arguments(job, pair, run_input, output, seed, executable, number)
+        recorded_input = run_input
+        if job.backend == "h3" and job.mode.value == "h3av":
+            from framechain.jobs.backends.h3 import H3JobData
+
+            if isinstance(job.backend_data, H3JobData) and job.backend_data.runs[number - 1].pipeline == "r2av":
+                recorded_input = None
+        return PlannedRun(number=number, pair=pair, input=recorded_input, output=output, last_frame=paths.handoff, arguments=arguments, raw_last_frame=paths.raw_handoff, corrected_output=paths.corrected_output)

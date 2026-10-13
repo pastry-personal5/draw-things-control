@@ -100,7 +100,7 @@ class CapabilitiesTests(ReadRoutesTestCase):
     def test_capabilities_reports_the_limits_in_force(self) -> None:
         body = self.get("/v1/capabilities").json()
         self.assertEqual(body["allow_write"], False)
-        self.assertEqual(body["limits"], {"max_queued_jobs": 20, "max_job_runs": 100, "max_job_seconds": 172800, "max_job_file_bytes": 65536})
+        self.assertEqual(body["limits"], {"max_queued_jobs": 20, "max_job_runs": 100, "max_job_seconds": 172800, "max_job_file_bytes": 65536, "max_reference_file_bytes": 4 * 1024 * 1024 * 1024, "max_reference_bytes": 32 * 1024 * 1024 * 1024})
 
 
 class JobRoutesTests(ReadRoutesTestCase):

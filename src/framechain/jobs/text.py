@@ -149,7 +149,7 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
     """The (label, value) rows validate-job prints under ``Valid job:``; ``random_seed_text``, if given, is the whole seed value when the job sets none."""
     seed, source = job.configured_seed()
     seed_value = random_seed_text if seed is None and random_seed_text is not None else f"{seed if seed is not None else '(random, drawn when the job starts)'} ({source})"
-    return [
+    rows = [
         ("name", job.name),
         ("backend", job.backend),
         ("mode", str(job.mode)),
@@ -163,6 +163,17 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
         ("model", job.model),
         ("seed", seed_value),
     ]
+    if job.backend == "h3" and job.backend_data is not None:
+        from framechain.jobs.backends.h3 import H3JobData
+
+        if isinstance(job.backend_data, H3JobData):
+            settings = job.backend_data.settings
+            controls = [f"{settings.width}x{settings.height}", f"{settings.seconds:g}s/{settings.frames} requested frames", f"{settings.effective_frames} effective frames", f"{settings.steps} steps", f"seed {settings.seed}"]
+            if settings.render_width is not None:
+                controls.append(f"render {settings.render_width}x{settings.render_height}")
+            controls.extend(f"{run.run}:{run.pipeline}" + (f" ({run.reference_pair})" if run.reference_pair else "") for run in job.backend_data.runs)
+            rows.append(("H3", "; ".join(controls)))
+    return rows
 
 
 def color_text(policy: ColorPolicy) -> str:
@@ -205,4 +216,13 @@ def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
 
 def plan_steps(job: JobDefinition, preview: JobPreview) -> list[PlanStep]:
     """Each run of the dry-run plan, in order; the TUI reads the plan from here."""
-    return [PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, f"Run {run.number}/{len(preview.runs)} (pair {run.pair.name})", run, command) for run, command in zip(preview.runs, preview.commands, strict=True)]
+    from framechain.jobs.backends.h3 import H3JobData
+
+    result = []
+    for run, command in zip(preview.runs, preview.commands, strict=True):
+        detail = f"Run {run.number}/{len(preview.runs)} (pair {run.pair.name})"
+        if job.backend == "h3" and isinstance(job.backend_data, H3JobData):
+            h3_run = job.backend_data.runs[run.number - 1]
+            detail += f" ({h3_run.pipeline}" + (f", references {h3_run.reference_pair})" if h3_run.reference_pair else ")")
+        result.append(PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, detail, run, command))
+    return result

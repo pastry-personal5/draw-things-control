@@ -77,7 +77,7 @@ class FakeBackend:
     def output_paths(self, job: JobDefinition, output: Path) -> OutputPaths:
         return OutputPaths()
 
-    def arguments(self, job: JobDefinition, pair: Any, run_input: Path | None, output: Path, seed: int, executable: str) -> FakeCommand:
+    def arguments(self, job: JobDefinition, pair: Any, run_input: Path | None, output: Path, seed: int, executable: str, run_number: int = 1) -> FakeCommand:
         assert isinstance(job.backend_data, FakeSettings)
         return FakeCommand(run_input, output, seed, job.backend_data.label)
 

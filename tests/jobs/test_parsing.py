@@ -11,6 +11,7 @@ from PIL import Image
 
 from framechain.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from framechain.core.errors import InputError, OutsideDirectoryError
+from framechain.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings
 from framechain.jobs.definition import GenerationMode
 from framechain.jobs.parsing import load_job, load_job_text
 from framechain.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
@@ -104,6 +105,38 @@ class JobDefinitionTests(JobTestCase):
         with self.assertRaises(InputError) as caught:
             load_job(self.write_job(data), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "backend_settings.frames")
+
+    def test_h3av_resolves_mixed_runs_and_optional_controls(self) -> None:
+        self.write_image("singer.png", (160, 160))
+        data = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}, {"run": 2, "pipeline": "i2av"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "dit_layers": 45, "reference_image_size": "max"}, output={"extension": "mp4"})
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        self.assertIsNone(job.input)
+        self.assertEqual(job.mode, GenerationMode.H3AV)
+        self.assertEqual(job.backend_settings["denoise_reuse"], 2)
+        self.assertEqual(job.backend_settings["h3_runs"], [{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}, {"run": 2, "pipeline": "i2av"}])
+        assert isinstance(job.backend_data, H3JobData)
+        self.assertEqual((job.backend_data.runs[0].pipeline, job.backend_data.runs[0].reference_pair, job.backend_data.reference_pairs[0].references[0].basename), ("r2av", "voice", "singer.png"))
+
+    def test_h3av_rejects_incompatible_reuse_controls_and_wrong_first_input(self) -> None:
+        base = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "i2av"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "core_reuse": 2}, output={"extension": "mp4"})
+        with self.assertRaises(InputError) as caught:
+            load_job(self.write_job(base), self.global_config, self.params)
+        self.assertEqual(caught.exception.field, "backend_settings")
+        base["backend_settings"] = {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}
+        with self.assertRaises(InputError) as caught:
+            load_job(self.write_job(base), self.global_config, self.params)
+        self.assertEqual(caught.exception.field, "input")
+
+    def test_h3_r2av_arguments_keep_ordered_refs_and_compatible_control_flags(self) -> None:
+        settings = H3Settings(768, 1344, 96, 4, 30, 42, 107, 576, 1008, 2, 45, 1, True, False, True, True, "max", (("bf16_mlp", False),), frozenset({"render_width", "render_height", "denoise_reuse", "dit_layers"}))
+        arguments = H3Arguments(Path("/h3"), Path("/model"), "prompt", "r2av", (("image", Path("/private/ref.png"), None), ("video_audio", Path("/private/stage.mp4"), Path("/private/voice.wav"))), None, Path("/output.partial.mp4"), settings, "/tools/ffmpeg", "/tools/ffprobe")
+        command = arguments.command
+        self.assertNotIn("--first-frame", command)
+        self.assertEqual(command[command.index("--ref-image") + 1], "/private/ref.png")
+        self.assertEqual(command[command.index("--ref-video-audio") + 1 : command.index("--ref-video-audio") + 3], ("/private/stage.mp4", "/private/voice.wav"))
+        for flag in ("--render-width", "--render-height", "--reuse", "--layers", "--token-reduction", "--use-int8-row-fc2", "--use-reference-rope", "--ref-image-size"):
+            self.assertIn(flag, command)
+        self.assertNotIn("--ssd-streaming", command)
 
     def test_absolute_input_inside_a_configured_directory_symlink_is_valid(self) -> None:
         alias = self.root / "input-alias"

@@ -16,3 +16,5 @@ project document needed for the task.
   documentation; do not use it for project logic or general programming.
 - Keep documentation current, never rewrite old changelog entries, run
   `make check`, and commit only when asked.
+- The current `make check` suite takes more than 150 seconds; allow it to finish
+  and be patient while it runs.

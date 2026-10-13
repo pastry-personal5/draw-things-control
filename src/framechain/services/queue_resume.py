@@ -76,8 +76,8 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
     # decoding the image a second time here would be wasted work. Parsed unconditionally, not only inside
     # before_submit's own check, since total_runs below needs it on every resume, not only a checked one (a direct
     # call with no before_submit, as some tests make, still gets a total_runs).
-    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, backends=backends)()
-    _check_resume_input(job, chain.input)
+    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
+    _check_resume_input(job, chain.input, chain.first_run)
     if before_submit is not None:
         before_submit(job, job.run_count - chain.first_run + 1)
     new = _new_resumed_entry(entry, chain, job.run_count, local_timestamp(clock()), caller)
@@ -134,9 +134,9 @@ def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, p
         if entry.backend != "h3":
             _check_own_input(entry, global_config, params_directory, decode_input=False, backends=backends)
         chain = _resolve_chain(store, entry)
-        job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, backends=backends)()
-        _check_resume_input(job, chain.input, decode=False)
-    except ResumeRefusedError as error:
+        job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
+        _check_resume_input(job, chain.input, chain.first_run, decode=False)
+    except InputError as error:
         return ResumePreview(False, reason=str(error))
     return ResumePreview(True, from_run=chain.first_run)
 
@@ -158,21 +158,36 @@ def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_direct
         raise ResumeRefusedError(f"{entry.label}'s job cannot be resolved: {error}") from error
 
 
-def _check_resume_input(job: JobDefinition, handoff: Path, *, decode: bool = True) -> None:
+def _check_resume_input(job: JobDefinition, handoff: Path, run: int, *, decode: bool = True) -> None:
     """A saved H3 handoff, unlike an ordinary file check, must be decodable at
     exactly the backend's requested dimensions before a resumed child starts."""
     if job.backend != "h3":
+        if not handoff.is_file():
+            raise ResumeRefusedError(f"saved handoff is gone: {handoff}")
         return
-    try:
-        size, _orientation = read_image_info(handoff)
+    if job.mode.value == "h3av" and job.backend_data is not None:
+        from framechain.jobs.backends.h3 import H3JobData
+
+        if isinstance(job.backend_data, H3JobData):
+            if job.backend_data.runs[run - 1].pipeline == "r2av":
+                return
+            expected_size = (job.backend_data.settings.width, job.backend_data.settings.height)
+        else:
+            raise ResumeRefusedError("H3 resume has no validated run plan")
+    else:
         plan = job.input_resize
         if plan is None:
-            raise ValueError("has no H3 input-normalization plan")
-        if size != plan.target_size:
-            raise ValueError(f"has dimensions {size[0]}x{size[1]}, expected {plan.target_size[0]}x{plan.target_size[1]}")
+            raise ResumeRefusedError("H3 resume has no input-normalization plan")
+        expected_size = plan.target_size
+    try:
+        if not handoff.is_file():
+            raise ValueError("file is missing")
+        size, _orientation = read_image_info(handoff)
+        if size != expected_size:
+            raise ValueError(f"has dimensions {size[0]}x{size[1]}, expected {expected_size[0]}x{expected_size[1]}")
         if decode:
             decode_image(handoff)
-    except ValueError as error:
+    except (OSError, ValueError) as error:
         raise ResumeRefusedError(f"H3 saved handoff {handoff} is not a valid next input: {error}") from error
 
 
@@ -196,7 +211,7 @@ def _resolve_chain(store: Store, entry: QueueRow) -> ResumeChain:
     if execution.total_runs is not None and last.number >= execution.total_runs:
         raise ResumeRefusedError(f"{entry.label}: the chain already finished all {execution.total_runs} runs; nothing to resume")
     input_path = execution.run_file(last.last_frame or last.output)
-    if input_path is None or not input_path.is_file():
+    if input_path is None:
         raise ResumeRefusedError(f"{entry.label}: run {last.number}'s output is gone: {input_path or '(no file)'}")
     return ResumeChain(first_run=last.number + 1, input=input_path, seed=execution.seed or 0, first_image=execution.first_image, anchor=last.anchor, execution_number=execution.execution_number)
 

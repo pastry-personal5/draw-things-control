@@ -120,7 +120,9 @@ class Store:
         deleted, log_paths = self.executions.prune(cutoff, keep=[execution for _queue, execution in kept if execution is not None])
         for log_path in log_paths:
             _delete_log(Path(log_path))
-        return deleted + self.queue.prune(cutoff, keep=[queue for queue, _execution in kept])
+        pruned_queue = self.queue.prune(cutoff, keep=[queue for queue, _execution in kept])
+        self.queue.cleanup_reference_snapshots()
+        return deleted + pruned_queue
 
     def delete_execution_files(self, deleted: Sequence[DeletedExecution]) -> list[tuple[int, str]]:
         """Delete the log and manifest of each execution ``ExecutionRepository.delete`` deleted, once its transaction

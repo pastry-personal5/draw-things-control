@@ -58,6 +58,7 @@ class ResumePoint:
     # for an execution recorded before them, or without one.
     first_image: Path | None = None
     anchor: Path | None = None
+    backend_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -214,8 +215,13 @@ class JobExecutor:
         """An i2v job's first input, and its resized copy, checked before the run that reads them; a resume's input,
         the chain's own last frame, is checked as a handoff."""
         checker = self._media.checker
-        if checker is None or chain.job.mode not in (GenerationMode.I2V, GenerationMode.I2AV) or run_input is None:
+        if checker is None or chain.job.mode not in (GenerationMode.I2V, GenerationMode.I2AV, GenerationMode.H3AV) or run_input is None:
             return
+        if chain.job.mode is GenerationMode.H3AV and chain.job.backend_data is not None:
+            from framechain.jobs.backends.h3 import H3JobData
+
+            if isinstance(chain.job.backend_data, H3JobData) and chain.job.backend_data.runs[run - 1].pipeline == "r2av":
+                return
         if chain.options.resume is not None:
             self._report_check(run, checker.handoff(run_input))
             return
@@ -234,20 +240,34 @@ class JobExecutor:
         if options.shutdown_grace < 0:
             raise InputError("--shutdown-grace must not be negative")
         self._planner.check_tools(job, options.executable)
-        if options.resume is not None:
-            # The chain keeps its original seed; run 1 is not run again, so it needs no resized copy of the input.
-            seed, seed_source, temporary_input = options.resume.seed, "resume", None
-        else:
-            seed, seed_source = self._planner.seed(job, None)
-            # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
-            temporary_input = self._temporary_input(job)
+        if options.resume is not None and options.resume.backend_fingerprint is not None:
+            current = getattr(self._backends.get(job.backend), "_installation", {}).get("executable_sha256")
+            if current != options.resume.backend_fingerprint:
+                raise InputError("H3 executable changed since the previous execution; refusing resume")
+        backend = self._backends.get(job.backend)
+        prepare_job = getattr(backend, "prepare_job", None)
+
+        def cleanup_references() -> None:
+            return None
+
+        if prepare_job is not None:
+            job, cleanup_references = prepare_job(job)
+        temporary_input: TemporaryInput | None = None
         try:
+            if options.resume is not None:
+                # The chain keeps its original seed; run 1 is not run again, so it needs no resized copy of the input.
+                seed, seed_source, temporary_input = options.resume.seed, "resume", None
+            else:
+                seed, seed_source = self._planner.seed(job, None)
+                # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
+                temporary_input = self._temporary_input(job)
             # Taken last of the checks, so a job refused above never uses up a number; a job that cannot get one does not start.
             execution_id = options.reserve_execution_id() if options.reserve_execution_id is not None else None
             return self._run_with_records(job, options, seed, seed_source, temporary_input, execution_id)
         finally:
             if temporary_input is not None:
                 temporary_input.cleanup()
+            cleanup_references()
 
     @staticmethod
     def _temporary_input(job: JobDefinition) -> TemporaryInput | None:
@@ -342,6 +362,11 @@ class JobExecutor:
         job, manifest, resume = chain.job, chain.records.manifest, chain.options.resume
         if not job.mode.is_video:
             return
+        if job.mode is GenerationMode.H3AV and job.backend_data is not None:
+            from framechain.jobs.backends.h3 import H3JobData
+
+            if isinstance(job.backend_data, H3JobData) and job.backend_data.runs[0].pipeline == "r2av":
+                return
         if resume is not None:
             if resume.anchor is not None and resume.anchor.is_file():
                 chain.anchor = resume.anchor

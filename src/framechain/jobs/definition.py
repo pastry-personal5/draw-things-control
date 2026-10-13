@@ -22,6 +22,7 @@ class GenerationMode(StrEnum):
     # Reserved for the H3 adapter in Phase 4, Milestone 03.  The common chain
     # needs to represent a backend-owned mode before that adapter is installed.
     I2AV = "i2av"
+    H3AV = "h3av"
 
     @property
     def is_video(self) -> bool:
@@ -29,7 +30,7 @@ class GenerationMode(StrEnum):
 
     @property
     def requires_input(self) -> bool:
-        return self is not GenerationMode.T2V
+        return self not in (GenerationMode.T2V, GenerationMode.H3AV)
 
     @property
     def default_extension(self) -> str:

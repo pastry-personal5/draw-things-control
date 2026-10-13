@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from framechain.core.clock import local_timestamp
@@ -356,6 +359,32 @@ class QueueRepository:
         # limit on bound values.
         with self._database.transaction() as connection:
             return connection.execute("DELETE FROM queue WHERE finished_epoch IS NOT NULL AND finished_epoch < ? AND queue_number NOT IN (SELECT value FROM json_each(?))", (cutoff, json.dumps(list(keep)))).rowcount
+
+    def cleanup_reference_snapshots(self) -> None:
+        """Remove queue-owned H3 reference directories that no remaining queue snapshot can resume from."""
+        root = self._database.path.parent / "queue-inputs"
+        if not root.is_dir() or root.is_symlink():
+            return
+        referenced: set[Path] = set()
+        for row in self._database.connection().execute("SELECT snapshot FROM queue WHERE snapshot IS NOT NULL"):
+            try:
+                data = json.loads(row["snapshot"])
+            except (TypeError, ValueError):
+                continue
+            assets = data.get("reference_assets", []) if isinstance(data, dict) else []
+            if not isinstance(assets, list):
+                continue
+            for asset in assets:
+                if isinstance(asset, dict) and isinstance(asset.get("snapshot_path"), str):
+                    path = Path(asset["snapshot_path"])
+                    if path.parent.parent == root:
+                        referenced.add(path.parent)
+        # A submission publishes its snapshot only after copying and validating it. Keep recent unreferenced
+        # directories so a concurrent retention pass cannot delete that unpublished work.
+        oldest_unpublished = time.time() - 3600
+        for directory in root.iterdir():
+            if directory.is_dir() and not directory.is_symlink() and directory.name.startswith("h3-references-") and directory not in referenced and directory.stat().st_mtime < oldest_unpublished:
+                shutil.rmtree(directory, ignore_errors=True)
 
     def _get(self, connection: sqlite3.Connection, entry_id: int) -> QueueRow:
         row = connection.execute("SELECT * FROM queue WHERE id = ?", (entry_id,)).fetchone()
