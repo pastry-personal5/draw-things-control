@@ -19,7 +19,8 @@ prompt_pairs:
     default: true
 
 # Closed H3 settings. Requested frames must equal llround(seconds * 24).
-# H3 snaps that request to its nearest supported 17n + 5 frame count.
+# Framecontrol snaps that request to its nearest supported 17n + 5 frame count
+# and passes the effective integer count to H3 with --frames.
 backend_settings:
   width: 768
   height: 1344

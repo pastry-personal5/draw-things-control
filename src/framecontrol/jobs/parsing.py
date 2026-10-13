@@ -65,7 +65,7 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -81,7 +81,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
@@ -91,7 +91,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
@@ -102,6 +102,7 @@ class JobParser:
         self.require_reference_snapshots = require_reference_snapshots
         self.inactive_reference_pairs = inactive_reference_pairs
         self._reference_facts = reference_facts or {}
+        self.legacy_h3_frames = legacy_h3_frames
         self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:

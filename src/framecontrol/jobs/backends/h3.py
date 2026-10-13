@@ -154,7 +154,7 @@ class H3Arguments:
                 if audio is not None:
                     args.append(str(audio))
             args.extend(("--ref-image-size", self.settings.reference_image_size))
-        args.extend(("--width", str(self.settings.width), "--height", str(self.settings.height), "--seconds", _number(self.settings.effective_seconds), "--steps", str(self.settings.steps), "--seed", str(self.settings.seed), "-o", str(self.output)))
+        args.extend(("--width", str(self.settings.width), "--height", str(self.settings.height), "--frames", str(self.settings.effective_frames), "--steps", str(self.settings.steps), "--seed", str(self.settings.seed), "-o", str(self.output)))
         if self.settings.render_width is not None:
             args.extend(("--render-width", str(self.settings.render_width), "--render-height", str(self.settings.render_height)))
         if "denoise_reuse" in self.settings.explicit or self.settings.denoise_reuse != 1:
@@ -178,10 +178,6 @@ class H3Arguments:
         environment.pop("H3_FFPROBE", None)
         environment["PATH"] = os.pathsep.join((str(Path(self.ffmpeg).parent), str(Path(self.ffprobe).parent), environment.get("PATH", "")))
         return environment
-
-
-def _number(value: float) -> str:
-    return str(int(value)) if value.is_integer() else repr(value)
 
 
 def effective_frames(frames: int) -> int:
@@ -429,7 +425,7 @@ class H3Backend:
         reference_image_size = value.get("reference_image_size", "match")
         if reference_image_size not in ("match", "max"):
             parser.fail("backend_settings.reference_image_size", "must be match or max")
-        return H3Settings(width, height, frames, seconds, steps, seed, effective_frames(frames), render_width, render_height, denoise_reuse, dit_layers, core_reuse, value.get("token_reduction", False), value.get("ssd_streaming", False), value.get("int8_row_fc2", False), value.get("reference_rope", False), reference_image_size, tuple(sorted((dict.fromkeys(compatibility_keys, False) | compatibility).items())), frozenset(value))
+        return H3Settings(width, height, frames, seconds, steps, seed, parser.legacy_h3_frames if parser.legacy_h3_frames is not None else effective_frames(frames), render_width, render_height, denoise_reuse, dit_layers, core_reuse, value.get("token_reduction", False), value.get("ssd_streaming", False), value.get("int8_row_fc2", False), value.get("reference_rope", False), reference_image_size, tuple(sorted((dict.fromkeys(compatibility_keys, False) | compatibility).items())), frozenset(value))
 
     @staticmethod
     def _runs(parser: JobParser, value: Any, run_count: int) -> tuple[H3Run, ...]:

@@ -5,6 +5,10 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-14
 
+- **Design decision** [M03]: Pass H3 the exact effective grid count with `--frames` alone. The checked-in CLI's `--seconds` parsing and mutually exclusive flags remain valid, but converting the aligned count back to seconds is unnecessary.
+- **Change** [M03]: H3 queue snapshots now preserve the upward aligned timing of jobs submitted before the nearest-grid change. New H3 snapshots use version 6 so altered effective timing remains detectable.
+- **Change** [M03]: H3 now snaps requested timing to the nearest supported `17n + 5` frame count and passes the resulting effective duration to the child. Requested and measured timing remain recorded separately.
+
 - **Change** [M08]: Framecontrol now replaces Framechain throughout the active package, distribution, user-facing interfaces, MCP and gRPC identities, and current documentation. `fc` remains the sole command at version 3.0.0. The state store opens `state/framecontrol.db` and safely migrates either `state/framechain.db` or `state/dtc.db`; ambiguous files and held run locks require manual recovery.
 
 - **Owner decision** [M07]: Increase the default parallel test worker count from four to eight; CI continues to select another safe count through `TEST_WORKERS` when needed. The baseline machine's full check completed in 29.65 seconds with eight workers.
@@ -59,10 +63,6 @@ Owner decisions, design decisions, and notable changes for
 - **Change** [M04]: State now opens `state/framechain.db`. An existing `state/dtc.db`, including committed WAL data, is copied through SQLite backup, verified, and removed only after a safe migration; conflicting files or a held run lock require recovery before startup.
 - **Owner decision** [M10]: Move the graph-based metadata milestone from M04 to M10; the milestone document and Phase 4 plan now use M10.
 - **Change**: The API creates job files and replacement backups with private permissions. The server refuses linked, non-regular, or malformed token files and reads an existing token from one checked file descriptor.
-
-## 2026-10-14
-
-- **Change** [M03]: H3 now snaps requested timing to the nearest supported `17n + 5` frame count and passes the resulting effective duration to the child. Requested and measured timing remain recorded separately.
 
 ## 2026-10-12
 

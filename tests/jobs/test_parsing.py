@@ -86,11 +86,12 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual((job.input_resize.target_size, job.input_resize.fit), ((768, 1344), "crop"))
         self.assertEqual(job.backend_settings["effective_frames"], 90)
 
-    def test_h3_snaps_to_the_nearest_supported_frame_count_and_passes_its_duration(self) -> None:
+    def test_h3_snaps_to_the_nearest_supported_frame_count_and_passes_exact_frames(self) -> None:
         self.assertEqual([effective_frames(frames) for frames in (24, 96, 120, 240, 360)], [22, 90, 124, 243, 362])
         settings = H3Settings(768, 1344, 240, 10, 30, 42, effective_frames(240))
         command = H3Arguments(Path("/h3"), Path("/model"), "prompt", "i2av", (), Path("/input.png"), Path("/output.partial.mp4"), settings, "/tools/ffmpeg", "/tools/ffprobe").command
-        self.assertEqual(command[command.index("--seconds") + 1], "10.125")
+        self.assertEqual(command[command.index("--frames") + 1], "243")
+        self.assertNotIn("--seconds", command)
 
     def test_h3_rejects_draw_things_fields_and_negative_prompt_key(self) -> None:
         base = {
@@ -164,6 +165,8 @@ class JobDefinitionTests(JobTestCase):
         arguments = H3Arguments(Path("/h3"), Path("/model"), "prompt", "r2av", (("image", Path("/private/ref.png"), None), ("video_audio", Path("/private/stage.mp4"), Path("/private/voice.wav"))), None, Path("/output.partial.mp4"), settings, "/tools/ffmpeg", "/tools/ffprobe")
         command = arguments.command
         self.assertNotIn("--first-frame", command)
+        self.assertEqual(command[command.index("--frames") + 1], "90")
+        self.assertNotIn("--seconds", command)
         self.assertEqual(command[command.index("--ref-image") + 1], "/private/ref.png")
         self.assertEqual(command[command.index("--ref-video-audio") + 1 : command.index("--ref-video-audio") + 3], ("/private/stage.mp4", "/private/voice.wav"))
         for flag in ("--render-width", "--render-height", "--reuse", "--layers", "--token-reduction", "--use-int8-row-fc2", "--use-reference-rope", "--ref-image-size"):

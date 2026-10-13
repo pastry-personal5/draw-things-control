@@ -34,7 +34,7 @@ class SubmitJobTests(JobTestCase):
         path = self.write_job(job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
         entry = submit_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
-        self.assertEqual(snapshot["version"], 5)
+        self.assertEqual(snapshot["version"], 6)
         self.assertEqual(snapshot["settings"]["backend_settings"]["color_policy"], {"version": 1, "anchor": "none"})
         asset = snapshot["reference_assets"][0]
         self.assertEqual((asset["pair"], asset["ordinal"], asset["field"], asset["basename"], len(asset["sha256"])), ("voice", 0, "path", "singer.png", 64))
@@ -52,12 +52,47 @@ class SubmitJobTests(JobTestCase):
         path = self.write_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "first", "strength": 0.4, "regions": False}))
         entry = submit_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
-        self.assertEqual(snapshot["version"], 5)
+        self.assertEqual(snapshot["version"], 6)
         self.assertEqual(parse_snapshot(entry, self.global_config, self.params)().color.strength, 0.4)
         changed_settings = json.loads(json.dumps(snapshot["settings"]))
         changed_settings["backend_settings"]["color_policy"]["strength"] = 0.9
         changed_snapshot = {**snapshot, "settings": changed_settings}
         changed = replace(entry, settings=replace(entry.settings, backend_settings=changed_settings["backend_settings"]), snapshot=json.dumps(changed_snapshot))
+        with self.assertRaises(InputError) as caught:
+            parse_snapshot(changed, self.global_config, self.params)()
+        self.assertEqual(caught.exception.field, "settings")
+
+    def test_h3_snapshot_from_before_nearest_frame_alignment_keeps_its_plan(self) -> None:
+        from framecontrol.jobs.backends.h3 import H3JobData
+
+        path = self.write_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        entry = submit_job(path, self.global_config, self.params, self.store)
+        snapshot = json.loads(entry.snapshot or "")
+        snapshot["version"] = 5
+        nearest = replace(entry, snapshot=json.dumps(snapshot))
+        self.assertEqual(parse_snapshot(nearest, self.global_config, self.params)().backend_settings["effective_frames"], 90)
+
+        legacy_settings = json.loads(json.dumps(snapshot["settings"]["backend_settings"]))
+        legacy_settings["effective_frames"] = 107
+        legacy_settings["effective_seconds"] = 107 / 24
+        snapshot["version"] = 5
+        snapshot["settings"]["backend_settings"] = legacy_settings
+        previous = replace(entry, settings=replace(entry.settings, backend_settings=legacy_settings), snapshot=json.dumps(snapshot))
+        job = parse_snapshot(previous, self.global_config, self.params)()
+        self.assertIsInstance(job.backend_data, H3JobData)
+        assert isinstance(job.backend_data, H3JobData)
+        self.assertEqual((job.backend_data.settings.effective_frames, job.backend_settings["effective_frames"]), (107, 107))
+
+        snapshot["version"] = 6
+        changed = replace(previous, snapshot=json.dumps(snapshot))
+        with self.assertRaises(InputError) as caught:
+            parse_snapshot(changed, self.global_config, self.params)()
+        self.assertEqual(caught.exception.field, "settings")
+
+        snapshot["version"] = 5
+        legacy_settings["effective_frames"] = 124
+        legacy_settings["effective_seconds"] = 124 / 24
+        changed = replace(previous, settings=replace(entry.settings, backend_settings=legacy_settings), snapshot=json.dumps(snapshot))
         with self.assertRaises(InputError) as caught:
             parse_snapshot(changed, self.global_config, self.params)()
         self.assertEqual(caught.exception.field, "settings")
