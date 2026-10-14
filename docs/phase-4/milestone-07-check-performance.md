@@ -16,6 +16,8 @@ On 2026-10-14, a warm local run measured Ruff at 0.06 seconds, Pyright at 4.58 s
 
 The delivered pytest-xdist route uses eight `--dist loadfile` workers and completed `make check` in 29.65 seconds. `tests/core/test_process_output.py` runs in its own pytest process: after gRPC starts threads, its C-core fork diagnostic can otherwise enter that test's deliberately exact child-output assertion. The remaining 1,363 tests run in xdist and the isolated process runs the other seven; repeated full runs passed without warnings or collisions.
 
+A later 2026-10-14 change replaced every project-owned subprocess start with the fork-free `posix_spawn`/clean-exec boundary. The gRPC fork diagnostic no longer exists to contaminate the exact-output test, so that file now runs in the same xdist suite as every other test.
+
 ## Scope
 
 In scope:

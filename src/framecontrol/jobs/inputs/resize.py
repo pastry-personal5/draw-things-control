@@ -21,6 +21,7 @@ import numpy as np
 from loguru import logger
 from PIL import Image, ImageCms, ImageOps
 
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.inputs.gamut import GamutMapper, GamutReport, read_matrix_profile
 from framecontrol.jobs.inputs.size import EXIF_ORIENTATION, IMAGE_ERRORS, Box, ResizePlan
 from framecontrol.jobs.media import oklab
@@ -172,7 +173,7 @@ def _ffmpeg_rgb(source: Path, ffmpeg: str, size: tuple[int, int]) -> np.ndarray:
     8.1.1 turns a PNG upright by its EXIF orientation unless told not to, and ``_upright`` does that here."""
     command = [ffmpeg, "-v", "error", "-nostdin", "-noautorotate", "-i", str(source), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba64le", "-"]
     try:
-        result = subprocess.run(command, capture_output=True, check=False, timeout=FFMPEG_TIMEOUT_SECONDS)
+        result = run_process(command, capture_output=True, check=False, timeout=FFMPEG_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError) as error:
         raise ValueError(f"ffmpeg could not read it: {error}") from error
     width, height = size

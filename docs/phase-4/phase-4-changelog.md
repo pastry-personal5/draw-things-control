@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-14
 
+- **Change**: Project-owned backend, media-tool, run-lock, and desktop child processes now cross a shared fork-free `posix_spawn`/clean-exec boundary. It preserves working directories, process-session supervision, pipes, timeouts, descriptor closing, and startup errors without copying live gRPC threads and poll descriptors through `fork`; the gRPC diagnostics no longer enter server or child output, and the exact process-output tests rejoin the parallel suite. The loopback launcher also drops its redundant `--allow-remote-bind`, and remote-token warnings now describe actual non-loopback binds only.
+
 - **Design decision** [M03]: Pass H3 the exact effective grid count with `--frames` alone. The checked-in CLI's `--seconds` parsing and mutually exclusive flags remain valid, but converting the aligned count back to seconds is unnecessary.
 - **Change** [M03]: H3 queue snapshots now preserve the upward aligned timing of jobs submitted before the nearest-grid change. New H3 snapshots use version 6 so altered effective timing remains detectable.
 - **Change** [M03]: H3 now snaps requested timing to the nearest supported `17n + 5` frame count and passes the resulting effective duration to the child. Requested and measured timing remain recorded separately.

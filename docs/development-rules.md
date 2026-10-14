@@ -58,7 +58,7 @@ The rules for changing `framecontrol`, for people and AI agents alike.
 - Test files live in `tests/<subpackage>/`, each directory has an `__init__.py`, and shared helpers are in `tests/fixtures.py`.
 - `make check` regenerates gRPC stubs first, then runs Ruff's linter, Ruff's
   formatter in check mode, pyright (`standard` mode, over `src/` and `tests/`),
-  and the tests concurrently where safe. It must pass before a change is
+  and the tests concurrently. It must pass before a change is
   committed. Do not use direct `make -j check`: the target manages its own
   generated-stub barrier and validation parallelism. An ignore comment for
   pyright names its rule and says why.

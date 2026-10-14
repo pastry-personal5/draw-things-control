@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.state.executions import ExecutionRow
 
 
@@ -34,7 +35,7 @@ def reveal_target(execution: ExecutionRow, run_number: int | None) -> Path | str
 def reveal_in_finder(path: Path) -> str | None:
     """Select the file in a Finder window; None when it did, else why not. The path is an argument, never shell text."""
     try:
-        result = subprocess.run(["open", "-R", str(path)], check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=10)
+        result = run_process(["open", "-R", str(path)], check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as error:
         return f"Cannot reveal {path}: {error}"
     if result.returncode != 0:
@@ -50,7 +51,7 @@ def copy_to_pasteboard(text: str) -> str | None:
     # pbcopy reads its input in the locale's encoding; UTF-8 keeps any prompt's characters.
     environment = {**os.environ, "LC_CTYPE": "UTF-8"}
     try:
-        result = subprocess.run([pbcopy], input=text.encode("utf-8"), check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10, env=environment)
+        result = run_process([pbcopy], input=text.encode("utf-8"), check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10, env=environment)
     except (OSError, subprocess.SubprocessError) as error:
         return f"pbcopy failed: {error}"
     if result.returncode != 0:

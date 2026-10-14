@@ -281,7 +281,7 @@ def mcp_command(
             run_mcp(server_url, token_path)
             return
         listen_port = DEFAULT_MCP_PORT if port is None else port
-        if allow_remote_bind:
+        if allow_remote_bind and not is_loopback_host(listen_host):
             logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
         with errors_exit():
             try:

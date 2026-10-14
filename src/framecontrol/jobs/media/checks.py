@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.fingerprint import SAME_MATRIX, MatrixFingerprint, can_measure, measure_matrix
 from framecontrol.jobs.media.stream_color import RANGES, UNSTATED, CommandRunner, StreamColor
 from framecontrol.jobs.media.tools import find_ffprobe
@@ -89,7 +90,7 @@ class MediaChecker:
     finds them once they are; a test gives it a fake ``run`` so neither tool starts. ``segmenter`` gives the segmenter
     the color drift check measures regions with (Apple Vision), or None for the whole frame only."""
 
-    def __init__(self, find_ffmpeg: Callable[[], str | None], *, run: CommandRunner = subprocess.run, segmenter: Callable[[], Segmenter | None] | None = None) -> None:
+    def __init__(self, find_ffmpeg: Callable[[], str | None], *, run: CommandRunner = run_process, segmenter: Callable[[], Segmenter | None] | None = None) -> None:
         self._find_ffmpeg = find_ffmpeg
         self._run = run
         self._segmenter = segmenter
@@ -411,7 +412,7 @@ def check_last_frame(png: Path, video: VideoProbe | None, color: StreamColor) ->
 # Videos
 
 
-def probe_video(video: Path, ffprobe: str | None, run: CommandRunner = subprocess.run) -> VideoProbe:
+def probe_video(video: Path, ffprobe: str | None, run: CommandRunner = run_process) -> VideoProbe:
     """One ffprobe call: the first video stream, and the color its first frame states. The frame is read rather than
     the stream because ffmpeg decodes with the frame's: once a ``colr`` box is added, the stream reports the box."""
     if ffprobe is None:
@@ -451,7 +452,7 @@ def probe_video(video: Path, ffprobe: str | None, run: CommandRunner = subproces
     )
 
 
-def check_output(video: Path, requested_format: str | None, written: VideoProbe, color: StreamColor, ffmpeg: str | None, run: CommandRunner = subprocess.run) -> MediaCheck:
+def check_output(video: Path, requested_format: str | None, written: VideoProbe, color: StreamColor, ffmpeg: str | None, run: CommandRunner = run_process) -> MediaCheck:
     """The run's video: the format it was asked for, what its stream states, the ``colr`` box, and whether its pixels
     were encoded with the matrix it states. ``written`` is read before the tagger ran; ``color`` is what it is decoded with."""
     warnings: list[str] = []

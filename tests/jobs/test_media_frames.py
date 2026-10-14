@@ -40,7 +40,7 @@ class ExtractionCommandTests(unittest.TestCase):
             calls.append(command)
             return mock.Mock(returncode=0, stdout=probe_output, stderr="")
 
-        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(tools.shutil, "which", return_value="/usr/bin/ffprobe"), mock.patch.object(frame_extraction.subprocess, "run", side_effect=fake_run), mock.patch.object(stream_color.subprocess, "run", side_effect=fake_run), tempfile.TemporaryDirectory() as directory:
+        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(tools.shutil, "which", return_value="/usr/bin/ffprobe"), mock.patch.object(frame_extraction, "run_process", side_effect=fake_run), mock.patch.object(stream_color, "run_process", side_effect=fake_run), tempfile.TemporaryDirectory() as directory:
             png = Path(directory) / "frame.png"
             png.write_bytes(b"png")
             extract_last_frame(Path("clip.mov"), png, color)
@@ -75,7 +75,7 @@ class ExtractionCommandTests(unittest.TestCase):
                 self.assertTrue(self.filter_chain(None, unstated).startswith("scale=in_color_matrix=bt709:in_range=tv:"))
 
     def test_a_failed_extraction_is_reported(self) -> None:
-        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(frame_extraction.subprocess, "run", return_value=mock.Mock(returncode=1, stderr="boom", stdout="")):
+        with mock.patch.object(frame_extraction, "require_ffmpeg", return_value="/usr/bin/ffmpeg"), mock.patch.object(frame_extraction, "run_process", return_value=mock.Mock(returncode=1, stderr="boom", stdout="")):
             with self.assertRaisesRegex(ValueError, "boom"):
                 extract_last_frame(Path("clip.mov"), Path("/nonexistent/frame.png"), StreamColor())
 

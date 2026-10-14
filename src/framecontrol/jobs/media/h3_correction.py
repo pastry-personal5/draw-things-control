@@ -20,6 +20,7 @@ from typing import Callable
 import numpy as np
 from PIL import Image
 
+from framecontrol.core.process.spawn import popen
 from framecontrol.jobs.media import oklab
 from framecontrol.jobs.media.color_stats import ColorStats, measure, turn_degrees
 from framecontrol.jobs.media.h3_color import DELIVERY_TO_SRGB_FILTER, NATIVE_TO_SRGB_FILTER, H3ColorCancelled, measure_h3_image
@@ -140,7 +141,7 @@ def apply_h3_params(frame: np.ndarray, current: ColorStats, params: H3Params) ->
 
 def _decoder(source: Path, width: int, height: int, ffmpeg: str, *, rec709_delivery: bool) -> subprocess.Popen[bytes]:
     color_filter = DELIVERY_TO_SRGB_FILTER if rec709_delivery else NATIVE_TO_SRGB_FILTER
-    return subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(source), "-vf", color_filter, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(source), "-vf", color_filter, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def _read_frame(process: subprocess.Popen[bytes], width: int, height: int, index: int, deadline: float, stop_requested: Callable[[], signal.Signals | None]) -> np.ndarray:
@@ -268,7 +269,7 @@ def correct_h3_video(source: Path, target: Path, ffmpeg: str, *, frames: int, wi
             fitted_regions[name].append(_params(regional, _target(input_regions[name], anchor_regions.get(name), pull * ramp), strength, skin=name == "skin"))
     fitted = _smooth(fitted)
     fitted_regions = {name: _smooth(values) for name, values in fitted_regions.items()}
-    encoder = subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", "24", "-i", "-", "-i", str(source), "-map", "0:v:0", "-map", "1:a:0", "-vf", ENCODE_FILTER, "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-c:a", "copy", "-movflags", "+faststart", str(target)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    encoder = popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", "24", "-i", "-", "-i", str(source), "-map", "0:v:0", "-map", "1:a:0", "-vf", ENCODE_FILTER, "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-c:a", "copy", "-movflags", "+faststart", str(target)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     decoder: subprocess.Popen[bytes] | None = None
     peak_clipped = 0.0
     reduced = 0

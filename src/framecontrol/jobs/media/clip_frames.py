@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from framecontrol.core.process.spawn import popen
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.frames import decode_filter, handoff_samples
 from framecontrol.jobs.media.stream_color import StreamColor
 
@@ -51,7 +53,7 @@ def probe_clip(video: Path, ffprobe: str) -> ClipInfo:
     """One ffprobe call for the first video stream; raises ValueError when it cannot be read."""
     command = [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames,r_frame_rate,bit_rate,codec_name,codec_tag_string", "-of", "json", str(video)]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, errors="replace", check=False, timeout=PROBE_TIMEOUT_SECONDS)
+        result = run_process(command, capture_output=True, text=True, errors="replace", check=False, timeout=PROBE_TIMEOUT_SECONDS)
         stream = json.loads(result.stdout)["streams"][0] if result.returncode == 0 else None
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError) as error:
         raise ValueError(f"ffprobe could not read {video.name}: {error}") from error
@@ -87,7 +89,7 @@ def iter_frames(video: Path, color: StreamColor, ffmpeg: str, size: tuple[int, i
     # ffmpeg's errors go to a file, since a pipe read only at the end fills and stalls it; and a timer kills ffmpeg at the
     # deadline, since a read it never answers would otherwise wait past it.
     with tempfile.TemporaryFile() as errors_file:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors_file)
+        process = popen(command, stdout=subprocess.PIPE, stderr=errors_file)
         assert process.stdout is not None
         timer = threading.Timer(max(deadline - time.monotonic(), 0.0), process.kill) if deadline is not None else None
         if timer is not None:
@@ -160,7 +162,7 @@ class EncoderChoice:
 def available_encoders(ffmpeg: str) -> set[str]:
     """The encoder names this ffmpeg lists."""
     try:
-        result = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, errors="replace", check=False, timeout=PROBE_TIMEOUT_SECONDS)
+        result = run_process([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, errors="replace", check=False, timeout=PROBE_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return set()
     names = set()
@@ -217,7 +219,7 @@ class ClipEncoder:
         # ffmpeg's errors go to a file, as iter_frames' do, since a pipe read only at the end fills and stalls it.
         self._errors_file = tempfile.TemporaryFile()
         try:
-            self._process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self._errors_file)
+            self._process = popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self._errors_file)
         except BaseException:
             self._errors_file.close()
             raise

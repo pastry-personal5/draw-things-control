@@ -155,13 +155,13 @@ class RunLockTests(unittest.TestCase):
 
     def test_the_process_check_matches_only_the_command_name(self) -> None:
         self.assertFalse(run_lock.is_draw_things_process(os.getpid()))
-        with mock.patch.object(run_lock.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="/usr/local/bin/draw-things-cli\n")):
+        with mock.patch.object(run_lock, "run_process", return_value=mock.Mock(returncode=0, stdout="/usr/local/bin/draw-things-cli\n")):
             self.assertTrue(run_lock.is_draw_things_process(1234))
             self.assertFalse(run_lock.is_draw_things_process(1234, "other-cli"))
-        with mock.patch.object(run_lock.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="/opt/my-wrapper\n")):
+        with mock.patch.object(run_lock, "run_process", return_value=mock.Mock(returncode=0, stdout="/opt/my-wrapper\n")):
             self.assertTrue(run_lock.is_draw_things_process(1234, "my-wrapper"))
         # A system that truncates the command name to 15 characters.
-        with mock.patch.object(run_lock.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="a-very-long-exe\n")):
+        with mock.patch.object(run_lock, "run_process", return_value=mock.Mock(returncode=0, stdout="a-very-long-exe\n")):
             self.assertTrue(run_lock.is_draw_things_process(1234, "a-very-long-executable"))
 
     def test_the_refusal_names_the_executable_the_earlier_run_started(self) -> None:

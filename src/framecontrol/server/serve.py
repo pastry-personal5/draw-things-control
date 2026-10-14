@@ -122,7 +122,7 @@ def run(paths: ProjectPaths, global_config: GlobalConfig, toolkit: Toolkit, opti
     cleanly instead of a queued entry being claimed and then interrupted by the refusal."""
     if not options.allow_remote_bind and not is_loopback_host(options.host):
         raise InputError(f"--host {options.host} is not loopback; pass --allow-remote-bind to bind beyond it (the token then crosses the network in plain HTTP)")
-    if options.allow_remote_bind:
+    if options.allow_remote_bind and not is_loopback_host(options.host):
         logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
     token = load_or_create_token(paths.server_token)
     backlog = EventBacklog()

@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from framecontrol.core.process.spawn import popen
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.video_color import ColrTag, read_colr, read_colr_kind
 
 if TYPE_CHECKING:
@@ -56,14 +58,14 @@ def inspect_h3_declarations(video: Path, ffmpeg: str, ffprobe: str) -> H3Declara
     """Read container, H.264 SPS/VUI, and FFprobe's merged stream view separately."""
     container = read_colr(video)
     container_kind = read_colr_kind(video)
-    probe = subprocess.run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range,color_space,color_transfer,color_primaries", "-of", "json", str(video)], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
+    probe = run_process([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range,color_space,color_transfer,color_primaries", "-of", "json", str(video)], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
     if probe.returncode:
         raise ValueError(probe.stderr.strip() or "could not inspect H3 stream color")
     streams = json.loads(probe.stdout).get("streams")
     if not isinstance(streams, list) or len(streams) != 1 or not isinstance(streams[0], dict):
         raise ValueError("could not inspect H3 video stream color")
     stream = {key: streams[0].get(key) for key in ("color_range", "color_space", "color_transfer", "color_primaries")}
-    trace = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "trace", "-i", str(video), "-map", "0:v:0", "-frames:v", "1", "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
+    trace = run_process([ffmpeg, "-hide_banner", "-loglevel", "trace", "-i", str(video), "-map", "0:v:0", "-frames:v", "1", "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
     if trace.returncode:
         raise ValueError(trace.stderr.strip()[-500:] or "could not inspect H3 H.264 color")
     fields = {key: int(value) for key, value in re.findall(r"\b(video_signal_type_present_flag|video_full_range_flag|colour_description_present_flag|colour_primaries|transfer_characteristics|matrix_coefficients)\s+\d+\s+=\s+(\d+)\b", trace.stderr)}
@@ -105,7 +107,7 @@ def declarations_match(declarations: H3Declarations, expected: ColrTag, *, requi
 
 def packet_facts(video: Path, ffprobe: str, stream: str) -> list[tuple[int | None, int | None, int | None, str | None]]:
     """Packet payload hashes and integer time stamps, including AAC priming."""
-    probe = subprocess.run([ffprobe, "-v", "error", "-select_streams", stream, "-show_packets", "-show_data_hash", "sha256", "-show_entries", "packet=pts,dts,duration,data_hash", "-of", "json", str(video)], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
+    probe = run_process([ffprobe, "-v", "error", "-select_streams", stream, "-show_packets", "-show_data_hash", "sha256", "-show_entries", "packet=pts,dts,duration,data_hash", "-of", "json", str(video)], capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SECONDS, check=False)
     if probe.returncode:
         raise ValueError(probe.stderr.strip() or "could not inspect H3 packets")
     packets = json.loads(probe.stdout).get("packets")
@@ -119,7 +121,7 @@ def convert_h3_delivery(source: Path, target: Path, ffmpeg: str, stop_requested:
     if target.exists():
         raise ValueError(f"staged H3 delivery already exists: {target}")
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0", "-vf", CONVERT_FILTER, "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv", "-c:a", "copy", "-movflags", "+faststart", str(target)]
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace") as process:
+    with popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace") as process:
         deadline = time.monotonic() + COLOR_TIMEOUT_SECONDS
         while True:
             if stop_requested is not None and (received_signal := stop_requested()) is not None:
@@ -162,7 +164,7 @@ def decode_h3_video_frame(video: Path, index: int, width: int, height: int, ffmp
 
     color_filter = DELIVERY_TO_SRGB_FILTER if rec709_delivery else NATIVE_TO_SRGB_FILTER
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(video), "-vf", f"select=eq(n\\,{index}),{color_filter}", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+    with popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
         deadline = time.monotonic() + DECODE_TIMEOUT_SECONDS
         while True:
             if stop_requested is not None and (received_signal := stop_requested()) is not None:

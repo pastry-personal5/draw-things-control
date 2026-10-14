@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from framecontrol.core.numbers import positive_whole
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.tools import find_ffprobe
 
 VIDEO_SUFFIXES = {".mov", ".mp4"}
@@ -34,7 +35,7 @@ class MediaInfo:
     frames: int | None = None
 
 
-def measure_output(path: Path, *, ffprobe: str | None = None, run: CommandRunner = subprocess.run) -> MediaInfo:
+def measure_output(path: Path, *, ffprobe: str | None = None, run: CommandRunner = run_process) -> MediaInfo:
     """The file's size and frame count; raises ValueError when it cannot be measured."""
     if path.suffix.lower() in VIDEO_SUFFIXES:
         return _measure_video(path, ffprobe or find_ffprobe(), run)

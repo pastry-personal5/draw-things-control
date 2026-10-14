@@ -45,17 +45,14 @@ typecheck:
 	uv run --extra dev pyright
 
 test:
-	@parallel_output=$$(mktemp); isolated_output=$$(mktemp); \
-	$(PYTEST) -q -n "$(TEST_WORKERS)" --dist loadfile --ignore=tests/core/test_process_output.py >"$$parallel_output" 2>&1; parallel_result=$$?; \
-	if [ "$$parallel_result" -eq 0 ]; then $(PYTEST) -q tests/core/test_process_output.py >"$$isolated_output" 2>&1; isolated_result=$$?; else isolated_result=0; fi; \
-	if [ "$$parallel_result" -ne 0 ]; then printf '%s\\n' 'Parallel test suite failed:'; cat "$$parallel_output"; \
-	elif [ "$$isolated_result" -ne 0 ]; then printf '%s\\n' 'Isolated process-output test suite failed:'; cat "$$isolated_output"; fi; \
-	rm -f "$$parallel_output" "$$isolated_output"; \
-	test "$$parallel_result" -eq 0 && test "$$isolated_result" -eq 0
+	@output=$$(mktemp); \
+	$(PYTEST) -q -n "$(TEST_WORKERS)" --dist loadfile >"$$output" 2>&1; result=$$?; \
+	if [ "$$result" -ne 0 ]; then cat "$$output"; fi; \
+	rm -f "$$output"; \
+	exit "$$result"
 
 test-verbose:
-	$(PYTEST) -vv -n "$(TEST_WORKERS)" --dist loadfile --ignore=tests/core/test_process_output.py
-	$(PYTEST) -vv tests/core/test_process_output.py
+	$(PYTEST) -vv -n "$(TEST_WORKERS)" --dist loadfile
 
 test-tui:
 	@output=$$(mktemp); \

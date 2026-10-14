@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framecontrol.core.process.spawn import run as run_process
+
 # Kr and Kb of each candidate, under the names ffprobe gives them.
 MATRICES = {"bt470bg": (0.299, 0.114), "bt709": (0.2126, 0.0722), "bt2020nc": (0.2627, 0.0593)}
 # ffprobe's names that mean the same matrix as a candidate.
@@ -63,7 +65,7 @@ def can_measure(pix_fmt: str | None) -> bool:
     return depth is not None and int(depth.group(1)) >= 10
 
 
-def measure_matrix(video: Path, ffmpeg: str, width: int, height: int, *, full_range: bool, run: CommandRunner = subprocess.run) -> MatrixFingerprint:
+def measure_matrix(video: Path, ffmpeg: str, width: int, height: int, *, full_range: bool, run: CommandRunner = run_process) -> MatrixFingerprint:
     """Score each candidate matrix on the video's first frames; raises ValueError when they cannot be decoded."""
     import numpy as np
 

@@ -283,7 +283,7 @@ class HistoryTests(HistoryCase):
         for failure in failures:
             with self.subTest(failure=failure):
                 run = mock.Mock(side_effect=failure) if isinstance(failure, Exception) else mock.Mock(return_value=failure)
-                with mock.patch("framecontrol.tui.desktop.subprocess.run", run):
+                with mock.patch("framecontrol.tui.desktop.run_process", run):
                     async with app.run_test(size=(140, 40)) as pilot:
                         await self.settle(pilot)
                         await self.command(pilot, f"/reveal E{execution_id:04d}")
@@ -720,11 +720,11 @@ class RunStartedTextTests(unittest.TestCase):
 class PasteboardTests(unittest.TestCase):
     def test_the_text_goes_to_pbcopy_as_utf_8_and_failures_say_why(self) -> None:
         done = subprocess.CompletedProcess(["pbcopy"], 0)
-        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.subprocess.run", return_value=done) as run:
+        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.run_process", return_value=done) as run:
             self.assertIsNone(copy_to_pasteboard("a café [slow]"))
         self.assertEqual(run.call_args.args[0], ["/usr/bin/pbcopy"])
         self.assertEqual((run.call_args.kwargs["input"], run.call_args.kwargs["env"]["LC_CTYPE"]), ("a café [slow]".encode(), "UTF-8"))
         with mock.patch("framecontrol.tui.desktop.shutil.which", return_value=None):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy was not found")
-        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.subprocess.run", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
+        with mock.patch("framecontrol.tui.desktop.shutil.which", return_value="/usr/bin/pbcopy"), mock.patch("framecontrol.tui.desktop.run_process", return_value=subprocess.CompletedProcess(["pbcopy"], 1)):
             self.assertEqual(copy_to_pasteboard("x"), "pbcopy exited with 1")

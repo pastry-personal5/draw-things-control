@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.fingerprint import SAME_MATRIX, MatrixFingerprint, can_measure, measure_matrix
 
 UNSTATED = {None, "", "unknown", "unspecified", "reserved", "N/A"}
@@ -79,7 +80,7 @@ def resolve_video_color(video: Path, ffmpeg: str | None, ffprobe: str | None, ru
     if ffmpeg is None or not can_measure(pix_fmt) or width <= 0 or height <= 0:
         return stated
     try:
-        fingerprint = measure_matrix(video, ffmpeg, width, height, full_range=stated.decode_range == "pc", run=run or subprocess.run)
+        fingerprint = measure_matrix(video, ffmpeg, width, height, full_range=stated.decode_range == "pc", run=run or run_process)
     except ValueError:
         return stated
     measured = fingerprint.matrix
@@ -93,7 +94,7 @@ def _probe(video: Path, ffprobe: str | None, run: CommandRunner | None) -> tuple
         return StreamColor(), 0, 0, None
     command = [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_entries", "stream=pix_fmt,width,height:frame=color_space,color_range", "-of", "json", str(video)]
     try:
-        result = (run or subprocess.run)(command, capture_output=True, text=True, errors="replace", check=False, timeout=TIMEOUT_SECONDS)
+        result = (run or run_process)(command, capture_output=True, text=True, errors="replace", check=False, timeout=TIMEOUT_SECONDS)
         data = json.loads(result.stdout) if result.returncode == 0 else {}
         frame = (data.get("frames") or [{}])[0]
         stream = (data.get("streams") or [{}])[0]

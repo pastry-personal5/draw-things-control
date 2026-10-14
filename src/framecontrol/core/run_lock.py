@@ -13,6 +13,7 @@ from types import TracebackType
 from framecontrol.core.errors import BusyError, StateUnavailableError
 from framecontrol.core.paths import LOCK_FILE_NAME
 from framecontrol.core.process.groups import process_group_alive
+from framecontrol.core.process.spawn import run as run_process
 
 # A read-only screen probes the lock by holding it for an instant, so a busy lock is retried this long before it is reported.
 BUSY_RETRY_SECONDS = 0.25
@@ -43,7 +44,7 @@ def ensure_state_directory(directory: Path) -> Path:
 def is_draw_things_process(pid: int, name: str = CHILD_EXECUTABLE_NAME) -> bool:
     """Whether ``pid`` is alive and its command is ``name`` (the executable the run started), so a reused PID is not mistaken for one."""
     try:
-        result = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, check=False, timeout=5)
+        result = run_process(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, check=False, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False
     command = Path(result.stdout.strip()).name

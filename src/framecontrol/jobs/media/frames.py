@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.media.stream_color import StreamColor, resolve_video_color
 from framecontrol.jobs.media.tools import find_ffprobe, require_ffmpeg
 
@@ -96,7 +96,7 @@ def write_handoff_png(samples: np.ndarray, png: Path, *, executable: str = "ffmp
     height, width = samples.shape[:2]
     raw = np.ascontiguousarray(samples, dtype="<u2").tobytes()
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-f", "rawvideo", "-pix_fmt", "rgb48le", "-s", f"{width}x{height}", "-i", "-", "-frames:v", "1", "-vf", f"{SRGB_LABEL},{RGB_16}", str(png)]
-    result = subprocess.run(command, input=raw, capture_output=True, check=False)
+    result = run_process(command, input=raw, capture_output=True, check=False)
     if result.returncode != 0 or not png.is_file():
         detail = result.stderr.decode(errors="replace").strip() or f"exit code {result.returncode}"
         raise ValueError(f"Could not write {png.name}: {detail}")
@@ -110,7 +110,7 @@ def extract_last_frame(video: Path, png: Path, color: StreamColor | None = None,
         color = resolve_video_color(video, ffmpeg, find_ffprobe(ffmpeg))
     # Seek near the end and keep overwriting one image; the last frame decoded wins.
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-n", "-sseof", "-1", "-i", str(video), "-update", "1", "-q:v", "1", "-vf", srgb_filter(color), str(png)]
-    result = subprocess.run(command, capture_output=True, text=True, errors="replace", check=False)
+    result = run_process(command, capture_output=True, text=True, errors="replace", check=False)
     if result.returncode != 0 or not png.is_file():
         detail = result.stderr.strip() or f"exit code {result.returncode}"
         raise ValueError(f"Could not extract the last frame of {video}: {detail}")

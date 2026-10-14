@@ -5,5 +5,4 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-"$project_root/.cache/uv"}"
 
 uv run fc serve \
 --host=127.0.0.1 \
---allow-write \
---allow-remote-bind
+--allow-write

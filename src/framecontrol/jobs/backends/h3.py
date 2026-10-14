@@ -25,6 +25,7 @@ from framecontrol.core.errors import InputError
 from framecontrol.core.exit_codes import exit_code_for_signal
 from framecontrol.core.numbers import is_int, is_number, setting_number
 from framecontrol.core.paths import linked_component
+from framecontrol.core.process.spawn import run as run_process
 from framecontrol.jobs.backend import H3_BACKEND, OutputPaths, RunContext, RunPreparation
 from framecontrol.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, GenerationMode, JobDefinition
 from framecontrol.jobs.inputs.size import ResizePlan, decode_image, read_image_info
@@ -248,7 +249,7 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
         raise InputError("ffprobe and ffmpeg are required to validate H3 media references")
 
     def streams(source: Path) -> tuple[list[dict[str, Any]], float]:
-        result = subprocess.run((ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(source)), capture_output=True, text=True, errors="replace", timeout=20, check=False)
+        result = run_process((ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(source)), capture_output=True, text=True, errors="replace", timeout=20, check=False)
         if result.returncode != 0:
             raise ValueError(f"cannot inspect media: {result.stderr.strip() or 'ffprobe failed'}")
         payload = json.loads(result.stdout)
@@ -261,7 +262,7 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
         return items, duration
 
     def decode(source: Path, selector: str) -> None:
-        result = subprocess.run((ffmpeg, "-v", "error", "-i", str(source), "-map", selector, "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
+        result = run_process((ffmpeg, "-v", "error", "-i", str(source), "-map", selector, "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
         if result.returncode != 0:
             raise ValueError(f"cannot decode media: {result.stderr.strip() or 'ffmpeg failed'}")
 
@@ -295,7 +296,7 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
 
 
 def _inspect_audio(path: Path, ffprobe: str, ffmpeg: str) -> float:
-    result = subprocess.run((ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)), capture_output=True, text=True, errors="replace", timeout=20, check=False)
+    result = run_process((ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)), capture_output=True, text=True, errors="replace", timeout=20, check=False)
     if result.returncode != 0:
         raise ValueError(f"cannot inspect audio: {result.stderr.strip() or 'ffprobe failed'}")
     payload = json.loads(result.stdout)
@@ -304,7 +305,7 @@ def _inspect_audio(path: Path, ffprobe: str, ffmpeg: str) -> float:
     duration = float(audio[0].get("duration") or payload.get("format", {}).get("duration") or 0.0) if len(audio) == 1 else 0.0
     if len(audio) != 1 or not math.isfinite(duration) or not 2 <= duration <= 15:
         raise ValueError("must contain exactly one audio stream with a duration from 2 to 15 seconds")
-    decoded = subprocess.run((ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
+    decoded = run_process((ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
     if decoded.returncode != 0:
         raise ValueError(f"cannot decode audio: {decoded.stderr.strip() or 'ffmpeg failed'}")
     return duration
@@ -618,7 +619,7 @@ class H3Backend:
             raise InputError("ffprobe is missing for h3")
         self._ffmpeg, self._ffprobe = ffmpeg, ffprobe
         try:
-            result = subprocess.run((str(self.runtime.executable), "-d", str(self.runtime.model_directory), "--info"), capture_output=True, text=True, errors="replace", timeout=H3_INFO_TIMEOUT_SECONDS, check=False, cwd=self.runtime.executable.parent)
+            result = run_process((str(self.runtime.executable), "-d", str(self.runtime.model_directory), "--info"), capture_output=True, text=True, errors="replace", timeout=H3_INFO_TIMEOUT_SECONDS, check=False, cwd=self.runtime.executable.parent)
         except (OSError, subprocess.SubprocessError) as error:
             raise InputError(f"H3 installation probe failed: {error}") from error
         if result.returncode != 0:
@@ -958,7 +959,7 @@ def _centre_crop_plan(size: tuple[int, int], orientation: int | None, width: int
 
 def _verify_h3_mp4(path: Path, settings: H3Settings, ffprobe: str) -> dict[str, Any]:
     command = [ffprobe, "-v", "error", "-count_frames", "-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate,nb_read_frames,sample_rate,channels,duration", "-of", "json", str(path)]
-    result = subprocess.run(command, capture_output=True, text=True, errors="replace", timeout=30, check=False)
+    result = run_process(command, capture_output=True, text=True, errors="replace", timeout=30, check=False)
     if result.returncode:
         raise ValueError(result.stderr.strip() or "ffprobe failed")
     streams = json.loads(result.stdout).get("streams")
@@ -992,6 +993,6 @@ def _extract_h3_frame(video: Path, target: Path, ffmpeg: str) -> None:
     tag = read_colr(video)
     color_filter = DELIVERY_TO_SRGB_FILTER if tag == DELIVERY else NATIVE_TO_SRGB_FILTER
     color_filter += ",setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=gbr:range=pc"
-    result = subprocess.run([ffmpeg, "-v", "error", "-n", "-sseof", "-1", "-i", str(video), "-update", "1", "-vf", color_filter, str(target)], capture_output=True, text=True, errors="replace", timeout=30, check=False)
+    result = run_process([ffmpeg, "-v", "error", "-n", "-sseof", "-1", "-i", str(video), "-update", "1", "-vf", color_filter, str(target)], capture_output=True, text=True, errors="replace", timeout=30, check=False)
     if result.returncode or not target.is_file():
         raise ValueError(result.stderr.strip() or "could not extract H3 final frame")

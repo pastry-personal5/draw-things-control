@@ -18,6 +18,7 @@ from framecontrol.core.arguments import CommandArguments, DrawThingsGenerateArgu
 from framecontrol.core.process.groups import process_group_alive, send_to_process_group
 from framecontrol.core.process.output import MessageCallback, OutputProcessor, OutputStream, ProcessMessage
 from framecontrol.core.process.signals import install_signal_handlers, restore_signal_handlers
+from framecontrol.core.process.spawn import popen
 
 
 class RunResult(Protocol):
@@ -261,7 +262,7 @@ class DrawThingsProcessRunner:
         # Without capture the child inherits the terminal, so it can preview images inline.
         pipe = subprocess.PIPE if self._capture_output else None
         try:
-            return subprocess.Popen(
+            return popen(
                 self._command,
                 stdout=pipe,
                 stderr=pipe,

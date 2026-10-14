@@ -70,7 +70,7 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `core/global_config.py`, `core/cooldown.py` | The global configuration; `CooldownPolicy` and its mapping, shared by it and jobs |
 | `core/numbers.py`, `core/clock.py` | Numbers read from outside and written for people; the clock every timestamp comes from |
 | `core/run_lock.py` | `fcntl.flock` on `state/run.lock`, naming the holder and the running child |
-| `core/process/` | The supervised process runner (process group, timeout, graceful-then-forced shutdown), its runner factories, output processing, signals, `CancelToken`, process groups |
+| `core/process/` | The supervised process runner (process group, timeout, graceful-then-forced shutdown), its fork-free `posix_spawn`/clean-exec boundary for threaded front ends, runner factories, output processing, signals, `CancelToken`, process groups |
 | `jobs/backend.py`, `jobs/backends/` | The backend protocol and registry; adapters own typed settings, safe settings summaries, command preparation, tool checks, per-run finishing state, and output finishing. The Draw Things adapter keeps its color policy inside that boundary. H3 owns first-frame preparation, project-installed runtime preflight, staged MP4 verification/promotion, audio facts, mixed `i2av`/`r2av` argv, fingerprint-gated color finishing, and verified sRGB handoffs when extraction succeeds; a valid MP4 can succeed with a missing-handoff warning, while the executor stops a dependent `i2av` run before launch. H3 uses its own media color inspection, conversion, drift, and correction modules, and does not enter the Draw Things color pipeline. `h3_references.py` makes private, digest-checked copies |
 | `jobs/definition.py`, `jobs/parsing.py`, `jobs/prompt_pairs.py`, `jobs/overrides.py` | A validated job, and `JobParser` (`load_job`, `load_job_text`), whose errors are `InputError`s naming the file and the field |
 | `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and the anchor state handed to the backend for each run |
@@ -103,7 +103,11 @@ never start a process.
 reads stdout and stderr concurrently. `SIGHUP`, `SIGINT`, and `SIGTERM` send
 `SIGTERM` to the group, wait `--shutdown-grace` (10 s), then `SIGKILL`.
 `--timeout` uses the same sequence. Without `--output`, the child inherits the
-terminal for inline preview.
+terminal for inline preview. Every project-owned subprocess starts through a
+clean helper interpreter reached with `posix_spawn`; that helper closes inherited
+descriptors, creates the requested session, changes directory, and execs the
+real command. The threaded gRPC server and clients therefore never fork their
+live C-core state into a child.
 
 **Exit codes.** 0 success; 1 run wrote no output, last-frame extraction
 failed, or the state database or lock cannot be used; 2 invalid input; 75 run
