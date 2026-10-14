@@ -49,6 +49,16 @@ prompt_pairs:
 
       non_diegetic_music:
       N/A
+  evolve-interaction:
+    positive: |
+      integrated_multimodal_description:
+      Continue smoothly from the supplied first frame without any cut or interruption. From 00:00 to 00:06, both people engage in a natural conversation. <Subject 1> gestures while speaking, shifting slightly to face <Subject 2> more directly. <Subject 2> listens attentively with responsive facial expressions, occasionally nodding or leaning slightly. Maintain consistent lighting, background, and camera angle throughout. Preserve their distinct appearances and proportions. The interaction feels organic and unscripted, with gentle pacing.
+
+      overall_soundscape:
+      Ambient background sounds with subtle environmental textures. Occasional quiet vocalizations and soft movement sounds. No dialogue.
+
+      non_diegetic_music:
+      N/A
 
 settings_profiles:
   h3-portrait:
@@ -78,8 +88,18 @@ defaults:
       timeout_seconds: 3600
 
 runs:
-  - {backend: h3, pipeline: r2av}
-  - {backend: h3, pipeline: i2av}
+  - backend: h3
+    pipeline: r2av
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: continue-from-handoff
+    knobs:
+      seconds: 4
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: evolve-interaction
+    knobs:
+      seconds: 6
 
 cooldown:
   mode: off
