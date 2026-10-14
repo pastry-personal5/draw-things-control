@@ -50,6 +50,12 @@ Arguments = tuple[list[Row], list[Row]]
 PreviousRun = tuple[int, Arguments]
 
 
+def is_version_2(backend_settings: dict[str, Any] | None) -> bool:
+    """Whether stored settings are a version-2 job's, whose overrides and sizes belong to each run's profile: there
+    is no one job-wide override or desired size to note on a run's arguments."""
+    return isinstance(backend_settings, dict) and backend_settings.get("format_version") == 2
+
+
 def override_notes(config_override: dict[str, Any] | None, sized: bool) -> dict[str, str]:
     """The note for each flag or --config-json key the job set: ``job override`` for ``config_override``'s keys, and
     ``desired input size`` for the width and height when desired_input_width or desired_input_height set them (``sized``),
@@ -63,6 +69,8 @@ def override_notes(config_override: dict[str, Any] | None, sized: bool) -> dict[
 def execution_notes(execution: ExecutionRow) -> dict[str, str]:
     """``override_notes`` for a stored execution, from the job settings it ran with; a resize plan means a desired size."""
     settings = execution.settings
+    if is_version_2(settings.backend_settings):
+        return {}
     return override_notes(settings.config_override, settings.input_resize is not None)
 
 
@@ -192,7 +200,7 @@ def run_arguments(live: LiveRun | None, event: JobEvent) -> tuple[Arguments | No
     if not isinstance(event, RunStarted) or not event.command:
         return None, None
     started = live.started if live is not None else None
-    notes = override_notes(started.config_override, started.input_resize is not None) if started is not None else {}
+    notes = override_notes(started.config_override, started.input_resize is not None) if started is not None and not is_version_2(started.backend_settings) else {}
     arguments = argument_rows(event.command, notes)
     if live is None:
         return arguments, None

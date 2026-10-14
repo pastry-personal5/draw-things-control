@@ -9,9 +9,8 @@ from pathlib import Path
 from loguru import logger
 
 from framecontrol.jobs.events import JobStatus
-from framecontrol.jobs.parsing import load_job
 from framecontrol.jobs.records import JobManifest, JobRecords, RunRecord, write_manifest
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import JobTestCase, job_data, load_legacy_job
 
 
 class JobManifestTests(unittest.TestCase):
@@ -34,7 +33,7 @@ class JobLogScopeTests(JobTestCase):
     """A job's log file holds only its own lines, never an unrelated line logged from the same process."""
 
     def test_a_line_logged_outside_the_job_never_reaches_its_log_file(self) -> None:
-        job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
         logger.info("a line logged before the job, such as a server starting up")
         with JobRecords.open(job, write_records=True, seed=1, seed_source="random", execution_id=None, clock=lambda: datetime(2026, 9, 27, 10, 0, 0), random_number=lambda: 1000) as records:
             logger.info("a line from inside the job")

@@ -27,10 +27,9 @@ from framecontrol.jobs import launcher as launcher_module
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobEvent, combine_observers, event_to_dict
 from framecontrol.jobs.media.info import MediaInfo
-from framecontrol.jobs.parsing import load_job
 from framecontrol.state.recorder import ExecutionRecorder
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, TalkingRunner
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -94,7 +93,7 @@ class JobCharacterizationTests(JobTestCase):
     def job(self, **changes: Any) -> JobDefinition:
         pairs = [{"name": "walk", "positive": "walk", "negative": "blurry", "runs": [1, 3]}, {"name": "wave", "positive": "wave", "default": True}]
         data = job_data(**{"run_count": 3, "prompt_pairs": pairs, "cooldown": {"mode": "manual", "seconds": 90}, **changes})
-        return load_job(self.write_job(data), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
 
     def snapshot(self, job: JobDefinition) -> str:
         events: list[JobEvent] = []

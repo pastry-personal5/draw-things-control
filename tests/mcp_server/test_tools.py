@@ -69,7 +69,7 @@ class ListTests(McpCase):
 
 class ReadToolTests(McpCase):
     async def test_each_read_tool_returns_its_endpoints_body(self) -> None:
-        self.write_catalog_job("walk.yaml", run_count=3)
+        self.write_catalog_job("walk.yaml", run_count=7)
         queue_id = (await self.api("POST", "/v1/queue", json={"job": "walk.yaml"}, caller="tui")).json()["queue_id"]
         self.make_running(queue_id)
         execution_id = self.interrupt_with_runs(queue_id)
@@ -107,8 +107,8 @@ class ReadToolTests(McpCase):
             body = await self.ok(client, "validate_job_text", {"yaml": text, "name": "sunset-walk"})
             self.assertEqual((body["name"], len(body["sha256"])), ("sunset-walk", 64))
             self.assertEqual(self.transport.sent()[-1], ("POST", "/v1/validate?name=sunset-walk"))
-            refused = await self.error(client, "validate_job_text", {"yaml": text.replace("run_timeout_seconds: 60\n", "")})
-            self.assertEqual(refused["code"], "timeout_required")
+            refused = await self.error(client, "validate_job_text", {"yaml": text.replace("timeout_seconds: 60\n", "")})
+            self.assertEqual((refused["code"], refused["field"]), ("invalid_input", "runs[0].knobs.timeout_seconds"))
         self.assertFalse((self.paths.jobs / "draft.yaml").exists())
 
 

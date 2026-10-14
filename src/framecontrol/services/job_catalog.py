@@ -194,7 +194,9 @@ class JobCatalog:
             row, dependencies = JobRow(path, None, error_text(path, error), error_field=getattr(error, "field", None), changed=changed), None
         else:
             row = JobRow(path, job, changed=changed)
-            inputs = ((job.input,) if job.input is not None else ()) + ((self._paths.params / job.config_file,) if job.config_file else ())
+            # A version-2 job reads one base configuration per Draw Things settings profile, not one for the whole job.
+            config_files = sorted({view.config_file for view in (job.job_for_run(number) for number in range(1, job.run_count + 1)) if view.config_file})
+            inputs = ((job.input,) if job.input is not None else ()) + tuple(self._paths.params / name for name in config_files)
             dependencies = tuple((dependency, signature(dependency)) for dependency in inputs)
         with self._lock:
             self._cache[path] = (own, dependencies, row)

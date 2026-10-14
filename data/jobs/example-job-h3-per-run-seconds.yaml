@@ -1,0 +1,72 @@
+# H3 i2av runs with a different duration each (job format version 2).
+# The first image is read from global-config.yaml's input_directory.
+# A run's own `seconds` replaces the default's; the frame counts are derived and recorded per run.
+# Validate: uv run fc validate-job data/jobs/example-job-h3-per-run-seconds.yaml
+version: 2
+name: h3-changing-duration
+input: ./story/opening.png
+
+prompt_pairs:
+  opening:
+    positive: "A quiet street at blue hour; leaves move gently; distant traffic and footsteps."
+  turn:
+    positive: "Continue from the supplied first frame as the subject turns toward the shop window."
+  settle:
+    positive: "Continue from the supplied first frame as the subject stops and the camera settles."
+
+settings_profiles:
+  h3-landscape-corrected:
+    backend: h3
+    settings:
+      width: 832
+      height: 448
+      steps: 30
+      denoise_reuse: 1
+      dit_layers: 50
+      core_reuse: 1
+      token_reduction: false
+      ssd_streaming: false
+      int8_row_fc2: false
+      reference_rope: false
+      reference_image_size: match
+      compatibility: {}
+      color:
+        anchor: blend
+        strength: 0.5
+        first_weight: 0.25
+        reanchor: never
+        regions: true
+
+defaults:
+  - backend: h3
+    pipeline: i2av
+    settings_profile: h3-landscape-corrected
+    knobs:
+      seconds: 5
+      seed: 42
+      timeout_seconds: 3600
+
+runs:
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: opening
+    knobs:
+      seconds: 4
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: turn
+    knobs:
+      seconds: 8
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: settle
+    knobs:
+      seconds: 12
+
+output:
+  directory: h3-changing-duration
+cooldown:
+  mode: auto
+  ratio: 0.5
+  minimum_seconds: 0
+  maximum_seconds: 3600

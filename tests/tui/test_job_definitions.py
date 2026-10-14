@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
+import yaml
 from rich.text import Text
 from textual.app import App
 
@@ -27,7 +28,7 @@ from framecontrol.tui.job_watch import JobWatcher
 from framecontrol.tui.panes.job_definitions import JobsList
 from framecontrol.tui.text.jobs import changed_text, job_display_names, sort_job_rows
 from framecontrol.tui.widgets import ActivityLog
-from tests.fixtures import job_data
+from tests.fixtures import job_data, to_version_2
 from tests.tui.test_tui import make_service
 from tests.tui.tui_case import TuiTestCase
 
@@ -169,7 +170,7 @@ class JobDefinitionTests(TuiTestCase):
                 await self.settle(pilot)
             names = sorted(row[1] for row in self.rows(pilot.app))
             read_again = [call.args[0].name for call in read.call_args_list]
-            walk.write_text(walk.read_text(encoding="utf-8").replace("run_count: 5", "run_count: 6"), encoding="utf-8")
+            walk.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=ONE_PAIR, run_count=6), self.paths.params), sort_keys=False), encoding="utf-8")
             self.touch(walk, walk.stat().st_mtime + 10)
             table.load()
             await self.settle(pilot)

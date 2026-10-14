@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from framecontrol.core.cooldown import CooldownPolicy
-from framecontrol.jobs.definition import ColorPolicy, JobDefinition, PromptPair
+from framecontrol.jobs.definition import ColorPolicy, EffectiveRun, JobDefinition, PromptPair
 
 if TYPE_CHECKING:
     from framecontrol.jobs.events import MediaChecked
@@ -111,6 +111,8 @@ def auto_wait_text(seconds: float, ratio: float, after_run: int, run_seconds: fl
 
 def ignored_config_lines(job: JobDefinition) -> list[str]:
     """The base configuration keys the job's mode or size ignores, and how run 1's input is resized, one line each."""
+    if job.effective_runs:
+        return _ignored_config_lines_v2(job)
     lines = [f"Ignoring {key} ({value}) from config_file {job.config_file}: not used in {job.mode} jobs; the job's run_count sets the number of runs" for key, value in job.ignored_config.items()]
     if job.size is not None:
         size = f"{job.size[0]}x{job.size[1]}"
@@ -119,6 +121,32 @@ def ignored_config_lines(job: JobDefinition) -> list[str]:
                 lines.append(f"Ignoring {key} ({value}) from config_file {job.config_file}: desired_input_width/desired_input_height set the size ({size})")
             else:
                 lines.append(f"Ignoring config_override.{key} ({value}): desired_input_width/desired_input_height set the size ({size})")
+    plan = job.input_copy
+    if plan is not None and job.input is not None:
+        lines.append(plan.describe(job.input.name))
+    return lines
+
+
+def _ignored_config_lines_v2(job: JobDefinition) -> list[str]:
+    """What each version-2 settings profile's base configuration is not used for, once per profile, then run 1's input."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for run in job.effective_runs:
+        if run.settings_profile in seen:
+            continue
+        seen.add(run.settings_profile)
+        view = run.backend_job
+        where = f"config_file {view.config_file} (settings profile {run.settings_profile})"
+        for key, value in view.ignored_config.items():
+            if key == "seed":
+                lines.append(f"Ignoring seed ({value}) from {where}: a run's seed is its knobs.seed, else the execution seed")
+            else:
+                lines.append(f"Ignoring {key} ({value}) from {where}: not used in {run.pipeline} runs; the job's runs set the number of runs")
+        if view.size is not None:
+            size = f"{view.size[0]}x{view.size[1]}"
+            for source, key, value in view.ignored_size:
+                origin = where if source == "config_file" else f"config_override.{key} of settings profile {run.settings_profile}"
+                lines.append(f"Ignoring {key if source == 'config_file' else 'value'} ({value}) from {origin}: input_resize sets the size ({size})")
     plan = job.input_copy
     if plan is not None and job.input is not None:
         lines.append(plan.describe(job.input.name))
@@ -152,6 +180,19 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
     color_summary = color_text(job.color) if job.color.corrects else "none, measure only"
     if job.backend == "h3":
         color_summary += " (H3 policy v1)"
+    if job.effective_runs:
+        return [
+            ("name", job.name),
+            ("format", "version 2"),
+            ("backend", job.backend),
+            ("mode", job.mode_label),
+            ("runs", f"{job.run_count} ({', '.join(pair.name for pair in job.schedule())})"),
+            ("cooldown", cooldown_details(job)),
+            ("input", str(job.input or "(none)")),
+            ("output directory", str(job.output_directory)),
+            ("execution seed", seed_value),
+            *[(f"run {run.number}", run_text(run)) for run in job.effective_runs],
+        ]
     rows = [
         ("name", job.name),
         ("backend", job.backend),
@@ -177,6 +218,30 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
             controls.extend(f"{run.run}:{run.pipeline}" + (f" ({run.reference_pair})" if run.reference_pair else "") for run in job.backend_data.runs)
             rows.append(("H3", "; ".join(controls)))
     return rows
+
+
+def knobs_text(knobs: dict[str, object], sources: dict[str, str]) -> str:
+    """A run's resolved knobs and where each came from: ``seconds 5 (defaults), seed 42 (run)``."""
+    parts = []
+    for key, value in sorted(knobs.items()):
+        shown = f"{value:g}" if isinstance(value, float) else str(value)
+        parts.append(f"{key} {shown}" + (f" ({sources[key]})" if key in sources else ""))
+    return ", ".join(parts)
+
+
+def run_text(run: EffectiveRun) -> str:
+    """One compiled run in a line: its backend and pipeline, prompt pair, profile, duration, seed, and time limit."""
+    knobs = run.knobs
+    parts = [f"{run.backend}/{run.pipeline}", f"pair {run.prompt_pair}", f"profile {run.settings_profile}"]
+    if run.backend == "h3":
+        parts.append(f"{knobs['seconds']:g}s requested, {knobs['requested_frames']} frames requested, {knobs['effective_frames']} effective")
+        if "reference_pair" in knobs:
+            parts.append(f"references {knobs['reference_pair']}")
+    elif "frames" in knobs:
+        parts.append(f"{knobs['frames']} frames" + (f" ({knobs['seconds']:g}s at {knobs['nominal_fps']:g} fps)" if "seconds" in knobs else ""))
+    parts.append(f"seed {knobs['seed']}" if "seed" in knobs else "execution seed")
+    parts.append(f"time limit {duration_text(float(knobs['timeout_seconds']))}")
+    return ", ".join(parts)
 
 
 def color_text(policy: ColorPolicy) -> str:
@@ -212,7 +277,7 @@ class PlanStep:
 def plan_header(job: JobDefinition, preview: JobPreview) -> list[str]:
     """The dry-run plan's lines before its runs, as text without the ``# `` the CLI adds."""
     return [
-        f"Job {job.name} ({job.mode}, {job.backend}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job.cooldown, job.cooldown_source)}",
+        f"Job {job.name} ({job.mode_label}, {job.backend}): {len(preview.runs)} runs, seed {preview.seed} ({preview.seed_source}), {cooldown_summary(job.cooldown, job.cooldown_source)}",
         "Output names are examples; a real run generates new ones.",
     ]
 
@@ -224,7 +289,10 @@ def plan_steps(job: JobDefinition, preview: JobPreview) -> list[PlanStep]:
     result = []
     for run, command in zip(preview.runs, preview.commands, strict=True):
         detail = f"Run {run.number}/{len(preview.runs)} (pair {run.pair.name})"
-        if job.backend == "h3" and isinstance(job.backend_data, H3JobData):
+        effective = job.effective_run(run.number)
+        if effective is not None:
+            detail += f" ({effective.backend}/{effective.pipeline}, profile {effective.settings_profile})"
+        elif job.backend == "h3" and isinstance(job.backend_data, H3JobData):
             h3_run = job.backend_data.runs[run.number - 1]
             detail += f" ({h3_run.pipeline}" + (f", references {h3_run.reference_pair})" if h3_run.reference_pair else ")")
         result.append(PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, detail, run, command))

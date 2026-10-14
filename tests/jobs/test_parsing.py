@@ -13,14 +13,13 @@ from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from framecontrol.core.errors import InputError, OutsideDirectoryError
 from framecontrol.jobs.backends.h3 import H3Arguments, H3JobData, H3Settings, effective_frames
 from framecontrol.jobs.definition import GenerationMode
-from framecontrol.jobs.parsing import load_job, load_job_text
 from framecontrol.jobs.text import auto_wait_text, cooldown_details, duration_text, ignored_config_lines, policy_text, seconds_text, share_text
-from tests.fixtures import BASE_CONFIG, JobTestCase, job_data
+from tests.fixtures import BASE_CONFIG, JobTestCase, job_data, load_legacy_job, load_legacy_job_text
 
 
 class JobDefinitionTests(JobTestCase):
     def load(self, **changes: object):
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def assert_invalid(self, field: str, **changes: object) -> None:
         with self.assertRaisesRegex(ValueError, field):
@@ -38,10 +37,10 @@ class JobDefinitionTests(JobTestCase):
         self.assertIsInstance(caught.exception, ValueError)
 
     def test_a_job_is_read_from_its_text_and_the_file_is_not_touched(self) -> None:
-        path = self.write_job(job_data())
+        path = self.write_legacy_job(job_data())
         text = path.read_text(encoding="utf-8")
         path.unlink()
-        job = load_job_text(text, path, self.global_config, self.params)
+        job = load_legacy_job_text(text, path, self.global_config, self.params)
         self.assertEqual((job.name, job.path, job.source_text), ("sunset-walk", path, text))
         self.assertFalse(path.exists())
 
@@ -52,16 +51,16 @@ class JobDefinitionTests(JobTestCase):
         linked.symlink_to(outside)
         with mock.patch.object(Path, "open", side_effect=AssertionError("linked job was opened")):
             with self.assertRaises(InputError) as caught:
-                load_job(linked, self.global_config, self.params)
+                load_legacy_job(linked, self.global_config, self.params)
         self.assertIn("symbolic link", str(caught.exception))
         self.assertNotIn("sentinel-secret", str(caught.exception))
 
     def test_the_text_of_a_job_is_checked_as_a_file_is(self) -> None:
         path = self.root / "queued.yaml"
         with self.assertRaisesRegex(InputError, r"queued\.yaml: 'run_count' is required"):
-            load_job_text("version: 1\nname: x\nmode: t2v\nprompt_pairs: [{name: a, positive: x}]\nconfig_file: base.yaml\n", path, self.global_config, self.params)
+            load_legacy_job_text("version: 1\nname: x\nmode: t2v\nprompt_pairs: [{name: a, positive: x}]\nconfig_file: base.yaml\n", path, self.global_config, self.params)
         with self.assertRaisesRegex(ValueError, r"Job file is not valid YAML: .*queued\.yaml"):
-            load_job_text("a: 1\na: 2\n", path, self.global_config, self.params)
+            load_legacy_job_text("a: 1\na: 2\n", path, self.global_config, self.params)
 
     def test_valid_job_resolves_paths_and_defaults(self) -> None:
         job = self.load()
@@ -80,7 +79,7 @@ class JobDefinitionTests(JobTestCase):
             backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42},
             output={"extension": "mp4"},
         )
-        job = load_job(self.write_job(data), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         self.assertEqual((job.backend, job.mode, job.extension, job.requested_seed), ("h3", GenerationMode.I2AV, "mp4", 42))
         assert job.input_resize is not None
         self.assertEqual((job.input_resize.target_size, job.input_resize.fit), ((768, 1344), "crop"))
@@ -104,18 +103,18 @@ class JobDefinitionTests(JobTestCase):
         }
         for field, change in (("config_override", {"config_override": {}}), ("prompt_pairs[0].negative", {"prompt_pairs": [{"name": "scene", "positive": "wind", "negative": None, "default": True}]})):
             with self.subTest(field=field), self.assertRaises(InputError) as caught:
-                load_job(self.write_job(job_data(**(base | change))), self.global_config, self.params)
+                load_legacy_job(self.write_legacy_job(job_data(**(base | change))), self.global_config, self.params)
             self.assertEqual(caught.exception.field, field)
 
     def test_h3_color_policy_has_a_closed_schema_and_backend_defaults(self) -> None:
         base = {"backend": "h3", "mode": "i2av", "config_file": None, "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}], "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, "output": {"extension": "mp4"}}
-        plain = load_job(self.write_job(job_data(**base)), self.global_config, self.params)
+        plain = load_legacy_job(self.write_legacy_job(job_data(**base)), self.global_config, self.params)
         self.assertEqual(plain.backend_settings["color_policy"], {"version": 1, "anchor": "none"})
         self.assertFalse(plain.color.regions)
         from framecontrol.jobs.text import job_summary
 
         self.assertEqual(dict(job_summary(plain))["color"], "none, measure only (H3 policy v1)")
-        blend = load_job(self.write_job(job_data(**(base | {"color": {"anchor": "blend", "strength": 0.5, "first_weight": 0, "reanchor": "never", "regions": True}}))), self.global_config, self.params)
+        blend = load_legacy_job(self.write_legacy_job(job_data(**(base | {"color": {"anchor": "blend", "strength": 0.5, "first_weight": 0, "reanchor": "never", "regions": True}}))), self.global_config, self.params)
         self.assertEqual(blend.backend_settings["color_policy"], {"version": 1, "anchor": "blend", "strength": 0.5, "regions": True, "first_weight": 0.0, "reanchor": "never"})
         self.assertEqual(dict(job_summary(blend))["color"], "blend, first 0, never reanchor, strength 0.5, regions (H3 policy v1)")
         invalid = [
@@ -130,19 +129,19 @@ class JobDefinitionTests(JobTestCase):
         ]
         for field, color in invalid:
             with self.subTest(field=field, color=color), self.assertRaises(InputError) as caught:
-                load_job(self.write_job(job_data(**(base | {"color": color}))), self.global_config, self.params)
+                load_legacy_job(self.write_legacy_job(job_data(**(base | {"color": color}))), self.global_config, self.params)
             self.assertEqual(caught.exception.field, field)
 
     def test_h3_rejects_temporal_disagreement(self) -> None:
         data = job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 95, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
         with self.assertRaises(InputError) as caught:
-            load_job(self.write_job(data), self.global_config, self.params)
+            load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "backend_settings.frames")
 
     def test_h3av_resolves_mixed_runs_and_optional_controls(self) -> None:
         self.write_image("singer.png", (160, 160))
         data = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}, {"run": 2, "pipeline": "i2av"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "dit_layers": 45, "reference_image_size": "max"}, output={"extension": "mp4"})
-        job = load_job(self.write_job(data), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         self.assertIsNone(job.input)
         self.assertEqual(job.mode, GenerationMode.H3AV)
         self.assertEqual(job.backend_settings["denoise_reuse"], 2)
@@ -153,11 +152,11 @@ class JobDefinitionTests(JobTestCase):
     def test_h3av_rejects_incompatible_reuse_controls_and_wrong_first_input(self) -> None:
         base = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "i2av"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "core_reuse": 2}, output={"extension": "mp4"})
         with self.assertRaises(InputError) as caught:
-            load_job(self.write_job(base), self.global_config, self.params)
+            load_legacy_job(self.write_legacy_job(base), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "backend_settings")
         base["backend_settings"] = {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}
         with self.assertRaises(InputError) as caught:
-            load_job(self.write_job(base), self.global_config, self.params)
+            load_legacy_job(self.write_legacy_job(base), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "input")
 
     def test_h3_r2av_arguments_keep_ordered_refs_and_compatible_control_flags(self) -> None:
@@ -211,11 +210,11 @@ class JobDefinitionTests(JobTestCase):
             return original_stat(path, *args, **kwargs)
 
         for value in ("../outside.png", str(self.root / "missing.png"), "~/missing.png", "~definitely-not-a-real-user/missing.png", "/etc/hosts"):
-            path = self.write_job(job_data(input=value))
+            path = self.write_legacy_job(job_data(input=value))
             source = path.read_text(encoding="utf-8")
             with self.subTest(value=value), mock.patch.object(Path, "stat", trusted_directory_stat), mock.patch("framecontrol.jobs.parsing.read_image_info", side_effect=AssertionError("image was read")):
                 with self.assertRaises(OutsideDirectoryError) as caught:
-                    load_job_text(source, path, self.global_config, self.params)
+                    load_legacy_job_text(source, path, self.global_config, self.params)
                 self.assertEqual(caught.exception.field, "input")
 
     def test_nul_in_nested_job_text_names_the_field(self) -> None:
@@ -233,7 +232,7 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("extra", extra=1)
         self.assert_invalid("'name'", name="Sunset Walk")
         self.assert_invalid("'name'", name=None)
-        self.assert_invalid("'version'", version=2)
+        self.assert_invalid("'version'", version=3)
         self.assert_invalid("'mode'", mode="t2i")
         self.assert_invalid("'input'", input=None)
         self.assert_invalid("'input'", mode="t2v")
@@ -446,7 +445,7 @@ class JobDefinitionTests(JobTestCase):
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640)
         self.assert_invalid("'input' could not be decoded", input="noise.jpg", desired_input_width=640, desired_input_height=448)
         # A real run writes the copy right away, which decodes the input, so it skips this decode.
-        load_job(self.write_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.params, decode_input=False)
+        load_legacy_job(self.write_legacy_job(job_data(input="noise.jpg", desired_input_width=640)), self.global_config, self.params, decode_input=False)
 
     def test_loading_a_job_does_not_import_the_resizer(self) -> None:
         code = "import sys, framecontrol.jobs.parsing; sys.exit('input_resize' in sys.modules or 'numpy' in sys.modules)"

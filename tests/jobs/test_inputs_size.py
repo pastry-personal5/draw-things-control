@@ -3,13 +3,12 @@
 import unittest
 
 from framecontrol.jobs.inputs.size import copy_plan, floor_to_step, read_image_info, resize_plan
-from framecontrol.jobs.parsing import load_job
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import JobTestCase, job_data, load_legacy_job
 
 
 class InputSizeTests(JobTestCase):
     def load(self, **changes: object):
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def test_matching_size_passes(self) -> None:
         self.assertEqual(self.load().input, self.input_directory / "first-frame.png")

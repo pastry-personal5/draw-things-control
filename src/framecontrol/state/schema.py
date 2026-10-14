@@ -209,7 +209,21 @@ ALTER TABLE runs ADD COLUMN audio_channels INTEGER;
 ALTER TABLE runs ADD COLUMN audio_duration REAL
 """
 
+# Phase 4 Milestone 09: version-2 jobs select the generator and pipeline per
+# run and freeze catalog selectors plus resolved knobs with provenance, and name
+# the earlier run and role (initial, output, handoff) each run's image came from.
+# Older rows stay NULL/empty and retain their execution-wide backend spelling.
+SCHEMA_V13 = """
+ALTER TABLE runs ADD COLUMN backend TEXT;
+ALTER TABLE runs ADD COLUMN pipeline TEXT;
+ALTER TABLE runs ADD COLUMN settings_profile TEXT;
+ALTER TABLE runs ADD COLUMN knobs TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE runs ADD COLUMN knob_sources TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE runs ADD COLUMN input_run INTEGER;
+ALTER TABLE runs ADD COLUMN input_role TEXT
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12, SCHEMA_V13)
 SCHEMA_VERSION = len(MIGRATIONS)

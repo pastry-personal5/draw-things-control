@@ -6,7 +6,7 @@ import random
 import shutil
 import signal
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,7 +22,7 @@ from framecontrol.core.generation import GenerationOutcome
 from framecontrol.core.process.output import MessageCallback, ProcessMessage
 from framecontrol.core.process.runner import ChildStartCallback, JobRunnerFactory, StoppableRunner
 from framecontrol.core.process.signals import CancelToken, install_signal_handlers, restore_signal_handlers
-from framecontrol.jobs.backend import BackendRegistry, RunContext
+from framecontrol.jobs.backend import H3_BACKEND, BackendRegistry, RunContext
 from framecontrol.jobs.backends import DEFAULT_BACKENDS
 from framecontrol.jobs.definition import GenerationMode, JobDefinition, PromptPair
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, notify
@@ -112,6 +112,14 @@ class _Chain:
     # The file a correcting job's first and blend anchors hold its colors to: the first image, or the input of the run
     # that last re-anchored; a resume starts from the anchor of the run it continues after.
     anchor: Path | None = None
+    # Version 2 only: a run that needs no handoff (``r2av``, ``t2v``) after run 1 starts an independent segment, which
+    # resets the anchor and is held to its own first image: the input of its first handoff-consuming run.
+    segmented: bool = False
+    segment_first_image: Path | None = None
+    # Version 2: a run that consumes a handoff across a backend or settings-profile boundary reads a copy its own profile
+    # prepared (``boundary_copy``) from the producer's file (``boundary_source``), removed after the run.
+    boundary_copy: TemporaryInput | None = None
+    boundary_source: Path | None = None
 
     @property
     def total(self) -> int:
@@ -212,16 +220,11 @@ class JobExecutor:
         self._emit(MediaChecked(at=self._timestamp(), run=run, stage=check.stage, file=check.file, summary=check.summary, verdict=check.verdict, notes=check.warnings + check.notes, facts=check.facts))
 
     def _check_input(self, chain: _Chain, run: int, run_input: Path | None) -> None:
-        """An i2v job's first input, and its resized copy, checked before the run that reads them; a resume's input,
-        the chain's own last frame, is checked as a handoff."""
+        """An image-conditioned video run's input, and its resized copy, checked before the run that reads them; a
+        resume's input, the chain's own last frame, is checked as a handoff."""
         checker = self._media.checker
-        if checker is None or chain.job.mode not in (GenerationMode.I2V, GenerationMode.I2AV, GenerationMode.H3AV) or run_input is None:
+        if checker is None or run_input is None or not chain.job.run_checks_input(run):
             return
-        if chain.job.mode is GenerationMode.H3AV and chain.job.backend_data is not None:
-            from framecontrol.jobs.backends.h3 import H3JobData
-
-            if isinstance(chain.job.backend_data, H3JobData) and chain.job.backend_data.runs[run - 1].pipeline == "r2av":
-                return
         if chain.options.resume is not None:
             self._report_check(run, checker.handoff(run_input))
             return
@@ -239,19 +242,31 @@ class JobExecutor:
     def _run(self, job: JobDefinition, options: JobRunOptions) -> JobOutcome:
         if options.shutdown_grace < 0:
             raise InputError("--shutdown-grace must not be negative")
-        self._planner.check_tools(job, options.executable)
-        if options.resume is not None and options.resume.backend_fingerprint is not None:
-            current = getattr(self._backends.get(job.backend), "_installation", {}).get("executable_sha256")
+        self._planner.check_tools(job, options.executable, first_run=options.resume.first_run if options.resume is not None else 1)
+        first_run = options.resume.first_run if options.resume is not None else 1
+        # Only an H3 run still to come depends on the H3 executable, so a Draw Things tail resumes whatever H3 did.
+        runs_h3 = any(job.run_backend(number) == H3_BACKEND for number in range(first_run, job.run_count + 1))
+        if options.resume is not None and options.resume.backend_fingerprint is not None and runs_h3:
+            current = getattr(self._backends.get("h3"), "_installation", {}).get("executable_sha256")
             if current != options.resume.backend_fingerprint:
                 raise InputError("H3 executable changed since the previous execution; refusing resume")
-        backend = self._backends.get(job.backend)
-        prepare_job = getattr(backend, "prepare_job", None)
 
-        def cleanup_references() -> None:
-            return None
-
-        if prepare_job is not None:
-            job, cleanup_references = prepare_job(job)
+        cleanups: list[Callable[[], None]] = []
+        if job.effective_runs:
+            prepared_runs = []
+            for effective in job.effective_runs:
+                prepare_job = getattr(self._backends.get(effective.backend), "prepare_job", None)
+                backend_job = effective.backend_job
+                if prepare_job is not None:
+                    backend_job, cleanup = prepare_job(backend_job)
+                    cleanups.append(cleanup)
+                prepared_runs.append(replace(effective, backend_job=backend_job))
+            job = replace(job, effective_runs=tuple(prepared_runs))
+        else:
+            prepare_job = getattr(self._backends.get(job.backend), "prepare_job", None)
+            if prepare_job is not None:
+                job, cleanup = prepare_job(job)
+                cleanups.append(cleanup)
         temporary_input: TemporaryInput | None = None
         try:
             if options.resume is not None:
@@ -267,7 +282,8 @@ class JobExecutor:
         finally:
             if temporary_input is not None:
                 temporary_input.cleanup()
-            cleanup_references()
+            for cleanup in reversed(cleanups):
+                cleanup()
 
     @staticmethod
     def _temporary_input(job: JobDefinition) -> TemporaryInput | None:
@@ -316,6 +332,8 @@ class JobExecutor:
         self._check_input(chain, start, current_input)
         completed = 0
         exit_code = 0
+        # A resume that lands after an independent segment start holds to the anchor it was given, not to run 1's image.
+        chain.segmented = any(not job.run_needs_visual_input(earlier) for earlier in range(2, start)) if job.effective_runs else False
         for number, pair in enumerate(chain.schedule[start - 1 :], start=start):
             if self._token.requested is not None:
                 exit_code = self._stop(manifest, self._token.requested, f"before run {number}/{total}")
@@ -324,22 +342,29 @@ class JobExecutor:
             if number > start and self._token.take_park():
                 exit_code = self._park(manifest, number - 1, total)
                 break
-            run, record, status, exit_code = self._run_step(chain, number, pair, current_input)
+            run_input = current_input if job.run_needs_visual_input(number) or not job.effective_runs else None
+            try:
+                run_input = self._prepare_boundary(chain, number, run_input)
+            except (ValueError, OSError) as error:
+                logger.error("Run {} cannot take the handoff from run {}: {}", number, number - 1, error)
+                manifest.status = JobStatus.FAILED
+                exit_code = 1
+                break
+            try:
+                run, record, status, exit_code = self._run_step(chain, number, pair, run_input)
+            finally:
+                self._drop_boundary(chain)
             if status != RunStatus.SUCCEEDED:
                 manifest.status = JobStatus.INTERRUPTED if status == RunStatus.INTERRUPTED else JobStatus.FAILED
                 chain.records.save()
                 break
             completed += 1
             chain.records.save()
-            if job.backend == "h3" and number < total and record.last_frame is None:
-                from framecontrol.jobs.backends.h3 import H3JobData
-
-                data = job.backend_data
-                if isinstance(data, H3JobData) and data.runs[number].pipeline == "i2av":
-                    logger.error("Run {} succeeded, but run {} requires a verified H3 handoff that is unavailable", number, number + 1)
-                    manifest.status = JobStatus.FAILED
-                    exit_code = 1
-                    break
+            if number < total and job.run_backend(number) == H3_BACKEND and job.run_needs_visual_input(number + 1) and record.last_frame is None and run.last_frame is not None:
+                logger.error("Run {} succeeded, but run {} requires a verified visual handoff that is unavailable", number, number + 1)
+                manifest.status = JobStatus.FAILED
+                exit_code = 1
+                break
             current_input = run.last_frame or run.output
             # The park takes effect only here, after the run's finish (its last frame, measuring) and RunFinished, and
             # never after the last run. A stop that landed first wins: until the park is taken, a cancel stops the job.
@@ -422,8 +447,10 @@ class JobExecutor:
         """Plan, start, execute, and record one run; returns it with its status and exit code."""
         job = chain.job
         run = self._planner.plan_run(job, number, pair, current_input, chain.records.manifest.seed, chain.options.executable, set())
-        context = RunContext(number, pair, current_input, chain.first_image, chain.anchor, chain.schedule[number - 2] if number > 1 else None, chain.first_image_notes, _fresh_t2v(chain, number))
-        prepared = self._backends.get(job.backend).prepare_run(job, context)
+        durable_input = chain.boundary_source or current_input
+        first_image = self._segment_first_image(chain, number, durable_input)
+        context = RunContext(number, pair, durable_input, first_image, chain.anchor, chain.schedule[number - 2] if number > 1 else None, chain.first_image_notes, _fresh_t2v(chain, number))
+        prepared = self._backends.get(job.run_backend(number)).prepare_run(job.job_for_run(number), context)
         chain.anchor = prepared.chain_anchor
         record = self._start_run(chain, run, prepared.record_anchor)
         try:
@@ -449,6 +476,56 @@ class JobExecutor:
             chain.temporary_input.cleanup()
         return run, record, status, exit_code
 
+    def _prepare_boundary(self, chain: _Chain, number: int, current_input: Path | None) -> Path | None:
+        """The input run ``number`` reads: ``current_input`` as it is, or, when the run before it was another backend or
+        profile, a copy its own profile prepares from that file (see ``plan_input`` on the adapters)."""
+        job = chain.job
+        if not job.effective_runs or number < 2 or current_input is None or not job.run_needs_visual_input(number):
+            return current_input
+        producer, consumer = job.effective_runs[number - 2], job.effective_runs[number - 1]
+        if producer.backend == consumer.backend and producer.settings_profile == consumer.settings_profile:
+            return current_input
+        plan_input = getattr(self._backends.get(consumer.backend), "plan_input", None)
+        if plan_input is None:
+            return current_input
+        from framecontrol.jobs.inputs.resize import TemporaryInput
+
+        copy = TemporaryInput(current_input, plan_input(consumer.backend_job, current_input), find_ffmpeg())
+        chain.boundary_copy, chain.boundary_source = copy, current_input
+        logger.info("Run {} input: {}'s handoff prepared by profile {} as {} (removed after run {})", number, producer.settings_profile, consumer.settings_profile, copy.path, number)
+        return copy.path
+
+    @staticmethod
+    def _drop_boundary(chain: _Chain) -> None:
+        if chain.boundary_copy is not None:
+            chain.boundary_copy.cleanup()
+        chain.boundary_copy = chain.boundary_source = None
+
+    @staticmethod
+    def _input_origin(job: JobDefinition, number: int) -> tuple[int | None, str | None]:
+        """Where run ``number``'s image comes from, for its record: the earlier run and role, or the job's own input."""
+        run = job.effective_run(number)
+        if run is None or not run.requires_visual_input:
+            return None, None
+        if number == 1:
+            return None, "initial"
+        return number - 1, "output" if job.effective_runs[number - 2].pipeline == "i2i" else "handoff"
+
+    @staticmethod
+    def _segment_first_image(chain: _Chain, number: int, current_input: Path | None) -> Path | None:
+        """The first image run ``number``'s colors are measured against: the chain's, until a version-2 run that needs
+        no handoff starts a new segment; from then on the input of that segment's first handoff-consuming run."""
+        job = chain.job
+        if not job.effective_runs:
+            return chain.first_image
+        if number > 1 and not job.run_needs_visual_input(number):
+            chain.segmented, chain.segment_first_image, chain.anchor = True, None, None
+        if not chain.segmented:
+            return chain.first_image
+        if chain.segment_first_image is None and current_input is not None and job.run_needs_visual_input(number):
+            chain.segment_first_image = current_input
+        return chain.segment_first_image
+
     def _wait_between_runs(self, chain: _Chain, record: RunRecord, number: int, parks: int) -> tuple[signal.Signals, str] | _ParkedInCooldown | None:
         """The cooldown after run ``number``; the signal that cut it short and where, a park that ended it, or None.
         ``parks`` is the park count read before the run boundary's park check."""
@@ -460,19 +537,29 @@ class JobExecutor:
     def _start_run(self, chain: _Chain, run: PlannedRun, anchor: Path | None = None) -> RunRecord:
         """Record ``run`` in the manifest and announce it, with the file its colors are held to; return its record."""
         pair, number, temporary_input = run.pair, run.number, chain.temporary_input
+        effective = chain.job.effective_run(number)
         record = RunRecord(
             pair=pair.name,
             positive=pair.positive,
             negative=pair.negative,
             # Run 1's temporary copy is gone after the run, so record the job's own input.
-            input=str(chain.job.input if number == 1 else run.input) if run.input is not None else None,
+            input=str(chain.job.input if number == 1 else chain.boundary_source or run.input) if run.input is not None else None,
             output=run.output.name,
             last_frame=None,
-            command=list(self._backends.get(chain.job.backend).redact(run.arguments.command)),
+            command=list(self._backends.get(chain.job.run_backend(number)).redact(run.arguments.command)),
             started_at=self._timestamp(),
-            resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else None,
+            resized_input=str(temporary_input.path) if number == 1 and temporary_input is not None else str(chain.boundary_copy.path) if chain.boundary_copy is not None else None,
             anchor=str(anchor) if anchor is not None else None,
+            backend=effective.backend if effective is not None else None,
+            pipeline=effective.pipeline if effective is not None else None,
+            settings_profile=effective.settings_profile if effective is not None else None,
+            knobs=dict(effective.knobs) if effective is not None else {},
+            knob_sources=dict(effective.knob_sources) if effective is not None else {},
         )
+        record.input_run, record.input_role = self._input_origin(chain.job, number)
+        if effective is not None and "seed" not in record.knobs and run.seed is not None:
+            # The plan froze no seed for this run; the record keeps the one the execution actually used.
+            record.knobs["seed"], record.knob_sources["seed"] = run.seed, "execution_seed"
         chain.records.manifest.runs.append(record)
         chain.records.save()
         self._emit(run_started_event(record, run, chain.total))
@@ -540,7 +627,7 @@ class JobExecutor:
         return on_message
 
     def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, finish_state: object | None) -> tuple[RunStatus, int]:
-        return self._launcher.launch(chain.job, run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, finish_state=finish_state)
+        return self._launcher.launch(chain.job.job_for_run(run.number), run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, finish_state=finish_state)
 
 
 def _copy_first_image(chain: _Chain, source: Path, path: Path) -> bool:
@@ -604,4 +691,11 @@ def run_started_event(record: RunRecord, run: PlannedRun, total: int) -> RunStar
         last_frame=run.last_frame.name if run.last_frame is not None else None,
         command=tuple(record.command),
         anchor=record.anchor,
+        backend=record.backend,
+        pipeline=record.pipeline,
+        settings_profile=record.settings_profile,
+        knobs=dict(record.knobs),
+        knob_sources=dict(record.knob_sources),
+        input_run=record.input_run,
+        input_role=record.input_role,
     )

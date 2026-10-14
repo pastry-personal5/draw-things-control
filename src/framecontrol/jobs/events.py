@@ -96,6 +96,14 @@ class RunStarted:
     # The file the run's colors are held to: the first image, or the input of the run that last re-anchored; None when
     # the job does not correct toward an anchor (Milestone 09).
     anchor: str | None = None
+    backend: str | None = None
+    pipeline: str | None = None
+    settings_profile: str | None = None
+    knobs: dict[str, Any] = field(default_factory=dict)
+    knob_sources: dict[str, str] = field(default_factory=dict)
+    # The earlier run (None for the job's own input) and role (initial, output, handoff) the image came from.
+    input_run: int | None = None
+    input_role: str | None = None
 
 
 @dataclass(frozen=True)

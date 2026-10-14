@@ -58,6 +58,13 @@ class RunRecord:
     # A byte-identical H3 child MP4, retained when a positive color correction was requested.
     raw_output: str | None = None
     uncorrected_output: str | None = None
+    backend: str | None = None
+    pipeline: str | None = None
+    settings_profile: str | None = None
+    knobs: dict[str, Any] = field(default_factory=dict)
+    knob_sources: dict[str, str] = field(default_factory=dict)
+    input_run: int | None = None
+    input_role: str | None = None
 
 
 @dataclass
@@ -104,6 +111,12 @@ def write_manifest(path: Path, manifest: JobManifest) -> None:
             del run["raw_output"]
         if run["uncorrected_output"] is None:
             del run["uncorrected_output"]
+        for key in ("backend", "pipeline", "settings_profile", "input_run", "input_role"):
+            if run[key] is None:
+                del run[key]
+        for key in ("knobs", "knob_sources"):
+            if not run[key]:
+                del run[key]
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -163,7 +176,7 @@ class JobRecords:
         return JobManifest(
             job_file=str(job.path),
             name=job.name,
-            mode=str(job.mode),
+            mode=job.mode_label,
             backend=job.backend,
             backend_settings=dict(job.backend_settings),
             config_file=job.config_file,

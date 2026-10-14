@@ -59,11 +59,20 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/executions | 
 
 ## Validate and submit a job
 
+Job text must be `version: 2`; a version-1 file is refused with a pointer to the
+format, at field `version`. `GET /v1/capabilities` lists what a job may use under
+`job_format`: the backends and their pipelines, the knob names, and the Draw
+Things models whose frame rate is known (none today, so `knobs.seconds` is for
+H3 runs; use `knobs.frames` for Draw Things).
+
 ```bash
+# What a job may say
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/capabilities | jq .job_format
+
 # Validate YAML text without writing anything
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   --data-binary @- http://127.0.0.1:8765/v1/validate <<'EOF'
-{"yaml": "name: my-job\n..."}
+{"yaml": "version: 2\nname: my-job\n..."}
 EOF
 
 # Queue an existing job by reference
@@ -87,7 +96,7 @@ clients that send headers, `curl` and `fc mcp` included; see
 
 ```bash
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"yaml": "name: test-job\n..."}' http://127.0.0.1:8765/v1/jobs/test-job | jq
+  -d '{"yaml": "version: 2\nname: test-job\n..."}' http://127.0.0.1:8765/v1/jobs/test-job | jq
 
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8765/v1/jobs/test-job?expected_sha256=<sha from GET>"

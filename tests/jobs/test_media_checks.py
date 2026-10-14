@@ -28,10 +28,9 @@ from framecontrol.jobs.media.stream_color import StreamColor, resolve_video_colo
 from framecontrol.jobs.media.toolkit import MediaTools
 from framecontrol.jobs.media.tools import find_ffprobe
 from framecontrol.jobs.media.video_color import read_colr, tag_video_colors
-from framecontrol.jobs.parsing import load_job
 from framecontrol.jobs.text import media_check_text
 from framecontrol.tui.text.events import event_text
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner, saved_log
 
 DISPLAY_P3 = Path("/System/Library/ColorSync/Profiles/Display P3.icc")
@@ -374,7 +373,7 @@ class ExecutorCheckTests(JobTestCase):
         return events
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def test_an_i2v_job_checks_each_file_in_order_between_its_events(self) -> None:
         self.write_image("photo.jpg", (1920, 1080))
@@ -480,7 +479,7 @@ class StreamColorFlowTests(JobTestCase):
 
         media = MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=extract, video_tagger=tag, color_reader=read)
         executor = JobExecutor(lambda arguments, *rest: FakeRunner(arguments, FakeResult(), write_output=True), lambda executable: executable, media, handle_signals=False, cooldown=lambda seconds: seconds)
-        job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}])), self.global_config, self.params)
         run_job_with(executor, job, executable="draw-things-cli", shutdown_grace=2)
         self.assertEqual(seen, [("read", None), ("tag", stated), ("extract", stated)])
 

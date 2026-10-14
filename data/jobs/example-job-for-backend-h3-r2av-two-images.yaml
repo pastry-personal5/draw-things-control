@@ -1,22 +1,15 @@
-# One H3 Ref2VA run from two still-image references.
+# One H3 Ref2VA run from two still-image references (job format version 2).
 # Both paths are relative to global-config.yaml's input_directory, not data/jobs/.
 # Replace the filenames with images inside that directory before validating.
 # Each image identifies a different person; both people are video subjects.
+# The first run is r2av, so the job has no `input`.
 # Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-r2av-two-images.yaml
 
-version: 1
+version: 2
 name: two-image-subjects
-backend: h3
-mode: h3av
-run_count: 1
-
-h3_runs:
-  - run: 1
-    pipeline: r2av
-    reference_pair: two-subjects
 
 reference_pairs:
-  - name: two-subjects
+  two-subjects:
     references:
       - kind: image
         path: ./person-1.png
@@ -24,7 +17,7 @@ reference_pairs:
         path: ./person-2.png
 
 prompt_pairs:
-  - name: two-subjects
+  two-subjects:
     positive: |
       subject_definitions:
       <Subject 1> is the person in <Picture 1>, using that image for identity, face, hair, clothing, and proportions.
@@ -46,19 +39,28 @@ prompt_pairs:
 
       non_diegetic_music:
       N/A
-    default: true
 
-backend_settings:
-  width: 768
-  height: 1344
-  frames: 96
-  seconds: 4
-  steps: 30
-  seed: 42
+settings_profiles:
+  h3-portrait:
+    backend: h3
+    settings:
+      width: 768
+      height: 1344
+      steps: 30
 
-output:
-  extension: mp4
+defaults:
+  - backend: h3
+    pipeline: r2av
+    prompt_pair: two-subjects
+    settings_profile: h3-portrait
+    knobs:
+      seconds: 4
+      seed: 42
+      timeout_seconds: 3600
+      reference_pair: two-subjects    # required for r2av, and only for r2av
 
-run_timeout_seconds: 3600
+runs:
+  - {backend: h3, pipeline: r2av}
+
 cooldown:
   mode: off

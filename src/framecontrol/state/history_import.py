@@ -171,6 +171,14 @@ def _convert_run(run: dict[str, Any]) -> NewRun:
         output_frames=positive_whole(run.get("output_frames")),
         anchor=_text(run.get("anchor")),
         corrected_output=_text(run.get("corrected_output")),
+        # Written by version-2 jobs (Milestone 09); older manifests have none.
+        backend=_text(run.get("backend")),
+        pipeline=_text(run.get("pipeline")),
+        settings_profile=_text(run.get("settings_profile")),
+        knobs=dict(run["knobs"]) if isinstance(run.get("knobs"), dict) else {},
+        knob_sources={str(key): str(value) for key, value in run["knob_sources"].items()} if isinstance(run.get("knob_sources"), dict) else {},
+        input_run=positive_whole(run.get("input_run")),
+        input_role=_text(run.get("input_role")),
     )
     epoch(converted.started_at)
     return converted

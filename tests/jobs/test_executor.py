@@ -29,8 +29,7 @@ from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
 from framecontrol.jobs.executor import JobOutcome, ResumePoint
 from framecontrol.jobs.media.info import MediaInfo
-from framecontrol.jobs.parsing import load_job
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 
@@ -144,7 +143,7 @@ class JobExecutorTests(JobTestCase):
         png.write_bytes(b"png")
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def run_job(self, job: JobDefinition, write_records: bool = True):
         return run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records)
@@ -952,7 +951,7 @@ class JobExecutorTests(JobTestCase):
 
     def test_a_resume_never_creates_run_1s_resized_copy(self) -> None:
         self.write_image("photo.jpg", (1920, 1080))
-        job = load_job(self.write_job(job_data(run_count=5, input="photo.jpg", desired_input_width=850)), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(job_data(run_count=5, input="photo.jpg", desired_input_width=850)), self.global_config, self.params)
         resume = ResumePoint(first_run=2, input=self.output_directory / "last.png", seed=1, resumes_execution="E0001")
         outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, resume=resume)
         self.assertEqual(outcome.completed_runs, 4)

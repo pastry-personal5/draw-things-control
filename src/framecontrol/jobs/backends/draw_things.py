@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING, Any, cast
 from framecontrol.core.arguments import DrawThingsGenerateArguments, override_arguments, redact_command
 from framecontrol.core.draw_things_config import build_config_json, find_config_file
 from framecontrol.core.generation import require_executable
+from framecontrol.core.numbers import is_int
 from framecontrol.core.yaml_files import read_bounded_bytes
 from framecontrol.jobs.backend import DRAW_THINGS_BACKEND, OutputPaths, RunContext, RunPreparation
+from framecontrol.jobs.inputs.size import ResizePlan, copy_plan, read_image_info, resize_plan
 from framecontrol.jobs.media.checks import MediaCheck
 from framecontrol.jobs.media.toolkit import MediaTools
 from framecontrol.jobs.output_naming import corrected_output_path, last_frame_path, raw_last_frame_path
@@ -39,11 +41,36 @@ class DrawThingsJobSettings:
     size: tuple[int, int] | None
 
 
+@dataclass(frozen=True)
+class FrameRate:
+    """A model's nominal frame rate and where it was established (a research note, never a guess)."""
+
+    fps: float
+    source: str
+
+
+# Model file name to its authoritative nominal frame rate. Empty on purpose: no checked-in configuration or CLI help
+# defines one (see docs/research/draw-things-frame-rate.md), so a version-2 ``knobs.seconds`` is rejected for every
+# model until the owner characterizes it and adds an entry here together with the note that records the measurement.
+DRAW_THINGS_FRAME_RATES: Mapping[str, FrameRate] = {}
+
+
 class DrawThingsBackend:
     """All Draw Things command and output behavior needed by a chained job."""
 
     id = DRAW_THINGS_BACKEND
     supported_modes = frozenset({"i2i", "t2v", "i2v"})
+
+    def __init__(self, frame_rates: Mapping[str, FrameRate] | None = None) -> None:
+        self._frame_rates = DRAW_THINGS_FRAME_RATES if frame_rates is None else frame_rates
+
+    def frame_rate_models(self) -> tuple[str, ...]:
+        """The models whose frame rate is established, so ``knobs.seconds`` can name them."""
+        return tuple(sorted(self._frame_rates))
+
+    def frame_rate(self, model: str) -> FrameRate | None:
+        """The authoritative nominal frame rate of ``model``, or None when none is established."""
+        return self._frame_rates.get(model)
 
     def parse_job(self, parser: JobParser, data: dict[str, Any], source_text: str) -> JobDefinition:
         return parser.parse_draw_things(data, source_text)
@@ -56,6 +83,29 @@ class DrawThingsBackend:
         if settings.size is not None:
             summary["width"], summary["height"] = settings.size
         return summary
+
+    def output_size(self, job: JobDefinition) -> tuple[int, int] | None:
+        """The size this run's images and video frames come out at, known from its profile before it runs."""
+        if job.size is not None:
+            return job.size
+        width = job.config_override.width or job.base_config.get("width")
+        height = job.config_override.height or job.base_config.get("height")
+        return (width, height) if is_int(width) and is_int(height) else None
+
+    def plan_input(self, job: JobDefinition, artifact: Path) -> ResizePlan:
+        """How this run's profile prepares a handoff it consumes, as it does the job's first image: the profile's
+        ``input_resize`` plan, else an exact-size check. Raises ``ValueError`` when the artifact cannot be used."""
+        size, orientation = read_image_info(artifact)
+        planned = job.input_resize
+        if planned is not None:
+            plan = resize_plan(artifact.name, size, orientation, planned.desired_width, planned.desired_height, planned.max_crop_percent)
+            if plan.target_size != planned.target_size:
+                raise ValueError(f"{artifact.name} is {size[0]}x{size[1]}, which the profile would resize to {plan.target_size[0]}x{plan.target_size[1]}, but its run was planned at {planned.target_size[0]}x{planned.target_size[1]}")
+            return plan
+        required = self.output_size(job)
+        if required is not None and size != required:
+            raise ValueError(f"{artifact.name} is {size[0]}x{size[1]}, but the profile generates {required[0]}x{required[1]}; set input_resize in the settings profile")
+        return copy_plan(size, orientation)
 
     def snapshot_config(self, job: JobDefinition, params_directory: Path, max_bytes: int) -> str:
         config_path = find_config_file(job.config_file, params_directory)

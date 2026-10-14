@@ -89,6 +89,14 @@ class H3JobData:
     max_reference_bytes: int = 32 * 1024 * 1024 * 1024
 
 
+def h3_run(data: H3JobData, number: int) -> H3Run:
+    """Return a legacy chain run or a version-2 one-run adapter view."""
+    runs = data.runs
+    if not runs:
+        raise ValueError("H3 job has no run plan")
+    return runs[number - 1 if len(runs) > 1 else 0]
+
+
 @dataclass(frozen=True)
 class H3ColorState:
     run_input: Path | None
@@ -340,7 +348,9 @@ class H3Backend:
             if "h3_runs" in data or "reference_pairs" in data:
                 parser.fail("h3_runs", "and reference_pairs are only supported in h3av jobs")
             runs, reference_pairs = tuple(H3Run(run, "i2av") for run in range(1, common.run_count + 1)), ()
-        color = _color_policy(parser, data["color"], any(run.pipeline == "i2av" for run in runs)) if "color" in data else ColorPolicy(regions=False)
+        # A version-2 profile's color policy may serve an r2av run (measured, never corrected) beside i2av ones; the
+        # compiler checks that some i2av run selects the profile.
+        color = _color_policy(parser, data["color"], parser.run_view or any(run.pipeline == "i2av" for run in runs)) if "color" in data else ColorPolicy(regions=False)
         if settings.reference_image_size == "max" and not any(run.pipeline == "r2av" for run in runs):
             parser.fail("backend_settings.reference_image_size", "max requires at least one r2av run")
         output = data.get("output", {})
@@ -648,6 +658,17 @@ class H3Backend:
         self._installation = {"version": version_match.group(1) if version_match else None, "executable_sha256": digest.hexdigest(), "checkpoint_inventory": inventory, "ref2va_available": ref2va_available, "fl2va_available": fl2va_available, "metal_4_capable": metal_4_capable}
         job.backend_settings["h3_installation"] = dict(self._installation)
 
+    def output_size(self, job: JobDefinition) -> tuple[int, int] | None:
+        """The size this run's video and handoff come out at."""
+        settings = cast(H3JobData, job.backend_data).settings
+        return settings.width, settings.height
+
+    def plan_input(self, job: JobDefinition, artifact: Path) -> ResizePlan:
+        """H3 centre-crops any image it is given to its profile's width and height, as it does the job's first image."""
+        settings = cast(H3JobData, job.backend_data).settings
+        size, orientation = read_image_info(artifact)
+        return _centre_crop_plan(size, orientation, settings.width, settings.height)
+
     def prepare_job(self, job: JobDefinition) -> tuple[JobDefinition, Callable[[], None]]:
         """Freeze direct and queue-owned references once more for this execution, then clean up on every exit."""
         data = cast(H3JobData, job.backend_data)
@@ -685,13 +706,9 @@ class H3Backend:
     def arguments(self, job: JobDefinition, pair: Any, run_input: Path | None, output: Path, seed: int, executable: str, run_number: int = 1) -> H3Arguments:
         data = cast(H3JobData, job.backend_data)
         settings = data.settings
-        # The job seed is fixed by validated H3 settings; an input seed supplied
-        # by the common chain must agree, including resume.
-        if seed != settings.seed:
-            raise ValueError("H3 chain seed differs from backend_settings.seed")
         if self._ffmpeg is None or self._ffprobe is None:
             raise ValueError("H3 media tools were not resolved")
-        run = data.runs[run_number - 1]
+        run = h3_run(data, run_number)
         selected = next((item for item in data.reference_pairs if item.name == run.reference_pair), None)
         if run.pipeline == "r2av" and selected is None:
             raise ValueError(f"H3 run {run_number} has no selected reference pair")
@@ -701,13 +718,13 @@ class H3Backend:
                 self._reference_labels[str(item.path)] = item.basename or item.path.name
                 if item.audio is not None:
                     self._reference_labels[str(item.audio)] = item.audio_basename or item.audio.name
-        return H3Arguments(self.runtime.executable, self.runtime.model_directory, pair.positive, run.pipeline, refs, run_input if run.pipeline == "i2av" else None, _partial_path(output), settings, self._ffmpeg, self._ffprobe)
+        return H3Arguments(self.runtime.executable, self.runtime.model_directory, pair.positive, run.pipeline, refs, run_input if run.pipeline == "i2av" else None, _partial_path(output), replace(settings, seed=seed), self._ffmpeg, self._ffprobe)
 
     def prepare_run(self, job: JobDefinition, context: RunContext) -> RunPreparation:
         data = cast(H3JobData, job.backend_data)
-        if data.runs[context.number - 1].pipeline == "r2av":
+        if h3_run(data, context.number).pipeline == "r2av":
             return RunPreparation(finish_state=H3ColorState(None, None, "r2av boundary"), chain_anchor=None)
-        previous_r2av = context.number > 1 and data.runs[context.number - 2].pipeline == "r2av"
+        previous_r2av = len(data.runs) > 1 and context.number > 1 and data.runs[context.number - 2].pipeline == "r2av"
         changed_pair = context.previous_pair is not None and context.previous_pair.name != context.pair.name
         if context.chain_anchor is None or previous_r2av:
             anchor = context.first_image if context.number == 1 and context.first_image is not None else context.input
@@ -768,7 +785,7 @@ class H3Backend:
         delivery = partial
         main_output = partial
         known_color = False
-        h3_pipeline = cast(H3JobData, job.backend_data).runs[run.number - 1].pipeline
+        h3_pipeline = h3_run(cast(H3JobData, job.backend_data), run.number).pipeline
         raw_output = raw_output_path(run.output) if job.color.corrects and job.color.strength > 0 and h3_pipeline == "i2av" else None
         uncorrected_output = uncorrected_output_path(run.output) if raw_output is not None else None
         try:
@@ -907,10 +924,10 @@ class H3Backend:
             record.audio_codec, record.audio_sample_rate, record.audio_channels, record.audio_duration = facts["audio_codec"], facts["audio_sample_rate"], facts["audio_channels"], facts["audio_duration"]
             if report is not None:
                 data = cast(H3JobData, job.backend_data)
-                h3_run = data.runs[run.number - 1]
-                selected = next((item for item in data.reference_pairs if item.name == h3_run.reference_pair), None)
-                facts["pipeline"] = h3_run.pipeline
-                facts["reference_pair"] = h3_run.reference_pair
+                selected_run = h3_run(data, run.number)
+                selected = next((item for item in data.reference_pairs if item.name == selected_run.reference_pair), None)
+                facts["pipeline"] = selected_run.pipeline
+                facts["reference_pair"] = selected_run.reference_pair
                 facts["references"] = [{"ordinal": ordinal, "kind": item.kind, "basename": item.basename or item.path.name, "sha256": item.sha256, **({"audio_basename": item.audio_basename or item.audio.name, "audio_sha256": item.audio_sha256} if item.audio else {})} for ordinal, item in enumerate(selected.references, 1)] if selected is not None else []
                 facts["handoff_for_run"] = run.number + 1 if record.last_frame is not None else None
                 facts["color"] = color_facts

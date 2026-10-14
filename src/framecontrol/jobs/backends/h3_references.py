@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import Any, cast
@@ -17,6 +18,20 @@ from framecontrol.jobs.definition import JobDefinition
 
 def snapshot_references(job: JobDefinition, directory: Path, max_file_bytes: int, max_total_bytes: int) -> tuple[Path | None, list[dict[str, Any]]]:
     """Copy every declared reference from its opened regular-file descriptor into private storage."""
+    if job.effective_runs:
+        h3_jobs = [run.backend_job for run in job.effective_runs if run.backend == "h3" and isinstance(run.backend_job.backend_data, H3JobData)]
+        if not h3_jobs:
+            return None, []
+        pairs = {}
+        for backend_job in h3_jobs:
+            data = cast(H3JobData, backend_job.backend_data)
+            for pair in data.reference_pairs:
+                pairs.setdefault(pair.name, pair)
+        if not pairs:
+            return None, []
+        template = h3_jobs[0]
+        template_data = cast(H3JobData, template.backend_data)
+        job = replace(template, backend_data=replace(template_data, reference_pairs=tuple(pairs.values())))
     if job.backend != "h3" or not isinstance(job.backend_data, H3JobData) or not job.backend_data.reference_pairs:
         return None, []
     root = directory / f"h3-references-{uuid.uuid4().hex}"

@@ -20,7 +20,7 @@ from framecontrol.server import routes_job_files
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
 
 TOKEN = "b" * 64
 
@@ -42,7 +42,7 @@ class JobFileRoutesTests(JobTestCase):
         executor: JobExecutor = job_executor(runner_factory=lambda *args: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False)
         self.read_client = self.client_for(executor, allow_write=False)
         self.write_client = self.client_for(executor, allow_write=True)
-        self.text = yaml.safe_dump(job_data(name="fresh", run_timeout_seconds=10, prompt_pairs=[{"name": "only", "positive": "text"}]), sort_keys=False)
+        self.text = yaml.safe_dump(to_version_2(job_data(name="fresh", run_timeout_seconds=10, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), sort_keys=False)
 
     def client_for(self, executor: JobExecutor, *, allow_write: bool) -> TestClient:
         context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=FakeWorker(), executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write)  # pyright: ignore[reportArgumentType]  # write routes do not call the worker
@@ -62,6 +62,18 @@ class JobFileRoutesTests(JobTestCase):
         self.assertEqual((response.status_code, response.json()["code"]), (405, "writes_off"))
         self.assertNotIn("/v1/jobs/{name}", self.request(self.read_client, "GET", "/v1/openapi.json").json()["paths"])
         self.assertIn("/v1/jobs/{name}", self.request(self.write_client, "GET", "/v1/openapi.json").json()["paths"])
+
+    def test_version_1_text_is_refused_by_validate_create_and_replace(self) -> None:
+        legacy = yaml.safe_dump(job_data(name="fresh", run_timeout_seconds=10, prompt_pairs=[{"name": "only", "positive": "text"}]), sort_keys=False)
+        (self.paths.jobs / "fresh.yaml").write_text(self.text, encoding="utf-8")
+        for label, method, path, client in (("validate", "POST", "/v1/validate", self.read_client), ("create", "PUT", "/v1/jobs/brand-new", self.write_client), ("replace", "PUT", "/v1/jobs/fresh", self.write_client)):
+            with self.subTest(label):
+                response = self.request(client, method, path, json={"yaml": legacy})
+                self.assertEqual((response.status_code, response.json()["code"]), (422, "invalid_input"), response.text)
+                self.assertIn("'version' version 1 job files are no longer accepted", response.json()["message"])
+                self.assertIn("version: 2", response.json()["message"])
+        self.assertEqual((self.paths.jobs / "fresh.yaml").read_text(encoding="utf-8"), self.text)
+        self.assertFalse((self.paths.jobs / "brand-new.yaml").exists())
 
     def test_malformed_job_text_is_a_typed_refusal_on_validate_and_write(self) -> None:
         client = TestClient(self.write_client.app, base_url="http://127.0.0.1:8765", raise_server_exceptions=False)
@@ -126,11 +138,13 @@ class JobFileRoutesTests(JobTestCase):
         self.assertEqual((audit[0]["action"], audit[0]["outcome"], audit[0]["target"]), ("submit", "limit_exceeded", None))
 
     def test_existing_job_and_base_config_reads_accept_the_limit_and_refuse_one_byte_over(self) -> None:
-        self.global_config = replace(self.global_config, api_limits=ApiLimits(max_job_file_bytes=512))
+        # A round limit just above the job's own text, which the padding below fills exactly.
+        limit = len(self.text.encode()) + 64
+        self.global_config = replace(self.global_config, api_limits=ApiLimits(max_job_file_bytes=limit))
         client = self.client_for(job_executor(runner_factory=lambda *args: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False), allow_write=True)
         job = self.paths.jobs / "fresh.yaml"
-        job.write_text(self.text + "\n#" + "x" * (512 - len(self.text.encode()) - 2), encoding="utf-8")
-        self.assertEqual(job.stat().st_size, 512)
+        job.write_text(self.text + "\n#" + "x" * (limit - len(self.text.encode()) - 2), encoding="utf-8")
+        self.assertEqual(job.stat().st_size, limit)
         self.assertEqual(self.request(client, "GET", "/v1/jobs/fresh.yaml").status_code, 200)
         job.write_text(job.read_text(encoding="utf-8") + "x", encoding="utf-8")
         response = self.request(client, "GET", "/v1/jobs/fresh.yaml")

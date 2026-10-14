@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
+import yaml
 from rich.text import Text
 from textual.color import Color
 from typer.testing import CliRunner
@@ -26,7 +27,7 @@ from framecontrol.tui.panes.status import WorkStatus
 from framecontrol.tui.screens import MainScreen
 from framecontrol.tui.shortcut_help import ShortcutHelpOverlay
 from framecontrol.tui.widgets import MAX_MESSAGE_LINES, ActivityLog, CommandField
-from tests.fixtures import JobTestCase, TestExecutor, job_executor
+from tests.fixtures import JobTestCase, TestExecutor, job_data, job_executor, to_version_2
 from tests.tui.tui_case import TuiTestCase
 
 
@@ -175,7 +176,7 @@ class TuiTests(TuiTestCase):
         self.write_data_job("b-walk.yaml")
         self.write_data_job("a-still.yml", mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])
         self.write_data_job("c-bad.yaml", mode="t2i")
-        self.write_data_job("d-bad-pairs.yaml", run_count=2)
+        (self.data / "d-bad-pairs.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), "runs": [{"backend": "draw-things", "pipeline": "i2v", "prompt_pair": "ghost", "settings_profile": "main", "knobs": {"timeout_seconds": 60}}]}, sort_keys=False), encoding="utf-8")
         (self.data / ".hidden.yaml").write_text("not: a job\n", encoding="utf-8")
         (self.data / "notes.txt").write_text("not a job\n", encoding="utf-8")
         for directory in (".trash", "nested"):
@@ -191,14 +192,14 @@ class TuiTests(TuiTestCase):
         self.assertEqual([line.split()[0] for line in lines[1:]], ["a-still.yml", "b-walk.yaml", "c-bad.yaml", "d-bad-pairs.yaml"])
         self.assertEqual(lines[1].split()[1:], ["sunset-walk", "i2i", "1", "run", "valid"])
         self.assertEqual(lines[2].split()[1:], ["sunset-walk", "i2v", "5", "runs", "valid"])
-        self.assertIn("invalid: 'mode'", lines[3])
-        self.assertIn("invalid: 'prompt_pairs[0].runs'", lines[4])
+        self.assertIn("invalid: 'runs[0].pipeline'", lines[3])
+        self.assertIn("invalid: 'runs[0].prompt_pair'", lines[4])
         self.assertNotIn(str(self.data), lines[4])
 
     async def test_brackets_in_errors_and_paths_are_shown_as_written(self) -> None:
         (self.data / "broken.yaml").write_text("name: x\npositive: a cat [smiling]: [/sad]\n", encoding="utf-8")
         self.write_data_job("[b] walk.yaml")
-        self.write_data_job("c-key.yaml", **{"[/sad]": 1})
+        (self.data / "c-key.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(), self.paths.params), "[/sad]": 1}, sort_keys=False), encoding="utf-8")
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
@@ -253,7 +254,7 @@ class TuiTests(TuiTestCase):
         self.assertIn(f"Job file: {path}", shown)
         self.assertIn(f"Job file: {path}", by_stem)
         self.assertIn("  runs: 3 (walk, wave, walk)", shown)
-        self.assertIn("  seed: 42 (config_file)", shown)
+        self.assertIn("  execution seed: 42 (run)", shown)
         self.assertIn("walk: runs 1, 3", shown)
         self.assertIn("\nnegative:\nblurry\n", shown)
         self.assertIn("wave: run 2", shown)
@@ -296,7 +297,7 @@ class TuiTests(TuiTestCase):
         async with app.run_test() as pilot:
             await self.settle(pilot)
             shown = await self.show(pilot, "random")
-        self.assertIn("  seed: random (drawn when the job starts)", shown)
+        self.assertIn("  execution seed: random (drawn when the job starts)", shown)
         self.assertIn("placeholder seed 0", shown)
         self.assertIn("seed 0 (random)", shown)
         self.assertRegex(shown, r"\n  --seed\s+0\s")
@@ -308,7 +309,7 @@ class TuiTests(TuiTestCase):
             await self.settle(pilot)
             shown = await self.show(pilot, "bad")
         self.assertTrue(shown.startswith(f"Invalid job: {self.data / 'bad.yaml'}"), shown)
-        self.assertIn("'mode'", shown)
+        self.assertIn("'runs[0].pipeline'", shown)
         self.assertNotIn("Dry-run plan", shown)
 
     async def test_a_missing_tool_shows_the_message_and_the_rest_still_renders(self) -> None:

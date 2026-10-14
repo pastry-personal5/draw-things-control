@@ -13,7 +13,7 @@ from framecontrol.server.context import ServerContext
 from framecontrol.state.execution_rows import MediaCheckRow
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
 
 TOKEN = "a" * 64
 
@@ -47,7 +47,7 @@ class ReadRoutesTestCase(JobTestCase):
 
     def write_job_in_catalog(self, name: str = "job.yaml", **changes: Any):
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), sort_keys=False), encoding="utf-8")
+        path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params), sort_keys=False), encoding="utf-8")
         return path
 
     def add_execution(self, name: str = "walk", *, started: str = "2026-09-28T09:00:00+00:00", finished: str = "2026-09-28T09:05:00+00:00", job_file: str | None = None) -> int:
@@ -102,6 +102,14 @@ class CapabilitiesTests(ReadRoutesTestCase):
         self.assertEqual(body["allow_write"], False)
         self.assertEqual(body["limits"], {"max_queued_jobs": 20, "max_job_runs": 100, "max_job_seconds": 172800, "max_job_file_bytes": 65536, "max_reference_file_bytes": 4 * 1024 * 1024 * 1024, "max_reference_bytes": 32 * 1024 * 1024 * 1024, "max_job_output_bytes": 32 * 1024 * 1024 * 1024})
 
+    def test_capabilities_names_the_job_format_an_agent_may_write(self) -> None:
+        job_format = self.get("/v1/capabilities").json()["job_format"]
+        self.assertEqual(job_format["version"], 2)
+        self.assertEqual(job_format["backends"], {"draw-things": ["i2i", "t2v", "i2v"], "h3": ["i2av", "r2av"]})
+        self.assertEqual(job_format["knobs"], ["seconds", "frames", "seed", "timeout_seconds", "reference_pair"])
+        # No Draw Things model has an established frame rate, so no model can take knobs.seconds.
+        self.assertEqual(job_format["draw_things_seconds_models"], [])
+
 
 class JobRoutesTests(ReadRoutesTestCase):
     def test_a_valid_job_is_listed_and_read_by_file_name_and_by_id(self) -> None:
@@ -117,11 +125,14 @@ class JobRoutesTests(ReadRoutesTestCase):
         self.assertEqual(by_id["name"], "sunset-walk")
 
     def test_an_invalid_job_is_listed_with_its_error_and_field(self) -> None:
-        self.write_job_in_catalog("bad.yaml", run_count=0)
+        path = self.write_job_in_catalog("bad.yaml")
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["runs"] = []
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         row = self.get("/v1/jobs").json()["jobs"][0]
         self.assertFalse(row["valid"])
         self.assertIsNotNone(row["error"])
-        self.assertEqual(row["field"], "run_count")
+        self.assertEqual(row["field"], "runs")
         detail = self.get("/v1/jobs/bad.yaml").json()
         self.assertIsNotNone(detail["error"])
         self.assertIn("text", detail)
@@ -142,10 +153,13 @@ class JobRoutesTests(ReadRoutesTestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_a_jobs_detail_shows_its_color_policy(self) -> None:
+        # A version-2 job has no job-wide policy: each run shows the one its settings profile gives it.
         self.write_job_in_catalog("plain.yaml")
-        self.assertEqual(self.get("/v1/jobs/plain.yaml").json()["color"], {"anchor": "none"})
+        plain = self.get("/v1/jobs/plain.yaml").json()
+        self.assertEqual((plain["color"], plain["runs"][0]["settings"]["color"]), (None, {"anchor": "none"}))
         self.write_job_in_catalog("blend.yaml", color={"anchor": "blend"})
-        self.assertEqual(self.get("/v1/jobs/blend.yaml").json()["color"], {"anchor": "blend", "strength": 1.0, "regions": True, "first_weight": 0.25, "reanchor": "prompt_pair"})
+        blend = self.get("/v1/jobs/blend.yaml").json()
+        self.assertEqual(blend["runs"][0]["settings"]["color"], {"anchor": "blend", "strength": 1.0, "regions": True, "first_weight": 0.25, "reanchor": "prompt_pair"})
 
     def test_the_preview_lists_every_run_with_its_command(self) -> None:
         self.write_job_in_catalog("walk.yaml", run_count=1)

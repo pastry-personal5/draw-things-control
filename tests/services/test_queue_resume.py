@@ -12,7 +12,7 @@ from framecontrol.services.queue_submit import submit_job
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import JobTestCase, job_data, submit_legacy_job
 
 NOW = datetime(2026, 9, 27, 15, 30, 12)
 
@@ -109,12 +109,21 @@ class QueueResumeTests(JobTestCase):
         with self.assertRaisesRegex(ResumeRefusedError, "is gone"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
 
-    def test_a_resume_is_refused_when_the_jobs_own_first_input_is_gone(self) -> None:
-        entry = self.submit(run_count=7)
+    def test_a_version_1_resume_is_refused_when_the_jobs_own_first_input_is_gone(self) -> None:
+        # A job queued before the cutover resolves its size from its input again, exactly as its submission did.
+        path = self.write_legacy_job(job_data(run_count=7, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        entry = submit_legacy_job(path, self.global_config, self.params, self.store)
         self.succeed_three_of_seven(entry.id)
         os.remove(self.input_directory / "first-frame.png")
         with self.assertRaisesRegex(ResumeRefusedError, "first-frame.png"):
             resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+
+    def test_a_version_2_resume_starts_from_its_saved_handoff_and_needs_no_first_input(self) -> None:
+        entry = self.submit(run_count=7)
+        self.succeed_three_of_seven(entry.id)
+        os.remove(self.input_directory / "first-frame.png")
+        resumed = resume_entry(self.store, entry.id, self.global_config, self.params, clock=lambda: NOW)
+        self.assertEqual((resumed.resume_first_run, resumed.total_runs), (4, 7))
 
     def test_a_resume_is_refused_when_the_execution_was_pruned_distinct_from_no_succeeded_run(self) -> None:
         entry = self.submit(run_count=7)

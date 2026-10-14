@@ -16,11 +16,11 @@ from framecontrol.jobs.definition import GenerationMode, JobDefinition
 from framecontrol.jobs.events import RunStatus
 from framecontrol.jobs.executor import JobExecutor, JobRunOptions, ResumePoint
 from framecontrol.jobs.media.toolkit import MediaTools
-from framecontrol.jobs.parsing import JobParser, load_job
+from framecontrol.jobs.parsing import JobParser
 from framecontrol.services.api_rules import check_api_rules
-from framecontrol.services.queue_submit import parse_snapshot, submit_job
+from framecontrol.services.queue_submit import parse_snapshot
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import JobTestCase, job_data, load_legacy_job, submit_legacy_job
 
 
 @dataclass(frozen=True)
@@ -121,10 +121,10 @@ class BackendContractTests(JobTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.backends = BackendRegistry((DrawThingsBackend(), FakeBackend()))
-        self.job_path = self.write_job(job_data(backend="fake", backend_settings={"label": "sentinel-secret-label"}, config_file=None, mode="i2i", run_count=3, prompt_pairs=[{"name": "only", "positive": "walk"}]))
+        self.job_path = self.write_legacy_job(job_data(backend="fake", backend_settings={"label": "sentinel-secret-label"}, config_file=None, mode="i2i", run_count=3, prompt_pairs=[{"name": "only", "positive": "walk"}]))
 
     def _job(self) -> JobDefinition:
-        return load_job(self.job_path, self.global_config, self.params, backends=self.backends)
+        return load_legacy_job(self.job_path, self.global_config, self.params, backends=self.backends)
 
     def _executor(self, results: list[FakeResult], seen: list[FakeCommand]) -> JobExecutor:
         def runner(arguments: FakeCommand, *_rest: Any) -> FakeRunner:
@@ -157,7 +157,7 @@ class BackendContractTests(JobTestCase):
     def test_fake_backend_queue_snapshot_keeps_its_validated_settings(self) -> None:
         store = Store.open(self.paths.database, mode=StoreMode.WRITE)
         self.addCleanup(store.close)
-        entry = submit_job(self.job_path, self.global_config, self.params, store, backends=self.backends)
+        entry = submit_legacy_job(self.job_path, self.global_config, self.params, store, backends=self.backends)
         self.assertEqual((entry.backend, entry.settings.backend_settings), ("fake", {"label": "[redacted]"}))
         self.job_path.write_text("invalid: replacement\n", encoding="utf-8")
         restored = parse_snapshot(entry, self.global_config, self.params, backends=self.backends)()
@@ -183,13 +183,13 @@ class BackendContractTests(JobTestCase):
             changed = job_data(backend="fake", backend_settings={"label": "sentinel-secret-label"}, config_file=None, mode="i2i")
             changed[field] = "wrong"
             with self.subTest(field=field), self.assertRaises(InputError) as caught:
-                load_job(self.write_job(changed), self.global_config, self.params, backends=self.backends)
+                load_legacy_job(self.write_legacy_job(changed), self.global_config, self.params, backends=self.backends)
             self.assertEqual(caught.exception.field, field)
 
     def test_backend_owned_mode_reaches_the_adapter(self) -> None:
         data = job_data(backend="draw-things-cli", mode="i2av", prompt_pairs=[{"name": "only", "positive": "walk"}])
         with self.assertRaises(InputError) as caught:
-            load_job(self.write_job(data), self.global_config, self.params, backends=self.backends)
+            load_legacy_job(self.write_legacy_job(data), self.global_config, self.params, backends=self.backends)
         self.assertEqual(caught.exception.field, "mode")
         self.assertIn("is not supported by draw-things-cli", str(caught.exception))
 

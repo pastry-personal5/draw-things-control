@@ -1,0 +1,136 @@
+# An H3 and Draw Things chain with a profile and a duration for each (job format version 2).
+# H3 r2av is measured but never corrected; positive `previous` correction applies to
+# the H3 i2av and Draw Things i2v runs through their own profiles.
+# Run 3 (Draw Things) starts from the verified last frame of run 2 (H3), cropped or checked by its
+# profile; run 4 (H3) starts from run 3's last frame. Reference paths are relative to
+# global-config.yaml's input_directory.
+# Validate: uv run fc validate-job data/jobs/example-job-mixed-backends.yaml
+version: 2
+name: corrected-mixed-story
+
+prompt_pairs:
+  establish:
+    positive: |
+      subject_definitions:
+      <Subject 1> is the person in <Picture 1>.
+      <Subject 2> is the person in <Picture 2>.
+
+      summary:
+      [reference generation] The two subjects stand together beside a river at blue hour.
+
+      retention_analysis:
+      Preserve both subjects' identities, clothing, and proportions.
+
+      detailed_description:
+      [Shot 1] A steady medium shot establishes both subjects and the riverside setting.
+
+      overall_soundscape:
+      Flowing water, a light breeze, and distant city ambience.
+
+      non_diegetic_music:
+      None.
+  h3-continue:
+    positive: "Continue from the supplied first frame as both subjects begin walking beside the river."
+  draw-things-continue:
+    positive: "The two subjects continue walking together; preserve their clothing, lighting, and positions."
+    negative: "blurry, distorted faces, extra people, flickering"
+  h3-final:
+    positive: "Continue from the supplied first frame and settle on both subjects looking across the water."
+
+reference_pairs:
+  two-subjects:
+    references:
+      - kind: image
+        path: ./references/person-1.png
+      - kind: image
+        path: ./references/person-2.png
+
+settings_profiles:
+  h3-landscape-corrected:
+    backend: h3
+    settings:
+      width: 832
+      height: 448
+      steps: 30
+      denoise_reuse: 1
+      dit_layers: 50
+      core_reuse: 1
+      token_reduction: false
+      ssd_streaming: false
+      int8_row_fc2: false
+      reference_rope: false
+      reference_image_size: match
+      compatibility: {}
+      color:
+        anchor: previous
+        strength: 0.5
+        regions: true
+  wan-landscape-corrected:
+    backend: draw-things
+    settings:
+      config_file: image-to-video-wan-2-2.example.yaml
+      config_override:
+        model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+        refiner_model: wan_v2.2_a14b_lne_i2v_i8x.ckpt
+        refiner_start: 0.1
+        steps: 40
+        guidance_scale: 5.0
+        shift: 3.99
+        width: 832
+        height: 448
+        strength: 1.0
+      output:
+        extension: mov
+        video_format: prores4444
+      color:
+        anchor: previous
+        strength: 0.75
+        regions: true
+
+defaults:
+  - backend: h3
+    pipeline: r2av
+    prompt_pair: establish
+    settings_profile: h3-landscape-corrected
+    knobs:
+      seconds: 5
+      seed: 42
+      timeout_seconds: 3600
+      reference_pair: two-subjects
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: h3-continue
+    settings_profile: h3-landscape-corrected
+    knobs:
+      seconds: 5
+      seed: 42
+      timeout_seconds: 3600
+  - backend: draw-things
+    pipeline: i2v
+    prompt_pair: draw-things-continue
+    settings_profile: wan-landscape-corrected
+    knobs:
+      frames: 81
+      seed: 42
+      timeout_seconds: 3600
+
+runs:
+  - backend: h3
+    pipeline: r2av
+  - backend: h3
+    pipeline: i2av
+  - backend: draw-things
+    pipeline: i2v
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: h3-final
+    knobs:
+      seconds: 8
+
+output:
+  directory: corrected-mixed-story
+cooldown:
+  mode: auto
+  ratio: 0.5
+  minimum_seconds: 0
+  maximum_seconds: 3600

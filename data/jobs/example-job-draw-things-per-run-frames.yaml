@@ -1,0 +1,74 @@
+# Draw Things i2v runs with an exact frame count each (job format version 2).
+# The first image must already be 832x448, the size this profile generates.
+# Validate: uv run fc validate-job data/jobs/example-job-draw-things-per-run-frames.yaml
+version: 2
+name: draw-things-changing-frames
+input: ./story/opening-832x448.png
+
+prompt_pairs:
+  walk:
+    positive: "A woman walks along the beach at sunset, with gentle camera tracking."
+    negative: "blurry, distorted, extra limbs, flickering"
+  wave:
+    positive: "She turns and waves toward the camera in warm golden light."
+    negative: "blurry, distorted, extra limbs, flickering"
+  settle:
+    positive: "She lowers her hand and looks toward the water as the camera settles."
+    negative: "blurry, distorted, extra limbs, flickering"
+
+settings_profiles:
+  wan-landscape-corrected:
+    backend: draw-things
+    settings:
+      config_file: image-to-video-wan-2-2.example.yaml
+      config_override:
+        model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+        refiner_model: wan_v2.2_a14b_lne_i2v_i8x.ckpt
+        refiner_start: 0.1
+        steps: 40
+        guidance_scale: 5.0
+        shift: 3.99
+        width: 832
+        height: 448
+        strength: 1.0
+      output:
+        extension: mov
+        video_format: prores4444
+      color:
+        anchor: blend
+        strength: 0.75
+        first_weight: 0.25
+        reanchor: never
+        regions: true
+
+defaults:
+  - backend: draw-things
+    pipeline: i2v
+    settings_profile: wan-landscape-corrected
+    knobs:
+      frames: 81
+      seed: 829023514
+      timeout_seconds: 3600
+
+runs:
+  - backend: draw-things
+    pipeline: i2v
+    prompt_pair: walk
+  - backend: draw-things
+    pipeline: i2v
+    prompt_pair: wave
+    knobs:
+      frames: 49
+  - backend: draw-things
+    pipeline: i2v
+    prompt_pair: settle
+    knobs:
+      frames: 97
+
+output:
+  directory: draw-things-changing-frames
+cooldown:
+  mode: auto
+  ratio: 0.5
+  minimum_seconds: 0
+  maximum_seconds: 3600

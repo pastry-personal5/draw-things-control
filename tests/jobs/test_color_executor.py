@@ -14,8 +14,7 @@ from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import FirstImageDropped, JobStarted, MediaChecked, RunFinished, RunStarted, RunStatus
 from framecontrol.jobs.executor import ResumePoint
 from framecontrol.jobs.media.checks import MediaCheck
-from framecontrol.jobs.parsing import load_job
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 from tests.jobs.test_media_checks import FakeChecker, write_frame
 
@@ -61,7 +60,7 @@ class CorrectingJobTests(JobTestCase):
         )
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def run_job(self, job: JobDefinition, **options: Any) -> list:
         events: list = []

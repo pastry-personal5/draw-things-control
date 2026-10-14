@@ -26,7 +26,7 @@ from framecontrol.state.execution_rows import MediaCheckRow
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
 from tests.server.test_queue_routes import TOKEN, FakeWorker
 
 SERVER_URL = "http://127.0.0.1:8765"
@@ -105,7 +105,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     def write_job(self, data: dict[str, Any], name: str = "job.yaml") -> Any:
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        path.write_text(yaml.safe_dump(to_version_2(data, self.paths.params), sort_keys=False), encoding="utf-8")
         return path
 
     def write_catalog_job(self, name: str = "walk.yaml", **changes: Any) -> str:

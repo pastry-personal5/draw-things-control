@@ -13,9 +13,10 @@ from framecontrol.jobs.text import job_summary
 from tests.fixtures import BASE_CONFIG, FakeToolkit, JobTestCase, job_data, job_executor
 
 IGNORED = [
-    "INFO Ignoring batchCount (4) from config_file batch.yaml: not used in i2v jobs; the job's run_count sets the number of runs",
-    "INFO Ignoring width (640) from config_file batch.yaml: desired_input_width/desired_input_height set the size (832x448)",
-    "INFO Ignoring height (448) from config_file batch.yaml: desired_input_width/desired_input_height set the size (832x448)",
+    "INFO Ignoring batchCount (4) from config_file batch.yaml (settings profile main): not used in i2v runs; the job's runs set the number of runs",
+    "INFO Ignoring seed (42) from config_file batch.yaml (settings profile main): a run's seed is its knobs.seed, else the execution seed",
+    "INFO Ignoring width (640) from config_file batch.yaml (settings profile main): input_resize sets the size (832x448)",
+    "INFO Ignoring height (448) from config_file batch.yaml (settings profile main): input_resize sets the size (832x448)",
     "INFO Input photo.jpg (1920x1080) will be scaled to 832x468 and cropped to 832x448 (4.3%) for run 1",
 ]
 
@@ -43,7 +44,7 @@ class JobOutputTests(JobTestCase):
         return result.stdout.replace(str(self.root), "ROOT")
 
     def test_validate_job_output(self) -> None:
-        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  backend: draw-things-cli\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  output format: prores4444 (.mov)\n  config file: batch.yaml\n  model: base.ckpt\n  seed: 42 (config_file)\n"
+        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  format: version 2\n  backend: draw-things\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  execution seed: 42 (run)\n  run 1: draw-things/i2v, pair walk, profile main, seed 42, time limit 1 h\n  run 2: draw-things/i2v, pair wave, profile main, seed 42, time limit 1 h\n  run 3: draw-things/i2v, pair walk, profile main, seed 42, time limit 1 h\n"
         self.assertEqual(self.invoke("validate-job", str(self.job_path)), expected)
         self.assertEqual(self.logged, IGNORED)
 
@@ -51,7 +52,7 @@ class JobOutputTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
         job_path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_file="noseed.yaml", cooldown={"mode": "off"}), name="noseed.yaml")
         output = self.invoke("validate-job", str(job_path))
-        self.assertEqual(output.splitlines()[-7:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  output format: prores4444 (.mov)", "  config file: noseed.yaml", "  model: m.ckpt", "  seed: (random, drawn when the job starts) (random)"])
+        self.assertEqual(output.splitlines()[-5:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  execution seed: (random, drawn when the job starts) (random)", "  run 1: draw-things/i2v, pair only, profile main, execution seed, time limit 1 h"])
         # Run 1 reads an 8-bit sRGB copy of every input, so its plan is logged even without a desired size.
         self.assertEqual(self.logged, ["INFO Input first-frame.png is already 832x448; copied as 8-bit sRGB for run 1"])
 
@@ -67,6 +68,6 @@ class JobOutputTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
         random_job = load_job(self.write_job(job_data(config_file="noseed.yaml"), name="noseed.yaml"), self.global_config, self.params)
         seeded_job = load_job(self.job_path, self.global_config, self.params)
-        self.assertEqual(dict(job_summary(random_job))["seed"], "(random, drawn when the job starts) (random)")
-        self.assertEqual(dict(job_summary(random_job, random_seed_text="random (later)"))["seed"], "random (later)")
-        self.assertEqual(dict(job_summary(seeded_job, random_seed_text="random (later)"))["seed"], "42 (config_file)")
+        self.assertEqual(dict(job_summary(random_job))["execution seed"], "(random, drawn when the job starts) (random)")
+        self.assertEqual(dict(job_summary(random_job, random_seed_text="random (later)"))["execution seed"], "random (later)")
+        self.assertEqual(dict(job_summary(seeded_job, random_seed_text="random (later)"))["execution seed"], "42 (run)")

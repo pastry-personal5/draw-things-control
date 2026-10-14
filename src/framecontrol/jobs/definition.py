@@ -9,7 +9,7 @@ from typing import Any
 
 from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy
 from framecontrol.core.numbers import is_int
-from framecontrol.jobs.backend import DRAW_THINGS_BACKEND
+from framecontrol.jobs.backend import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.jobs.inputs.size import ResizePlan
 
 
@@ -50,6 +50,57 @@ class PromptPair:
     negative: str | None
     runs: tuple[int, ...]
     default: bool
+
+
+@dataclass(frozen=True)
+class EffectiveRun:
+    """One immutable, fully resolved run in a version-2 job.
+
+    ``backend_job`` is the adapter-owned compatibility view used to execute
+    this one run.  The remaining fields are the portable compiled plan kept in
+    snapshots, records, and public summaries.
+    """
+
+    number: int
+    backend: str
+    pipeline: str
+    prompt_pair: str
+    settings_profile: str
+    pair: PromptPair
+    knobs: dict[str, Any]
+    knob_sources: dict[str, str]
+    settings: dict[str, Any]
+    backend_job: JobDefinition = field(repr=False, compare=False)
+
+    @property
+    def seed(self) -> int | None:
+        value = self.knobs.get("seed")
+        return value if is_int(value) else None
+
+    @property
+    def timeout_seconds(self) -> float | None:
+        value = self.knobs.get("timeout_seconds")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    @property
+    def requires_visual_input(self) -> bool:
+        return self.pipeline in ("i2i", "i2v", "i2av")
+
+    @property
+    def is_video(self) -> bool:
+        return self.pipeline != "i2i"
+
+    def public_plan(self) -> dict[str, Any]:
+        return {
+            "number": self.number,
+            "backend": self.backend,
+            "pipeline": self.pipeline,
+            "prompt_pair": self.prompt_pair,
+            "settings_profile": self.settings_profile,
+            "knobs": dict(self.knobs),
+            "knob_sources": dict(self.knob_sources),
+            "settings": dict(self.settings),
+        }
 
 
 @dataclass(frozen=True)
@@ -185,6 +236,10 @@ class JobDefinition:
     # The job file's text as it was loaded, so a record shows exactly what ran. Job files reject unknown keys, so it cannot hold a credential.
     # Left out of equality and repr: comments must not make two jobs differ, and a repr must not dump the file.
     source_text: str = field(default="", repr=False, compare=False)
+    # Version 2 compiles every run before queue insertion.  Empty for legacy
+    # version-1 snapshots, whose job-wide fields remain authoritative.
+    version: int = 1
+    effective_runs: tuple[EffectiveRun, ...] = field(default=(), repr=False)
 
     @property
     def input_copy(self) -> ResizePlan | None:
@@ -195,6 +250,8 @@ class JobDefinition:
 
     def schedule(self) -> tuple[PromptPair, ...]:
         """Return the prompt pair used by each run, in run order."""
+        if self.effective_runs:
+            return tuple(run.pair for run in self.effective_runs)
         assigned = {number: pair for pair in self.prompt_pairs for number in pair.runs}
         default = next((pair for pair in self.prompt_pairs if pair.default), None)
         return tuple(assigned.get(number, default) for number in range(1, self.run_count + 1))  # type: ignore[misc]
@@ -213,3 +270,56 @@ class JobDefinition:
     def configured_seed(self) -> tuple[int | None, str]:
         """Return the backend-validated seed and where it came from."""
         return self.requested_seed, self.requested_seed_source
+
+    def effective_run(self, number: int) -> EffectiveRun | None:
+        """Return version 2's compiled run, or ``None`` for a legacy job."""
+        return self.effective_runs[number - 1] if self.effective_runs and 1 <= number <= len(self.effective_runs) else None
+
+    def job_for_run(self, number: int) -> JobDefinition:
+        """Return the adapter-owned view for one run."""
+        run = self.effective_run(number)
+        return run.backend_job if run is not None else self
+
+    def effective_plan(self) -> tuple[dict[str, Any], ...]:
+        """Return the safe, serializable frozen run plan."""
+        return tuple(run.public_plan() for run in self.effective_runs)
+
+    @property
+    def mode_label(self) -> str:
+        """The job's mode as records and front ends show it: a version-2 job's one pipeline, or ``mixed``."""
+        if not self.effective_runs:
+            return str(self.mode)
+        pipelines = {run.pipeline for run in self.effective_runs}
+        return next(iter(pipelines)) if len(pipelines) == 1 else "mixed"
+
+    def run_backend(self, number: int) -> str:
+        """The backend ID of the adapter that runs ``number``."""
+        run = self.effective_run(number)
+        return run.backend if run is not None else self.backend
+
+    def run_needs_visual_input(self, number: int) -> bool:
+        """Whether run ``number`` is conditioned on an image: the job's input or the previous run's handoff.
+
+        A version-1 job answers from its mode and, for H3, its run plan; a version-2 job from the run's pipeline. A run
+        past the end needs nothing, so ``run_needs_visual_input(number + 1)`` says whether run ``number`` must hand off.
+        """
+        if number < 1 or number > self.run_count:
+            return False
+        run = self.effective_run(number)
+        if run is not None:
+            return run.requires_visual_input
+        if self.backend == H3_BACKEND:
+            from framecontrol.jobs.backends.h3 import H3JobData
+
+            if isinstance(self.backend_data, H3JobData):
+                return self.backend_data.runs[number - 1].pipeline == "i2av"
+        return number > 1 or self.mode.requires_input
+
+    def run_checks_input(self, number: int) -> bool:
+        """Whether the media checks examine run ``number``'s input: an image-conditioned video run's."""
+        run = self.effective_run(number)
+        if run is not None:
+            return run.pipeline in ("i2v", "i2av")
+        if self.mode not in (GenerationMode.I2V, GenerationMode.I2AV, GenerationMode.H3AV):
+            return False
+        return self.run_needs_visual_input(number)

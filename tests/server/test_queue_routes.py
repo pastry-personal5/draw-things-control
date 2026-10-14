@@ -27,7 +27,7 @@ from framecontrol.services.queue_submit import submit_job
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.queue import QueueRow, QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
 
 TOKEN = "a" * 64
 
@@ -153,7 +153,7 @@ class QueueRoutesTestCase(JobTestCase):
     def write_job_in_catalog(self, name: str = "job.yaml", **changes: Any):
         changes.setdefault("run_timeout_seconds", 60)
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), sort_keys=False), encoding="utf-8")
+        path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params), sort_keys=False), encoding="utf-8")
         return path
 
     def submit(self, name: str = "job.yaml", *, caller: str | None = None, **changes: Any) -> dict[str, Any]:
@@ -216,11 +216,21 @@ class SubmitTests(QueueRoutesTestCase):
         self.assertEqual([row["queue_id"] for row in listed], ["Q0001"])
         self.assertEqual((listed[0]["total_runs"], listed[0]["succeeded"]), (1, 0))
 
-    def test_a_job_without_run_timeout_seconds_is_refused(self) -> None:
-        self.write_job_in_catalog("no-timeout.yaml", run_timeout_seconds=None)
+    def test_a_version_1_job_file_cannot_be_submitted(self) -> None:
+        path = self.paths.jobs / "legacy.yaml"
+        path.write_text(yaml.safe_dump(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], run_timeout_seconds=60), sort_keys=False), encoding="utf-8")
+        response = self.request("post", "/v1/queue", json={"job": "legacy.yaml"})
+        self.assertEqual((response.status_code, response.json()["field"]), (422, "version"))
+        self.assertEqual(self.store.queue.list(), [])
+
+    def test_a_job_without_a_run_timeout_is_refused(self) -> None:
+        path = self.write_job_in_catalog("no-timeout.yaml")
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for run in data["runs"]:
+            run["knobs"].pop("timeout_seconds")
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         response = self.request("post", "/v1/queue", json={"job": "no-timeout.yaml"})
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.json()["code"], "timeout_required")
+        self.assertEqual((response.status_code, response.json()["code"], response.json()["field"]), (422, "invalid_input", "runs[0].knobs.timeout_seconds"))
         self.assertEqual(self.store.queue.list(), [])
 
     def test_a_job_over_max_job_runs_is_refused(self) -> None:
@@ -286,7 +296,7 @@ class SubmitTests(QueueRoutesTestCase):
 
         def check_then_edit(*args: Any, **kwargs: Any) -> None:
             real_check(*args, **kwargs)
-            path.write_text(yaml.safe_dump(job_data(prompt_pairs=[{"name": "only", "positive": "text"}]), sort_keys=False), encoding="utf-8")
+            path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), sort_keys=False), encoding="utf-8")
 
         routes_queue.check_api_rules = check_then_edit  # type: ignore[assignment]
         try:
@@ -295,7 +305,9 @@ class SubmitTests(QueueRoutesTestCase):
             routes_queue.check_api_rules = real_check  # type: ignore[assignment]
         self.assertEqual(response.status_code, 200, response.text)
         (stored,) = self.store.queue.list()
-        self.assertIn("run_timeout_seconds", stored.job_text)
+        # The text stored is the one the rules checked (a 60-second limit), not the edit made after them.
+        self.assertIn("timeout_seconds: 60", stored.job_text)
+        self.assertNotIn("timeout_seconds: 3600", stored.job_text)
 
     def test_a_body_fastapi_refuses_gets_the_stable_error_shape(self) -> None:
         response = self.request("post", "/v1/queue", json={})

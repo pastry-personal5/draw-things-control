@@ -16,7 +16,7 @@ from framecontrol.jobs.backends import DEFAULT_BACKENDS
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.inputs.size import decode_image, read_image_info
 from framecontrol.services.queue_callers import check_entry_permitted
-from framecontrol.services.queue_submit import Enqueue, parse_snapshot
+from framecontrol.services.queue_submit import Enqueue, is_version_2, parse_snapshot
 from framecontrol.services.resume_chain import walk_chain
 from framecontrol.state.execution_rows import ExecutionRow
 from framecontrol.state.ids import execution_id_text
@@ -68,7 +68,7 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
         raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
-    if entry.backend != "h3":
+    if entry.backend != "h3" and not is_version_2(entry):
         _check_own_input(entry, global_config, params_directory, backends=backends)
     chain = _resolve_chain(store, entry)
     # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is still
@@ -131,7 +131,7 @@ def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, p
     if _resumed_by_some_entry(store, entry.queue_number):
         return ResumePreview(False, reason=f"{entry.label} already has a resume; resume the newest one instead")
     try:
-        if entry.backend != "h3":
+        if entry.backend != "h3" and not is_version_2(entry):
             _check_own_input(entry, global_config, params_directory, decode_input=False, backends=backends)
         chain = _resolve_chain(store, entry)
         job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
@@ -161,11 +161,29 @@ def _check_own_input(entry: QueueRow, global_config: GlobalConfig, params_direct
 def _check_resume_input(job: JobDefinition, handoff: Path, run: int, *, decode: bool = True) -> None:
     """A saved H3 handoff, unlike an ordinary file check, must be decodable at
     exactly the backend's requested dimensions before a resumed child starts."""
-    if job.backend != "h3":
+    if run > job.run_count:
+        raise ResumeRefusedError(f"the chain's next run is {run}, but the job has {job.run_count} runs")
+    effective = job.effective_run(run)
+    if effective is not None:
+        if not effective.requires_visual_input:
+            return
+        if not handoff.is_file():
+            raise ResumeRefusedError(f"saved handoff is gone: {handoff}")
+        previous = job.effective_run(run - 1)
+        if previous is None or previous.backend != effective.backend or previous.settings_profile != effective.settings_profile or effective.backend != "h3":
+            # Another profile prepares this handoff when the run starts, and a Draw Things run reads it as it is.
+            return
+        backend_job = effective.backend_job
+        from framecontrol.jobs.backends.h3 import H3JobData
+
+        if not isinstance(backend_job.backend_data, H3JobData):
+            raise ResumeRefusedError("H3 resume has no validated run plan")
+        expected_size = (backend_job.backend_data.settings.width, backend_job.backend_data.settings.height)
+    elif job.backend != "h3":
         if not handoff.is_file():
             raise ResumeRefusedError(f"saved handoff is gone: {handoff}")
         return
-    if job.mode.value == "h3av" and job.backend_data is not None:
+    elif job.mode.value == "h3av" and job.backend_data is not None:
         from framecontrol.jobs.backends.h3 import H3JobData
 
         if isinstance(job.backend_data, H3JobData):

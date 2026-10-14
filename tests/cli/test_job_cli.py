@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 from framecontrol.cli.app import CliServices, app
 from framecontrol.core.arguments import DrawThingsGenerateArguments
 from framecontrol.services.toolkit import create_job_runner, create_runner
-from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor
+from tests.fixtures import FakeToolkit, JobTestCase, job_data, job_executor, to_version_2
 
 
 class JobCliTests(JobTestCase):
@@ -32,6 +32,11 @@ class JobCliTests(JobTestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("runs: 5 (walk, wave, walk, wave, walk)", result.stdout)
         self.assertIn(str(self.output_directory / "sunset-walk"), result.stdout)
+
+    def test_a_version_1_job_file_exits_with_2_and_points_to_version_2(self) -> None:
+        legacy = self.write_legacy_job(job_data(), name="legacy.yaml")
+        message = self.invalid(legacy)
+        self.assertTrue(message.startswith("'version' version 1 job files are no longer accepted. Rewrite the job as 'version: 2'"), message)
 
     def test_invalid_job_and_missing_global_config_exit_with_2(self) -> None:
         bad_job = self.write_job(job_data(mode="t2i"), name="bad.yaml")
@@ -83,7 +88,7 @@ class JobCliTests(JobTestCase):
         return logged[-1].split(": ", 1)[1]
 
     def test_the_old_cooldown_seconds_key_fails_with_exit_code_2(self) -> None:
-        old = self.write_job(job_data(cooldown_seconds=300), name="old.yaml")
+        old = self.write_legacy_job({**to_version_2(job_data(), self.params), "cooldown_seconds": 300}, name="old.yaml")
         self.assertTrue(self.invalid(old).startswith("'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {mode: manual, seconds: 300} for the same wait"))
         self.global_path.write_text(self.global_path.read_text(encoding="utf-8") + "cooldown_seconds: 1200\n", encoding="utf-8")
         self.assertEqual(self.invalid(self.job_path), "'cooldown_seconds' was replaced by 'cooldown'; write cooldown: {mode: manual, seconds: 1200} for the same wait, or use mode auto or off (see config/global-config.example.yaml)")

@@ -73,6 +73,13 @@ class NewRun:
     audio_duration: float | None = None
     anchor: str | None = None
     corrected_output: str | None = None
+    backend: str | None = None
+    pipeline: str | None = None
+    settings_profile: str | None = None
+    knobs: dict[str, Any] = field(default_factory=dict)
+    knob_sources: dict[str, str] = field(default_factory=dict)
+    input_run: int | None = None
+    input_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +171,13 @@ class RunRow:
     started_epoch: float = 0.0
     # The run's media checks, in the order they were made (a video job's; none for an image job or an imported run).
     checks: tuple[MediaCheckRow, ...] = ()
+    backend: str | None = None
+    pipeline: str | None = None
+    settings_profile: str | None = None
+    knobs: dict[str, Any] = field(default_factory=dict)
+    knob_sources: dict[str, str] = field(default_factory=dict)
+    input_run: int | None = None
+    input_role: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row, running_as_interrupted: bool = False) -> RunRow:
@@ -194,6 +208,13 @@ class RunRow:
             audio_duration=row["audio_duration"] if "audio_duration" in row.keys() else None,
             anchor=row["anchor"],
             corrected_output=row["corrected_output"],
+            backend=row["backend"] if "backend" in row.keys() else None,
+            pipeline=row["pipeline"] if "pipeline" in row.keys() else None,
+            settings_profile=row["settings_profile"] if "settings_profile" in row.keys() else None,
+            knobs=json.loads(row["knobs"]) if "knobs" in row.keys() and row["knobs"] else {},
+            knob_sources=json.loads(row["knob_sources"]) if "knob_sources" in row.keys() and row["knob_sources"] else {},
+            input_run=row["input_run"] if "input_run" in row.keys() else None,
+            input_role=row["input_role"] if "input_role" in row.keys() else None,
             id=row["id"],
             started_epoch=row["started_epoch"],
         )
@@ -313,6 +334,6 @@ class ExecutionRow:
 
 
 EXECUTION_COLUMNS = ("execution_number", "job_name", "job_file", "mode", "status", "model", "seed", "seed_source", "cooldown_seconds", "cooldown_source", "total_runs", "started_at", "finished_at", "exit_code", "signal", "manifest_path", "log_path", "config_file", "job_yaml", "recovered_at", "first_run", "resumes", "first_image", "source_kind", "backend")
-RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "output_frame_rate", "output_duration", "audio_codec", "audio_sample_rate", "audio_channels", "audio_duration", "anchor", "corrected_output")
+RUN_COLUMNS = ("pair", "positive", "negative", "input", "resized_input", "output", "last_frame", "started_at", "seconds", "exit_code", "status", "cooldown_after_seconds", "output_width", "output_height", "output_frames", "output_frame_rate", "output_duration", "audio_codec", "audio_sample_rate", "audio_channels", "audio_duration", "anchor", "corrected_output", "backend", "pipeline", "settings_profile", "knobs", "knob_sources", "input_run", "input_role")
 # Each execution's count of successful runs, read with it.
 SUCCEEDED_COUNT = "(SELECT COUNT(*) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS succeeded"

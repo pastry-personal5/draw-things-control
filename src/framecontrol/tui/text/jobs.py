@@ -30,7 +30,7 @@ def jobs_text(rows: list[JobRow], running: str | None, message: str | None) -> T
         if job is None:
             text.append(f"invalid: {row.error}\n", style="red")
             continue
-        text.append(f"{job.name}  {job.mode}  {job.run_count} run{'s' if job.run_count != 1 else ''}  ")
+        text.append(f"{job.name}  {job.mode_label}  {job.run_count} run{'s' if job.run_count != 1 else ''}  ")
         running_here = row.path.name == running
         text.append("running\n" if running_here else "valid\n", style="bold cyan" if running_here else "green")
     text.rstrip()
@@ -57,7 +57,7 @@ def changed_text(changed: float | None, now: datetime | None = None) -> str:
 def job_definition_cells(row: JobRow, name: str) -> tuple[Text, ...]:
     """The Jobs list's row: ID, name, changed time, mode, and runs; an invalid file in dim red."""
     style = "dim red" if row.job is None else ""
-    mode = str(row.job.mode) if row.job is not None else "invalid"
+    mode = row.job.mode_label if row.job is not None else "invalid"
     runs = str(row.job.run_count) if row.job is not None else "invalid"
     return tuple(Text(cell, style=style) for cell in (row.job_id or "-", name, changed_text(row.changed), mode, runs))
 
@@ -69,7 +69,7 @@ def sort_job_rows(rows: list[JobRow], key: str, descending: bool) -> list[JobRow
     if key in ("mode", "runs"):
         valid = [row for row in by_id if row.job is not None]
         invalid = [row for row in by_id if row.job is None]
-        value = (lambda row: str(row.job.mode)) if key == "mode" else (lambda row: row.job.run_count)
+        value = (lambda row: row.job.mode_label) if key == "mode" else (lambda row: row.job.run_count)
         return sorted(valid, key=value, reverse=descending) + invalid
     values = {
         "id": lambda row: (row.number is None, row.number or 0),

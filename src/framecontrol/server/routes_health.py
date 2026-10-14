@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from framecontrol.jobs.compile_v2 import job_format_summary
 from framecontrol.server.context import ServerContext, server_version
 from framecontrol.server.dependencies import get_context, require_auth
 
@@ -34,4 +35,6 @@ def capabilities(context: ServerContext = Depends(get_context)) -> dict[str, obj
             "max_reference_bytes": limits.max_reference_bytes,
             "max_job_output_bytes": limits.max_job_output_bytes,
         },
+        # What a job file may say (version 2 is the only authoring format): see docs/user-guide.md.
+        "job_format": job_format_summary(context.executor.backends),
     }

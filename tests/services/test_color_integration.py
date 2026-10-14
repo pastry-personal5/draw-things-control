@@ -14,9 +14,8 @@ from PIL import Image
 
 from framecontrol.core.arguments import DrawThingsGenerateArguments
 from framecontrol.jobs.events import JobStarted, MediaChecked, RunFinished
-from framecontrol.jobs.parsing import load_job
 from framecontrol.services.toolkit import Toolkit
-from tests.fixtures import JobTestCase, job_data, run_job_with
+from tests.fixtures import JobTestCase, job_data, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 from tests.jobs.test_media_correction import drifted, scene
 
@@ -65,7 +64,7 @@ class CorrectingJobWithRealToolsTests(JobTestCase):
         Image.fromarray(np.rint(picture * 255).astype(np.uint8), "RGB").save(self.input_directory / "scene.png")
 
     def test_a_blend_job_corrects_every_run_and_hands_off_its_corrected_frame(self) -> None:
-        job = load_job(self.write_job(job_data(input="scene.png", run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], color={"anchor": "blend"})), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(job_data(input="scene.png", run_count=2, prompt_pairs=[{"name": "only", "positive": "walk"}], color={"anchor": "blend"})), self.global_config, self.params)
         events: list = []
         outcome = run_job_with(self.toolkit.job_executor(handle_signals=False), job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
         self.assertEqual((outcome.exit_code, outcome.completed_runs), (0, 2))

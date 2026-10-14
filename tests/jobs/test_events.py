@@ -10,9 +10,8 @@ from unittest import mock
 from framecontrol.core.arguments import DrawThingsGenerateArguments
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
-from framecontrol.jobs.parsing import load_job
 from framecontrol.jobs.planning import PlannedRun
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
 
 
@@ -100,7 +99,7 @@ class EventsOfARealJobTests(JobTestCase):
             return replace(run, arguments=replace(cast(DrawThingsGenerateArguments, run.arguments), cloud_compute=True, api_key=secret))
 
         events: list[JobEvent] = []
-        job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
         with mock.patch.object(executor._planner, "plan_run", with_a_key):
             run_job_with(executor, job, executable="draw-things-cli", shutdown_grace=1, observer=events.append)
         text = json.dumps([event_to_dict(event) for event in events])

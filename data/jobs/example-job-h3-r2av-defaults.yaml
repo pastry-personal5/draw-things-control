@@ -1,0 +1,100 @@
+# H3 r2av then two i2av runs, with pipeline-scoped defaults (job format version 2).
+# Run 1 is r2av: it is measured and never color-corrected. Runs 2 and 3 are i2av
+# and use the positive correction policy of the selected H3 profile.
+# Reference paths are relative to global-config.yaml's input_directory.
+# Validate: uv run fc validate-job data/jobs/example-job-h3-r2av-defaults.yaml
+version: 2
+name: h3-reference-defaults
+
+prompt_pairs:
+  establish:
+    positive: |
+      subject_definitions:
+      <Subject 1> is the person in <Picture 1>.
+      <Subject 2> is the person in <Picture 2>.
+
+      summary:
+      [reference generation] The two subjects meet in a softly lit studio.
+
+      retention_analysis:
+      Preserve both subjects' identities, clothing, and proportions.
+
+      detailed_description:
+      [Shot 1] A steady medium shot holds both subjects as they greet each other.
+
+      overall_soundscape:
+      Quiet room tone and subtle clothing movement.
+
+      non_diegetic_music:
+      None.
+  continue:
+    positive: "Continue from the supplied first frame as both subjects walk toward the window."
+  close:
+    positive: "Continue from the supplied first frame and settle on a quiet two-shot."
+
+reference_pairs:
+  two-subjects:
+    references:
+      - kind: image
+        path: ./references/person-1.png
+      - kind: image
+        path: ./references/person-2.png
+
+settings_profiles:
+  h3-portrait-corrected:
+    backend: h3
+    settings:
+      width: 768
+      height: 1344
+      steps: 30
+      denoise_reuse: 1
+      dit_layers: 50
+      core_reuse: 1
+      token_reduction: false
+      ssd_streaming: false
+      int8_row_fc2: false
+      reference_rope: false
+      reference_image_size: match
+      compatibility: {}
+      color:
+        anchor: previous
+        strength: 0.5
+        regions: true
+
+defaults:
+  - backend: h3
+    pipeline: r2av
+    prompt_pair: establish
+    settings_profile: h3-portrait-corrected
+    knobs:
+      seconds: 5
+      seed: 42
+      timeout_seconds: 3600
+      reference_pair: two-subjects
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: continue
+    settings_profile: h3-portrait-corrected
+    knobs:
+      seconds: 8
+      seed: 42
+      timeout_seconds: 3600
+
+runs:
+  - backend: h3
+    pipeline: r2av
+  - backend: h3
+    pipeline: i2av
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: close
+    knobs:
+      seconds: 10
+
+output:
+  directory: h3-reference-defaults
+cooldown:
+  mode: auto
+  ratio: 0.5
+  minimum_seconds: 0
+  maximum_seconds: 3600

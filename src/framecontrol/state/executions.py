@@ -243,6 +243,8 @@ class ExecutionRepository:
     def _insert_run(connection: sqlite3.Connection, execution_id: int, number: int, new: NewRun) -> None:
         values: dict[str, Any] = {column: getattr(new, column) for column in RUN_COLUMNS}
         values["status"] = str(values["status"])
+        values["knobs"] = json.dumps(values["knobs"], ensure_ascii=False, sort_keys=True)
+        values["knob_sources"] = json.dumps(values["knob_sources"], ensure_ascii=False, sort_keys=True)
         values["command"] = json.dumps(list(new.command), ensure_ascii=False)
         values["started_epoch"] = epoch(new.started_at)
         columns = ", ".join(("execution_id", "number", *values))

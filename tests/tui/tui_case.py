@@ -23,7 +23,7 @@ from framecontrol.state.store import Store
 from framecontrol.tui.app import FramecontrolApp
 from framecontrol.tui.panes.history import ExecutionHistoryList
 from framecontrol.tui.widgets import ActivityLog, CommandField
-from tests.fixtures import FakeToolkit, JobTestCase, job_data
+from tests.fixtures import FakeToolkit, JobTestCase, job_data, to_version_2
 from tests.tui.fake_server import TOKEN, FakeServer
 
 SERVER_URL = "http://127.0.0.1:8765"
@@ -66,7 +66,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     def write_data_job(self, name: str, **changes: object) -> Path:
         path = self.data / name
-        path.write_text(yaml.safe_dump(job_data(**changes), sort_keys=False), encoding="utf-8")
+        path.write_text(yaml.safe_dump(to_version_2(job_data(**changes), self.paths.params), sort_keys=False), encoding="utf-8")
         return path
 
     def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> FramecontrolApp:

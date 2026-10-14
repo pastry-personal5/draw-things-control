@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 DRAW_THINGS_BACKEND = "draw-things-cli"
+DRAW_THINGS_V2_BACKEND = "draw-things"
 H3_BACKEND = "h3"
 
 
@@ -101,8 +102,9 @@ class BackendRegistry:
             raise ValueError("Backend IDs must be unique")
 
     def get(self, backend_id: str) -> JobBackend:
+        lookup = DRAW_THINGS_BACKEND if backend_id == DRAW_THINGS_V2_BACKEND else backend_id
         try:
-            return self._backends[backend_id]
+            return self._backends[lookup]
         except KeyError as error:
             raise InputError(f"Unknown backend '{backend_id}'", field="backend") from error
 

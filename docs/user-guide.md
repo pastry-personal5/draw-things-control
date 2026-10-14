@@ -170,7 +170,7 @@ with its name and the line or key path, for example `loras[0].version`:
 - The keys a merge (`<<`) brings in follow the same rules, though the mapping
   itself may override them.
 
-Every command takes YAML only: a job's `config_file`, `generate --config-file`
+Every command takes YAML only: a Draw Things profile's `config_file`, `generate --config-file`
 (any `--config-json` is merged on top), and `validate-config`. A `.json` file is
 rejected (exit code 2), naming the YAML file with the same name if there is
 one beside it, and is never changed. Job files and the global configuration
@@ -188,9 +188,13 @@ as they are; each has a YAML copy with the same name (`.yaml`) to use instead.
 
 ## Jobs: chained runs
 
-A job is a YAML file in `data/jobs/` describing a chain of generations. It runs
-`run_count` times, and every run starts from the previous run's output (the
-last frame, for video). Each run uses one of your named prompt pairs.
+A job is a YAML file in `data/jobs/` describing a chain of generations. Its
+`runs` list is the chain, in order. Each run picks a generator (`draw-things`
+or `h3`) and a pipeline, a named prompt pair, a named settings profile, and the
+few values that change from run to run: a duration, a seed, a time limit. Every
+run after the first starts from the previous run's output (the last frame, for
+video) unless its pipeline needs no image, and a chain may switch generators
+between runs.
 
 Validate the file, start the server, then submit it:
 
@@ -201,60 +205,252 @@ uv run fc serve
 uv run fc queue add example-job-for-backend-draw-things-cli.yaml --wait
 ```
 
-1. `validate-job` reports any problem, naming the field, and shows the
-   settings the job resolves to, including the cooldown and where it came
+1. `validate-job` reports any problem, naming the field, and shows what the
+   job resolves to: one line per run with its generator, pipeline, prompt pair,
+   profile, duration, seed, and time limit, and the cooldown and where it came
    from.
 2. `fc serve` holds the run lock and starts the queue worker.
 3. `queue add --wait` submits the file and follows its runs.
 
 Start from `data/jobs/example-job-for-backend-draw-things-cli.yaml` or
 `data/jobs/example-job-for-backend-h3.yaml`, which are commented line by line.
-For two still-image H3 references and one `r2av` run, use
-`data/jobs/example-job-for-backend-h3-r2av-two-images.yaml` after replacing its
-`./person-1.png` and `./person-2.png` paths with paths relative to
-`input_directory`.
-For a second `i2av` run that starts from the verified last frame of that
-`r2av` run, use `data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml`.
-Invalid jobs are rejected before any generation starts.
+More examples show one idea each:
+
+| Example | Shows |
+|---------|-------|
+| `data/jobs/example-job-mixed-backends.yaml` | A chain `h3` `r2av`, `h3` `i2av`, `draw-things` `i2v`, `h3` `i2av`, each with its own profile and duration |
+| `data/jobs/example-job-h3-per-run-seconds.yaml` | Three H3 runs of 4, 8, and 12 seconds |
+| `data/jobs/example-job-h3-r2av-defaults.yaml` | `defaults` for an `r2av` run and its `i2av` successors, with one run overriding a knob |
+| `data/jobs/example-job-draw-things-per-run-frames.yaml` | Draw Things runs of 81, 49, and 97 frames |
+| `data/jobs/example-job-for-backend-h3-r2av-two-images.yaml` | One `r2av` run from two still images; replace its `./person-1.png` and `./person-2.png` with paths relative to `input_directory` |
+| `data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml` | A second `i2av` run that starts from the verified last frame of that `r2av` run |
+
+Invalid jobs are rejected before any generation starts. Job files must use
+`version: 2`; [Version-1 files](#version-1-files) says how to convert one.
 
 ## Job file reference
 
+A job has these top-level keys. YAML order does not matter, but the examples
+use this one: identity and first input, catalogs, `defaults`, `runs`, then
+job-wide output and cooldown.
+
 | Key | Meaning |
 |-----|---------|
-| `version` | Format version, `1` |
+| `version` | Format version, `2` |
 | `name` | Base of output file names; `a-z`, `0-9`, `-` only |
-| `backend` | Generator for the whole chain. Omit it or use `draw-things-cli` for Draw Things; use `h3` with `i2av` or `h3av` |
-| `backend_settings` | Empty or absent for Draw Things. H3 requires `width`, `height`, `frames`, `seconds`, `steps`, and `seed`; `h3av` also accepts the controls below |
-| `mode` | `i2i`, `t2v`, `i2v`, H3-only `i2av` (image to audio-video), or H3-only `h3av` (mixed pipelines) |
-| `input` | First input image, looked up in `input_directory`. Required for `i2i` and `i2v`; `h3av` requires it when run 1 is `i2av` and forbids it when run 1 is `r2av`; not allowed for `t2v` |
-| `run_count` | Total number of runs |
-| `prompt_pairs` | Named positive/negative prompts; see below |
-| `config_file` | Required for Draw Things: a YAML file name in `data/params/`, the [base configuration](#base-configurations) |
-| `config_override` | Draw Things settings applied to every run on top of `config_file` |
-| `output` | `directory`, `extension` (`mov` or `mp4` for video), and, in video jobs, `video_format`: `prores4444` (the default), `prores422hq`, `h264`, or `hevc`, passed to every run as `--video-format`. ProRes needs `mov`, so an `mp4` job names `h264` or `hevc`. ProRes 4444 keeps 4:4:4 chroma at 12 bits, where H.264 is 4:2:0 at 8 bits, and its files are about 7 times larger per pixel (an 81-frame 448x576 clip is about 28 MB); set `video_format: h264` for small files |
-| `run_timeout_seconds` | Limit for each run |
-| `cooldown` | The wait after each successful run except the last; replaces the global `cooldown` as a whole; see [Cooldown](#cooldown) |
-| `desired_input_width`, `desired_input_height` | Resize the first input; see below |
-| `max_input_crop_percent` | With one desired size, refuse a larger crop (default 10) |
-| `color` | Video jobs: correct each run's colors toward the chain's first image; see [Color correction](#color-correction) |
+| `input` | The first image, looked up in `input_directory`. Required when run 1 is `i2i`, `i2v`, or `i2av`; forbidden when run 1 is `t2v` or `r2av`, which take no image |
+| `prompt_pairs` | Named prompts; see [Prompt pairs](#prompt-pairs) |
+| `reference_pairs` | Named, ordered H3 reference lists; see [H3 controls and reference pipelines](#h3-controls-and-reference-pipelines) |
+| `settings_profiles` | Named settings for one backend; see [Settings profiles](#settings-profiles) |
+| `defaults` | What a run takes when it names nothing itself, one block per backend and pipeline; see [Defaults and knobs](#defaults-and-knobs) |
+| `runs` | The chain, one entry per run; the position is the run number |
+| `output` | `directory` only. Each profile owns its file type |
+| `cooldown` | The wait after each successful run except the last, for the whole job; see [Cooldown](#cooldown) |
+
+A run has `backend` and `pipeline` (required), and `prompt_pair`,
+`settings_profile`, and `knobs`. The pipelines are `i2i`, `t2v`, and `i2v` for
+`draw-things`, and `i2av` and `r2av` for `h3`. A run number, a top-level
+`backend`, `mode`, or `run_count`, and every other version-1 key are refused
+with a message naming where the value lives now.
+
+This chain runs a Draw Things video after two H3 videos, then returns to H3:
+
+```yaml
+version: 2
+name: mixed-story
+
+prompt_pairs:
+  establish-subjects:
+    positive: "Use the selected references to establish both people."
+  continue:
+    positive: "Continue from the supplied first frame."
+
+reference_pairs:
+  two-subjects:
+    references:
+      - kind: image
+        path: person-1.png
+      - kind: image
+        path: person-2.png
+
+settings_profiles:
+  h3-portrait:
+    backend: h3
+    settings:
+      width: 768
+      height: 1344
+      steps: 30
+  wan-portrait:
+    backend: draw-things
+    settings:
+      config_file: image-to-video-wan-2-2.example.yaml
+      config_override:
+        model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+        steps: 40
+        width: 768
+        height: 1344
+      output:
+        extension: mov
+        video_format: prores4444
+
+defaults:
+  - backend: h3
+    pipeline: r2av
+    prompt_pair: establish-subjects
+    settings_profile: h3-portrait
+    knobs: {seconds: 5, seed: 42, timeout_seconds: 3600, reference_pair: two-subjects}
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: continue
+    settings_profile: h3-portrait
+    knobs: {seconds: 5, seed: 42, timeout_seconds: 3600}
+  - backend: draw-things
+    pipeline: i2v
+    prompt_pair: continue
+    settings_profile: wan-portrait
+    knobs: {frames: 81, seed: 42, timeout_seconds: 3600}
+
+runs:
+  - {backend: h3, pipeline: r2av}
+  - {backend: h3, pipeline: i2av, knobs: {seconds: 8}}
+  - {backend: draw-things, pipeline: i2v}
+  - {backend: h3, pipeline: i2av}
+
+output:
+  directory: mixed-story
+cooldown:
+  mode: off
+```
 
 ### Prompt pairs
 
-Each pair has a `name`, a `positive` prompt, an optional `negative` prompt,
-and either `runs: [1, 3, 5]` (the runs that use it) or `default: true`
-(every run no other pair lists). A pair with no `negative` leaves Draw
-Things' recommended one in effect.
+`prompt_pairs` maps each name to a `positive` prompt and an optional
+`negative` prompt; a name is 1 to 64 lowercase letters, digits, and hyphens. A
+run selects one with `prompt_pair`, directly or from its defaults. Every pair
+must be used by some run, so a misspelled name cannot leave a dead entry. A
+pair with no `negative` leaves Draw Things' recommended one in effect, and H3
+refuses a pair that has one, even an empty or null one.
 
-Job files written before the rename used `batch_count` and `batches`; they now
-fail validation with a message naming the new key (`run_count`, `runs`).
-Existing jobs with no `backend` keep the Draw Things behavior. A job cannot
-switch backends between runs. Queue submissions store the backend and the
-validated job and base-configuration text; editing those files later does not
-change queued or resumed work.
-Job, queue, and execution details show a safe summary of effective backend
-settings. For Draw Things it includes the resolved model, output extension,
-video format when relevant, and any explicitly requested size; the job file's
-`backend_settings` mapping must still be empty.
+Queue submissions store the job text and each profile's base configuration;
+editing those files later does not change queued or resumed work. Job, queue,
+and execution details show a safe summary of every run's effective settings: a
+Draw Things run's resolved model, output extension, video format when relevant,
+and any explicitly requested size, and an H3 run's controls.
+
+### Settings profiles
+
+A settings profile is a name, one `backend`, and that backend's closed
+`settings` mapping. Runs of the same backend share a profile, which must be
+selected by at least one run, and a profile cannot be used by another backend.
+Anything that varies from run to run is a [knob](#defaults-and-knobs), never a
+profile setting.
+
+| Backend | Settings |
+|---------|----------|
+| `draw-things` | `config_file` (required: a YAML file name in `data/params/`, the [base configuration](#base-configurations)), `config_override`, `output` (`extension`, `video_format`), `input_resize`, `color` |
+| `h3` | `width`, `height`, `steps` (required), `render_width`, `render_height`, `denoise_reuse`, `dit_layers`, `core_reuse`, `token_reduction`, `ssd_streaming`, `int8_row_fc2`, `reference_rope`, `reference_image_size`, `compatibility`, `color`, and `output` (only `extension: mp4`) |
+
+- `draw-things` `output.extension` is `png` for `i2i` and `mov` or `mp4` for
+  video, and `video_format` (video only) is `prores4444` (the default),
+  `prores422hq`, `h264`, or `hevc`, passed to every run as `--video-format`.
+  ProRes needs `mov`, so an `mp4` profile names `h264` or `hevc`. ProRes 4444
+  keeps 4:4:4 chroma at 12 bits, where H.264 is 4:2:0 at 8 bits, and its files
+  are about 7 times larger per pixel (an 81-frame 448x576 clip is about 28 MB);
+  set `video_format: h264` for small files. One profile may serve `i2i` and
+  video runs; `video_format` and `color` then apply to the video runs, and a
+  profile that sets either must be selected by at least one video run.
+- `config_override.frame_count` and `config_override.seed` are refused: a frame
+  count and a seed are knobs.
+- A profile's base configuration is read once, at submission, and kept with the
+  queue entry; it is not read again between runs.
+- H3 omits optional controls to keep the established values: native render
+  size, `denoise_reuse: 1`, `dit_layers: 50`, `core_reuse: 1`,
+  `reference_image_size: match`, false switches, MP4 output, and no color
+  correction.
+
+### Defaults and knobs
+
+A run's values come from the run, then from the one `defaults` block that
+matches its exact `(backend, pipeline)` pair. There is no inheritance from the
+previous run and no fallback to a backend-wide block.
+
+- `prompt_pair` and `settings_profile` come from the run, else its defaults. A
+  missing one is an error: Framecontrol never chooses the first entry of a
+  catalog.
+- `knobs` resolve key by key: a key the run sets replaces the same key in the
+  defaults, and a key it omits is inherited. An explicit `null` is an error and
+  never means inherit or auto. `seconds` and `frames` are one temporal choice,
+  so a run's own `seconds` replaces a default `frames` and the reverse.
+- A duplicate defaults block, an unknown or inapplicable key, a defaults block
+  no run uses, and an invalid default are refused at their `defaults[...]`
+  field even when every run overrides them. A prompt pair, profile, or
+  reference pair that no run selects is refused too.
+
+| Knob | Applies to | Rule |
+|------|-----------|------|
+| `seconds` | `h3` `i2av` and `r2av`; `draw-things` `t2v` and `i2v` | Requested duration in seconds. H3: 1 to 15. Draw Things: only for a model whose frame rate is known, see [Duration](#duration) |
+| `frames` | `draw-things` `t2v` and `i2v` | An exact frame count, 1 or more; not with `seconds` |
+| `seed` | every run | An integer from 0 to 4294967295. Omitted: the whole job shares one random seed, drawn when it starts and kept by a resume |
+| `timeout_seconds` | every run | Time limit for the run, positive and finite; required after defaults |
+| `reference_pair` | `h3` `r2av` | The name of one declared reference pair; required there, forbidden elsewhere |
+
+Job and execution details show every run's resolved knobs and where each came
+from: `run`, `defaults`, `settings_profile` (a Draw Things frame count taken
+from the base configuration), `derived`, `backend` (a limit the backend
+applied), or `execution_seed`.
+
+### Duration
+
+**H3.** `seconds` is required and runs from 1 to 15. Framecontrol derives the
+requested frame count, `llround(seconds * 24)`, and H3 snaps it to the nearest
+valid `17n + 5` count, which it generates and records as the effective
+duration: 120 requested frames becomes 124 (about 5.17 seconds), while a
+10-second request (240 frames) becomes 243 frames (10.125 seconds). Framecontrol
+passes the effective integer count to h3.c with `--frames`. The requested
+seconds, requested frames, effective frames, and effective seconds are recorded
+per run; you never write `frames` for H3, and each run may differ.
+
+**Draw Things.** `frames` is an exact count that is passed as it is, and the
+frame count the child produced is recorded separately as a measured fact. With
+neither `frames` nor `seconds`, a video run keeps the base configuration's
+`numFrames` (recorded with source `settings_profile`), and, when that has none
+either, `draw-things-cli` applies its own. `seconds` needs the model's frame
+rate before the job is queued, and none is known: nothing in the checked-in
+configurations or the CLI help states one, and Framecontrol never guesses it
+or reads it from a finished file. A Draw Things run that asks for `seconds` is
+refused with a message pointing to `frames`. See
+[the research note](research/draw-things-frame-rate.md) and
+`GET /v1/capabilities`, whose `job_format.draw_things_seconds_models` lists the
+models that can take `seconds`.
+
+### Chains across backends
+
+Run `n` takes the verified visual output of run `n - 1`: an image run's picture
+(`output`), or a video run's last frame (`handoff`). A run that needs no image
+(`t2v`, `r2av`) starts an independent segment and takes nothing, so a missing
+earlier handoff does not stop it; a run that needs one stops the job before it
+launches when the earlier run left none.
+
+- **Preparing a handoff.** When the run before was another backend or another
+  settings profile, the consuming profile prepares the image it is given, as it
+  does the job's first image: a Draw Things profile applies its
+  [`input_resize`](#input-size) plan, or requires the exact size it generates;
+  H3 crops to the center at its `width` and `height`. The prepared copy is
+  removed after the run, and the run's record names the producer's file
+  (`input`), the copy (`resized_input`), and the earlier run and its role
+  (`input_run`, `input_role`: `initial`, `output`, or `handoff`). Two runs of
+  one backend and one profile pass the file as it is. A size the consuming
+  profile cannot take fails when the job is checked, where both sizes are
+  known, or else before that run starts.
+- **Audio** is never handed on: each H3 run generates its own, and a Draw
+  Things run has none.
+- **Color.** Each run's profile owns its [`color`](#color-correction) policy. An
+  `r2av` or `t2v` run after run 1 starts a new segment: its anchor and first
+  image restart at the first image-consuming run after it.
+- **What the job records as a whole.** A job with one backend shows it
+  (`h3` or `draw-things`); a job with runs on several shows `mixed`, and its
+  `mode` is its one pipeline or `mixed`. Each run's own backend and pipeline
+  are in its record.
 
 ### H3 image-to-audio-video
 
@@ -264,41 +460,34 @@ path. H3 needs an Apple Silicon Metal-capable installation plus `ffmpeg` and
 `ffprobe`. `--executable` still selects Draw Things only.
 
 ```yaml
-version: 1
+version: 2
 name: autumn-audio
-backend: h3
-mode: i2av
 input: opening.png
-run_count: 2
 prompt_pairs:
-  - name: street
+  street:
     positive: "A calm autumn street; wind in leaves; distant city ambience."
-    default: true
-backend_settings:
-  width: 768
-  height: 1344
-  frames: 96
-  seconds: 4
-  steps: 30
-  seed: 42
-output:
-  extension: mp4
+settings_profiles:
+  h3-portrait:
+    backend: h3
+    settings: {width: 768, height: 1344, steps: 30}
+defaults:
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: street
+    settings_profile: h3-portrait
+    knobs: {seconds: 4, seed: 42, timeout_seconds: 3600}
+runs:
+  - {backend: h3, pipeline: i2av}
+  - {backend: h3, pipeline: i2av}
 cooldown:
   mode: off
 ```
 
 Width and height are multiples of 32, at least 32, and together no larger
-than 768×1344. `seconds` is 1–15 and `frames` must be exactly
-`llround(seconds * 24)` (24–360). H3 snaps the requested count to the nearest
-valid `17n + 5` count and generates at that effective duration, which is stored
-separately: 120 requested frames becomes 124 (about 5.17 seconds), while a
-10-second request (240 frames) becomes 243 frames (10.125 seconds).
-Framecontrol passes the effective integer count to h3.c with `--frames`.
-H3 rejects Draw Things configuration and sizing
-keys, negative prompts (including an empty or null value), and
-`output.video_format`. It receives an 8-bit sRGB PNG cropped centrally to the
-requested dimensions. H3 accepts its own closed top-level `color` policy with
-`anchor: none` by default. A positive `i2av` correction retains the byte-identical
+than 768×1344. H3 rejects Draw Things configuration and sizing keys, negative
+prompts, and `output.video_format`. It receives an 8-bit sRGB PNG cropped
+centrally to the requested dimensions. A profile's `color` policy
+has `anchor: none` by default. A positive `i2av` correction retains the byte-identical
 raw child MP4 and the uncorrected delivery MP4; when correction succeeds, the
 verified corrected MP4 is the main output and supplies the next handoff. On
 optional correction failure, the uncorrected MP4 is the main output.
@@ -306,12 +495,19 @@ For example, an `i2av` chain can blend toward its current segment's first
 input while correcting each run toward its prepared input:
 
 ```yaml
-color:
-  anchor: blend
-  strength: 0.5
-  first_weight: 0.25
-  reanchor: prompt_pair
-  regions: false
+settings_profiles:
+  h3-portrait:
+    backend: h3
+    settings:
+      width: 768
+      height: 1344
+      steps: 30
+      color:
+        anchor: blend
+        strength: 0.5
+        first_weight: 0.25
+        reanchor: prompt_pair
+        regions: false
 ```
 
 H3 also accepts `anchor: none`, `previous`, and `first`; `strength: 0` measures
@@ -319,8 +515,9 @@ drift without writing a corrected copy. `regions: true` measures and corrects
 people and background separately when Apple Vision finds a person in enough
 frames; detected skin gets narrower lightness, chroma, hue, and cast caps.
 When segmentation is unavailable or insufficient, H3 reports and uses the
-whole-frame fallback. An `r2av` run is measured but never corrected,
-and starts a new color segment for a later `i2av` run.
+whole-frame fallback. An `r2av` run is measured but never corrected, even in a
+profile with a positive policy (a positive policy needs at least one `i2av` run
+that selects the profile), and starts a new color segment for a later `i2av` run.
 Every successful run generates H.264/AAC MP4 audio and video. For the
 characterized H3 executable fingerprint, the finisher applies the documented
 sRGB source convention and attempts verified limited-range Rec.709 delivery;
@@ -339,18 +536,17 @@ dimensions and does not require the original run-1 input to remain available.
 
 ### H3 controls and reference pipelines
 
-An `h3av` job declares one `h3_runs` entry per run. Each entry uses
-`pipeline: i2av` or `pipeline: r2av`; an `r2av` entry also names one
-`reference_pair`. The first run needs `input` only when it uses `i2av`. Later
-`i2av` runs receive the immediately preceding run's verified final frame.
-`r2av` runs receive their named reference pair and never receive a frame
-anchor; consecutive `r2av` runs are independent.
+An `r2av` run names one `reference_pair` knob. The first run needs the job's
+`input` only when it is `i2av`. Later `i2av` runs receive the immediately
+preceding run's verified final frame. `r2av` runs receive their named reference
+pair and never receive a frame anchor; consecutive `r2av` runs are independent.
 
-Each `reference_pairs` item has a unique name and an ordered `references` list.
+Each `reference_pairs` entry has a unique name and an ordered `references` list.
 Kinds are `image`, `video`, `silent_video`, `video_audio` (with separate
 `audio:`), and `audio`. Reference paths are inside `input_directory`. Images
 are decoded before submission. Videos and audio are probed and fully decoded;
-each source video or consumed audio input is limited to 2–15 seconds. A pair
+each source video or consumed audio input is limited to 2–15 seconds, and a
+reference's audio is checked against that run's effective frame count. A pair
 needs an image or video, with at most 9 images, 3 videos, 3 audio inputs, and
 12 total entries. `video` consumes embedded audio; `silent_video` ignores it;
 `video_audio` uses the separate audio file. The six Ref2VA prompt sections and
@@ -365,7 +561,7 @@ references has a 600-second submission limit. A resume verifies the copies
 selected by unfinished `r2av` runs; an earlier pair can be missing if no
 remaining run uses it.
 
-For H3 jobs, optional `backend_settings` controls include `render_width` and
+An H3 profile's optional controls include `render_width` and
 `render_height` (together, same aspect ratio, no larger than output),
 `denoise_reuse` (1–3), `dit_layers` (35–50), `core_reuse` (1–6), the Boolean
 switches `token_reduction`, `ssd_streaming`, `int8_row_fc2`, and
@@ -377,30 +573,27 @@ pipeline and reference pair appear in job and execution details; private
 snapshot paths are not shown.
 
 ```yaml
-mode: h3av
-run_count: 2
-h3_runs:
-  - run: 1
-    pipeline: r2av
-    reference_pair: singer
-  - run: 2
-    pipeline: i2av
 reference_pairs:
-  - name: singer
+  singer:
     references:
       - kind: image
         path: singer.png
       - kind: audio
         path: singer-voice.wav
+runs:
+  - {backend: h3, pipeline: r2av, knobs: {reference_pair: singer}}
+  - {backend: h3, pipeline: i2av}
 ```
 
 ### Configuration overrides
 
-`config_override` may set `model`, `refiner_model`, `refiner_start`, `steps`,
-`guidance_scale`, `shift`, `width`, `height`, `frame_count`, `strength`,
-`seed`, and three settings that affect color. Anything left out comes from
-`config_file`, then from the model's recommended settings. With no `seed` in
-either, one random seed is chosen for the whole job.
+A Draw Things profile's `config_override` may set `model`, `refiner_model`,
+`refiner_start`, `steps`, `guidance_scale`, `shift`, `width`, `height`,
+`strength`, and three settings that affect color. Anything left out comes from
+`config_file`, then from the model's recommended settings. A frame count is
+`knobs.frames`, and the seed is `knobs.seed`; a run with no seed uses one random
+seed shared by the whole job, never the base configuration's own `seed`, which a
+version-2 job ignores (an INFO line says so).
 
 | Key | Draw Things key | Values | What it does |
 |-----|-----------------|--------|--------------|
@@ -416,27 +609,28 @@ image-to-video is 3.5.
 
 ### Input size
 
-For `i2i` and `i2v`, the input image must already be exactly the job's
-`width` and `height`, unless you set a desired size. `t2v` jobs have no input:
-run 1 generates from text, and later runs continue from the previous last
-frame.
+For `i2i` and `i2v`, the image a run receives must already be exactly its
+profile's `width` and `height`, unless the profile sets `input_resize`. A
+`t2v` run has no image: it generates from text alone. A profile's `input_resize`
+applies to the job's first image and to a handoff from another backend or
+profile.
 
-`desired_input_width` and `desired_input_height` (1 to 8192, either or both)
-resize the first input before run 1. Every run then generates at the
-resulting size, and `width` and `height` from the configuration are ignored
-(an INFO line says so). Each value is rounded down to a multiple of 64. The
-input is never stretched:
+`input_resize` takes `desired_width` and `desired_height` (1 to 8192, either or
+both) and `max_crop_percent`. They resize the image before the run, which then
+generates at the resulting size, so `width` and `height` from the configuration
+are ignored (an INFO line says so). Each value is rounded down to a multiple of
+64. The image is never stretched:
 
-- **One key:** the other is derived from the input's aspect ratio, and the few
+- **One key:** the other is derived from the image's aspect ratio, and the few
   leftover pixels are cropped from the center. The job is refused if the crop
-  exceeds `max_input_crop_percent`. Example: a 1920x1080 input with
-  `desired_input_width: 850` becomes 832x448.
-- **Both keys:** the input is scaled to fit and padded with black bars.
+  exceeds `max_crop_percent` (default 10). Example: a 1920x1080 input with
+  `desired_width: 850` becomes 832x448.
+- **Both keys:** the image is scaled to fit and padded with black bars.
 
 Every job with an input, resized or not, hands `draw-things-cli` a copy for
 run 1: upright, transparency flattened onto black, converted to sRGB, 8-bit,
-at exactly the job's size. A job without `desired_input_*` gets its copy at
-scale 1, since its input must already be the job's size. `draw-things-cli`
+at exactly the run's size. A profile without `input_resize` gets its copy at
+scale 1, since its image must already be that size. `draw-things-cli`
 then only ever reads a PNG it takes as it is (it reads PNG values with no
 color management), and this tool decides every value the model sees.
 `--dry-run` shows the copy as `'<photo.jpg resized to 832x448>'`, or
@@ -466,6 +660,31 @@ How the copy's values are made:
   outside sRGB is clipped. **YCbCr and HSV** are converted to RGB first, and a
   profile then applies as for any RGB source. The resized input check says
   which.
+
+### Version-1 files
+
+Version 1 is no longer an authoring format. `validate-job`, the queue, and the
+HTTP and MCP calls refuse a `version: 1` file with one message pointing here,
+and a file with no `version` or another number is refused as well. Jobs
+already queued, parked, or resumable as version 1 keep their original text and
+settings and run, and resume, exactly as they did; history stays readable. To
+convert a file:
+
+| Version 1 | Version 2 |
+|-----------|-----------|
+| `mode`, `backend` | `backend` and `pipeline` on each run (`t2v` run 2 and later were `i2v` continuations) |
+| `run_count`, `h3_runs` | one entry per run in `runs` |
+| `prompt_pairs` list with `runs` or `default` | `prompt_pairs` mapping by name; each run selects one with `prompt_pair` |
+| `config_file`, `config_override`, `color`, `output.extension`, `output.video_format`, `desired_input_*`, `max_input_crop_percent` | a Draw Things profile's `settings` (`config_file`, `config_override`, `color`, `output`, `input_resize`) |
+| `backend_settings` (H3) | an H3 profile's `settings`, without `frames`, `seconds`, and `seed` |
+| `config_override.frame_count`, `backend_settings.frames` | `knobs.frames` (Draw Things only) |
+| `backend_settings.seconds` | `knobs.seconds` |
+| `config_override.seed`, `backend_settings.seed` | `knobs.seed` |
+| `run_timeout_seconds` | `knobs.timeout_seconds`, now required |
+| `reference_pairs` list | `reference_pairs` mapping by name, selected by `knobs.reference_pair` |
+
+Your own job files under `data/jobs/` are not rewritten; each one that is still
+version 1 shows as invalid until converted.
 
 ### Cooldown
 
@@ -532,7 +751,8 @@ ends a wait at once and stops the job.
 
 A long chain drifts in color: brightness and contrast, saturation creeping up,
 a cast on skin. Every video run measures its drift (the `Color drift check`
-below). A job that asks also corrects it, with a `color` block:
+below). A job that asks also corrects it, with a `color` block in a
+[settings profile](#settings-profiles):
 
 ```yaml
 color:
@@ -546,8 +766,9 @@ color:
 Each key is checked and named as `color.<key>` on error; `first_weight` is
 refused unless `anchor` is `blend`, `reanchor` unless it is `first` or
 `blend`, `strength` and `regions` unless it is `previous`, `first`, or `blend`
-(with `none` they would correct nothing), and an image job refuses the block. `validate-job` shows a
-correcting job's policy as a `color` row, and `GET /v1/jobs/{job}` as `color`.
+(with `none` they would correct nothing). A profile used only by image runs
+refuses the block, and a positive H3 policy needs an `i2av` run that selects the
+profile. `GET /v1/jobs/{job}` shows each run's policy as `runs[].settings.color`.
 
 **Anchors.** Each run is first corrected back to its own input, which removes
 the drift the model added in that run. The anchor then says what else pulls it:
@@ -558,7 +779,10 @@ the drift the model added in that run. The anchor then says what else pulls it:
 | `first` | all of the remaining gap, within each run's caps | Held to the anchor; an intended change of light within one prompt pair is pulled back |
 | `blend` | `first_weight` of the gap | Bounded; an intended change fades back over a few runs |
 
-The anchor is the first image, as `draw-things-cli` saw it for run 1. With
+The anchor is the first image, as the first run saw it. An `r2av` or `t2v` run
+after run 1 starts a new segment: the anchor and the first image restart at the
+input of the first image-consuming run after it, and may be another backend's
+output. With
 `reanchor: prompt_pair` (the default), a run whose prompt pair differs from the
 previous run's makes its own input the anchor from then on, so an intended
 change of scene is not pulled back past it. Every change counts: a job whose
@@ -869,7 +1093,9 @@ terminal does.
   reads `yes`), then each `--config-json` key. The note column marks a
   value the job's configuration overrides set (`job override`), a width
   and height that `desired_input_width` or `desired_input_height` set
-  (`desired input size`, which replaces any width or height override), and a flag
+  (`desired input size`, which replaces any width or height override; both
+  notes are for a version-1 job, since a version-2 job's overrides and sizes
+  belong to each run's profile), and a flag
   that replaced a `--config-json` value, on both rows: `--width 832` says
   `replaces --config-json 1000`, and `width 1000` says
   `replaced by --width 832`.
@@ -1271,8 +1497,8 @@ client cancels the call. Its snapshot carries `park_requested` and
 `queue_held`, and `WatchEvents` carries `queue_park_changed`, `queue_held`, and
 `queue_released`.
 
-**Rules and limits.** Every job the API queues must set
-`run_timeout_seconds` and keep its `input` inside `input_directory` and its
+**Rules and limits.** Every job the API queues must give each run a
+`knobs.timeout_seconds` (version 2 requires it of every job) and keep its `input` inside `input_directory` and its
 `output.directory` inside `output_directory`, and must fit the limits below,
 configurable under `api_limits:` in `config/global-config.yaml` (see
 `config/global-config.example.yaml` for the full block and defaults):
@@ -1286,7 +1512,7 @@ and use.
 |-----|---------|---------|
 | `max_queued_jobs` | Entries `queued` at once | 20 |
 | `max_job_runs` | Runs a submitted job may have, or a resume may have left | 100 |
-| `max_job_seconds` | One entry's worst case: runs × `run_timeout_seconds`, plus the longest cooldown wait between them; Draw Things video adds its drift and correction deadlines, while H3 adds media verification, color delivery, drift, correction, and handoff finishing time | 172800 (48 h) |
+| `max_job_seconds` | One entry's worst case: the sum of each run's `timeout_seconds`, plus the cooldown wait after each but the last; Draw Things video adds its drift and correction deadlines, while H3 adds media verification, color delivery, drift, correction, and handoff finishing time | 172800 (48 h) |
 | `max_job_file_bytes` | Maximum job YAML size loaded by the CLI, TUI, or API | 65536 |
 | `max_reference_file_bytes` | Maximum size of one H3 reference asset | 4294967296 (4 GiB) |
 | `max_reference_bytes` | Maximum total size of H3 reference assets in one job | 34359738368 (32 GiB) |
@@ -1597,7 +1823,7 @@ keeps any partial output, and exits with that run's exit code.
 | 2 | Invalid input: options, configuration, or job file |
 | 3 | `fc queue add --wait`: the entry parked; `fc queue resume` continues it |
 | 75 | Another run holds the run lock; try again when it finishes |
-| 124 | A run exceeded `--timeout` or `run_timeout_seconds` |
+| 124 | A run exceeded `--timeout` or its `timeout_seconds` |
 | 130 | Stopped with Ctrl-C (`128 + signal`; 143 for `SIGTERM`, 129 for `SIGHUP`) |
 | other | The exit code of `draw-things-cli` |
 
@@ -1605,8 +1831,8 @@ keeps any partial output, and exits with that run's exit code.
 
 - **Exit code 2 and a field name:** fix that field; the message names it.
 - **`draw-things-cli` not found:** pass `--executable /path/to/draw-things-cli`.
-- **Input size refused:** resize the image to the job's `width` and `height`,
-  or set `desired_input_width` and/or `desired_input_height`.
+- **Input size refused:** resize the image to the profile's `width` and `height`,
+  or set `input_resize` in its settings profile.
 - **Last-frame extraction failed:** install `ffmpeg` and make sure it is on
   your `PATH`.
 - **`Could not find 'ffprobe'`:** a video job needs `ffprobe` to measure its

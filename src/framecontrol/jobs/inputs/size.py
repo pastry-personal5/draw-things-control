@@ -100,6 +100,24 @@ class ResizePlan:
             return f"Input {name} ({_size_text(self.input_size)}) will be scaled to {scaled} and cropped to {target} ({self.crop_percent:.1f}%) for run 1{rotated}"
         return f"Input {name} ({_size_text(self.input_size)}) will be scaled to {scaled} and letterboxed to {target} for run 1{rotated}"
 
+    @classmethod
+    def from_manifest(cls, data: dict[str, Any]) -> ResizePlan:
+        """A plan with the target, fit, and sizes a manifest recorded. The crop box is not recorded, so the plan can
+        say where a picture goes, not resample one; a resume that must not re-read its first input uses it so."""
+        orientation = data["exif_orientation"]
+        crop_percent = data["crop_percent"]
+        return cls(
+            data["desired_width"],
+            data["desired_height"],
+            data["max_crop_percent"],
+            (int(data["input_size"][0]), int(data["input_size"][1])),
+            orientation if isinstance(orientation, int) else None,
+            (int(data["target_size"][0]), int(data["target_size"][1])),
+            str(data["fit"]),
+            (int(data["scaled_size"][0]), int(data["scaled_size"][1])),
+            float(crop_percent) if isinstance(crop_percent, (int, float)) else None,
+        )
+
     def as_manifest(self) -> dict[str, Any]:
         """The plan as the job manifest records it; the crop fields are set only when one desired key was given."""
         cropping = (self.desired_width is None) != (self.desired_height is None)

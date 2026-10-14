@@ -13,8 +13,7 @@ from unittest import mock
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.media.stream_color import StreamColor
 from framecontrol.jobs.media.video_color import read_colr, tag_video_color_codes, tag_video_colors
-from framecontrol.jobs.parsing import load_job
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner
 
 
@@ -169,7 +168,7 @@ class JobTaggingTests(JobTestCase):
         )
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def test_each_video_is_tagged_before_its_last_frame_is_extracted(self) -> None:
         outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=2)

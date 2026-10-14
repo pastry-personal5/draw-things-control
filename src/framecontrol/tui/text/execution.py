@@ -11,7 +11,7 @@ from rich.text import Text
 
 from framecontrol.core.arguments import CommandSettings, command_settings
 from framecontrol.core.cooldown import parse_cooldown
-from framecontrol.jobs.text import MEDIA_CHECK_LABELS, media_check_result, policy_text, seconds_text
+from framecontrol.jobs.text import MEDIA_CHECK_LABELS, knobs_text, media_check_result, policy_text, seconds_text
 from framecontrol.state.executions import ExecutionRow, MediaCheckRow, RunRow
 from framecontrol.state.ids import execution_id_text
 from framecontrol.tui.text.arguments import PreviousRun, argument_rows, arguments_text, execution_notes
@@ -90,7 +90,10 @@ def _run_text(text: Text, execution: ExecutionRow, run: RunRow, notes: dict[str,
     prompt_block(text, "negative", "red", run.negative)
     text.append("\n")
     corrected_label = "corrected main" if run.corrected_output is not None and run.corrected_output == run.output else "corrected copy"
-    anchor = Path(run.anchor).name if execution.backend == "h3" and run.anchor is not None else run.anchor
+    anchor = Path(run.anchor).name if (run.backend or execution.backend) == "h3" and run.anchor is not None else run.anchor
+    if run.backend is not None:
+        origin = f"run {run.input_run} {run.input_role}" if run.input_run is not None else run.input_role
+        _fields(text, (("generator", f"{run.backend}/{run.pipeline}, profile {run.settings_profile}"), ("knobs", knobs_text(run.knobs, run.knob_sources)), ("image from", origin)))
     _fields(text, (("input", run.input or "-"), ("output", file_text(execution, run.output)), ("last frame", file_text(execution, run.last_frame) if run.last_frame else None), (corrected_label, file_text(execution, run.corrected_output) if run.corrected_output else None), ("anchor", anchor)))
     if run.cooldown_after_seconds is not None:
         _fields(text, (("cooldown after", seconds_text(run.cooldown_after_seconds)),))
@@ -154,10 +157,11 @@ def number_text(value: float | None) -> str:
 
 def execution_settings(execution: ExecutionRow) -> CommandSettings:
     """The execution's settings, from the first run with a readable command; the model falls back to the execution's own."""
-    if execution.backend != "draw-things-cli":
+    if execution.backend == "h3":
         return CommandSettings(model=execution.model or None)
     for run in execution.runs:
-        if run.command:
+        # A mixed job's H3 runs have no Draw Things command to read.
+        if run.command and run.backend != "h3":
             settings = command_settings(run.command)
             if settings != CommandSettings():
                 return settings if settings.model else CommandSettings(execution.model, settings.refiner_model, settings.refiner_start, settings.cfg, settings.shift, settings.steps)

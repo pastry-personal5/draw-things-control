@@ -17,7 +17,7 @@ class StrictYamlTests(JobTestCase):
 
     def test_a_job_file_with_an_octal_looking_number_is_refused(self) -> None:
         path = self.write_job(job_data())
-        path.write_text(path.read_text(encoding="utf-8").replace("run_count: 5", "run_count: 010"), encoding="utf-8")
+        path.write_text(path.read_text(encoding="utf-8").replace("timeout_seconds: 3600", "timeout_seconds: 03600"), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "leading zero"):
             load_job(path, self.global_config, self.params)
 

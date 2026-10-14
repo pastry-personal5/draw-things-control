@@ -15,12 +15,11 @@ from framecontrol.core.arguments import DrawThingsGenerateArguments
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobObserver, combine_observers
 from framecontrol.jobs.media.info import MediaInfo
-from framecontrol.jobs.parsing import load_job
 from framecontrol.jobs.planning import PlannedRun
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.state.recorder import ExecutionRecorder
 from framecontrol.state.store import Store
-from tests.fixtures import JobTestCase, job_data, job_executor, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import NOW, FakeResult, FakeRunner, saved_manifest
 
 
@@ -58,7 +57,7 @@ class RecorderTests(JobTestCase):
         return execution
 
     def job(self, **changes: object) -> JobDefinition:
-        return load_job(self.write_job(job_data(**changes)), self.global_config, self.params)
+        return load_legacy_job(self.write_legacy_job(job_data(**changes)), self.global_config, self.params)
 
     def run_recorded(self, job: JobDefinition, *, write_records: bool, recorder: JobObserver | None = None):
         return run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=write_records, observer=recorder or ExecutionRecorder(self.store))

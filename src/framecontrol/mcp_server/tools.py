@@ -145,11 +145,11 @@ def _delete_executions(arguments: Arguments) -> ApiRequest:
 
 
 READ_AND_RUN = (
-    Tool("get_capabilities", "Whether writes are on, and the limits every job must meet (max_job_runs, max_job_seconds, max_queued_jobs, max_job_file_bytes, max_reference_file_bytes, max_reference_bytes, max_job_output_bytes). The write tools (create_job, replace_job, delete_job, delete_executions) are listed only while fc serve runs with --allow-write.", _get(lambda _a: "/v1/capabilities"), READ),
+    Tool("get_capabilities", "Whether writes are on, the limits every job must meet (max_job_runs, max_job_seconds, max_queued_jobs, max_job_file_bytes, max_reference_file_bytes, max_reference_bytes, max_job_output_bytes), and the job format: version 2, each backend's pipelines, the knob names, and the Draw Things models whose frame rate is known (knobs.seconds works only for those; otherwise use knobs.frames). The write tools (create_job, replace_job, delete_job, delete_executions) are listed only while fc serve runs with --allow-write.", _get(lambda _a: "/v1/capabilities"), READ),
     Tool("list_jobs", "The job files in data/jobs/: ID, file name, name, backend, mode, runs, and validity.", _get(lambda _a: "/v1/jobs", _page), READ, {"limit": LIMIT, "cursor": CURSOR}),
     Tool(
         "get_job",
-        "A job resolved: prompt pairs, size, seed, cooldown, and sha256. Brief unless brief is false, which adds the YAML text an edit needs; an invalid job always has its text and error.",
+        "A job resolved: prompt pairs, size, seed, cooldown, and sha256; a version-2 job also lists each run's backend, pipeline, settings profile, and resolved knobs. Brief unless brief is false, which adds the YAML text an edit needs; an invalid job always has its text and error.",
         _get(_job(), lambda arguments: {"brief": "1" if arguments.get("brief", True) else None}),
         READ,
         {"job": JOB, "brief": {"type": "boolean", "description": "Leave out a valid job's YAML text (default true)"}},
@@ -158,7 +158,7 @@ READ_AND_RUN = (
     Tool("preview_job", "A job's dry-run plan: each run's input, output, and command, without running anything.", _get(_job("/preview")), READ, {"job": JOB}, ("job",)),
     Tool(
         "validate_job_text",
-        "Check a draft job's YAML without writing it; given name, check it as a write to that name would. Inputs must already be in the input directory and match the job's size (list_inputs), run_timeout_seconds is required, and the limits apply (get_capabilities).",
+        "Check a draft job's YAML without writing it; given name, check it as a write to that name would. Inputs must already be in the input directory and match the size the first run generates (list_inputs), every run needs knobs.timeout_seconds (on the run or in its defaults), and the limits apply (get_capabilities).",
         _validate,
         READ,
         {"yaml": YAML, "name": NAME},

@@ -19,6 +19,7 @@ from framecontrol.core.yaml_files import parse_yaml_mapping, read_yaml_file
 from framecontrol.jobs.backend import DRAW_THINGS_BACKEND, BackendRegistry
 from framecontrol.jobs.backends import DEFAULT_BACKENDS
 from framecontrol.jobs.backends.draw_things import DrawThingsJobSettings
+from framecontrol.jobs.compile_v2 import VERSION_1_MESSAGE, RunCompiler
 from framecontrol.jobs.definition import COLOR_ANCHORS, REANCHOR_RULES, ColorPolicy, ConfigOverride, GenerationMode, JobDefinition, PromptPair
 from framecontrol.jobs.inputs.size import MAX_DESIRED_SIZE, ResizePlan, check_input_size, copy_plan, decode_image, read_image_info, resize_plan
 from framecontrol.jobs.overrides import MAX_SEED, parse_config_override
@@ -47,7 +48,7 @@ class CommonJobFields:
     cooldown_source: str
 
 
-def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_version_1: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
@@ -58,14 +59,14 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: Job file uses a symbolic link", path=path)
     try:
         data, text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, allow_version_1=allow_version_1, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, first_input_plan: ResizePlan | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -81,7 +82,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=base_config_texts, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, allow_version_1=allow_version_1, first_input_plan=first_input_plan, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
@@ -91,18 +92,26 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, handoff_size: tuple[int, int] | None = None, run_view: bool = False, first_input_plan: ResizePlan | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
         self._decode_input = decode_input
         self._base_config_text = base_config_text
+        self._base_config_texts = base_config_texts or {}
         self._allow_missing_input = allow_missing_input
         self._reference_overrides = reference_overrides or {}
         self.require_reference_snapshots = require_reference_snapshots
         self.inactive_reference_pairs = inactive_reference_pairs
         self._reference_facts = reference_facts or {}
         self.legacy_h3_frames = legacy_h3_frames
+        self._allow_version_1 = allow_version_1
+        # A version-2 run that consumes the previous run's output: that output's size, known before it exists.
+        self._handoff_size = handoff_size
+        # True for the parser of one version-2 run's view, whose profile may serve other runs and pipelines too.
+        self._run_view = run_view
+        # A resumed version-2 job whose first input is gone: that input's frozen resize plan, from its queue snapshot.
+        self._first_input_plan = first_input_plan
         self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
@@ -115,6 +124,11 @@ class JobParser:
 
     def _parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
         self._check_text_values(data)
+        version = data.get("version")
+        if version == 2 and not isinstance(version, bool):
+            return RunCompiler(self).compile(data, source_text)
+        if not self._allow_version_1:
+            self._fail("version", VERSION_1_MESSAGE if version == 1 and not isinstance(version, bool) else "must be 2")
         self._check_top_level(data)
         backend = self._backend(data)
         adapter = self._backends.get(backend)
@@ -204,6 +218,52 @@ class JobParser:
     @property
     def path(self) -> Path:
         return self._path
+
+    @property
+    def backends(self) -> BackendRegistry:
+        return self._backends
+
+    @property
+    def run_view(self) -> bool:
+        """Whether this parser validates one version-2 run's view rather than a whole version-1 job."""
+        return self._run_view
+
+    def check_keys(self, data: dict[str, Any], allowed: set[str], prefix: str) -> None:
+        self._check_keys(data, allowed, prefix)
+
+    def job_name(self, name: Any) -> str:
+        return self._name(name)
+
+    def cooldown_policy(self, data: dict[str, Any]) -> tuple[CooldownPolicy, str]:
+        return self._cooldown(data)
+
+    def confined_path(self, value: str, directory: Path, field: str) -> Path:
+        return self._confined_path(value, directory, field)
+
+    def base_config_for(self, profile: str, config_file: str) -> dict[str, Any]:
+        """A version-2 settings profile's base configuration: its queue snapshot's text, else the parameter file."""
+        return self.nested(profile=profile)._base_config(config_file)
+
+    def nested(self, *, profile: str | None = None, handoff_size: tuple[int, int] | None = None) -> JobParser:
+        """A parser for one version-2 run's one-run view: the profile's frozen configuration, no input file required."""
+        text = self._base_config_texts.get(profile, self._base_config_text) if profile is not None else None
+        return JobParser(
+            self._path,
+            self._global_config,
+            self._params_directory,
+            decode_input=self._decode_input,
+            base_config_text=text,
+            allow_missing_input=True,
+            reference_overrides=self._reference_overrides,
+            require_reference_snapshots=self.require_reference_snapshots,
+            inactive_reference_pairs=self.inactive_reference_pairs,
+            reference_facts=self._reference_facts,
+            legacy_h3_frames=self.legacy_h3_frames,
+            handoff_size=handoff_size,
+            run_view=True,
+            first_input_plan=self._first_input_plan,
+            backends=self._backends,
+        )
 
     @property
     def global_config(self) -> GlobalConfig:
@@ -455,6 +515,22 @@ class JobParser:
         """
         if input_path is None:
             return None, None, ()
+        if self._handoff_size is not None:
+            # A version-2 run that consumes the previous run's output: plan from the size that run is known to produce.
+            # The exact-size rule for a run without desired sizes is checked by the compiler, which can name the runs.
+            if desired is None:
+                return None, copy_plan(self._handoff_size, None), ()
+            try:
+                return resize_plan(input_path.name, self._handoff_size, None, *desired), None, ()
+            except ValueError as error:
+                raise self._wrap(error) from error
+        if self._allow_missing_input and not input_path.is_file() and self._first_input_plan is not None and desired is not None:
+            return self._first_input_plan, None, ()
+        if self._allow_missing_input and not input_path.is_file():
+            target, _source = self._job_size(override, base_config, config_file)
+            # A resumed job starts from its saved handoff, never this path; the exact target stands in for its plan.
+            placeholder = ResizePlan(target[0], target[1], None, target, None, target, "none", target, None)
+            return (placeholder, None, ()) if desired is not None else (None, placeholder, ())
         image_size, orientation = read_image_info(input_path)
         if desired is None:
             job_size, source = self._job_size(override, base_config, config_file)

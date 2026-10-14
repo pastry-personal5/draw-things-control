@@ -474,6 +474,8 @@ class QueueWorkerTests(QueueWorkerCase):
         self.assertEqual(self.entry(second).state, str(QueueState.SUCCEEDED))
 
     def test_a_resumed_entry_runs_from_its_resolved_resume_point(self) -> None:
+        # A job whose runs name no seed uses the execution seed, which a resume keeps: here, the resumed one's 99.
+        self.write_base_config({"model": "base.ckpt", "width": 832, "height": 448})
         label = self.submit(run_count=3)
         entry = self.entry(label)
         claimed = self.store.queue.claim_oldest(NOW)

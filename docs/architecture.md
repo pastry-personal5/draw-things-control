@@ -2,8 +2,9 @@
 
 `framecontrol` exists for long-horizon video generation by
 autoregressive chaining: each run starts from the previous run's output.
-Chained jobs select a backend: Draw Things through `draw-things-cli`, or H3
-image-to-audio-video through the project-owned h3.c installation. One executor runs the chain; front ends (CLI, TUI,
+Each run of a chained job selects its own backend: Draw Things through
+`draw-things-cli`, or H3 image-to-audio-video through the project-owned h3.c
+installation, and one job may mix them. One executor runs the chain; front ends (CLI, TUI,
 API, MCP) are thin layers over it. The run lock permits one supervised backend
 command at a time on the machine.
 
@@ -72,8 +73,9 @@ Phase plans: [1](archive/phase-1/README.md), [2](archive/phase-2/README.md),
 | `core/run_lock.py` | `fcntl.flock` on `state/run.lock`, naming the holder and the running child |
 | `core/process/` | The supervised process runner (process group, timeout, graceful-then-forced shutdown), its fork-free `posix_spawn`/clean-exec boundary for threaded front ends, runner factories, output processing, signals, `CancelToken`, process groups |
 | `jobs/backend.py`, `jobs/backends/` | The backend protocol and registry; adapters own typed settings, safe settings summaries, command preparation, tool checks, per-run finishing state, and output finishing. The Draw Things adapter keeps its color policy inside that boundary. H3 owns first-frame preparation, project-installed runtime preflight, staged MP4 verification/promotion, audio facts, mixed `i2av`/`r2av` argv, fingerprint-gated color finishing, and verified sRGB handoffs when extraction succeeds; a valid MP4 can succeed with a missing-handoff warning, while the executor stops a dependent `i2av` run before launch. H3 uses its own media color inspection, conversion, drift, and correction modules, and does not enter the Draw Things color pipeline. `h3_references.py` makes private, digest-checked copies |
-| `jobs/definition.py`, `jobs/parsing.py`, `jobs/prompt_pairs.py`, `jobs/overrides.py` | A validated job, and `JobParser` (`load_job`, `load_job_text`), whose errors are `InputError`s naming the file and the field |
-| `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and the anchor state handed to the backend for each run |
+| `jobs/definition.py`, `jobs/parsing.py`, `jobs/prompt_pairs.py`, `jobs/overrides.py` | A validated job, and `JobParser` (`load_job`, `load_job_text`), whose errors are `InputError`s naming the file and the field. A job is either a version-1 job, whose job-wide fields describe every run (only a snapshot queued before the cutover is read this way, `allow_version_1`), or a version-2 job, whose `effective_runs` are its frozen per-run plan. Shared code asks `JobDefinition` per run (`run_backend`, `run_needs_visual_input`, `run_checks_input`, `job_for_run`, `mode_label`) and never reads a job-wide field to decide what one run does |
+| `jobs/compile_v2.py` | `RunCompiler`: turns a version-2 file (name-keyed catalogs, `defaults` by `(backend, pipeline)`, ordered `runs`) into one immutable `EffectiveRun` per run. Each run's own adapter parses and validates a one-run view of it (`EffectiveRun.backend_job`), so the command, finishing, and color code of the backends is reused unchanged; the compiler resolves each knob with its source, derives H3 frame counts, checks every cross-run edge it can know before anything runs (the size a handoff has against the size its consumer takes), and answers a client's `GET /v1/capabilities` (`job_format_summary`) |
+| `jobs/executor.py` | `JobExecutor.run(job, JobRunOptions)`: the chain of runs, the cooldown between them, cancellation; the preparation of a handoff that crosses a backend or profile boundary (the consuming adapter's `plan_input`); the anchor reset an independent `r2av` or `t2v` run makes; the chain's first image (a `t2v` job's, named by `JobStarted` before run 1 writes it, dropped with `FirstImageDropped`, which `state/recorder.py` follows, when it is not kept), and the anchor state handed to the backend for each run |
 | `jobs/planning.py`, `jobs/launcher.py`, `jobs/run_finisher.py`, `jobs/color_run.py` | The shared seed, file names, and backend-prepared arguments of each run (`JobPlanner`); supervised execution and common result mapping (`RunLauncher`); Draw Things tagging, last frame, drift check, correction, and measurement (`RunFinisher`, called by its adapter); the correction's two passes over a run's frames, its corrected copy and handoff, and its checks (`ColorCorrector`, loaded only when a job first corrects; a failed correction hands off the uncorrected frame) |
 | `jobs/records.py`, `jobs/log_writer.py` | The manifest and job log file (`JobRecords`); the job's log lines, written from its events |
 | `jobs/events.py` | Typed events, `RunStatus` and `JobStatus`, and `event_to_dict` for a JSON stream |
@@ -121,8 +123,11 @@ allowed to start `draw-things-cli`. It executes one entry at a time. Shutdown
 stops the current child and releases the lock only after the worker has joined;
 startup recovers entries left running by a previous server.
 
-A queued job stores a versioned snapshot of the exact job and base-configuration
-text, backend identity, resolved directories, and cooldown policy. H3 queue snapshots also store private copies, digests, and media facts for every reference pair. Retention removes those copies when their queue snapshots are gone. H3 snapshots deliberately exclude the mutable local model snapshot, which is rechecked before execution and resume. Older
+A queued job stores a versioned snapshot of the exact job text, each Draw Things
+profile's base-configuration text, backend identity, resolved directories, and
+cooldown policy. A version-2 snapshot (version 7) also stores its compiled plan,
+which is compared with what the frozen text recompiles to on every read, so a
+resume reads the snapshot and never a live file, profile, or reference. H3 queue snapshots also store private copies, digests, and media facts for every reference pair. Retention removes those copies when their queue snapshots are gone. H3 snapshots deliberately exclude the mutable local model snapshot, which is rechecked before execution and resume. Older
 snapshots and rows without a backend read as Draw Things. A queued one-off
 generation stores its resolved request and also identifies Draw Things as its
 backend. Later file edits therefore do not change queued work. Resuming copies

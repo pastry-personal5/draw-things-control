@@ -1,25 +1,15 @@
-# Two H3 runs: Ref2VA from two still images, then first-frame i2av.
+# Two H3 runs: Ref2VA from two still images, then first-frame i2av (job format version 2).
 # Both paths are relative to global-config.yaml's input_directory, not data/jobs/.
 # Replace the filenames with images inside that directory before validating.
 # Each image identifies a different person; both people are video subjects.
-# Run 2 receives run 1's verified last-frame PNG automatically; no input is set here.
+# Run 2 receives run 1's verified last-frame PNG automatically; the job sets no `input`.
 # Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml
 
-version: 1
+version: 2
 name: two-image-subjects-chain
-backend: h3
-mode: h3av
-run_count: 2
-
-h3_runs:
-  - run: 1
-    pipeline: r2av
-    reference_pair: two-subjects
-  - run: 2
-    pipeline: i2av
 
 reference_pairs:
-  - name: two-subjects
+  two-subjects:
     references:
       - kind: image
         path: ./person-1.png
@@ -27,8 +17,7 @@ reference_pairs:
         path: ./person-2.png
 
 prompt_pairs:
-  - name: establish-subjects
-    runs: [1]
+  establish-subjects:
     positive: |
       subject_definitions:
       <Subject 1> is the person in <Picture 1>, using that image for identity, face, hair, clothing, and proportions.
@@ -50,8 +39,7 @@ prompt_pairs:
 
       non_diegetic_music:
       N/A
-  - name: continue-from-handoff
-    runs: [2]
+  continue-from-handoff:
     positive: |
       integrated_multimodal_description:
       Continue directly from the supplied first frame, which is the verified final frame of the preceding video. From 00:00 to 00:04, keep the same two people, their distinct faces, hair, clothing, proportions, positions, lighting, and background. The first person makes one small head movement while the second person blinks and settles again. Hold the same fixed camera and avoid a cut, an additional person, or a change of setting. The opening frame should match the supplied image; motion develops smoothly from it.
@@ -62,17 +50,36 @@ prompt_pairs:
       non_diegetic_music:
       N/A
 
-backend_settings:
-  width: 768
-  height: 1344
-  frames: 96
-  seconds: 4
-  steps: 30
-  seed: 42
+settings_profiles:
+  h3-portrait:
+    backend: h3
+    settings:
+      width: 768
+      height: 1344
+      steps: 30
 
-output:
-  extension: mp4
+defaults:
+  - backend: h3
+    pipeline: r2av
+    prompt_pair: establish-subjects
+    settings_profile: h3-portrait
+    knobs:
+      seconds: 4
+      seed: 42
+      timeout_seconds: 3600
+      reference_pair: two-subjects
+  - backend: h3
+    pipeline: i2av
+    prompt_pair: continue-from-handoff
+    settings_profile: h3-portrait
+    knobs:
+      seconds: 4
+      seed: 42
+      timeout_seconds: 3600
 
-run_timeout_seconds: 3600
+runs:
+  - {backend: h3, pipeline: r2av}
+  - {backend: h3, pipeline: i2av}
+
 cooldown:
   mode: off

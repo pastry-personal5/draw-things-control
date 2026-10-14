@@ -7,17 +7,16 @@ import shutil
 from framecontrol.core.errors import LimitExceededError, OutsideDirectoryError, TimeoutRequiredError
 from framecontrol.core.global_config import ApiLimits
 from framecontrol.jobs.backends import DEFAULT_BACKENDS
-from framecontrol.jobs.parsing import load_job
 from framecontrol.services.api_rules import check_api_rules, check_job_limits, check_job_rules, check_queue_not_full
-from tests.fixtures import JobTestCase, job_data
+from tests.fixtures import JobTestCase, job_data, load_legacy_job
 
 ONE_PAIR = [{"name": "only", "positive": "text"}]
 
 
 class ApiRulesTests(JobTestCase):
     def job(self, **changes: object):
-        path = self.write_job(job_data(prompt_pairs=ONE_PAIR, **changes))
-        return load_job(path, self.global_config, self.params)
+        path = self.write_legacy_job(job_data(prompt_pairs=ONE_PAIR, **changes))
+        return load_legacy_job(path, self.global_config, self.params)
 
     def test_run_timeout_seconds_is_required(self) -> None:
         job = self.job(run_count=1)
@@ -85,7 +84,7 @@ class ApiRulesTests(JobTestCase):
 
     def test_h3_output_limit_counts_staged_correction_copies_and_remaining_runs(self) -> None:
         data = job_data(backend="h3", mode="i2av", run_count=2, run_timeout_seconds=60, config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "previous"})
-        job = load_job(self.write_job(data), self.global_config, self.params)
+        job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         backend = DEFAULT_BACKENDS.get("h3")
         estimated = backend.estimated_output_bytes(job, 2)
         self.assertGreater(estimated, backend.estimated_output_bytes(job, 1))

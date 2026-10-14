@@ -23,12 +23,12 @@ def job_summary(row: JobRow) -> dict[str, Any]:
     """One row of ``GET /jobs``: job ID, file name, job name, mode, runs, and validity or the first error and field."""
     base = {"job_id": row.job_id, "file_name": row.path.name}
     if row.job is not None:
-        return {**base, "name": row.job.name, "mode": row.job.mode.value, "backend": row.job.backend, "runs": row.job.run_count, "valid": True, "error": None, "field": None}
+        return {**base, "name": row.job.name, "mode": row.job.mode_label, "backend": row.job.backend, "runs": row.job.run_count, "valid": True, "error": None, "field": None}
     return {**base, "name": None, "mode": None, "backend": None, "runs": None, "valid": False, "error": row.error, "field": row.error_field}
 
 
-def prompt_pair(pair: PromptPair) -> dict[str, Any]:
-    return {"name": pair.name, "positive": pair.positive, "negative": pair.negative, "runs": list(pair.runs), "default": pair.default}
+def prompt_pair(pair: PromptPair, runs: tuple[int, ...] | None = None) -> dict[str, Any]:
+    return {"name": pair.name, "positive": pair.positive, "negative": pair.negative, "runs": list(pair.runs if runs is None else runs), "default": pair.default}
 
 
 def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = None, job_id: str | None = None) -> dict[str, Any]:
@@ -38,12 +38,12 @@ def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = Non
     detail = {
         "text": source_text,
         "name": job.name,
-        "mode": job.mode.value,
+        "mode": job.mode_label,
         "backend": job.backend,
         "backend_settings": job.backend_settings,
         "input": str(job.input) if job.input is not None else None,
         "run_count": job.run_count,
-        "prompt_pairs": [prompt_pair(pair) for pair in job.prompt_pairs],
+        "prompt_pairs": [prompt_pair(pair, tuple(run.number for run in job.effective_runs if run.prompt_pair == pair.name) if job.effective_runs else None) for pair in job.prompt_pairs],
         "output_directory": str(job.output_directory),
         "extension": job.extension,
         "video_format": job.video_format,
@@ -56,14 +56,27 @@ def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = Non
         "seed_source": seed_source,
         "cooldown": job.cooldown.as_dict(),
         "cooldown_source": job.cooldown_source,
-        # The color correction (Milestone 09): {"anchor": "none"} for a job without one.
-        "color": job.color.as_dict(),
+        # The color correction (Milestone 09): {"anchor": "none"} for a job without one; null for a version-2 job, whose
+        # runs each have their own, in runs[].settings.
+        "color": None if job.effective_runs else job.color.as_dict(),
     }
+    if job.effective_runs:
+        # A version-2 job is its compiled runs: each run's backend, pipeline, catalog selections, and resolved knobs.
+        detail["format_version"] = job.version
+        detail["runs"] = list(job.effective_plan())
     if sha256 is not None:
         detail["sha256"] = sha256
     if job_id is not None:
         detail["job_id"] = job_id
     return detail
+
+
+def _run_plan(job: JobDefinition, number: int) -> dict[str, Any]:
+    """A version-2 run's compiled identity and knobs, which a version-1 job's runs do not have."""
+    run = job.effective_run(number)
+    if run is None:
+        return {}
+    return {"backend": run.backend, "pipeline": run.pipeline, "prompt_pair": run.prompt_pair, "settings_profile": run.settings_profile, "knobs": dict(run.knobs), "knob_sources": dict(run.knob_sources)}
 
 
 def job_preview(job: JobDefinition, preview: JobPreview) -> dict[str, Any]:
@@ -72,7 +85,7 @@ def job_preview(job: JobDefinition, preview: JobPreview) -> dict[str, Any]:
         "backend": job.backend,
         "seed": preview.seed,
         "seed_source": preview.seed_source,
-        "runs": [{"number": run.number, "pair": run.pair.name, "input": str(run.input) if run.input is not None else None, "output": str(run.output), "last_frame": str(run.last_frame) if run.last_frame is not None else None, "command": command} for run, command in zip(preview.runs, (redact_command(command) for command in preview.commands), strict=True)],
+        "runs": [{"number": run.number, **_run_plan(job, run.number), "pair": run.pair.name, "input": str(run.input) if run.input is not None else None, "output": str(run.output), "last_frame": str(run.last_frame) if run.last_frame is not None else None, "command": command} for run, command in zip(preview.runs, (redact_command(command) for command in preview.commands), strict=True)],
     }
 
 
@@ -90,6 +103,7 @@ def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things
     return {
         "number": run.number,
         "pair": run.pair,
+        **({"backend": run.backend or backend, "pipeline": run.pipeline, "settings_profile": run.settings_profile, "knobs": run.knobs, "knob_sources": run.knob_sources, "input_run": run.input_run, "input_role": run.input_role} if run.backend is not None else {}),
         "status": run.status,
         "started_at": run.started_at,
         "seconds": run.seconds,
