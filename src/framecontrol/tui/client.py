@@ -1,5 +1,5 @@
 """What the TUI needs to reach ``fc serve``: the gRPC stub Protocol the feed worker and the Queue list's client
-use (Milestone 03), mirroring ``cli/queue_wait.py``'s own. Each front end holds its own copy of the generated
+use, mirroring ``cli/queue_wait.py``'s own. Each front end holds its own copy of the generated
 stubs (``cli/generated/``, ``tui/generated/``, ``server/generated/``); nothing here imports another's."""
 
 from __future__ import annotations

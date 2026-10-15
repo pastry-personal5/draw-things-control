@@ -19,8 +19,8 @@ from framecontrol.core.process.spawn import run as run_process
 BUSY_RETRY_SECONDS = 0.25
 _RETRY_INTERVAL_SECONDS = 0.025
 CHILD_EXECUTABLE_NAME = "draw-things-cli"
-# The holder name the queue worker's host locks with (phase 3): while it holds the lock, the busy message names it and
-# how to free it, instead of the generic "Another run is in progress" (owner decision, phase-3-changelog.md).
+# The holder name the queue worker's host locks with: while it holds the lock, the busy message names it and
+# how to free it, instead of the generic "Another run is in progress" (owner decision, docs/archive/phase-3/phase-3-changelog.md).
 SERVER_HOLDER_NAME = "serve"
 
 

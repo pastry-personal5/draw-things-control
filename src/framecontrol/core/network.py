@@ -1,6 +1,6 @@
 """Loopback hostnames: whether a URL or a bind address names the machine itself, for every front end that has to
 decide (a server refusing to bind beyond loopback without ``--allow-remote-bind``, or a client refusing to reach
-beyond it without ``--allow-remote-server``, Milestone 03) without duplicating the same three names."""
+beyond it without ``--allow-remote-server``) without duplicating the same three names."""
 
 from __future__ import annotations
 

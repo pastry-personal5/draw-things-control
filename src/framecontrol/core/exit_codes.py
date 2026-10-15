@@ -8,7 +8,7 @@ from framecontrol.core.errors import FramecontrolError
 
 EXIT_STATE_UNAVAILABLE = 1
 EXIT_INVALID_INPUT = 2
-# A job that parked (Milestone 05): it ended at a run boundary, keeping every run it finished, and can be resumed. Not a
+# A job that parked: it ended at a run boundary, keeping every run it finished, and can be resumed. Not a
 # failure, and not the whole job, so ``fc queue add --wait && next-step`` does not go on. The execution's own exit
 # code can still be 3 from a failed run whose draw-things-cli exited 3; its status tells the two apart.
 EXIT_PARKED = 3
@@ -38,7 +38,7 @@ def exit_code_for_child_signal(return_code: int) -> int:
 
 
 # The exit code of each error code (see ``FramecontrolError.code``); a front end that is not a command line maps the same codes to its own statuses.
-# The four Milestone 02 codes (timeout_required, outside_directory, limit_exceeded, invalid_state) arise only from the
+# The four API-rule codes (timeout_required, outside_directory, limit_exceeded, invalid_state) arise only from the
 # API today (no CLI command raises them directly), but a front end that is one, such as fc queue, still maps an
 # API error's code to an exit code through this same table, so they are listed here too, all exiting 2.
 EXIT_CODES_BY_ERROR_CODE = {
@@ -50,7 +50,7 @@ EXIT_CODES_BY_ERROR_CODE = {
     "limit_exceeded": EXIT_INVALID_INPUT,
     "invalid_state": EXIT_INVALID_INPUT,
     "conflict": EXIT_INVALID_INPUT,
-    # An agent's action on what a person started (Milestone 10); a person's own commands are never refused it.
+    # An agent's action on what a person started; a person's own commands are never refused it.
     "not_permitted": EXIT_INVALID_INPUT,
     "busy": EXIT_BUSY,
     "state_unavailable": EXIT_STATE_UNAVAILABLE,
@@ -63,7 +63,7 @@ def exit_code_for_error(error: FramecontrolError) -> int:
     return EXIT_CODES_BY_ERROR_CODE.get(error.code, EXIT_STATE_UNAVAILABLE)
 
 
-# The exit code of ``fc queue add --wait``, drawn from the entry's own final queue state (Milestone 03), not
+# The exit code of ``fc queue add --wait``, drawn from the entry's own final queue state, not
 # EXIT_CODES_BY_ERROR_CODE above, which maps only a submission refusal. ``cancelled`` and ``interrupted`` match the
 # signal that would have stopped ``run-job`` itself for the same reason: Ctrl-C (SIGINT) for a cancel, and the
 # SIGTERM the server itself sends a run it stops for an interrupted one.

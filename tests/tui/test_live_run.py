@@ -1,5 +1,5 @@
 """Headless tests of following a job from the TUI: events arrive over the gRPC feed from a fake ``fc serve``; the TUI
-never runs a job itself (Milestone 03), so nothing here starts draw-things-cli."""
+never runs a job itself, so nothing here starts draw-things-cli."""
 
 from __future__ import annotations
 

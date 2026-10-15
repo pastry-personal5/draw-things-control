@@ -1,5 +1,5 @@
 """Shared by every command module in ``cli/``: the services object a command reads from its Typer context, and how
-an error ends one. Its own module, not ``cli/app.py``, so ``cli/queue_app.py`` (Milestone 03) can import it without
+an error ends one. Its own module, not ``cli/app.py``, so ``cli/queue_app.py`` can import it without
 ``cli/app.py`` importing ``cli/queue_app.py`` back to register it -- a cycle."""
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ class CliServices:
     """What every command needs from the machine: where the project's files are, and the real tools. ``main``
     builds it once; a test passes its own with ``CliRunner.invoke(..., obj=...)``.
 
-    ``http_transport`` and ``grpc_stub_factory`` are ``fc queue``'s own test seams (Milestone 03), both None in
+    ``http_transport`` and ``grpc_stub_factory`` are ``fc queue``'s own test seams, both None in
     production: a transport its httpx client uses instead of the network, and a factory for the gRPC stub
     ``add --wait`` streams ``WatchQueueEntry`` from instead of dialing a real ``fc serve``. ``stdin_is_terminal``
-    says whether a command may ask a question (``fc history delete``, Milestone 06); a test asks it with its own.
+    says whether a command may ask a question (``fc history delete``); a test asks it with its own.
     """
 
     paths: ProjectPaths

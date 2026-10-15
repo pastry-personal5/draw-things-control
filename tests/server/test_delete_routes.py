@@ -1,4 +1,4 @@
-"""Tests for ``POST /v1/executions/delete`` (Milestone 06): each execution's outcome, the refusals of a request as a
+"""Tests for ``POST /v1/executions/delete``: each execution's outcome, the refusals of a request as a
 whole, the audit log, the race with a resume, and ``GET /v1/executions?name=``."""
 
 from __future__ import annotations

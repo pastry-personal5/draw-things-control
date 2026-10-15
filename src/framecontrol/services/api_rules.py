@@ -1,5 +1,5 @@
-"""The rules and limits every job the HTTP API runs or writes must meet (Milestone 02), checked at every submission
-and resume, and (Milestone 07) at every write, so a job an agent can write is a job it can run. Whoever calls, ``fc
+"""The rules and limits every job the HTTP API runs or writes must meet, checked at every submission
+and resume, and at every write, so a job an agent can write is a job it can run. Whoever calls, ``fc
 queue`` included, and with ``--allow-write`` on too: the API cannot tell a person from an agent (owner decision)."""
 
 from __future__ import annotations

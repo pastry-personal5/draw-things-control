@@ -1,4 +1,4 @@
-"""Tests for the queue repository's Milestone 03 additions: total_runs, and the joined succeeded count."""
+"""Tests for the queue repository's total_runs and the joined succeeded count."""
 
 import sqlite3
 import tempfile
@@ -140,7 +140,7 @@ OLD = "2026-09-01T09:00:00+00:00"
 
 
 class ParkedTests(QueueCase):
-    """Milestone 05: a parked entry is finished, and retention keeps it, and its execution, until a resume of it has a
+    """A parked entry is finished, and retention keeps it, and its execution, until a resume of it has a
     succeeded run."""
 
     def finished(self, state: QueueState, *, resumes: int | None = None, succeeded: int = 0, failed: bool = False, ran: bool = True) -> tuple[int, int | None]:

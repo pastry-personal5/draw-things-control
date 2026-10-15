@@ -72,7 +72,7 @@ class QueueHostTests(JobTestCase):
         self.assertTrue(run_lock_is_free(directory=self.paths.state))
 
     def test_start_worker_false_builds_the_worker_without_running_it(self) -> None:
-        """``fc serve``'s own startup-order fix (Milestone 02, phase-3 changelog 2026-09-28): the worker is built,
+        """``fc serve``'s own startup-order fix (docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): the worker is built,
         but not started, until whatever else can still refuse to start (binding its ports) has already succeeded."""
         self.submit_ahead_of_time()
         host = self.host()

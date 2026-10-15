@@ -1,4 +1,4 @@
-"""The ``color_drift`` check of every video run, whether or not its job corrects (owner decision, Milestone 09).
+"""The ``color_drift`` check of every video run, whether or not its job corrects (owner decision).
 
 Three comparisons, by statistics (``color_stats.py``), over the whole frame:
 
@@ -7,7 +7,7 @@ Three comparisons, by statistics (``color_stats.py``), over the whole frame:
 - the last frame against frame 0: the model's own drift within the run;
 - the last frame against the first image: the chain's drift so far.
 
-With a segmenter (Apple Vision, Milestone 09's increment E), each is also made for people, their skin, and the
+With a segmenter (Apple Vision), each is also made for people, their skin, and the
 background (``regions.py``), on the frames compared: the run's input, the first image, frame 0, every fourth frame, and
 the last frame. A region is compared only where both sides have enough of it. The summary adds skin's hue, and the
 facts keep every region's numbers.
@@ -31,7 +31,7 @@ from framecontrol.jobs.media.color_stats import ColorStats, Drift, compare
 from framecontrol.jobs.media.regions import REGIONS, RegionFinder, Regions, Segmenter, region_stats
 from framecontrol.jobs.media.stream_color import StreamColor
 
-# Thresholds (Milestone 09, as proposed; accepted without the A/B chains, owner decision, 2026-10-01): a drift beyond
+# Thresholds (as proposed; accepted without the A/B chains, owner decision, 2026-10-01): a drift beyond
 # any of them warns.
 LIGHTNESS_LIMIT = 3.0
 RATIO_LIMIT = 0.10

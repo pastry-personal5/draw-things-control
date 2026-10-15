@@ -51,7 +51,7 @@ def _delete_log(path: Path) -> None:
 
 
 def _delete_manifest(path: Path) -> bool:
-    """Delete a deleted execution's manifest (Milestone 06), so ``fc import-history`` cannot bring it back; returns
+    """Delete a deleted execution's manifest, so ``fc import-history`` cannot bring it back; returns
     whether it is gone. Only a regular ``.json`` file goes: a symbolic link or another file is kept, and so is one that
     cannot be deleted (logged), since the importer could still find it. A file already gone is no error."""
     # is_symlink() and exists() are inside the try: they raise too when the directory cannot be searched.
@@ -110,7 +110,7 @@ class Store:
     def prune(self) -> int:
         """Delete executions (and their runs), and finished queue entries, before the retention cutoff; never a
         ``running`` execution or a ``queued`` or ``running`` queue entry, nor a parked entry and the chain of resumes
-        below it, or their executions, until one of those resumes has a succeeded run (Milestone 05). An execution's
+        below it, or their executions, until one of those resumes has a succeeded run. An execution's
         ``.log`` file is deleted too, never its manifest or outputs."""
         cutoff = self.retention_cutoff()
         if cutoff is None:

@@ -1,4 +1,4 @@
-"""The color correction of one run (Milestone 09): the fit, the anchor's pull and its ramp, the caps, the smoothing over
+"""The color correction of one run: the fit, the anchor's pull and its ramp, the caps, the smoothing over
 frames, and applying the result to a frame. It knows nothing of files: statistics in, transforms out, frames in and out.
 
 Each frame ``t`` of a run is fitted once, from its own statistics to a target between the run's input and the anchor:
@@ -12,7 +12,7 @@ go to the target's median and spread), and ``(a, b)`` to ``gain * R(turn) * (a, 
 the difference of mean hues, and what is left of the neutral cast. Colors the transform leaves inside sRGB pass through
 unchanged; one it pushes outside is brought onto the edge at constant lightness and hue.
 
-With regions (increment E), people and the background each get their own transform, fitted the same way to their own
+With regions, people and the background each get their own transform, fitted the same way to their own
 statistics (the background's own by owner decision, 2026-10-01); and people's skin a residual on top: skin's lightness median and mean ``(a, b)``, after
 people's transform, moved to skin's own target, within ``SKIN_CAP``. Soft masks blend the three per pixel
 (``apply_regions``). A frame without enough of a region takes its parent's fit, before the smoothing.
@@ -29,7 +29,7 @@ import numpy as np
 from framecontrol.jobs.media import oklab
 from framecontrol.jobs.media.color_stats import ColorStats, measure, turn_degrees
 
-# Caps per run (Milestone 09, as proposed; accepted without the A/B chains, owner decision, 2026-10-01). A cap that binds is reported, never exceeded:
+# Caps per run (as proposed; accepted without the A/B chains, owner decision, 2026-10-01). A cap that binds is reported, never exceeded:
 # a large difference is more likely a change of scene than drift.
 LIGHTNESS_CAP = 0.04
 SPREAD_CAP = (0.92, 1.08)

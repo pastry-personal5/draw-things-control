@@ -1,5 +1,5 @@
 """The queue host: the one place that takes the run lock for its whole lifetime, opens the state store, recovers what
-a crash left running, and starts and stops the worker. What a future ``fc serve`` (Milestone 02) wraps in a process."""
+a crash left running, and starts and stops the worker. What ``fc serve`` wraps in a process."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class QueueHost:
 
     @property
     def store(self) -> Store | None:
-        """The open store, from ``start()`` until ``stop()``; None otherwise. Milestone 02's ``fc serve`` reads
+        """The open store, from ``start()`` until ``stop()``; None otherwise. ``fc serve`` reads
         this to build the ``ServerContext`` every route and the gRPC service share."""
         return self._store
 

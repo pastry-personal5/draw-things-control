@@ -1,6 +1,6 @@
 """Runs the API under uvicorn on a loopback port, in a thread of its own, for what an in-process client cannot test:
 ``httpx.ASGITransport`` and Starlette's ``TestClient`` collect a whole response before they return it, which an
-endless SSE watch never finishes (Milestone 10). The server is ``fc serve``'s own ``UvicornServer``, so stopping it
+endless SSE watch never finishes. The server is ``fc serve``'s own ``UvicornServer``, so stopping it
 ends every open watch as ``fc serve``'s shutdown does."""
 
 from __future__ import annotations

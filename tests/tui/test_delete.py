@@ -1,4 +1,4 @@
-"""Headless tests of deleting executions from the TUI (Milestone 06): ``d`` and ``Space`` on the Execution History
+"""Headless tests of deleting executions from the TUI: ``d`` and ``Space`` on the Execution History
 widget, ``/delete``, and the dialog, against a fake ``fc serve`` that deletes from the test's store."""
 
 from __future__ import annotations

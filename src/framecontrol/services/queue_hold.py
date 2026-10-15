@@ -1,7 +1,7 @@
-"""The queue's hold (Milestone 05): while held, the worker starts no new entry. A park reservation holds the queue, and so
+"""The queue's hold: while held, the worker starts no new entry. A park reservation holds the queue, and so
 does ``/queue hold``; only a release ends it. The hold is kept in memory and in the state store's ``settings`` table,
 under ``queue_hold``, so it survives a ``fc serve`` restart. Its own class, so the hold's memory, its row, and the
-reading of a damaged row stay together, apart from the worker's claim and cancel bookkeeping. From Milestone 10 it
+reading of a damaged row stay together, apart from the worker's claim and cancel bookkeeping. It also
 records the caller that made it, and an agent may release only a hold an agent made (``queue_callers.py``)."""
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ HOLD_KEY = "queue_hold"
 @dataclass(frozen=True)
 class HoldState:
     """Whether the queue is held, since when (a local timestamp), by which entry's park reservation (Q0007), or None
-    for a ``/queue hold``, and the caller that made it (Milestone 10: cli, tui, mcp, or api). A damaged saved hold reads
+    for a ``/queue hold``, and the caller that made it (cli, tui, mcp, or api). A damaged saved hold reads
     as held with none of them; a hold saved before callers were recorded has no caller. Either counts as a person's."""
 
     held: bool = False
@@ -55,7 +55,7 @@ def read_hold(settings: SettingsRepository, *, warn: bool = True) -> HoldState:
         return HoldState()
     try:
         data = json.loads(text)
-        # No caller in a hold saved before Milestone 10: it reads as a person's, not as damaged.
+        # No caller in a hold saved before callers were recorded: it reads as a person's, not as damaged.
         since, by, caller = data["since"], data["by"], data.get("caller")
         if not isinstance(since, str) or not all(value is None or isinstance(value, str) for value in (by, caller)):
             raise TypeError("since must be text, and by and caller text or null")
@@ -107,8 +107,8 @@ class QueueHold:
     def _held_again(self, by: str | None, caller: str | None) -> tuple[str | None, str | None] | None:
         """Call with the lock held, on a held queue: the hold's entry and caller after a hold by ``by`` for ``caller``,
         or None when it changes nothing. A direct hold makes a park's hold its own, so a later unpark no longer releases
-        it (Milestone 05). A person's hold, direct or a park's, makes an agent's hold the person's, so an agent cannot
-        release what a person's park or hold relies on; an agent never comes to own a person's hold (Milestone 10)."""
+        it. A person's hold, direct or a park's, makes an agent's hold the person's, so an agent cannot
+        release what a person's park or hold relies on; an agent never comes to own a person's hold."""
         state = self._state
         new_by = None if by is None else state.by
         if is_agent(caller) != is_agent(state.caller):

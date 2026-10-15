@@ -1,4 +1,4 @@
-"""Pins what a real job run writes and emits, so the Milestone 11 refactor cannot change it unnoticed.
+"""Pins what a real job run writes and emits, so a refactor cannot change it unnoticed.
 
 Each scenario runs a job with fake tools and a fixed clock, then compares one text snapshot with a file in
 ``tests/jobs/golden/``: the log lines, the job's events in order, the manifest, the job log file, and the rows the

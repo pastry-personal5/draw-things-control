@@ -1,4 +1,4 @@
-"""``get_queue_entry``'s wait (Milestone 10): it reads the entry, and, unless it is finished, follows the API's SSE
+"""``get_queue_entry``'s wait: it reads the entry, and, unless it is finished, follows the API's SSE
 watch of it (``GET /v1/queue/{id}/watch``) until the next change an agent acts on, usually a run's end, or the time
 is up, then reads the entry again. Each call is a turn that reads the agent's whole conversation again, so a wait that
 ends at the next change takes about one call a run. ``mcp_server/`` imports nothing from the package, so the finished

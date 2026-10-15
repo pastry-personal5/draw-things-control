@@ -127,7 +127,7 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
     server itself when the gRPC feed cannot reach it); without one, a generic line is shown. ``fc serve`` holds
     the run lock for its whole lifetime, so ``other_process`` is only ever true while the feed itself is down.
 
-    ``hold`` is the queue's (Milestone 05). While no job runs it is shown: as the first line with nothing run this
+    ``hold`` is the queue's. While no job runs it is shown: as the first line with nothing run this
     session, and otherwise as the third, which those layouts leave empty. ``now`` is the local time it is read at.
     """
     lines = [Text() for _ in range(5)]

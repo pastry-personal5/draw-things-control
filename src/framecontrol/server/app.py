@@ -1,5 +1,5 @@
-"""The FastAPI app: authentication, the ``Host`` header check, routes, and the error-code-to-status table
-(Milestone 02). Imported only inside the ``fc serve`` command, as ``fc tui`` imports Textual only inside its own
+"""The FastAPI app: authentication, the ``Host`` header check, routes, and the error-code-to-status table.
+Imported only inside the ``fc serve`` command, as ``fc tui`` imports Textual only inside its own
 command (``cli/app.py``)."""
 
 from __future__ import annotations

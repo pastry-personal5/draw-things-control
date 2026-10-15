@@ -138,7 +138,7 @@ class MediaChecker:
         return _guarded("last_frame", png.name, lambda: check_last_frame(png, video, color))
 
     def color_drift(self, video: Path, color: StreamColor, run_input: Path | None, first_image: Path | None, notes: tuple[str, ...] = ()) -> MediaCheck:
-        """The run's color drift (Milestone 09): its frames decoded with ``color``, against its input and the first image;
+        """The run's color drift: its frames decoded with ``color``, against its input and the first image;
         region by region, with a segmenter."""
 
         def check() -> MediaCheck:
@@ -247,7 +247,7 @@ def _is_srgb_profile(name: str | None) -> bool:
 
 def check_input(path: Path) -> MediaCheck:
     """The job's first input. draw-things-cli reads its copy, upright 8-bit sRGB RGB at the job's size (owner
-    decision, Milestone 09), so an input that is not plain 8-bit sRGB RGB is a note, not a warning."""
+    decision), so an input that is not plain 8-bit sRGB RGB is a note, not a warning."""
     facts = image_facts(path)
     warnings: list[str] = []
     notes: list[str] = []
@@ -267,7 +267,7 @@ def check_input(path: Path) -> MediaCheck:
 
 def check_handoff(path: Path) -> MediaCheck:
     """A resume's input, the chain's own last frame, checked as the handoff it is (owner decision), not as a person's
-    input: an RGB PNG without alpha, at 8 or 16 bits. A last frame from before Milestone 08 can have alpha."""
+    input: an RGB PNG without alpha, at 8 or 16 bits. A last frame an older version wrote can have alpha."""
     facts = image_facts(path)
     warnings: list[str] = []
     if facts["format"] != "PNG" or facts.get("color_type") != "RGB":

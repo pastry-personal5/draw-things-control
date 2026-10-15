@@ -135,7 +135,7 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
         first_run=first_run,
         resumes=resumes,
         settings=_settings(manifest),
-        # Written since Milestone 09; older manifests have none.
+        # Newer manifests only; older ones have none.
         first_image=_text(manifest.get("first_image")),
     )
     epoch(execution.started_at)
@@ -171,7 +171,7 @@ def _convert_run(run: dict[str, Any]) -> NewRun:
         output_frames=positive_whole(run.get("output_frames")),
         anchor=_text(run.get("anchor")),
         corrected_output=_text(run.get("corrected_output")),
-        # Written by version-2 jobs (Milestone 09); older manifests have none.
+        # Written by version-2 jobs; older manifests have none.
         backend=_text(run.get("backend")),
         pipeline=_text(run.get("pipeline")),
         settings_profile=_text(run.get("settings_profile")),

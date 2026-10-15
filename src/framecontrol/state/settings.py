@@ -1,4 +1,4 @@
-"""Settings kept across sessions: a front end's, such as the Job Definition widget's sort, and the queue's hold (Milestone 05)."""
+"""Settings kept across sessions: a front end's, such as the Job Definition widget's sort, and the queue's hold."""
 
 from __future__ import annotations
 

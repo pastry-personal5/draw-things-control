@@ -1,6 +1,6 @@
-"""``fc queue``: a client of the HTTP API (Milestone 03), replacing `run-job`'s own direct execution now that
+"""``fc queue``: a client of the HTTP API, replacing `run-job`'s own direct execution now that
 `fc serve`'s worker is the only thing that ever starts `draw-things-cli`. The HTTP client is ``cli/api_client.py``,
-shared with ``fc history`` (Milestone 06); the gRPC client ``add --wait`` uses is ``cli/queue_wait.py``."""
+shared with ``fc history``; the gRPC client ``add --wait`` uses is ``cli/queue_wait.py``."""
 
 from __future__ import annotations
 

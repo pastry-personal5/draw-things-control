@@ -1,6 +1,6 @@
-"""Wraps a queue (and, from Milestone 07, a write) action with one ``audit_log`` row: the outcome (``ok``, or the
+"""Wraps a queue (and a write) action with one ``audit_log`` row: the outcome (``ok``, or the
 error code) and the caller, whether the action was accepted or refused. Built with the first endpoints that accept
-input, so no submission or write goes unrecorded (Milestone 02)."""
+input, so no submission or write goes unrecorded."""
 
 from __future__ import annotations
 

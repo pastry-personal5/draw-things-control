@@ -1,4 +1,4 @@
-"""The MCP server's HTTP client of ``fc serve``'s API (Milestone 10): the bearer token, read and read again, the caller
+"""The MCP server's HTTP client of ``fc serve``'s API: the bearer token, read and read again, the caller
 header, the rule for an argument that becomes part of a URL path, and turning a transport failure, a 401, or an API
 error into a tool's error, in the API's own error shape. ``mcp_server/`` imports nothing from the package, so reading
 the token is a copy of ``core/client_config.py``'s ``read_client_token`` (a test checks the two agree)."""

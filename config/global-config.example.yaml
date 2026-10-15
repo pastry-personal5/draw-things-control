@@ -61,7 +61,7 @@ history_retention_days: 14
 #   max_job_seconds: 172800    # one entry's worst case: its runs times run_timeout_seconds,
 #                              # plus cooldown (48 hours); backend finishing adds drift,
 #                              # color delivery, correction, and handoff deadlines
-#   max_job_file_bytes: 65536  # size of job text the API accepts (Milestone 07)
+#   max_job_file_bytes: 65536  # size of job text the API accepts
 #   max_reference_file_bytes: 4294967296  # size of one H3 reference (4 GiB)
 #   max_reference_bytes: 34359738368  # total size of H3 references in one job (32 GiB)
 #   max_job_output_bytes: 34359738368  # estimated H3 MP4 copies, staging, and handoffs in one job (32 GiB)

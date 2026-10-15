@@ -19,8 +19,7 @@ class GenerationMode(StrEnum):
     I2I = "i2i"
     T2V = "t2v"
     I2V = "i2v"
-    # Reserved for the H3 adapter in Phase 4, Milestone 03.  The common chain
-    # needs to represent a backend-owned mode before that adapter is installed.
+    # The H3 backend's modes: ``i2av``, and ``h3av`` for an ``r2av`` run.
     I2AV = "i2av"
     H3AV = "h3av"
 
@@ -130,10 +129,10 @@ class ConfigOverride:
 
 OVERRIDE_KEYS = {field.name for field in fields(ConfigOverride)}
 
-# What a correcting job's colors are held to, and when the anchor moves (Milestone 09).
+# What a correcting job's colors are held to, and when the anchor moves.
 COLOR_ANCHORS = ("none", "previous", "first", "blend")
 REANCHOR_RULES = ("prompt_pair", "never")
-# The correction's time limit per run (Milestone 09, as proposed; accepted, owner decision, 2026-10-01): 10 seconds plus 1 per
+# The correction's time limit per run (as proposed; accepted, owner decision, 2026-10-01): 10 seconds plus 1 per
 # frame. Running out of it is a failed correction; the API's max_job_seconds worst case adds it to each run.
 CORRECTION_BASE_SECONDS = 10.0
 CORRECTION_SECONDS_PER_FRAME = 1.0
@@ -152,7 +151,7 @@ def correction_limit(frames: int) -> float:
 
 @dataclass(frozen=True)
 class ColorPolicy:
-    """A video job's color correction (Milestone 09), from its ``color`` block; ``none`` corrects nothing, and every
+    """A video job's color correction, from its ``color`` block; ``none`` corrects nothing, and every
     video run still measures its drift.
 
     Each run is corrected back to its own input; ``first`` also pulls it all the way toward the anchor, and ``blend``
@@ -228,7 +227,7 @@ class JobDefinition:
     copy_plan: ResizePlan | None = None
     # (source, key, value) for each width or height that the desired size replaces.
     ignored_size: tuple[tuple[str, str, Any], ...] = ()
-    # The color correction (Milestone 09); ``none`` unless the job has a ``color`` block.
+    # The color correction; ``none`` unless the job has a ``color`` block.
     color: ColorPolicy = ColorPolicy()
     # The wait between runs, and where it came from: job, global_config, or default.
     cooldown: CooldownPolicy = DEFAULT_COOLDOWN
@@ -243,7 +242,7 @@ class JobDefinition:
 
     @property
     def input_copy(self) -> ResizePlan | None:
-        """How run 1's copy of the input is made; every job with an input gets one (owner decision, Milestone 09)."""
+        """How run 1's copy of the input is made; every job with an input gets one (owner decision)."""
         if self.input is None:
             return None
         return self.input_resize or self.copy_plan

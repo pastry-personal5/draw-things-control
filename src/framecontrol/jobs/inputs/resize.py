@@ -1,6 +1,6 @@
 """Write run 1's copy of a job's first input: upright, alpha flattened, sRGB, 8-bit, at exactly the job's size.
 
-Every job with an input gets one (owner decision, Milestone 09), so draw-things-cli only ever reads a PNG it takes as
+Every job with an input gets one (owner decision), so draw-things-cli only ever reads a PNG it takes as
 it is, and this decides every value the model sees. The source is read into floating point, converted to sRGB there,
 resampled, and rounded to 8 bits once, at the end.
 """

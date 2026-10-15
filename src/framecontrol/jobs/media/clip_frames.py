@@ -128,7 +128,7 @@ def read_tool_png(path: Path) -> np.ndarray:
         return np.asarray(image.convert("RGB"), dtype=np.float32) / 255
 
 
-# The corrected copy is encoded in the original's format (owner decision, Milestone 09). Each format's encoder, the
+# The corrected copy is encoded in the original's format (owner decision). Each format's encoder, the
 # pixel format it is fed, and its options: VideoToolbox first, and for ProRes, prores_ks when VideoToolbox is missing
 # or cannot encode here (``encoder_works``). H.264 also has a software fallback when VideoToolbox has no hardware
 # session, which is common in headless or heavily loaded environments.

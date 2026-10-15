@@ -59,9 +59,9 @@ ALTER TABLE runs ADD COLUMN output_height INTEGER;
 ALTER TABLE runs ADD COLUMN output_frames INTEGER
 """
 
-# Milestone 10: an execution ID of its own (E0012), numbered by start time for the rows already there; counters that only
+# An execution ID of its own (E0012), numbered by start time for the rows already there; counters that only
 # go up, so a pruned execution's number or a retired job's is never given again; each job file name's ID (J0001); and the
-# TUI's remembered settings, such as the Job Definition widget's sort. Phase 3 Milestone 5 keeps the queue's hold there
+# TUI's remembered settings, such as the Job Definition widget's sort. The queue's hold is kept there
 # too, under ``queue_hold``, with no migration of its own.
 SCHEMA_V3 = """
 ALTER TABLE executions ADD COLUMN execution_number INTEGER;
@@ -73,7 +73,7 @@ CREATE TABLE job_definitions (number INTEGER PRIMARY KEY, file_name TEXT NOT NUL
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
 """
 
-# Phase 3 Milestone 1: the queue table, and an execution's resume point. Entries are linked to executions, and to the
+# The queue table, and an execution's resume point. Entries are linked to executions, and to the
 # entry they resume, by their public numbers (execution_number, a queue_number), never by a row id: a row id is
 # internal, and a plain number (unlike a foreign key) survives the row it names being pruned, which is how a resume
 # tells "its ancestor was pruned" apart from "never ran". A resumed entry's own ``resumes`` names the queue entry it
@@ -115,9 +115,9 @@ CREATE INDEX queue_submitted ON queue (submitted_epoch);
 INSERT INTO counters (name, value) VALUES ('queue', 0)
 """
 
-# Phase 3 Milestone 2: the audit log. Built with the first endpoints that accept input, so no submission or write
+# The audit log. Built with the first endpoints that accept input, so no submission or write
 # through the HTTP API goes unrecorded; unlike the rest of the history, it is never pruned by history_retention_days
-# (owner decision, phase-3-changelog.md), so its own row id (never shown to a caller) is stable enough to page by.
+# (owner decision, docs/archive/phase-3/phase-3-changelog.md), so its own row id (never shown to a caller) is stable enough to page by.
 SCHEMA_V5 = """
 CREATE TABLE audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,7 +131,7 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_at ON audit_log (at_epoch DESC)
 """
 
-# Milestone 3: the queue's own run count, so a queued entry -- or one that never reached JobStarted -- can show
+# The queue's own run count, so a queued entry -- or one that never reached JobStarted -- can show
 # "run 0/7" without reparsing job_text (a YAML parse and a base-configuration merge) on every list read. Backfilled
 # from a linked execution's own total_runs; a pre-migration row with no execution (a queued, or a never-started,
 # entry) has nothing SQL can recover it from, and stays NULL until it is next resubmitted or resumed.
@@ -159,7 +159,7 @@ CREATE TABLE media_checks (
 CREATE INDEX media_checks_execution ON media_checks (execution_id, run)
 """
 
-# Milestone 9: color preservation. Each run's anchor, the file its colors were held to (a full path; NULL when its job
+# Color preservation: each run's anchor, the file its colors were held to (a full path; NULL when its job
 # does not correct toward one), and its corrected copy's file name; each execution's first image (a full path), which
 # the color checks compare with. A queued resume carries the resumed execution's first image and the anchor of the run
 # it continues after, as it carries the rest of its resume point. Rows written before stay NULL: their executions kept
@@ -172,14 +172,14 @@ ALTER TABLE queue ADD COLUMN resume_first_image TEXT;
 ALTER TABLE queue ADD COLUMN resume_anchor TEXT
 """
 
-# Phase 3 Milestone 10: who submitted each queue entry, the caller of the submission or the resume that made it (cli,
+# Who submitted each queue entry, the caller of the submission or the resume that made it (cli,
 # tui, mcp, or api), so the API can keep agents off the entries people made. Entries already there stay NULL, and count
 # as a person's.
 SCHEMA_V9 = """
 ALTER TABLE queue ADD COLUMN submitted_by TEXT
 """
 
-# Milestone 12: queue entries are either the historical job snapshot or a one-off generation snapshot.  The old job
+# Queue entries are either the historical job snapshot or a one-off generation snapshot.  The old job
 # columns deliberately remain: SQLite cannot remove them cheaply and keeping them makes an upgraded job row exactly as
 # resumable as it was before.  ``snapshot`` is the versioned, tagged payload new readers use; the job columns are the
 # compatibility copy for older rows and migrations.  One-off executions do not have a job file, so their source kind
@@ -191,14 +191,14 @@ UPDATE queue SET snapshot = json_object('version', 1, 'kind', 'job', 'job_path',
 ALTER TABLE executions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'job';
 """
 
-# Phase 4 Milestone 02: the generator is independent of a queue entry's source kind and a job's mode. Existing jobs
+# The generator is independent of a queue entry's source kind and a job's mode. Existing jobs
 # and one-off generations are Draw Things; old records acquire that identity without reparsing their saved text.
 SCHEMA_V11 = """
 ALTER TABLE queue ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli';
 ALTER TABLE executions ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli'
 """
 
-# Phase 4 Milestone 03: native H3 audio is part of a successful run's artifact,
+# Native H3 audio is part of a successful run's artifact,
 # not merely a diagnostic media-check fact. Existing Draw Things rows stay NULL.
 SCHEMA_V12 = """
 ALTER TABLE runs ADD COLUMN output_frame_rate REAL;
@@ -209,7 +209,7 @@ ALTER TABLE runs ADD COLUMN audio_channels INTEGER;
 ALTER TABLE runs ADD COLUMN audio_duration REAL
 """
 
-# Phase 4 Milestone 09: version-2 jobs select the generator and pipeline per
+# Version-2 jobs select the generator and pipeline per
 # run and freeze catalog selectors plus resolved knobs with provenance, and name
 # the earlier run and role (initial, output, handoff) each run's image came from.
 # Older rows stay NULL/empty and retain their execution-wide backend spelling.

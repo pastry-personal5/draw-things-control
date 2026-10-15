@@ -1,5 +1,5 @@
 """Tests for core/network.py: loopback hostnames and gRPC target bracketing, shared by every front end that binds
-or dials one (a server's own bind check, and a client's --allow-remote-server refusal, Milestone 03)."""
+or dials one (a server's own bind check, and a client's --allow-remote-server refusal)."""
 
 from __future__ import annotations
 

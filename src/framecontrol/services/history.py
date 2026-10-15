@@ -68,7 +68,7 @@ class HistoryReader:
         return HistoryPage(offset, rows, len(rows) < limit, message)
 
     def every(self, history_filter: HistoryFilter) -> list[ExecutionRow]:
-        """Every execution the filter shows, newest first, every page read (Milestone 06: a deletion's selection is read
+        """Every execution the filter shows, newest first, every page read (a deletion's selection is read
         in full before anything is deleted, since paging by offset while deleting would skip rows)."""
         # By row id, since an execution that starts between two pages shifts the next one down by a row.
         rows: dict[int, ExecutionRow] = {}

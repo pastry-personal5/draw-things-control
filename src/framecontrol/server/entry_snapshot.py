@@ -1,4 +1,4 @@
-"""One queue entry's snapshot, as a watch sends it (Milestone 10): gRPC's ``WatchQueueEntry`` and the API's SSE watch
+"""One queue entry's snapshot, as a watch sends it: gRPC's ``WatchQueueEntry`` and the API's SSE watch
 (``GET /v1/queue/{id}/watch``) both read it here, the fields and the rule for when one is sent, so the two cannot
 drift. The fields are ``monitor.proto``'s ``QueueEntrySnapshot``'s, with the same names, an unset one as None."""
 

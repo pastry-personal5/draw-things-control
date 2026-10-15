@@ -9,11 +9,11 @@ TEST_WORKERS ?= 8
 TEST_PROFILE_LIMIT ?= 20
 PYTEST = uv run --extra dev pytest
 
-# One copy of the generated stubs per front end that needs a gRPC client (Milestone 02 design decision): front
+# One copy of the generated stubs per front end that needs a gRPC client: front
 # ends never import each other (tests/test_architecture.py), so cli/ and tui/ cannot import server/generated's
 # copy. server/ is also generated into, since it alone imports the generated *server* code (Servicer, add_..._to_
 # server) the same file carries alongside the client Stub every copy shares. mcp_server/ has none: it watches a queue
-# entry over the HTTP API's SSE watch (Milestone 10).
+# entry over the HTTP API's SSE watch.
 PROTO_SRC = src/framecontrol/server/proto/monitor.proto
 PROTO_OUTS = src/framecontrol/server/generated src/framecontrol/cli/generated src/framecontrol/tui/generated
 

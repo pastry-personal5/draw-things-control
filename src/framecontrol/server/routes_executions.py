@@ -1,6 +1,6 @@
 """``GET /v1/executions``, ``GET /v1/executions/{execution_id}``, ``GET /v1/executions/{execution_id}/outputs``,
-from Milestone 06, ``POST /v1/executions/delete``, which writes one audit log entry per execution it names, and, from
-Milestone 10, ``GET /v1/executions/{execution_id}/runs/{run}``."""
+``GET /v1/executions/{execution_id}/runs/{run}``, and ``POST /v1/executions/delete``, which writes one audit log entry per
+execution it names."""
 
 from __future__ import annotations
 
@@ -38,14 +38,14 @@ class DeleteBody:
 def list_executions(context: ServerContext = Depends(get_context), page: Page = Depends(get_page), status: str | None = None, job: str | None = None, name: str | None = None) -> dict[str, object]:
     # A job reference resolved to one file (as {job} is everywhere else), not the job's own name: (not an identifier).
     job_file = str(resolve_job_reference(context.catalog, job).resolve()) if job is not None else None
-    # ``name`` matches the job name or file name as the TUI's /filter name does (Milestone 06).
+    # ``name`` matches the job name or file name as the TUI's /filter name does.
     rows = context.store.executions.page(limit=page.limit, offset=page.offset, status=status, job_file=job_file, name_contains=name or None)
     return {"executions": [execution_summary(row) for row in rows], "cursor": next_cursor(page.offset, page.limit, len(rows))}
 
 
 @router.post("/v1/executions/delete")
 def post_delete(body: DeleteBody, context: ServerContext = Depends(get_context), x_framecontrol_caller: str | None = Header(default=None, alias="X-Framecontrol-Caller")) -> dict[str, object]:
-    """Delete one or several executions (Milestone 06), or, with ``dry_run``, say what a deletion would do now. A
+    """Delete one or several executions, or, with ``dry_run``, say what a deletion would do now. A
     refused or missing execution is not an error status: each one's outcome is in the answer, and has its own audit
     row. A request refused as a whole has one row, with no target; a dry run has none."""
     caller, caller_error = audit_caller(x_framecontrol_caller)
@@ -92,14 +92,14 @@ def _audit(context: ServerContext, target: str | None, outcome: str, caller: str
 
 @router.get("/v1/executions/{execution_id}")
 def get_execution(execution_id: str, context: ServerContext = Depends(get_context), brief: bool = Depends(get_brief)) -> dict[str, object]:
-    """``?brief=1`` (Milestone 10) leaves out each run's command and gives each check as its stage and verdict: a long
+    """``?brief=1`` leaves out each run's command and gives each check as its stage and verdict: a long
     chain's full answer is past what an agent reads in one turn."""
     return execution_detail(_execution(context, execution_id), brief=brief)
 
 
 @router.get("/v1/executions/{execution_id}/runs/{run}")
 def get_execution_run(execution_id: str, run: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
-    """One run, as the full answer gives it (Milestone 10). ``run`` is its number in the chain, so a resumed
+    """One run, as the full answer gives it. ``run`` is its number in the chain, so a resumed
     execution's first is not 1."""
     number = run.lstrip("0")
     if not (run.isascii() and run.isdigit() and number):

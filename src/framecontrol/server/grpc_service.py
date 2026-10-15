@@ -1,4 +1,4 @@
-"""The gRPC ``Monitor`` service (Milestone 02): ``WatchEvents`` and ``WatchQueueEntry``, both unary-request,
+"""The gRPC ``Monitor`` service: ``WatchEvents`` and ``WatchQueueEntry``, both unary-request,
 server-streaming, since nothing here writes (writes stay HTTP ``POST``). Only ``server/`` imports the generated
 server code from ``server/proto/monitor.proto``; ``tui/`` and ``cli/`` import their own generated client stubs from
 the same file. ``WatchQueueEntry``'s snapshots come from ``entry_snapshot.py``, which the API's SSE watch reads too."""

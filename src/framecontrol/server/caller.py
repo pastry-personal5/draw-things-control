@@ -1,5 +1,5 @@
 """The ``X-Framecontrol-Caller`` header: which front end made a request, for the audit log's caller column and the worker's
-busy message. Restricted to a known set (owner decision, phase-3-changelog.md), so the column stays clean; the
+busy message. Restricted to a known set (owner decision, docs/archive/phase-3/phase-3-changelog.md), so the column stays clean; the
 caller still only names itself, so this informs rather than proves."""
 
 from __future__ import annotations

@@ -73,7 +73,7 @@ def bayer_thresholds(height: int, width: int) -> np.ndarray:
 def handoff_samples(levels: np.ndarray) -> np.ndarray:
     """The handoff's 16-bit samples from floating-point 8-bit levels (H, W, 3): the numpy twin of ``HANDOFF``'s
     rounding, ``clip(floor(level + threshold), 0, 255) * 256 + 128``, without its half level. The levels given must
-    carry the half level already, as the correction's do (Milestone 09): adding it twice would lift each handoff."""
+    carry the half level already, as the correction's do: adding it twice would lift each handoff."""
     import numpy as np
 
     thresholds = bayer_thresholds(*levels.shape[:2])[..., None]

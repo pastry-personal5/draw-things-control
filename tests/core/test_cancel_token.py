@@ -92,7 +92,7 @@ class CancelTokenTests(unittest.TestCase):
         self.assertGreaterEqual(token.wait(0.05), 0.05)
         token.end()
 
-    # Park (Milestone 05).
+    # Park.
 
     def test_park_with_no_job_running_does_nothing(self) -> None:
         token = CancelToken(handle_signals=False)

@@ -154,7 +154,7 @@ class QueueWorkerTests(QueueWorkerCase):
         self.assertEqual(self.starts, 0)
 
     def test_enqueue_inserts_and_publishes_the_queued_change_under_the_claim_lock(self) -> None:
-        """The event-ordering fix (Milestone 02, phase-3 changelog 2026-09-28): enqueue's insert and its 'queued'
+        """The event-ordering fix (docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): enqueue's insert and its 'queued'
         publish happen under the same lock ``_claim_and_run_one`` takes to claim and register an entry, so a claim
         already blocked on it can never see the row -- and so never publish 'running' -- before this publish."""
         events: list[str] = []
@@ -250,7 +250,7 @@ class QueueWorkerTests(QueueWorkerCase):
 
     def test_a_run_killed_from_outside_reads_failed_on_the_entry_not_cancelled_or_interrupted(self) -> None:
         # Neither cancel_running() nor stop() asked for this stop, so the queue entry (unlike the execution, which
-        # keeps its own "interrupted" for any stopped run, Ctrl-C included, since Phase 2) reads a plain failure.
+        # keeps its own "interrupted" for any stopped run, Ctrl-C included) reads a plain failure.
         label = self.submit(run_count=1)
         self.next_runner = lambda arguments: FakeRunner(arguments, FakeResult(return_code=-9, termination_signal=signal.SIGKILL), write_output=False)
         self.assertTrue(self.worker.claim_and_run_one())

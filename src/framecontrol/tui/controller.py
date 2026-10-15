@@ -212,7 +212,7 @@ class CommandController:
         self.screen.execution_history.set_filter(history_filter)
 
     def command_delete(self, what: str, *arguments: str) -> None:
-        """/delete execution <IDs...>, /delete filtered, and /delete all (Milestone 06): each asks first, in a dialog,
+        """/delete execution <IDs...>, /delete filtered, and /delete all: each asks first, in a dialog,
         and deletes through the API. The whole history needs ``all`` written out, so a filter left off by mistake
         cannot select it."""
         word = what.lower()

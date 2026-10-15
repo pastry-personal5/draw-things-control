@@ -1,6 +1,6 @@
 """The Queue list: the running entry first, then the queued ones in order, then up to 5 finished ones newest
 first -- live from the gRPC feed while the server is up, or the state store's own read-only fallback while it is
-down (Milestone 03)."""
+down."""
 
 from __future__ import annotations
 

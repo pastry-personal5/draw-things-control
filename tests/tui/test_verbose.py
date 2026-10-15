@@ -1,4 +1,4 @@
-"""Milestone 04: ``/verbose high|medium|low``: the preference file, the ``include_output`` the TUI's one gRPC stream
+"""``/verbose high|medium|low``: the preference file, the ``include_output`` the TUI's one gRPC stream
 opens with, what the draw-things-cli pane writes, and how often the periodic widgets render."""
 
 from __future__ import annotations

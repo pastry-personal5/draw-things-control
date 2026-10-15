@@ -1,4 +1,4 @@
-"""``GET /v1/queue/{id}/watch``, ``WatchQueueEntry``'s snapshots over SSE (Milestone 10). An in-process client collects
+"""``GET /v1/queue/{id}/watch``, ``WatchQueueEntry``'s snapshots over SSE. An in-process client collects
 a whole response before it returns it, so the tests that run in process end the stream themselves (the entry gone,
 or the server stopping); a keep-alive, a client's disconnect, and a shutdown are tested under uvicorn."""
 

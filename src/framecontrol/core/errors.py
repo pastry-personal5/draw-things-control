@@ -51,7 +51,7 @@ class ConflictError(FramecontrolError):
 
 
 class NotPermittedError(FramecontrolError):
-    """An agent's action on a queue entry or a hold a person made (Milestone 10): the API keeps agents, by the caller a
+    """An agent's action on a queue entry or a hold a person made: the API keeps agents, by the caller a
     request declares, off what people started."""
 
     code = "not_permitted"
@@ -64,19 +64,19 @@ class StateUnavailableError(FramecontrolError):
 
 
 class TimeoutRequiredError(InputError):
-    """A job the API runs or writes has no ``run_timeout_seconds``, so its worst-case runtime is unbounded (Milestone 02)."""
+    """A job the API runs or writes has no ``run_timeout_seconds``, so its worst-case runtime is unbounded."""
 
     code = "timeout_required"
 
 
 class OutsideDirectoryError(InputError):
-    """A job's ``input`` is outside the input directory, or its ``output.directory`` outside the global output directory (Milestone 02)."""
+    """A job's ``input`` is outside the input directory, or its ``output.directory`` outside the global output directory."""
 
     code = "outside_directory"
 
 
 class LimitExceededError(InputError):
-    """A job the API runs or writes is over one of the ``api_limits`` (Milestone 02). ``key`` names the limit, ``limit`` its value, and ``value`` the job's own."""
+    """A job the API runs or writes is over one of the ``api_limits``. ``key`` names the limit, ``limit`` its value, and ``value`` the job's own."""
 
     code = "limit_exceeded"
 

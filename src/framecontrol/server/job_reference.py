@@ -1,6 +1,6 @@
 """Resolving ``{job}`` (a job ID or a file name in ``data/jobs/``) to a path, and the listing the API shows. The
 server reads regular files only: a symbolic link is listed as invalid ('is a symbolic link') and never read, since
-a YAML error quotes lines of the file it read (Milestone 02)."""
+a YAML error quotes lines of the file it read."""
 
 from __future__ import annotations
 

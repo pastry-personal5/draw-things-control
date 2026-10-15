@@ -1,4 +1,4 @@
-"""Headless tests of parking and holding from the TUI (Milestone 05): the commands, the aliases, the Queue widget's keys
+"""Headless tests of parking and holding from the TUI: the commands, the aliases, the Queue widget's keys
 and title, and the Status widget, against a fake ``fc serve``."""
 
 from __future__ import annotations

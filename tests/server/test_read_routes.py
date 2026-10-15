@@ -237,7 +237,7 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
 
 
 class BriefViewTests(ReadRoutesTestCase):
-    """Milestone 10: ``?brief=1`` on an execution and a job, and one run of an execution."""
+    """``?brief=1`` on an execution and a job, and one run of an execution."""
 
     def add_checked_execution(self) -> str:
         """A resumed execution whose runs are 3 and 4, each with a check, and a check of run 5, which never started."""

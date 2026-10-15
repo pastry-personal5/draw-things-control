@@ -1,7 +1,7 @@
 """Keeps a browser out through DNS rebinding: a bind beyond loopback is the owner's explicit choice
 (``--allow-remote-bind``), and every HTTP request's ``Host`` header must name loopback or the bound address, since a
-malicious page can make the browser resolve any name to 127.0.0.1 but cannot forge the ``Host`` header it sends
-(Milestone 02). gRPC has no equivalent gap: a channel dials the bound host and port directly, with no
+malicious page can make the browser resolve any name to 127.0.0.1 but cannot forge the ``Host`` header it sends.
+gRPC has no equivalent gap: a channel dials the bound host and port directly, with no
 virtual-hosting header to fake."""
 
 from __future__ import annotations

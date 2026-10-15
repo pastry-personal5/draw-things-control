@@ -102,7 +102,7 @@ class CancelToken:
     to one job at a time (``begin`` and ``end``). A signal handler takes no lock: it only sets a flag and asks the runner
     to stop, since a lock taken from a handler on the main thread could deadlock.
 
-    A park (Milestone 05) is kept apart from a stop: it never reaches the runner, and ``requested`` never reads it, so a
+    A park is kept apart from a stop: it never reaches the runner, and ``requested`` never reads it, so a
     run finishes, its last frame included, as it would without one. It ends a wait between runs, and the executor
     commits to it at a run boundary with ``take_park()``; until then ``unpark()`` withdraws it.
     """

@@ -1,4 +1,4 @@
-"""``fc mcp`` as a process (Milestone 10): started with no API running, driven over stdio by the SDK's client and by
+"""``fc mcp`` as a process: started with no API running, driven over stdio by the SDK's client and by
 hand, its stdout holding protocol messages only; and the checked-in ``.mcp.json`` that registers it with Claude Code."""
 
 from __future__ import annotations

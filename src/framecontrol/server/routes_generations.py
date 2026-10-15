@@ -1,4 +1,4 @@
-"""The person-facing one-off generation endpoints (Milestone 12)."""
+"""The person-facing one-off generation endpoints."""
 
 from __future__ import annotations
 

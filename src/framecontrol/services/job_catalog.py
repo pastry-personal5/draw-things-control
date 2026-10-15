@@ -29,7 +29,7 @@ class JobRow:
     path: Path
     job: JobDefinition | None
     error: str | None = None
-    # The offending key, when ``error`` came from an InputError (Milestone 02's GET /jobs reports it); None for a
+    # The offending key, when ``error`` came from an InputError (GET /jobs reports it); None for a
     # plain read failure (an unreadable directory) or when there is no error.
     error_field: str | None = None
     number: int | None = None

@@ -28,7 +28,7 @@ RESUMABLE_STATES = (QueueState.INTERRUPTED, QueueState.FAILED, QueueState.CANCEL
 
 class ResumeRefusedError(InputError):
     """A resume was refused, naming the reason. Not a ``NotFoundError``: the entry exists, so this is not a 404 for a
-    front end that maps error codes to statuses (Milestone 02); it is invalid to resume it, right now, for the
+    front end that maps error codes to statuses; it is invalid to resume it, right now, for the
     reason given."""
 
     code = "invalid_state"
@@ -41,7 +41,7 @@ class ResumeChain:
     first_run: int
     input: Path
     seed: int
-    # The execution's first image, and the anchor of the last succeeded run (Milestone 09); None when not recorded.
+    # The execution's first image, and the anchor of the last succeeded run; None when not recorded.
     first_image: str | None
     anchor: str | None
     # The execution number this resume point's last succeeded run came from, shown as "the execution it resumes" on
@@ -53,11 +53,11 @@ class ResumeChain:
 def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, params_directory: Path, *, clock: Clock = datetime.now, before_submit: Callable[[JobDefinition, int], None] | None = None, enqueue: Enqueue | None = None, caller: str | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> QueueRow:
     """Resolve and accept a resume of the entry ``entry_id``; returns the new ``queued`` entry, at the back of the
     FIFO queue like any submission. Raises ``ResumeRefusedError``, naming the reason, when it cannot be resumed.
-    ``before_submit``, when given, is called with the resumed job and the runs it has left (Milestone 02's own API
+    ``before_submit``, when given, is called with the resumed job and the runs it has left (the API's own
     rules and limits, which count only what a resume still has to do, not the whole chain) after the resume point is
     resolved but before anything is stored; it raising refuses the resume and stores nothing. ``enqueue`` is
     ``submit_job``'s own parameter of the same name (see its type alias, ``queue_submit.Enqueue``). ``caller`` submits
-    the new entry, and, an agent, is refused a person's entry (Milestone 10, ``queue_callers.py``)."""
+    the new entry, and, an agent, is refused a person's entry (``queue_callers.py``)."""
     entry = store.queue.get(entry_id)
     if entry is None:
         raise NotFoundError(f"No queue entry {entry_id}")
@@ -112,7 +112,7 @@ def _new_resumed_entry(entry: QueueRow, chain: ResumeChain, total_runs: int, sub
 @dataclass(frozen=True)
 class ResumePreview:
     """Whether an entry can be resumed right now, without accepting one: from which run, or why not
-    (``GET /queue/{id}``, Milestone 02)."""
+    (``GET /queue/{id}``)."""
 
     resumable: bool
     from_run: int | None = None
@@ -239,7 +239,7 @@ def _linked_execution(store: Store, entry: QueueRow) -> ExecutionRow | None:
     truly has no link, or a number was reserved for it but the row was never created (the job failed before
     ``JobStarted``, which ``QueueWorker._fail_to_start`` clears the link for) -- both read the same way here, since
     neither has a run to resume from. A linked execution whose row once existed and was since pruned by retention, or
-    deleted (Milestone 06), is refused instead, naming it, since that chain did run and is not simply resumable from further back."""
+    deleted, is refused instead, naming it, since that chain did run and is not simply resumable from further back."""
     if entry.execution_number is None:
         return None
     execution = store.executions.by_number(entry.execution_number)

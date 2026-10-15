@@ -1,4 +1,4 @@
-"""Tests for `fc history delete` (Milestone 06), against a fake ``httpx`` transport standing in for fc serve."""
+"""Tests for `fc history delete`, against a fake ``httpx`` transport standing in for fc serve."""
 
 from __future__ import annotations
 

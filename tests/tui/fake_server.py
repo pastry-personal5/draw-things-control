@@ -106,13 +106,13 @@ class FakeServer:
         self.cancelled_ids: list[str] = []
         # What POST /v1/queue was sent, as the job argument.
         self.submitted: list[str] = []
-        # Milestone 05: the entries parked and unparked, the hold GET /v1/queue and the hold endpoints report, and a
+        # The entries parked and unparked, the hold GET /v1/queue and the hold endpoints report, and a
         # response to replace an entry's park response with (a refusal, or an entry that already parked).
         self.parked_ids: list[str] = []
         self.unparked_ids: list[str] = []
         self.hold: dict[str, Any] = {"held": False, "held_since": None, "held_by": None}
         self.park_responses: dict[str, httpx.Response] = {}
-        # Milestone 06: the state database POST /v1/executions/delete deletes from, through the real service; each
+        # The state database POST /v1/executions/delete deletes from, through the real service; each
         # request's IDs and whether it was a dry run; how many real deletions succeed before the server drops (None:
         # never); and whether the server cannot be reached at all.
         self.database: Path | None = None

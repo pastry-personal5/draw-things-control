@@ -150,7 +150,7 @@ ShortcutHelpOverlay {
     color: $text-muted;
 }
 
-/* The delete dialog (Milestone 06): a bordered box in the middle of the dimmed screen. */
+/* The delete dialog: a bordered box in the middle of the dimmed screen. */
 DeleteDialog {
     align: center middle;
 }

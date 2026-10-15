@@ -54,7 +54,7 @@ class ResumePoint:
     input: Path | None
     seed: int
     resumes_execution: str | None = None
-    # The resumed execution's first image, and the anchor of the run this one continues after (Milestone 09); None
+    # The resumed execution's first image, and the anchor of the run this one continues after; None
     # for an execution recorded before them, or without one.
     first_image: Path | None = None
     anchor: Path | None = None
@@ -106,7 +106,7 @@ class _Chain:
     # Run 1's copy of the input (upright, 8-bit sRGB, the job's size), removed after run 1.
     temporary_input: TemporaryInput | None
     schedule: tuple[PromptPair, ...]
-    # The chain's first image once it exists, and why the color checks go without one (Milestone 09).
+    # The chain's first image once it exists, and why the color checks go without one.
     first_image: Path | None = None
     first_image_notes: tuple[str, ...] = field(default=())
     # The file a correcting job's first and blend anchors hold its colors to: the first image, or the input of the run
@@ -188,7 +188,7 @@ class JobExecutor:
         return self._token.cancel(received_signal)
 
     def run_generation(self, arguments: CommandArguments, *, timeout: float, shutdown_grace: float, on_begin: Callable[[], None] | None = None, on_child_start: ChildStartCallback | None = None) -> GenerationOutcome:
-        """Run Milestone 12's one-off request with the same cancellable runner a job uses."""
+        """Run a one-off generation request with the same cancellable runner a job uses."""
         self._token.begin()
         try:
             if on_begin is not None:
@@ -198,7 +198,7 @@ class JobExecutor:
             self._token.end()
 
     def park(self) -> bool:
-        """Ask the running job to end once its current run finishes; safe from any thread (Milestone 05).
+        """Ask the running job to end once its current run finishes; safe from any thread.
 
         Returns False, and does nothing, when no job is running. The run in progress finishes, its last frame
         included; after a succeeded run that is not the last, the job ends ``parked``. A cooldown between runs ends
@@ -390,7 +390,7 @@ class JobExecutor:
         return JobOutcome(exit_code=exit_code, completed_runs=completed, total_runs=total, manifest=chain.records.manifest_path, log=chain.records.log_path)
 
     def _keep_first_image(self, chain: _Chain) -> None:
-        """Keep the chain's first image for a video job (Milestone 09): run 1's copy of the input, named from the
+        """Keep the chain's first image for a video job: run 1's copy of the input, named from the
         manifest's stem, with or without records; a t2v job's is run 1's last frame, written after run 1; a resume uses
         the resumed execution's."""
         job, manifest, resume = chain.job, chain.records.manifest, chain.options.resume

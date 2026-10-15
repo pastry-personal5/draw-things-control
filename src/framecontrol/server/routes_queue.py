@@ -1,6 +1,6 @@
 """``POST /v1/queue``, ``GET /v1/queue``, ``GET /v1/queue/{queue_id}``, ``POST /v1/queue/{queue_id}/cancel``,
-``POST /v1/queue/{queue_id}/resume``, and, from Milestone 05, ``POST /v1/queue/{queue_id}/park`` and ``/unpark``, and
-``POST /v1/queue/hold`` and ``/release``. Each POST writes one audit log entry, refusals included. From Milestone 10,
+``POST /v1/queue/{queue_id}/resume``, ``POST /v1/queue/{queue_id}/park`` and ``/unpark``, and
+``POST /v1/queue/hold`` and ``/release``. Each POST writes one audit log entry, refusals included. Also
 ``GET /v1/queue/{queue_id}/watch``, ``WatchQueueEntry``'s snapshots over SSE; and each action passes the request's
 caller on, which an entry records as its submitter and the hold as its maker, and which keeps an agent off what a
 person started (``services/queue_callers.py``)."""
@@ -98,7 +98,7 @@ def get_queue_entry(queue_id: str, context: ServerContext = Depends(get_context)
 
 @router.get("/v1/queue/{queue_id}/watch")
 async def watch_queue_entry(queue_id: str, context: ServerContext = Depends(get_context)) -> EventSourceResponse:
-    """``WatchQueueEntry`` over SSE (Milestone 10), for clients that speak HTTP alone: ``event: snapshot`` with the
+    """``WatchQueueEntry`` over SSE, for clients that speak HTTP alone: ``event: snapshot`` with the
     current snapshot first, then one whenever a field it names changes, and a ``: keep-alive`` comment after
     ``watch_keepalive_seconds`` without one. An unknown entry is 404 before the stream starts. The stream ends when
     the client disconnects, the entry is gone, or the server begins to shut down. No event IDs: a client that
@@ -173,7 +173,7 @@ def post_cancel(queue_id: str, context: ServerContext = Depends(get_context), x_
 
 @router.post("/v1/queue/hold")
 def post_hold(context: ServerContext = Depends(get_context), x_framecontrol_caller: str | None = Header(default=None, alias="X-Framecontrol-Caller")) -> dict[str, object]:
-    """Hold the queue (Milestone 05): a running job is not stopped, and nothing starts after it until a release.
+    """Hold the queue: a running job is not stopped, and nothing starts after it until a release.
     ``changed`` is False when the queue was already held."""
     caller, caller_error = audit_caller(x_framecontrol_caller)
     with audited(context.store, action="hold", target=None, caller=caller):
@@ -186,7 +186,7 @@ def post_hold(context: ServerContext = Depends(get_context), x_framecontrol_call
 @router.post("/v1/queue/release")
 def post_release(context: ServerContext = Depends(get_context), x_framecontrol_caller: str | None = Header(default=None, alias="X-Framecontrol-Caller")) -> dict[str, object]:
     """End the hold: the oldest queued entry starts at once. ``changed`` is False when the queue was not held. An agent
-    may release only a hold an agent made (Milestone 10)."""
+    may release only a hold an agent made."""
     caller, caller_error = audit_caller(x_framecontrol_caller)
     with audited(context.store, action="release", target=None, caller=caller):
         if caller_error is not None:
@@ -197,7 +197,7 @@ def post_release(context: ServerContext = Depends(get_context), x_framecontrol_c
 
 @router.post("/v1/queue/{queue_id}/park")
 def post_park(queue_id: str, context: ServerContext = Depends(get_context), x_framecontrol_caller: str | None = Header(default=None, alias="X-Framecontrol-Caller")) -> dict[str, object]:
-    """Park a running entry: it ends once its current run finishes, and the queue is held (Milestone 05)."""
+    """Park a running entry: it ends once its current run finishes, and the queue is held."""
     caller, caller_error = audit_caller(x_framecontrol_caller)
     with audited(context.store, action="park", target=_canonical_queue_id(queue_id), caller=caller):
         if caller_error is not None:

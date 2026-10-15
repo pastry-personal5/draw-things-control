@@ -12,7 +12,7 @@ from framecontrol.core.process.signals import HANDLED_SIGNALS
 
 class SignalGuard:
     """Routes SIGHUP, SIGINT, and SIGTERM to the app's own ``exit()``, for a clean shutdown that restores the
-    terminal -- the raw signal's own default disposition does not. Milestone 03: nothing here coordinates with a
+    terminal -- the raw signal's own default disposition does not. Nothing here coordinates with a
     running job any more, since ``fc serve`` is the only thing that ever runs one, and quitting the TUI does not
     touch it; the old install/remove/ignore-until-removed dance existed only to stop a child this process ran
     itself, which no longer happens."""

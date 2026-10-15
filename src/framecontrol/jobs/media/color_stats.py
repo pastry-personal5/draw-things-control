@@ -1,6 +1,6 @@
 """Robust color statistics of a frame, or a region of one, in Oklab, and the comparison of two sets of them.
 
-Pixels cannot be matched one to one across motion, so frames are compared by statistics (Milestone 09). The owner's
+Pixels cannot be matched one to one across motion, so frames are compared by statistics. The owner's
 four drifts are the lightness median (brightness), the lightness spread from the 10th to the 90th percentile
 (contrast), the chroma median (saturation), and the chroma-weighted circular mean hue. A cast is the mean ``a`` and
 ``b`` of the least chromatic tenth of the pixels, when that tenth is near-neutral. Chosen by rank rather than by a
@@ -40,7 +40,7 @@ class ColorStats:
     hue: float | None
     # The mean a and b of the least chromatic tenth of the pixels; None when that tenth is not near-neutral.
     cast: tuple[float, float] | None
-    # The mean a and b of every pixel: the skin residual moves skin's (Milestone 09's increment E).
+    # The mean a and b of every pixel: the skin residual moves skin's.
     mean: tuple[float, float] = (0.0, 0.0)
 
     @property

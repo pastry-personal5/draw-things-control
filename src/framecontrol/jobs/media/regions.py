@@ -1,4 +1,4 @@
-"""A frame's regions (Milestone 09's increment E): people, their skin, and the background, from a ``Segmenter``.
+"""A frame's regions: people, their skin, and the background, from a ``Segmenter``.
 
 A ``Segmenter`` gives a frame's person mask, at its own resolution, and the landmarks of each face, in the frame's
 pixels. The skin of each face is the hull of its contour and its brows, less the eyes, the brows, and the outer lips
@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from framecontrol.jobs.media import oklab
 from framecontrol.jobs.media.color_stats import ColorStats, measure_lab
 
-# A region counts only with this share of the frame: people, and skin (Milestone 09).
+# A region counts only with this share of the frame: people, and skin.
 PEOPLE_SHARE = 0.02
 SKIN_SHARE = 0.005
 # A region is corrected apart only when at least this share of a run's frames have it.

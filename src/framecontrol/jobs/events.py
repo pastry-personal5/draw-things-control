@@ -32,7 +32,7 @@ class JobStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
-    # Ended at a run boundary because it was parked (Milestone 05): every run it made succeeded, and a resume continues
+    # Ended at a run boundary because it was parked: every run it made succeeded, and a resume continues
     # it at the next one. Runs are never parked, only jobs.
     PARKED = "parked"
 
@@ -69,7 +69,7 @@ class JobStarted:
     # The execution (E0012) this one resumes, when it is a resume.
     resumes_execution: str | None = None
     # The chain's first image, which the color checks compare with and the color correction's first and blend anchors
-    # start from (Milestone 09): kept for every video execution that writes records, or the resumed execution's; None
+    # start from: kept for every video execution that writes records, or the resumed execution's; None
     # without one. A t2v job's is run 1's last frame, written after run 1.
     first_image: str | None = None
     backend: str = "draw-things-cli"
@@ -94,7 +94,7 @@ class RunStarted:
     # The command with credentials redacted.
     command: tuple[str, ...]
     # The file the run's colors are held to: the first image, or the input of the run that last re-anchored; None when
-    # the job does not correct toward an anchor (Milestone 09).
+    # the job does not correct toward an anchor.
     anchor: str | None = None
     backend: str | None = None
     pipeline: str | None = None
@@ -199,7 +199,7 @@ class MediaChecked:
 
 @dataclass(frozen=True)
 class FirstImageDropped:
-    """A t2v job's first image, which ``JobStarted`` names before run 1 writes it, is not kept after all (Milestone 09):
+    """A t2v job's first image, which ``JobStarted`` names before run 1 writes it, is not kept after all:
     run 1 did not succeed, left no last frame, or the copy failed. The execution names no first image from here on."""
 
     at: str
@@ -283,7 +283,7 @@ EVENT_TYPES_BY_KIND: dict[str, type] = {name: cls for cls, name in EVENT_KINDS.i
 
 def event_from_dict(data: dict[str, Any]) -> JobEvent:
     """The exact inverse of ``event_to_dict``: given a mapping with a ``kind`` and that kind's own fields (as a
-    gRPC client decodes an ``Event.data_json``, Milestone 03), rebuilds the matching ``JobEvent`` dataclass."""
+    gRPC client decodes an ``Event.data_json``), rebuilds the matching ``JobEvent`` dataclass."""
     event_type = EVENT_TYPES_BY_KIND[data["kind"]]
     hints = get_type_hints(event_type)
     values = {event_field.name: _typed(data[event_field.name], hints[event_field.name]) for event_field in fields(event_type)}

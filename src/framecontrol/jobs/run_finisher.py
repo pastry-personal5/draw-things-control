@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class RunColor:
-    """What a run's colors are compared with and held to (Milestone 09), from the executor, which tracks the chain."""
+    """What a run's colors are compared with and held to, from the executor, which tracks the chain."""
 
     # The chain's first image; None when there is none yet (a t2v job's run 1) or none at all.
     first_image: Path | None = None
@@ -98,7 +98,7 @@ class RunFinisher:
         return None
 
     def _correct(self, job: JobDefinition, run: PlannedRun, record: RunRecord, run_color: RunColor, color: StreamColor) -> CorrectionResult | None:
-        """Correct the run's colors (Milestone 09), writing the handoff and the copy; a failed correction hands off the
+        """Correct the run's colors, writing the handoff and the copy; a failed correction hands off the
         uncorrected frame instead, and the run still succeeds (owner decision). A stop or park requested meanwhile
         takes effect when the correction ends, as one during the extraction does. None only when the uncorrected frame
         could not be moved into the handoff's place."""

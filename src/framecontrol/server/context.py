@@ -43,8 +43,8 @@ class SharedStoreProvider(StoreProvider):
 class ServerContext:
     """Everything a route or the gRPC service reads: the project's paths, its live global configuration, the open
     store, the running worker, an executor for previews and dry runs, the token (never served), and where the
-    process is bound (for the ``Host`` header check). ``allow_write`` gates the write tools and endpoints
-    (Milestone 07). ``catalog`` is built from ``store`` once ``__post_init__`` runs, so every request reuses its
+    process is bound (for the ``Host`` header check). ``allow_write`` gates the write tools and endpoints.
+    ``catalog`` is built from ``store`` once ``__post_init__`` runs, so every request reuses its
     file-signature cache instead of re-reading every job file; ``input_catalog`` does the same for ``GET /inputs``,
     keyed by each file's own modification time and size instead of a job's inputs' (``services/input_listing.py``).
     ``event_backlog`` is shared between the worker, given
@@ -67,14 +67,14 @@ class ServerContext:
     token: str
     bound_host: str
     bound_port: int
-    # The gRPC port sharing bound_host (Milestone 03): served on GET /v1/health so a client configured with
+    # The gRPC port sharing bound_host: served on GET /v1/health so a client configured with
     # --server-url alone (every gRPC client this phase adds) can derive its gRPC target with no flag of its own.
     grpc_port: int
     allow_write: bool = False
     event_backlog: EventBacklog = field(default_factory=EventBacklog)
     submission_lock: threading.Lock = field(default_factory=threading.Lock)
     # Set as `fc serve` begins to shut down (serve.py), so every SSE watch ends itself: uvicorn waits for open
-    # connections before it stops (Milestone 10). How often a watch reads its entry, and how long it stays quiet
+    # connections before it stops. How often a watch reads its entry, and how long it stays quiet
     # before it sends a keep-alive comment.
     stopping: threading.Event = field(default_factory=threading.Event)
     watch_poll_seconds: float = 0.5

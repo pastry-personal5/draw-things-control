@@ -56,7 +56,7 @@ def job_detail(job: JobDefinition, source_text: str, *, sha256: str | None = Non
         "seed_source": seed_source,
         "cooldown": job.cooldown.as_dict(),
         "cooldown_source": job.cooldown_source,
-        # The color correction (Milestone 09): {"anchor": "none"} for a job without one; null for a version-2 job, whose
+        # The color correction: {"anchor": "none"} for a job without one; null for a version-2 job, whose
         # runs each have their own, in runs[].settings.
         "color": None if job.effective_runs else job.color.as_dict(),
     }
@@ -98,7 +98,7 @@ def audit_entry(row: AuditRow) -> dict[str, Any]:
 
 
 def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things-cli") -> dict[str, Any]:
-    """One run, as ``GET /executions/{id}`` and ``GET /executions/{id}/runs/{run}`` give it; ``brief`` (Milestone 10)
+    """One run, as ``GET /executions/{id}`` and ``GET /executions/{id}/runs/{run}`` give it; ``brief``
     leaves out its command and gives each check as its stage and verdict alone."""
     return {
         "number": run.number,
@@ -119,7 +119,7 @@ def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things
         "audio_sample_rate": run.audio_sample_rate,
         "audio_channels": run.audio_channels,
         "audio_duration": run.audio_duration,
-        # The corrected copy's file name, and the file the run's colors were held to (Milestone 09).
+        # The corrected copy's file name, and the file the run's colors were held to.
         "corrected_output": run.corrected_output,
         "anchor": Path(run.anchor).name if backend == "h3" and run.anchor is not None else run.anchor,
         **({} if brief else {"command": redact_command(run.command)}),
@@ -132,7 +132,7 @@ def media_check(check: MediaCheckRow) -> dict[str, Any]:
 
 
 def brief_check(check: MediaCheckRow) -> dict[str, Any]:
-    """A check in an execution's brief view (Milestone 10): its stage and verdict, without its facts and notes."""
+    """A check in an execution's brief view: its stage and verdict, without its facts and notes."""
     return {"stage": check.stage, "verdict": check.verdict}
 
 
@@ -161,7 +161,7 @@ def execution_summary(row: ExecutionRow) -> dict[str, Any]:
 
 
 def execution_detail(row: ExecutionRow, *, brief: bool = False) -> dict[str, Any]:
-    """``GET /executions/{id}``; ``brief`` (``?brief=1``, Milestone 10) gives each run and check as ``run_summary`` and
+    """``GET /executions/{id}``; ``brief`` (``?brief=1``) gives each run and check as ``run_summary`` and
     ``unstarted_check`` do, so a long chain's answer fits what an agent reads."""
     return {
         **execution_summary(row),
@@ -171,14 +171,14 @@ def execution_detail(row: ExecutionRow, *, brief: bool = False) -> dict[str, Any
         "cooldown_source": row.cooldown_source,
         # The resolved cooldown mapping (mode, ratio, minimum/maximum_seconds), not only its old fixed-seconds
         # summary above: None for an execution written before it was kept (ExecutionSettings' own comment), which
-        # had only cooldown_seconds. The TUI's seeding (Milestone 03, attaching to a running entry with no live
+        # had only cooldown_seconds. The TUI's seeding (attaching to a running entry with no live
         # JobStarted to read a CooldownPolicy from) is the first reader of it over the API.
         "cooldown": row.settings.cooldown,
         "backend_settings": row.settings.backend_settings or {},
         "config_file": row.config_file,
         "manifest": row.manifest_path,
         "log": row.log_path,
-        # The chain's first image, which its color checks compare with (Milestone 09); None before it was kept.
+        # The chain's first image, which its color checks compare with; None before it was kept.
         "first_image": row.first_image,
         "runs": [run_summary(run, brief=brief, backend=row.backend) for run in row.runs],
         # Checks made before a run that never started (a stop during the input checks); each names its run.
@@ -220,7 +220,7 @@ def _run_output(execution: ExecutionRow, run: RunRow) -> dict[str, Any]:
 
 
 def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any]:
-    """``park_requested`` is the worker's (Milestone 05), since a park reservation is kept in memory, not in the row."""
+    """``park_requested`` is the worker's, since a park reservation is kept in memory, not in the row."""
     generation = None
     if row.kind == "generate":
         from framecontrol.services.generation_submit import GenerationSnapshot
@@ -246,19 +246,19 @@ def queue_entry(row: QueueRow, *, park_requested: bool = False) -> dict[str, Any
         "total_runs": row.total_runs,
         "succeeded": row.succeeded,
         "park_requested": park_requested,
-        # The caller that submitted or resumed it (Milestone 10); None for an entry made before it was recorded.
+        # The caller that submitted or resumed it; None for an entry made before it was recorded.
         "submitted_by": row.submitted_by,
     }
 
 
 def queue_hold(hold: HoldState) -> dict[str, Any]:
-    """The queue's hold (Milestone 05), beside the entries of ``GET /queue`` and ``GET /queue/{id}``, and the response
-    of ``POST /queue/hold`` and ``/queue/release``. ``hold_caller`` (Milestone 10) is the caller that made it."""
+    """The queue's hold, beside the entries of ``GET /queue`` and ``GET /queue/{id}``, and the response
+    of ``POST /queue/hold`` and ``/queue/release``. ``hold_caller`` is the caller that made it."""
     return {"held": hold.held, "held_since": hold.since, "held_by": hold.by, "hold_caller": hold.caller}
 
 
 def delete_report(report: DeleteReport, *, dry_run: bool) -> dict[str, Any]:
-    """``POST /executions/delete``'s answer (Milestone 06): each execution's outcome, the entries each deletion leaves
+    """``POST /executions/delete``'s answer: each execution's outcome, the entries each deletion leaves
     unresumable, and the manifests that could not be deleted."""
     return {
         "dry_run": dry_run,

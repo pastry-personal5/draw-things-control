@@ -1,4 +1,4 @@
-"""The MCP server's tools (Milestone 10): each one's name, arguments and input schema (with the API's names and bounds),
+"""The MCP server's tools: each one's name, arguments and input schema (with the API's names and bounds),
 description, and annotations, the endpoint it calls, and the check of a call's arguments against its schema. A tool
 returns the API's JSON as it is; the one exception to calling an endpoint as given is ``delete_executions``, which the
 server refuses itself while writes are off (``app.py``)."""

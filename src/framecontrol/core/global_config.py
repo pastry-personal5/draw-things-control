@@ -28,8 +28,8 @@ DEFAULT_MAX_JOB_OUTPUT_BYTES = 32 * 1024 * 1024 * 1024
 
 @dataclass(frozen=True)
 class ApiLimits:
-    """Bounded work the HTTP API enforces from its first submission (Milestone 02): entries queued at once, runs a
-    submitted job (or a resume's remaining runs) may have, one entry's worst-case seconds, and (Milestone 07) the
+    """Bounded work the HTTP API enforces from its first submission: entries queued at once, runs a
+    submitted job (or a resume's remaining runs) may have, one entry's worst-case seconds, and the
     size of job text the API accepts. Whoever calls, `fc queue` included, and with `--allow-write` on too."""
 
     max_queued_jobs: int = DEFAULT_MAX_QUEUED_JOBS
@@ -55,7 +55,7 @@ class GlobalConfig:
     cooldown: CooldownPolicy | None = None
     # Execution history older than this many days is pruned from the state store; 0 keeps it forever.
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
-    # The HTTP API's limits (Milestone 02); unused outside the server.
+    # The HTTP API's limits; unused outside the server.
     api_limits: ApiLimits = DEFAULT_API_LIMITS
 
 

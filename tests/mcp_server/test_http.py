@@ -1,4 +1,4 @@
-"""``fc mcp --transport streamable-http`` (Milestone 13): the bearer token every request needs, the server as a process driven by the SDK's client over real HTTP, and the command's refusals. Never starts ``draw-things-cli`` or ``fc serve``."""
+"""``fc mcp --transport streamable-http``: the bearer token every request needs, the server as a process driven by the SDK's client over real HTTP, and the command's refusals. Never starts ``draw-things-cli`` or ``fc serve``."""
 
 from __future__ import annotations
 

@@ -80,7 +80,7 @@ class ExecutionHistoryList(SidewaysTable):
         self.reader = reader
         self.busy = busy
         self.leave = leave
-        # Asks to delete these executions, by number, in history order (Milestone 06).
+        # Asks to delete these executions, by number, in history order.
         self.delete = delete
         # The executions marked for deletion, by number: kept across re-reads, cleared by a filter change or a deletion.
         self.marks: set[int] = set()
@@ -199,8 +199,8 @@ class ExecutionHistoryList(SidewaysTable):
         if page.offset == 0 and selected is not None and selected in self.executions:
             self.move_cursor(row=self.get_row_index(str(selected)))
         wanted, self.select_when_shown = self.select_when_shown, None
-        # An execution number (E0012), not a row id: the feed only ever names an execution by its public label
-        # (Milestone 03), and this page's own rows already carry both, so no extra lookup is needed to match one.
+        # An execution number (E0012), not a row id: the feed only ever names an execution by its public label,
+        # and this page's own rows already carry both, so no extra lookup is needed to match one.
         # A filter that hides the new execution leaves the cursor where it is.
         if page.offset == 0 and wanted is not None:
             match = next((row for row in page.rows if row.execution_number == wanted), None)

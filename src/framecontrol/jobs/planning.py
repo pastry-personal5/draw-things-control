@@ -28,7 +28,7 @@ class PlannedRun:
     output: Path
     last_frame: Path | None
     arguments: CommandArguments
-    # A correcting job's uncorrected last frame and corrected copy (Milestone 09); None for any other.
+    # A correcting job's uncorrected last frame and corrected copy; None for any other.
     raw_last_frame: Path | None = None
     corrected_output: Path | None = None
     # The seed this run's command uses: its own ``seed`` knob in a version-2 job, else the execution seed.

@@ -111,9 +111,9 @@ class NewExecution:
     # own snapshot names the entry, not the execution, so this is the only place a resumed execution is linked.
     first_run: int = 1
     resumes: int | None = None
-    # The chain's first image, a full path (Milestone 09).
+    # The chain's first image, a full path.
     first_image: str | None = None
-    # ``job`` for every historical execution, ``generate`` for Milestone 12's one-off requests.
+    # ``job`` for every historical execution, ``generate`` for one-off generation requests.
     source_kind: str = "job"
     backend: str = "draw-things-cli"
 
@@ -163,7 +163,7 @@ class RunRow:
     audio_sample_rate: int | None = None
     audio_channels: int | None = None
     audio_duration: float | None = None
-    # The file the run's colors were held to (a full path), and its corrected copy's file name (Milestone 09).
+    # The file the run's colors were held to (a full path), and its corrected copy's file name.
     anchor: str | None = None
     corrected_output: str | None = None
     # The store's own row number and start time as an epoch, for ordering.
@@ -253,7 +253,7 @@ class ExecutionRow:
     runs: tuple[RunRow, ...] = ()
     first_run: int = 1
     resumes: int | None = None
-    # The chain's first image, a full path; None for an execution recorded before Milestone 09, or without one.
+    # The chain's first image, a full path; None for an execution recorded before first images were kept, or without one.
     first_image: str | None = None
     source_kind: str = "job"
     backend: str = "draw-things-cli"

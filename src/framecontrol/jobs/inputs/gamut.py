@@ -5,8 +5,8 @@ colorants and the ``rTRC``, ``gTRC``, ``bTRC`` curves, of type ``curv`` or ``par
 light, to XYZ, adapted from the profile connection space's D50 to D65 by Bradford, to linear sRGB, unbounded.
 
 Clipping a color outside sRGB channel by channel bends its hue (a Display P3 red turns orange) and merges neighbouring
-shades. Instead its chroma is compressed toward the neutral axis at constant Oklab lightness and hue (owner decision,
-Milestone 09): colors within ``KNEE`` of the sRGB edge's chroma, at their lightness and hue, do not move; from there a
+shades. Instead its chroma is compressed toward the neutral axis at constant Oklab lightness and hue (owner decision):
+colors within ``KNEE`` of the sRGB edge's chroma, at their lightness and hue, do not move; from there a
 smooth curve, slope 1 at the knee, takes the source profile's own edge onto the sRGB edge. Where the profile reaches
 no further than sRGB, nothing moves. Both edges are tabulated over lightness and hue, and the tables pick the colors
 near the edge, whose edges are then found exactly; a color still outside is brought onto the exact edge.

@@ -1,4 +1,4 @@
-"""Park and unpark a running queue entry (Milestone 05). A park lets the entry's current run finish, ends the job
+"""Park and unpark a running queue entry. A park lets the entry's current run finish, ends the job
 ``parked``, and holds the queue until a release; ``queue_worker.py`` keeps the reservation and the hold, and its own
 ``hold()`` and ``release()`` are what ``/queue hold`` and ``/queue release`` call. Modeled on ``queue_cancel.py``."""
 

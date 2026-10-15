@@ -91,7 +91,7 @@ def _bind_one(family: socket.AddressFamily, socktype: socket.SocketKind, proto: 
 
 class UvicornServer(uvicorn.Server):
     """uvicorn's server, which tells every SSE watch to end (``context.stopping``) as it begins to shut down: uvicorn
-    then waits for open connections, and a watch never ends on its own (Milestone 10)."""
+    then waits for open connections, and a watch never ends on its own."""
 
     def __init__(self, config: uvicorn.Config, context: ServerContext) -> None:
         super().__init__(config)
@@ -181,7 +181,7 @@ async def _serve_async(context: ServerContext, options: ServeOptions, host: Queu
 
     Both ports are bound here, before ``host.start_worker()``: binding first means a taken port (gRPC or HTTP)
     raises a plain ``InputError`` with nothing yet running, rather than the worker having already claimed a queued
-    entry that a late bind failure then interrupts (Milestone 02's startup-order fix, phase-3 changelog 2026-09-28).
+    entry that a late bind failure then interrupts (the startup-order fix: docs/archive/phase-3/phase-3-changelog.md, 2026-09-28).
     """
     uvicorn_server = UvicornServer(uvicorn.Config(create_app(context), host=options.host, port=options.port, log_config=None), context)
     with uvicorn_server.capture_signals():

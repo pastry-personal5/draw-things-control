@@ -1,6 +1,6 @@
 """The TUI's own async HTTP client for the queue commands (``/queue add``, ``/apply``, ``/queue cancel``,
-``/queue resume``, ``c``, and, from Milestone 05, ``/queue park``, ``unpark``, ``hold``, and ``release``, ``p``, and
-``u``), and, from Milestone 06, ``/delete`` and ``d``: submits, cancels, resumes, parks, holds, and deletes through the API, exactly as ``fc queue`` does over its own
+``/queue resume``, ``c``, ``/queue park``, ``unpark``, ``hold``, and ``release``, ``p``, and
+``u``, and ``/delete`` and ``d``): submits, cancels, resumes, parks, holds, and deletes through the API, exactly as ``fc queue`` does over its own
 synchronous client (``cli/queue_app.py``) -- a small amount of the same shape duplicated once per front end, since
 front ends never import each other (``tests/test_architecture.py``)."""
 

@@ -1,4 +1,4 @@
-"""``fc mcp --transport streamable-http`` (Milestone 13): the same MCP server over Streamable HTTP at ``/mcp``, for a
+"""``fc mcp --transport streamable-http``: the same MCP server over Streamable HTTP at ``/mcp``, for a
 client that cannot spawn a process on this machine, such as an agent in a virtual machine. It adds no tool and no
 authority: every request still ends in ``fc serve``'s API, with the token in the server's own token file. What it adds is
 a listener, so every request must carry that token, as ``fc serve``'s own routes require it."""

@@ -3,7 +3,7 @@ its claim and run bookkeeping, so that class's body stays under the project's si
 ``queue_worker_status.py``, already is) -- but sharing its lock, passed in here rather than a lock of its own: a
 claim (``QueueWorker._claim_and_run_one``), an insert, and a queued cancel must never interleave, so a client
 watching events can never see a claim's 'running' published before an earlier 'queued' for the same entry
-(Milestone 02's event-order fix, phase-3 changelog 2026-09-28)."""
+(the event-order fix: docs/archive/phase-3/phase-3-changelog.md, 2026-09-28)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class QueueClaimGate:
         return cancelled
 
     def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
-        """Delete executions from the history (Milestone 06), checking which are running or in use under the shared
+        """Delete executions from the history, checking which are running or in use under the shared
         lock, so no claim, job start, or submission lands between the check and the delete; the files go after it is
         released. Publishes nothing: other clients see a deletion when they next read the history."""
         return delete_executions(self._store, numbers, dry_run=dry_run, lock=self._lock)

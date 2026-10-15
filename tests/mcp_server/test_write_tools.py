@@ -1,4 +1,4 @@
-"""The MCP server's write tools (Milestone 10): listed only while ``fc serve`` has writes on, a list-changed
+"""The MCP server's write tools: listed only while ``fc serve`` has writes on, a list-changed
 notification in each protocol era when that changes, a job file's whole life, and ``delete_executions`` behind a fresh
 read of the capabilities and a required dry run."""
 

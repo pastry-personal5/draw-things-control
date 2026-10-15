@@ -1,13 +1,13 @@
-"""Correct one run's colors (Milestone 09): two passes over its frames, the corrected copy, the corrected handoff, and
+"""Correct one run's colors: two passes over its frames, the corrected copy, the corrected handoff, and
 the checks that say what was done.
 
 The first pass measures every frame (``color_stats.py``), which also gives the run's ``color_drift`` check; the
 parameters are then fitted, capped, and smoothed (``correction.py``); the second pass applies them and pipes each
 frame to the encoder of the copy, ``<clip>-cc.<ext>``, in the original's format. The handoff is the corrected last
-frame, from the floating-point result, not decoded again from the copy, written as Milestone 08's handoff is, less the
+frame, from the floating-point result, not decoded again from the copy, written as an uncorrected run's handoff is, less the
 half level its values already carry. A file Draw Things wrote is never re-encoded, and none of its pixels change.
 
-With a segmenter (Apple Vision, increment E), the first pass also finds each frame's regions (``regions.py``) and
+With a segmenter (Apple Vision), the first pass also finds each frame's regions (``regions.py``) and
 keeps their masks; with ``color.regions``, people, their skin, and the background are then corrected apart (the
 background by its own transform, owner decision, 2026-10-01), and the second pass blends the transforms through the
 masks. A region is corrected apart only when the run's input,
@@ -40,7 +40,7 @@ from framecontrol.jobs.media.stream_color import StreamColor
 from framecontrol.jobs.media.tools import find_ffprobe
 from framecontrol.jobs.media.video_color import tag_video_colors
 
-# What the copy is tagged as: BT.709, limited range, as Milestone 08's tagger writes it.
+# What the copy is tagged as: BT.709, limited range, as the tagger writes it.
 COPY_COLOR = StreamColor("bt709", "tv")
 NO_VISION_NOTE = "Apple Vision is not available here, so the whole frame is corrected as one region."
 # Pixels of a region kept from the first pass, at most, to refine people's chroma gain and to fit skin's residual.

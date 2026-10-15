@@ -1,7 +1,7 @@
 """``fc queue add --wait``: watches one entry over gRPC (``WatchQueueEntry``) until it finishes, printing each run's
 start and its outcome, `run-job`'s own replacement now that only `fc serve` ever starts a run. Its gRPC target is
-derived from ``GET /v1/health``'s ``grpc_port`` and the already-configured HTTP host, with no flag of its own
-(Milestone 03); the stub comes from ``cli/generated/``, this front end's own copy (``server/`` holds another,
+derived from ``GET /v1/health``'s ``grpc_port`` and the already-configured HTTP host, with no flag of its own;
+the stub comes from ``cli/generated/``, this front end's own copy (``server/`` holds another,
 neither importing the other's: ``tests/test_architecture.py``)."""
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
                 last_printed_run = last_run = snapshot.current_run
             if snapshot.state in _FINISHED_STATE_VALUES:
                 return snapshot.state, snapshot.error if snapshot.HasField("error") else None, last_run, total_runs
-            # Milestone 05: a park reservation made or withdrawn, from anywhere, and a hold its queued entry waits behind.
+            # A park reservation made or withdrawn, from anywhere, and a hold its queued entry waits behind.
             if snapshot.state == "running" and snapshot.park_requested != parking:
                 parking = snapshot.park_requested
                 typer.echo(_parking_text(queue_id, parking, last_run, total_runs))

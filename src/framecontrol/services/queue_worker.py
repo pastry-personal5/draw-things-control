@@ -1,6 +1,6 @@
 """The queue worker: claims the oldest queued entry, runs it through ``JobRunSession``, and waits the cooldown between
 queued jobs. One worker thread; ``claim_and_run_one`` is the synchronous step a test drives directly without one.
-It keeps a running entry's park reservation, and the queue's hold (``QueueHold``), Milestone 05."""
+It keeps a running entry's park reservation, and the queue's hold (``QueueHold``)."""
 
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ class QueueWorker:
 
     def park_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
         """Make a park reservation on the running entry, and hold the queue by it, for ``caller``, unless the queue is
-        already held (Milestone 05); on a held queue, a person's park makes an agent's hold the person's (Milestone 10). False, doing nothing, when the entry is not the running one (queued, finished, or another entry), or a stop
+        already held; on a held queue, a person's park makes an agent's hold the person's. False, doing nothing, when the entry is not the running one (queued, finished, or another entry), or a stop
         (a cancel, or the server stopping) is already asked for it: ``stop_reason`` tells which. On an entry already
         parking, it only holds the queue again, when a release has ended the hold. Made before ``JobStarted``, the
         reservation stays pending and is applied there (``_start_guard``)."""
@@ -177,7 +177,7 @@ class QueueWorker:
         """Withdraw the running entry's park reservation, releasing the hold only when that reservation made it; a no-op
         when it has none. False when the entry is not the running one, or its park has already taken effect. Refused
         (``NotPermittedError``), with the reservation and its hold standing, for an agent ``caller`` when a person made
-        that hold (Milestone 10)."""
+        that hold."""
         with self._state_lock:
             if not self._is_running(entry_id):
                 return False
@@ -221,7 +221,7 @@ class QueueWorker:
     def release(self, caller: str | None = None) -> tuple[bool, HoldState]:
         """End the hold for ``caller``; the oldest queued entry is claimed at once, with no between-jobs cooldown. Returns
         whether the queue was held (False, doing nothing, when it was not), and the hold, both read under the same lock
-        as the change. Refused (``NotPermittedError``) for an agent when a person made the hold (Milestone 10)."""
+        as the change. Refused (``NotPermittedError``) for an agent when a person made the hold."""
         with self._state_lock:
             released = self._hold.release(caller)
             # Once the claimed job has ended (or with none claimed), the next claim skips the between-jobs cooldown, even
@@ -244,8 +244,8 @@ class QueueWorker:
         return self._thread is not None and self._thread.is_alive()
 
     def state(self) -> str:
-        """``running``, ``cooling_down``, ``idle`` (``GET /queue``, Milestone 02), or ``held``: not running a job, and the
-        queue is held (Milestone 05). A job running under a hold still reads ``running``."""
+        """``running``, ``cooling_down``, ``idle`` (``GET /queue``), or ``held``: not running a job, and the
+        queue is held. A job running under a hold still reads ``running``."""
         state = self._status.state()
         return "held" if state != "running" and self._hold.is_held else state
 

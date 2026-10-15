@@ -20,7 +20,7 @@ class QueueEventPublisher:
         self._sink = sink
 
     def job_event(self, event: JobEvent) -> None:
-        """A Phase 2 job event, exactly as ``event_to_dict`` already shapes it for every other reader of it."""
+        """A job event, exactly as ``event_to_dict`` already shapes it for every other reader of it."""
         if self._sink is not None:
             data = event_to_dict(event)
             self._sink(data["kind"], data)
@@ -38,13 +38,13 @@ class QueueEventPublisher:
             self._sink("queue_wait_ended", {"queue_id": queue_id})
 
     def park_changed(self, queue_id: str, park_requested: bool) -> None:
-        """A park reservation was made or withdrawn (Milestone 05). Its own kind, not ``queue_entry_changed``: that one
+        """A park reservation was made or withdrawn. Its own kind, not ``queue_entry_changed``: that one
         means a change of state, and a front end reads its ``running`` as the claim that comes before ``JobStarted``."""
         if self._sink is not None:
             self._sink("queue_park_changed", {"queue_id": queue_id, "park_requested": park_requested})
 
     def held(self, since: str | None, by: str | None, caller: str | None = None) -> None:
-        """The queue was held, or its hold changed hands; ``caller`` made it (Milestone 10)."""
+        """The queue was held, or its hold changed hands; ``caller`` made it."""
         if self._sink is not None:
             self._sink("queue_held", {"since": since, "by": by, "caller": caller})
 

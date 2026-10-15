@@ -1,4 +1,4 @@
-"""The delete dialog (Milestone 06), for the TUI action that cannot be undone.
+"""The delete dialog, for the TUI action that cannot be undone.
 
 Its own module, not ``screens.py``: ``tui/deletion.py`` pushes it, and
 ``screens.py`` already imports the controller that imports ``deletion.py``.
@@ -15,7 +15,7 @@ from textual.widgets import Button, Static
 
 
 class DeleteDialog(ModalScreen[str]):
-    """Asks before an execution is deleted (Milestone 06), the TUI's one action that cannot be undone. Dismissed with
+    """Asks before an execution is deleted, the TUI's one action that cannot be undone. Dismissed with
     the choice: ``delete``, ``skip``, ``all`` (delete this one and every remaining one without asking again), or
     ``cancel``. One execution offers only Delete and Cancel."""
 

@@ -1,4 +1,4 @@
-"""HTTP coverage for Milestone 07's draft and guarded job-file routes."""
+"""HTTP coverage for the draft and guarded job-file routes."""
 
 from __future__ import annotations
 

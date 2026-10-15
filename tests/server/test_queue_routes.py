@@ -45,7 +45,7 @@ class FakeWorker:
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
         self._current_step: tuple[int, int] | None = None
-        # Milestone 05: a reservation per entry, the stop asked for one (refusing a park), whether its park has taken
+        # A reservation per entry, the stop asked for one (refusing a park), whether its park has taken
         # effect (refusing an unpark), and the real hold, over the real store.
         self.parking: set[int] = set()
         self.stop_reasons: dict[int, str] = {}
@@ -315,7 +315,7 @@ class SubmitTests(QueueRoutesTestCase):
         self.assertEqual((response.json()["code"], response.json()["field"]), ("invalid_input", "job"))
 
     def test_a_body_fastapi_refuses_is_still_audited_with_the_default_caller(self) -> None:
-        """The audit fix (Milestone 02, phase-3 changelog 2026-09-28): a body FastAPI's own validation refuses
+        """The audit fix (docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): a body FastAPI's own validation refuses
         never reaches post_queue's body -- and so never opens its own audited() block -- but the spec still calls
         for one entry per request, refused ones included."""
         self.request("post", "/v1/queue", json={})
@@ -493,7 +493,7 @@ class ResumeTests(QueueRoutesTestCase):
 
 
 class QueueListingTests(QueueRoutesTestCase):
-    """``GET /v1/queue``'s paging fix (Milestone 02, phase-3 changelog 2026-09-28): active entries always come back
+    """``GET /v1/queue``'s paging fix (docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): active entries always come back
     in full, and the finished ones page, newest first, after them."""
 
     def finish(self, name: str, state: QueueState) -> str:
@@ -561,7 +561,7 @@ class QueueListingTests(QueueRoutesTestCase):
 
 
 class ParkAndHoldTests(QueueRoutesTestCase):
-    """Milestone 05: ``POST /v1/queue/{queue_id}/park`` and ``/unpark``, ``POST /v1/queue/hold`` and ``/release``."""
+    """``POST /v1/queue/{queue_id}/park`` and ``/unpark``, ``POST /v1/queue/hold`` and ``/release``."""
 
     def running_entry(self) -> dict[str, Any]:
         entry = self.submit(run_count=3)
@@ -645,7 +645,7 @@ class ParkAndHoldTests(QueueRoutesTestCase):
 
 
 class AgentLimitTests(QueueRoutesTestCase):
-    """Milestone 10: each entry records its submitter and the hold its caller, and the API keeps an agent
+    """Each entry records its submitter and the hold its caller, and the API keeps an agent
     (``X-Framecontrol-Caller: mcp``) off the entries and holds a person made."""
 
     AGENT = {"X-Framecontrol-Caller": "mcp"}

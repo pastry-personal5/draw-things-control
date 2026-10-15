@@ -64,7 +64,7 @@ class ImportHistoryTests(unittest.TestCase):
         return import_history(self.store, self.outputs, clock=NOW)
 
     def test_an_import_after_a_deletion_does_not_bring_the_execution_back(self) -> None:
-        """Milestone 06: a deleted execution's manifest goes with it, so an import cannot bring it back."""
+        """A deleted execution's manifest goes with it, so an import cannot bring it back."""
         path = self.write("walk-job.json", manifest())
         self.assertEqual(self.run_import().imported, 1)
         [row] = self.store.executions.page()

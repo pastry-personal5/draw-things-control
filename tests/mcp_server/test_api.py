@@ -1,4 +1,4 @@
-"""The MCP server's HTTP client (Milestone 10): its copy of reading the token agrees with ``core/client_config.py``'s,
+"""The MCP server's HTTP client: its copy of reading the token agrees with ``core/client_config.py``'s,
 the path rule, and its resources, the job files, read through the API."""
 
 from __future__ import annotations

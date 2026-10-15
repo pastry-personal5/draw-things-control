@@ -1,4 +1,4 @@
-"""Tests for parking a running entry and holding the queue (Milestone 05): the worker's reservation and hold, and the
+"""Tests for parking a running entry and holding the queue: the worker's reservation and hold, and the
 service functions the API calls."""
 
 from __future__ import annotations
@@ -509,7 +509,7 @@ class HoldTests(QueueWorkerCase):
 
 
 class HoldCallerTests(ParkCase):
-    """Milestone 10: the hold records its caller, and an agent never ends, or comes to own, a hold a person made."""
+    """The hold records its caller, and an agent never ends, or comes to own, a hold a person made."""
 
     def queue_hold(self) -> QueueHold:
         return QueueHold(self.store.settings, QueueEventPublisher(None), clock=lambda: NOW)

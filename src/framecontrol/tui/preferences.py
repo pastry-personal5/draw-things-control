@@ -1,4 +1,4 @@
-"""The terminal UI's own preferences (Milestone 04): today only the verbose level, kept in ``config/tui-preferences.yaml``."""
+"""The terminal UI's own preferences: today only the verbose level, kept in ``config/tui-preferences.yaml``."""
 
 from __future__ import annotations
 

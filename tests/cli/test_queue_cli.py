@@ -259,7 +259,7 @@ class QueueCliTests(JobTestCase):
         self.assertEqual(result.exit_code, 130, result.output)
         self.assertEqual(len(cancel_requests), 1)
 
-    # Milestone 05: park, unpark, hold, and release.
+    # Park, unpark, hold, and release.
 
     def entry_detail(self, **changes: Any) -> dict[str, Any]:
         detail = {"queue_id": "Q0001", "state": "running", "job_path": "/jobs/walk.yaml", "execution_id": "E0001", "total_runs": 7, "succeeded": 2, "park_requested": True, "current_run": 3, "between_runs_after_run": None, "cooldown_until": None, "error": None, "held": True, "held_since": "2026-09-29T12:04:05+00:00", "held_by": "Q0001", "resumable": False, "resume_refused_reason": "Q0001 is running"}

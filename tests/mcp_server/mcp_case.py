@@ -1,4 +1,4 @@
-"""The MCP server's tests' shared case (Milestone 10): ``fc serve``'s API in process, over a fake worker, reached
+"""The MCP server's tests' shared case: ``fc serve``'s API in process, over a fake worker, reached
 through ``httpx.ASGITransport`` with a base URL its ``Host`` check accepts, and the MCP server built over it, which the
 SDK's in-memory ``Client`` drives. Never starts ``draw-things-cli``."""
 

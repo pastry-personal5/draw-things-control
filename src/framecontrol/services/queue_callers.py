@@ -1,4 +1,4 @@
-"""Keeping agents off the queue entries and holds people made (Milestone 10). Each entry records the caller that
+"""Keeping agents off the queue entries and holds people made. Each entry records the caller that
 submitted or resumed it, and the hold the caller that made it; an agent (the caller ``mcp``) may cancel, park, unpark,
 or resume only an entry an agent submitted, and release only a hold an agent made. A person's commands are never
 limited. The caller names itself (``X-Framecontrol-Caller``), so this guards agents that use their tools; it adds no level of

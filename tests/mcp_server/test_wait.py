@@ -1,4 +1,4 @@
-"""``get_queue_entry``'s wait (Milestone 10): it follows the API's SSE watch, which an in-process transport collects
+"""``get_queue_entry``'s wait: it follows the API's SSE watch, which an in-process transport collects
 whole, so these tests run the API under uvicorn on a loopback port and the MCP server reaches it over the network. A
 scripted worker changes what each snapshot holds, by the count of snapshots read."""
 

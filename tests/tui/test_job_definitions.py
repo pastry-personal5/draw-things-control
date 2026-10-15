@@ -1,4 +1,4 @@
-"""The Job Definition widget, job IDs, and the blank lines in Messages (Milestone 10)."""
+"""The Job Definition widget, job IDs, and the blank lines in Messages."""
 
 from __future__ import annotations
 

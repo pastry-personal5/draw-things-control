@@ -1,4 +1,4 @@
-"""``fc mcp`` (Milestone 10): an MCP server on stdio, or, from Milestone 13, on Streamable HTTP (``http.py``), whose tools and resources call ``fc serve``'s HTTP API and
+"""``fc mcp``: an MCP server on stdio or on Streamable HTTP (``http.py``), whose tools and resources call ``fc serve``'s HTTP API and
 nothing else. Built on the SDK's low-level ``Server``, not ``MCPServer``: the tools need input schemas written with the
 API's names, a list that changes at runtime, and error results that carry the API's error shape as structured
 content. ``build_server`` is what the tests call; ``run`` is what ``cli/app.py`` calls."""

@@ -1,4 +1,4 @@
-"""The Apple Vision ``Segmenter`` (Milestone 09's increment E): people with ``VNGeneratePersonSegmentationRequest``
+"""The Apple Vision ``Segmenter``: people with ``VNGeneratePersonSegmentationRequest``
 (``balanced``), and faces with ``VNDetectFaceLandmarksRequest``, from a frame's PNG bytes.
 
 pyobjc is imported when a segmenter is made, never at import, as ``checks.py`` imports LittleCMS, so no other command

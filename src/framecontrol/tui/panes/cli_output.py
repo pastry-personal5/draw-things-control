@@ -39,8 +39,8 @@ class GenerationOutput(Vertical):
         self.border_title = "Generation output"
 
     def new_job(self, live: LiveRun, level: VerboseLevel = "high", *, seeded: bool = False) -> None:
-        """A job starts: its output replaces the last job's. ``seeded`` (attaching to one already running,
-        Milestone 03) marks the pane, since the state store never held draw-things-cli's own output: only what
+        """A job starts: its output replaces the last job's. ``seeded`` (attaching to one already running)
+        marks the pane, since the state store never held draw-things-cli's own output: only what
         arrives from here on is ever shown for it."""
         log = self.query_one(RichLog)
         log.clear()

@@ -1,4 +1,4 @@
-"""Tests for deleting executions (Milestone 06): the repository's transaction, and the store's log and manifest files."""
+"""Tests for deleting executions: the repository's transaction, and the store's log and manifest files."""
 
 import os
 from pathlib import Path

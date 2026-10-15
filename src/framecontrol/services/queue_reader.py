@@ -1,5 +1,5 @@
 """The queue, read from the state store: the Queue widget's fallback while the server (and so its API) is down,
-beside ``HistoryReader``'s own fallback for the execution history (Milestone 03). Reading never writes."""
+beside ``HistoryReader``'s own fallback for the execution history. Reading never writes."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ NO_QUEUE = "No queue entries"
 class QueueSnapshot:
     """The active entries (queued and running) and a page of finished ones, exactly as ``GET /queue`` shows them
     with no filter and no cursor -- the Queue widget's read-only fallback needs nothing more -- and the queue's saved
-    hold (Milestone 05), so the TUI shows it while the server is down."""
+    hold, so the TUI shows it while the server is down."""
 
     active: list[QueueRow] = field(default_factory=list)
     finished: list[QueueRow] = field(default_factory=list)

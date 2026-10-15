@@ -1,6 +1,6 @@
 """The audit log: one row for every request the HTTP API's rules cover (submit, cancel, resume, and, from Milestone
 07, create_job, replace_job, delete_job), refused ones included. Never pruned by history_retention_days: its rows are
-small, and it is the record of what agents did (owner decision, phase-3-changelog.md)."""
+small, and it is the record of what agents did (owner decision, docs/archive/phase-3/phase-3-changelog.md)."""
 
 from __future__ import annotations
 

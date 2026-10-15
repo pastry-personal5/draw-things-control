@@ -85,7 +85,7 @@ class ExecutionRepository:
             connection.execute("UPDATE runs SET cooldown_after_seconds = ? WHERE execution_id = ? AND number = ?", (seconds, execution_id, number))
 
     def set_first_image(self, execution_id: int, first_image: str | None) -> None:
-        """Name the execution's first image, or none, once its job has dropped the one it started with (Milestone 09)."""
+        """Name the execution's first image, or none, once its job has dropped the one it started with."""
         with self._database.transaction() as connection:
             connection.execute("UPDATE executions SET first_image = ? WHERE id = ?", (first_image, execution_id))
 
@@ -96,7 +96,7 @@ class ExecutionRepository:
     def page(self, *, limit: int = 50, offset: int = 0, status: str | None = None, name: str | None = None, name_contains: str | None = None, job_file: str | None = None, running_as_interrupted: bool = False) -> list[ExecutionRow]:
         """Executions, newest first, without their runs. ``name`` matches the job name exactly; ``name_contains`` matches
         the job name or the job file's name as a substring, in any ASCII letter case; ``job_file`` matches the exact
-        stored job file path (Milestone 02's ``GET /executions``, filtering by a job reference resolved to one file,
+        stored job file path (``GET /executions``, filtering by a job reference resolved to one file,
         as ``{job}`` is everywhere else, rather than the job's own ``name:``, which is not an identifier).
         ``running_as_interrupted`` is for read-only screens that know no runner is alive: it changes the display
         only, never the database."""
@@ -193,7 +193,7 @@ class ExecutionRepository:
 
     def prune(self, cutoff: float, *, keep: Sequence[int] = ()) -> tuple[int, list[str]]:
         """Delete executions (and their runs) finished before the epoch ``cutoff``, never a ``running`` one, nor one
-        whose number is in ``keep`` (a parked queue entry's, Milestone 05); return how many, and the log files they named."""
+        whose number is in ``keep`` (a parked queue entry's); return how many, and the log files they named."""
         # ``keep`` goes in as one JSON array, not a placeholder each, so no number of kept executions reaches SQLite's
         # limit on bound values.
         condition = "status != 'running' AND finished_epoch IS NOT NULL AND finished_epoch < ? AND (execution_number IS NULL OR execution_number NOT IN (SELECT value FROM json_each(?)))"
@@ -204,7 +204,7 @@ class ExecutionRepository:
         return deleted, log_paths
 
     def delete(self, numbers: Sequence[int], *, in_use: Mapping[int, str], dry_run: bool = False) -> ExecutionDeletion:
-        """Delete the executions with these numbers (and their runs) in one transaction (Milestone 06): never a missing,
+        """Delete the executions with these numbers (and their runs) in one transaction: never a missing,
         ``running``, or in-use one (``in_use`` maps an execution number to the reason it is used). ``dry_run`` reads
         and reports the same, deleting nothing."""
         deleted: list[DeletedExecution] = []

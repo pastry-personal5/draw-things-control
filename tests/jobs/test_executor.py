@@ -488,7 +488,7 @@ class JobExecutorTests(JobTestCase):
 
     def test_upright_input_at_the_target_is_copied_at_scale_1(self) -> None:
         # The 832x448 input already has the calculated size, however the keys reach it (850 floors to 832), or no key
-        # at all: run 1 still reads an 8-bit sRGB copy (owner decision, Milestone 09).
+        # at all: run 1 still reads an 8-bit sRGB copy (owner decision).
         for keys in ({}, {"desired_input_width": 832}, {"desired_input_width": 850}, {"desired_input_height": 470}, {"desired_input_width": 832, "desired_input_height": 448}, {"desired_input_width": 832, "max_input_crop_percent": 0}):
             with self.subTest(keys=keys):
                 self.calls.clear()
@@ -957,7 +957,7 @@ class JobExecutorTests(JobTestCase):
         self.assertEqual(outcome.completed_runs, 4)
         self.assertFalse(any("resized" in str(arguments.image) for arguments, _t, _g in self.calls))
 
-    # Park (Milestone 05): the job ends at a run boundary, keeping every run it finished.
+    # Park: the job ends at a run boundary, keeping every run it finished.
 
     def park_during_run(self, number: int, *, then: Callable[[], object] | None = None) -> None:
         """Park the job from inside run ``number`` (as another thread would, while draw-things-cli runs), then call ``then``."""

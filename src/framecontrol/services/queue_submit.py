@@ -27,7 +27,7 @@ from framecontrol.state.store import Store
 # A worker's own insert-and-publish method (``QueueWorker.enqueue``), threaded through so the actual DB insert and
 # its 'queued' event happen under the worker's own claim lock, and can therefore never interleave with a claim (a
 # plain ``store.queue.submit`` call here would let the worker claim the entry and publish 'running' before this
-# publishes 'queued': Milestone 02's event-order fix, see routes_queue.py and queue_worker.py). A plain type alias,
+# publishes 'queued'; see routes_queue.py and queue_worker.py). A plain type alias,
 # not ``QueueWorker`` itself: ``queue_worker.py`` already imports this module for ``parse_snapshot``, and importing
 # back would cycle.
 Enqueue = Callable[[Callable[[], QueueRow]], QueueRow]
@@ -43,7 +43,7 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
     02's own API rules and limits), so what it checks is what runs, not an earlier read of a file that may have
     changed since, and before the input image is decoded; it raising refuses the submission and stores nothing.
     ``enqueue`` does the actual insert and publish, as described above; None (most tests) inserts directly.
-    ``submitted_by`` is the request's caller, which the entry records (Milestone 10).
+    ``submitted_by`` is the request's caller, which the entry records.
     """
     path = job_path.expanduser().resolve()
     try:

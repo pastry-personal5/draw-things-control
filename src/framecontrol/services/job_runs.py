@@ -1,6 +1,6 @@
 """Run a job on this machine with its execution recorded: the use case behind the queue worker, the only thing that
-still runs one directly since Milestone 03 retired every other way (``run-job``, and the TUI's own direct-execution
-path)."""
+still runs one directly (``run-job`` and the TUI's own direct-execution
+path are retired)."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class JobRunSession:
         on_reserved: Callable[[str], None] | None = None,
     ) -> JobOutcome:
         """Run ``job`` and record it. ``holder`` names the process in the lock file (the queue worker's own
-        ``SERVER_HOLDER_NAME``, the only caller since Milestone 03). ``observers`` see
+        ``SERVER_HOLDER_NAME``, the only caller). ``observers`` see
         each event after the recorder. ``before_run`` is called with the store and the recorder once the lock is held and
         before the job starts. A ``lock`` the caller already holds is used, and left held; without one, this takes and
         releases its own. ``resume`` continues an interrupted chain instead of starting at run 1. ``on_reserved`` is

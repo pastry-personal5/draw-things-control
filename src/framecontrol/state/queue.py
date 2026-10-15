@@ -28,22 +28,22 @@ class QueueState(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
-    # Ended at a run boundary because it was parked (Milestone 05); a resume continues it at the next run.
+    # Ended at a run boundary because it was parked; a resume continues it at the next run.
     PARKED = "parked"
 
 
 # Entries in one of these states never run again on their own; they are what a resume, a cancel, or history retention act on.
 FINISHED_STATES = (QueueState.SUCCEEDED, QueueState.FAILED, QueueState.CANCELLED, QueueState.INTERRUPTED, QueueState.PARKED)
 _FINISHED_STATES_SQL = ", ".join(f"'{state}'" for state in FINISHED_STATES)
-# The entries retention keeps for a parked one (Milestone 05): the parked entry and every entry of the chain that
+# The entries retention keeps for a parked one: the parked entry and every entry of the chain that
 # resumes it (a resume, a resume of that resume, and so on), until one of those has a succeeded run. Until then, a
 # resume that was cancelled, or whose first run failed, still walks back through the resumes between to the parked
 # entry; keeping them also keeps the parked entry from reading as never resumed, and so being resumed a second time.
-# Milestone 06: nor once a finished entry of the chain links an execution that no longer exists (deleted): the newest
+# Nor are they kept once a finished entry of the chain links an execution that no longer exists (deleted): the newest
 # resume would walk back to it and be refused, so nothing in the chain can be resumed. A running entry does not count,
 # since it links its execution number before JobStarted creates the row.
 _KEPT_PARKED_SQL = "WITH RECURSIVE chain(root, queue_number, execution_number, state) AS (SELECT queue_number, queue_number, execution_number, state FROM queue WHERE state = 'parked' UNION ALL SELECT chain.root, queue.queue_number, queue.execution_number, queue.state FROM queue JOIN chain ON queue.resumes = chain.queue_number) SELECT DISTINCT queue_number, execution_number FROM chain WHERE root NOT IN (SELECT chain.root FROM chain JOIN executions ON executions.execution_number = chain.execution_number JOIN runs ON runs.execution_id = executions.id WHERE chain.queue_number != chain.root AND runs.status = 'succeeded') AND root NOT IN (SELECT chain.root FROM chain LEFT JOIN executions ON executions.execution_number = chain.execution_number WHERE chain.execution_number IS NOT NULL AND executions.id IS NULL AND chain.state NOT IN ('queued', 'running'))"
-# Every entry with what a resume chain's walk reads of its linked execution (Milestone 06's in-use refusal and resume
+# Every entry with what a resume chain's walk reads of its linked execution (a deletion's in-use refusal and resume
 # warning): whether the row still exists, its run count, and its last succeeded run.
 _RESUME_LINKS_SQL = "SELECT queue.queue_number, queue.state, queue.execution_number, queue.resumes, queue.resumes_execution, executions.id IS NOT NULL AS execution_exists, executions.total_runs AS execution_total_runs, (SELECT MAX(runs.number) FROM runs WHERE runs.execution_id = executions.id AND runs.status = 'succeeded') AS last_succeeded FROM queue LEFT JOIN executions ON executions.execution_number = queue.execution_number ORDER BY queue.queue_number"
 
@@ -82,7 +82,7 @@ class NewQueueEntry:
     settings: ExecutionSettings
     submitted_at: str
     # The whole chain's run count (job.run_count), set once at submission or resume, so a queued entry -- or one
-    # with no linked execution yet -- can still show "run 0/N" (Milestone 03); the same value JobFinished.total_runs
+    # with no linked execution yet -- can still show "run 0/N"; the same value JobFinished.total_runs
     # carries, unaffected by where a resume starts.
     total_runs: int
     # The queue number (Q0007) this entry resumes, the execution its resume point's last succeeded run came from
@@ -92,10 +92,10 @@ class NewQueueEntry:
     resume_first_run: int | None = None
     resume_input: str | None = None
     resume_seed: int | None = None
-    # The resumed execution's first image and the anchor of the run it continues after (schema 8, Milestone 09).
+    # The resumed execution's first image and the anchor of the run it continues after (schema 8).
     resume_first_image: str | None = None
     resume_anchor: str | None = None
-    # The caller that submitted or resumed it (schema 9, Milestone 10): cli, tui, mcp, or api.
+    # The caller that submitted or resumed it (schema 9): cli, tui, mcp, or api.
     submitted_by: str | None = None
     # Tagged snapshot fields added in schema 10. Existing job callers retain their old columns and receive the
     # matching snapshot automatically in ``submit``; generation callers set these explicitly.
@@ -137,10 +137,10 @@ class QueueRow:
     # in the linked execution (list_active, list_finished), 0 from get()/by_number()/list(), which do not.
     total_runs: int | None = None
     succeeded: int = 0
-    # The resumed execution's first image and the anchor of the run it continues after (schema 8, Milestone 09).
+    # The resumed execution's first image and the anchor of the run it continues after (schema 8).
     resume_first_image: str | None = None
     resume_anchor: str | None = None
-    # The caller that submitted or resumed it (schema 9, Milestone 10); None for an entry made before, a person's.
+    # The caller that submitted or resumed it (schema 9); None for an entry made before, a person's.
     submitted_by: str | None = None
     kind: str = "job"
     snapshot: str | None = None
@@ -253,11 +253,11 @@ class QueueRepository:
 
     def list_active(self, *, state: str | None = None) -> list[QueueRow]:
         """Every queued or running entry (or, given ``state``, only the ones in it), oldest first: never paged
-        (``GET /queue``, Milestone 02), since the queue itself is bounded by ``max_queued_jobs`` and only one entry
+        (``GET /queue``), since the queue itself is bounded by ``max_queued_jobs`` and only one entry
         is ever running at once. Ordering by ``queue_number`` alone already reads as 'the running entry, if any,
         then the queued ones in FIFO order': the worker always claims the smallest queue number among these, so a
         running entry's own number is the smallest of the set. ``state``, joined like the unfiltered read, is what
-        ``GET /queue?state=queued`` reads (Milestone 03): the plain ``list(state=...)`` below is unjoined, and
+        ``GET /queue?state=queued`` reads: the plain ``list(state=...)`` below is unjoined, and
         always reported ``succeeded`` as 0 for an active entry until this existed."""
         clauses = ["queue.state IN ('queued', 'running')"]
         values: list[Any] = []
@@ -343,7 +343,7 @@ class QueueRepository:
     def kept_parked(self) -> list[tuple[int, int | None]]:
         """The entries retention keeps for parked ones, as (queue number, linked execution number): each parked entry
         and the chain of resumes below it, until one of those resumes has a succeeded run, or a finished entry of it
-        links an execution that was deleted (Milestone 06). Read once, before anything
+        links an execution that was deleted. Read once, before anything
         is pruned (``Store.prune``): pruning the resume's execution first would otherwise hide the succeeded run that
         lets the chain go."""
         return [(row["queue_number"], row["execution_number"]) for row in self._database.connection().execute(_KEPT_PARKED_SQL)]

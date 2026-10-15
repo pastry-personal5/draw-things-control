@@ -1,4 +1,4 @@
-"""Tests for deleting executions (Milestone 06): the in-use refusal, the resume warning, dry runs, and a resume after a
+"""Tests for deleting executions: the in-use refusal, the resume warning, dry runs, and a resume after a
 deletion."""
 
 from __future__ import annotations

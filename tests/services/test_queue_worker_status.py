@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
 
 class BetweenRunsTests(unittest.TestCase):
-    """Milestone 05: the run the entry is between runs after, which a front end words a park's outcome from."""
+    """The run the entry is between runs after, which a front end words a park's outcome from."""
 
     def test_it_lasts_from_a_succeeded_run_through_its_cooldown_until_the_next_run_starts(self) -> None:
         status = WorkerStatus(clock=lambda: NOW)

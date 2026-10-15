@@ -44,7 +44,7 @@ def read_details(path: Path, settings: GlobalConfig, paths: ProjectPaths, *, bac
 def add_plan(details: JobDetails, toolkit: Toolkit, executable: str) -> JobDetails:
     """The details with the job's dry-run plan, using the placeholder seed when the job sets none.
 
-    Builds its own preview-only executor from ``toolkit`` (Milestone 03: since the TUI never runs a job itself any
+    Builds its own preview-only executor from ``toolkit`` (since the TUI never runs a job itself any
     more, it holds no ``JobExecutor`` of its own to pass in; a preview needs no signal handling, since nothing here
     is ever cancelled)."""
     assert details.job is not None

@@ -66,7 +66,7 @@ def violations(files: dict[str, str]) -> list[str]:
 
 # gRPC stubs make proto generates from server/proto/monitor.proto: not committed, not hand-written, not held to
 # this project's import rules or size limits (see the pyproject.toml ruff and pyright exclusions for the same). One
-# copy per front end with a gRPC client (Milestone 02 design decision: front ends never import each other, so cli/
+# copy per front end with a gRPC client (front ends never import each other, so cli/
 # and tui/ each need their own copy of the client stubs server/generated holds for server/ itself).
 GENERATED_DIR_NAME = "generated"
 
@@ -160,7 +160,7 @@ class RuleTests(unittest.TestCase):
 
 class McpServerImportTests(unittest.TestCase):
     def test_the_mcp_server_imports_no_grpc(self) -> None:
-        """It watches an entry over the API's SSE watch (Milestone 10), so it needs no gRPC client and no stubs."""
+        """It watches an entry over the API's SSE watch, so it needs no gRPC client and no stubs."""
         found = {module: sorted(name for name in imports_of(source) if name.split(".")[0] == "grpc" or ".generated" in name) for module, source in package_files().items() if module.startswith(f"{PACKAGE}.mcp_server")}
         self.assertTrue(found, "no mcp_server modules found")
         self.assertEqual({module: names for module, names in found.items() if names}, {})

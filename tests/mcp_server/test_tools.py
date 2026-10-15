@@ -1,4 +1,4 @@
-"""The MCP server's read, run, and queue control tools (Milestone 10), through the SDK's in-memory client, with the API
+"""The MCP server's read, run, and queue control tools, through the SDK's in-memory client, with the API
 in process: each tool calls its endpoint and returns its body, as structured content and as text; arguments are
 checked before any request; and no argument reaches an endpoint other than its tool's."""
 

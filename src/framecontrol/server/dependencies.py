@@ -1,6 +1,6 @@
 """FastAPI dependencies shared by the routes: bearer-token authentication and pagination. The ``X-Framecontrol-Caller``
 header is resolved by each audited route itself (``routes_queue.py``), not a shared dependency here: an unknown
-value must still be recorded (Milestone 02's audit fix, phase-3 changelog 2026-09-28), which means raising it inside
+value must still be recorded (the audit fix: docs/archive/phase-3/phase-3-changelog.md, 2026-09-28), which means raising it inside
 the route's own ``audited()`` block rather than as a dependency that fails before that block ever opens."""
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def get_page(limit: int | None = None, cursor: str | None = None) -> Page:
 
 
 def get_brief(brief: str | None = None) -> bool:
-    """``?brief=1`` (Milestone 10): the smaller view of an execution or a job, for an agent that reads every byte.
+    """``?brief=1``: the smaller view of an execution or a job, for an agent that reads every byte.
     Any other value is refused, naming ``brief``, as ``overwrite`` is."""
     if brief not in (None, "1"):
         raise InputError("'brief' must be 1", field="brief")

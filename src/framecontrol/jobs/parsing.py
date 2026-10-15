@@ -452,7 +452,7 @@ class JobParser:
         return DEFAULT_COOLDOWN, "default"
 
     def _color(self, value: Any, mode: GenerationMode) -> ColorPolicy:
-        """The ``color`` block (Milestone 09): each key checked and named as ``color.<key>`` on error."""
+        """The ``color`` block: each key checked and named as ``color.<key>`` on error."""
         if value is None:
             return ColorPolicy()
         if not mode.is_video:

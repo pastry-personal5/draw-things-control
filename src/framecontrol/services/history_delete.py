@@ -1,4 +1,4 @@
-"""Deleting executions from the history (Milestone 06): which ones a queued or running entry still uses, which resumes
+"""Deleting executions from the history: which ones a queued or running entry still uses, which resumes
 a deletion ends, and the deletion itself, checked and done under one lock."""
 
 from __future__ import annotations

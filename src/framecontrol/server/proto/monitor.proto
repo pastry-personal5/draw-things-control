@@ -2,14 +2,14 @@ syntax = "proto3";
 
 package framecontrol.monitor;
 
-// Watching for change (Milestone 02): a grpc.aio.server() beside uvicorn in the same `fc serve` process, not an
+// Watching for change: a grpc.aio.server() beside uvicorn in the same `fc serve` process, not an
 // HTTP endpoint, since nothing here writes (writes stay HTTP POST). Authentication is a server interceptor reading
 // the "authorization" metadata key ("Bearer <token>"), the same bearer token as the HTTP API; missing or wrong, the
 // call ends UNAUTHENTICATED. `tui/` and `cli/` (`fc queue add --wait`) each import their own generated client stubs
 // from this same file; only `server/` imports the generated server code. `mcp_server/` watches an entry over the
-// HTTP API's SSE watch (`GET /v1/queue/{id}/watch`, Milestone 10), which sends WatchQueueEntry's snapshots.
+// HTTP API's SSE watch (`GET /v1/queue/{id}/watch`), which sends WatchQueueEntry's snapshots.
 service Monitor {
-  // Replaces GET /events: the Phase 2 job events (jobs/events.py's event_to_dict) and the queue's own (an entry's
+  // Replaces GET /events: the job events (jobs/events.py's event_to_dict) and the queue's own (an entry's
   // state change, and the start and end of a between-jobs wait, each naming the entry). Event.id increases within
   // one run of the server; a client reconnecting with an earlier run's ID, or one older than the server's bounded
   // in-memory backlog, gets a Reset event and should read the state again over HTTP before resubscribing.
@@ -30,13 +30,13 @@ message WatchEventsRequest {
 message Event {
   int64 id = 1;
   // One of jobs/events.py's EVENT_KINDS (job_started, run_started, run_output, run_finished, cooldown_started,
-  // cooldown_ended, media_checked, first_image_dropped, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended, and,
-  // from Milestone 05, queue_park_changed, queue_held, queue_released), or "reset" (data_json empty: the client's
+  // cooldown_ended, media_checked, first_image_dropped, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended,
+  // queue_park_changed, queue_held, queue_released), or "reset" (data_json empty: the client's
   // last_event_id is unusable, and it should re-sync over HTTP).
   string kind = 2;
   // The event's own fields, exactly as event_to_dict (or the queue's own equivalent mapping) produces them, as
   // JSON: one generic payload instead of one message per event kind, since every client already reads this same
-  // shape from the job event stream Phase 2 defined; a typed message per kind would just duplicate that schema.
+  // shape from the job event stream; a typed message per kind would just duplicate that schema.
   string data_json = 3;
 }
 
@@ -58,13 +58,13 @@ message QueueEntrySnapshot {
   // set together, or neither before the first reading arrives.
   optional int32 current_step = 8;
   optional int32 current_step_total = 9;
-  // The whole chain's run count (state/queue.py's own total_runs, Milestone 03), so `fc queue add --wait` can
+  // The whole chain's run count (state/queue.py's own total_runs), so `fc queue add --wait` can
   // print "run 3/7" the way the Queue widget does, from the entry's stored column alone.
   optional int32 total_runs = 10;
-  // Milestone 05: whether the entry has a park reservation (it ends once its current run finishes), and whether the
+  // Whether the entry has a park reservation (it ends once its current run finishes), and whether the
   // queue is held, so `fc queue add --wait` can say its queued entry waits behind a hold. Both always set.
   optional bool park_requested = 11;
   optional bool queue_held = 12;
-  // ``job`` or ``generate`` (Milestone 12), so a watcher never has to infer a one-off from an empty job path.
+  // ``job`` or ``generate``, so a watcher never has to infer a one-off from an empty job path.
   string kind = 13;
 }

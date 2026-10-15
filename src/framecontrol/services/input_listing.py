@@ -1,4 +1,4 @@
-"""Images available as a job's ``input`` (Milestone 02's ``GET /inputs``): every regular file under the input
+"""Images available as a job's ``input`` (``GET /inputs``): every regular file under the input
 directory whose header Pillow reads as an image, by the relative path a job's ``input`` takes."""
 
 from __future__ import annotations

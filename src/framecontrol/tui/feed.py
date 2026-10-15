@@ -1,4 +1,4 @@
-"""The TUI's one gRPC connection to ``fc serve`` (Milestone 03): ``WatchEvents`` (``include_output`` unless the verbose level is low, Milestone 04) feeds both
+"""The TUI's one gRPC connection to ``fc serve``: ``WatchEvents`` (``include_output`` unless the verbose level is low) feeds both
 the Queue list and the generation output, since the TUI no longer runs a job itself to read events from
 directly. Reconnects on any drop, replaying the gap when the server never went down in between, and reseeding
 (``GET /queue?state=running``, ``GET /queue/{id}``, ``GET /executions/{id}``) exactly as attaching does otherwise.

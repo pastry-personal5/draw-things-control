@@ -63,8 +63,8 @@ def floor_to_step(value: int | Fraction) -> int:
 class ResizePlan:
     """How the first input becomes the job's size: the target, the fit, and the scaled picture.
 
-    Run 1 always reads a copy: upright, alpha flattened, sRGB, 8-bit, at exactly the target (owner decision,
-    Milestone 09). ``fit`` is ``none`` (upright and already the target; copied at scale 1), ``rotate`` (already the
+    Run 1 always reads a copy: upright, alpha flattened, sRGB, 8-bit, at exactly the target (owner decision).
+    ``fit`` is ``none`` (upright and already the target; copied at scale 1), ``rotate`` (already the
     target once upright), ``scale`` (scaled to exactly the target: no crop and no bars), ``crop``, or ``letterbox``.
     ``box`` is the area of the upright input that is resampled; ``None`` means all of it.
     """

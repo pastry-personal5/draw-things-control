@@ -3,7 +3,7 @@
 The rule (owner decision, 2026-09-30, superseding "honor the header" the same day): when the pixels tell which
 matrix encoded them (``fingerprint.py``, for 4:4:4 at 10 bits or more, such as ProRes 4444), that matrix is used;
 otherwise the one the stream states; BT.709 limited range when it states none, which is how Draw Things encodes its
-untagged H.264 (Phase 2's measurement). Draw Things' ProRes states BT.601 for smaller frames (832x448, 448x576) and
+untagged H.264 (``docs/research/prores-color-matrix.md``). Draw Things' ProRes states BT.601 for smaller frames (832x448, 448x576) and
 BT.709 for larger ones, while its pixels are always BT.709, so the header alone cannot be trusted. The stream is read
 from its first frame, before the tagger runs: ffmpeg decodes with the frame's color, and once a ``colr`` box is
 added, ffprobe's stream-level value reports the box instead.

@@ -141,7 +141,7 @@ class HostValidationTests(JobTestCase):
 
 
 class BindFailureTests(JobTestCase):
-    """The startup-order fix (Milestone 02, phase-3 changelog 2026-09-28): both ports are bound, inside
+    """The startup-order fix (docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): both ports are bound, inside
     ``_serve_async``, before ``host.start_worker()`` runs, so a taken port raises ``InputError`` before the worker's
     thread ever starts, instead of it claiming a queued entry that the late bind failure then tears down as
     ``interrupted``."""

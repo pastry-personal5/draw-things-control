@@ -1,4 +1,4 @@
-"""How a park reservation and its outcome are worded (Milestone 05), shared by ``fc queue`` and the TUI, so both word
+"""How a park reservation and its outcome are worded, shared by ``fc queue`` and the TUI, so both word
 the same outcome the same way; only the release command a hint names differs. It imports nothing of the worker, so a
 front end loads none of it for the words."""
 

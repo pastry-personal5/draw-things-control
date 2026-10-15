@@ -1,4 +1,4 @@
-"""The HTTP client of the commands that call ``fc serve``'s API (``fc queue``, and, from Milestone 06, ``fc history``):
+"""The HTTP client of the commands that call ``fc serve``'s API (``fc queue`` and ``fc history``):
 its options, and how an unreachable server, a refused token, or an API error ends a command. ``httpx`` is imported
 only inside the functions, so a command that never calls the API does not load it."""
 

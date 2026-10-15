@@ -1,4 +1,4 @@
-"""A bounded, in-memory backlog of events for the gRPC ``WatchEvents`` RPC (Milestone 02): the Phase 2 job events
+"""A bounded, in-memory backlog of events for the gRPC ``WatchEvents`` RPC: the job events
 (``event_to_dict``) and the queue's own, each appended once and read by every watching client."""
 
 from __future__ import annotations

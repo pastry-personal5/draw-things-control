@@ -1,5 +1,5 @@
 """The executions a queue entry's resume chain reads: the one definition a resume (``queue_resume._resolve_chain``)
-and a deletion's in-use refusal and resume warning (``history_delete.py``, Milestone 06) share."""
+and a deletion's in-use refusal and resume warning (``history_delete.py``) share."""
 
 from __future__ import annotations
 

@@ -162,5 +162,5 @@ class StateCliTests(JobTestCase):
         self.assertEqual(self.invoke("import-history", "--directory", str(self.root)).exit_code, 0)
 
     def test_import_history_takes_no_write_flag(self) -> None:
-        # --allow-write belongs to `fc serve`; Milestone 07's commit added it here too by mistake.
+        # --allow-write belongs to `fc serve` alone; this command does not take it.
         self.assertEqual(self.invoke("import-history", "--allow-write").exit_code, 2)

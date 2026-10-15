@@ -1,4 +1,4 @@
-"""A correcting job through the real media tools (Milestone 09): extraction, checks, and the lazily loaded correction,
+"""A correcting job through the real media tools: extraction, checks, and the lazily loaded correction,
 with a runner that writes Draw Things-like ProRes instead of starting draw-things-cli."""
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class CorrectingJobWithRealToolsTests(JobTestCase):
                 self.assertTrue((directory / name).is_file(), name)
             self.assertEqual(run.corrected_output, f"{stem}-cc.mov")
             self.assertEqual((manifest["runs"][number - 1]["anchor"], manifest["runs"][number - 1]["corrected_output"]), (started.first_image, run.corrected_output))
-            # Draw Things' file keeps every pixel; only Milestone 08's colr tag is added.
+            # Draw Things' file keeps every pixel; only the colr tag is added.
             self.assertEqual(decoded(directory / run.output), decoded(ClipRunner.written[directory / run.output]))
             # Each run's checks, after its video's: the handoff's, one drift check, the copy's, then the correction's.
             stages = [event.stage for event in events if isinstance(event, MediaChecked) and event.run == number]

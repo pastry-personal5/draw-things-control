@@ -1,5 +1,5 @@
-"""What the queue worker is doing right now, for ``GET /queue``, ``GET /queue/{id}``, and ``WatchQueueEntry``
-(Milestone 02): idle, running, or cooling down between jobs; the current run and when it started; and when the
+"""What the queue worker is doing right now, for ``GET /queue``, ``GET /queue/{id}``, and ``WatchQueueEntry``:
+idle, running, or cooling down between jobs; the current run and when it started; and when the
 between-jobs wait ends. Kept separate from ``QueueWorker``'s own claim and cancel bookkeeping, with its own lock, so
 that class's body stays under the project's size limit."""
 
@@ -22,7 +22,7 @@ class WorkerStatus:
         self._current_run_started_epoch: float | None = None
         self._current_step: tuple[int, int] | None = None
         # The succeeded run the claimed entry is between runs after, until its next run starts, a cooldown between the
-        # two included (Milestone 05); apart from _cooldown_until, the wait between two queued jobs, None while a job runs.
+        # two included; apart from _cooldown_until, the wait between two queued jobs, None while a job runs.
         self._between_runs_after: int | None = None
 
     def entry_claimed(self) -> None:
@@ -65,7 +65,7 @@ class WorkerStatus:
                 self._between_runs_after = event.after_run
 
     def generation_started(self) -> None:
-        """Mark the one run of a Milestone 12 entry live; it has no job events to observe."""
+        """Mark the one run of a one-off generation entry live; it has no job events to observe."""
         with self._lock:
             self._current_run, self._current_run_started_epoch, self._current_step = 1, self._clock().timestamp(), None
 
@@ -101,7 +101,7 @@ class WorkerStatus:
 
     def between_runs_after(self) -> int | None:
         """The succeeded run the claimed entry is between runs after, a cooldown included, until its next run starts;
-        None while a run is going, before the first, or when nothing is claimed (Milestone 05: a front end words a
+        None while a run is going, before the first, or when nothing is claimed (a front end words a
         park's outcome from it, since a park between two runs takes effect after that run)."""
         with self._lock:
             return self._between_runs_after

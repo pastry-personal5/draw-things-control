@@ -58,7 +58,7 @@ class ListInputsTests(unittest.TestCase):
 
 
 class ListInputsCacheTests(unittest.TestCase):
-    """``cache`` (Milestone 02's efficiency fix, phase-3 changelog 2026-09-28): a file already listed is read again
+    """``cache`` (the efficiency fix: docs/archive/phase-3/phase-3-changelog.md, 2026-09-28): a file already listed is read again
     only when its modification time or size changed."""
 
     def setUp(self) -> None:

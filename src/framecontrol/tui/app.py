@@ -43,7 +43,7 @@ LOW_NOTICE = "Verbose level: low. Bare output is hidden and status updates once 
 class FramecontrolApp(App[None]):
     """Browse the jobs in a data directory and the server's queue and history; browsing writes nothing.
 
-    Milestone 03: this process never starts ``draw-things-cli`` itself. ``/apply`` (and ``/queue add``) submit to
+    This process never starts ``draw-things-cli`` itself. ``/apply`` (and ``/queue add``) submit to
     the queue over the HTTP API; the running job's own events, and every queue change, arrive over one gRPC
     ``WatchEvents`` connection (``tui/feed.py``), fed by the server's worker, the only thing that still runs one.
     """
@@ -66,7 +66,7 @@ class FramecontrolApp(App[None]):
         self.token_file = token_file
         self.allow_remote_server = allow_remote_server
         # Only for the Jobs list's offline dry-run plan preview (services/job_details.py's add_plan):
-        # the TUI never runs a job through it any more (Milestone 03), so a test's own FakeToolkit needs no runner.
+        # the TUI never runs a job through it any more, so a test's own FakeToolkit needs no runner.
         self.toolkit = toolkit or Toolkit()
         self.http_transport = http_transport
         self.grpc_stub_factory = grpc_stub_factory
@@ -79,15 +79,15 @@ class FramecontrolApp(App[None]):
         # A park reservation made or withdrawn for pending_queue_id before its JobStarted: applied then, and cleared.
         self.pending_park_requested = False
         self.feed_connected = False
-        # The queue's hold (Milestone 05), from every queue read: the API's while the server is up, the store's while
+        # The queue's hold, from every queue read: the API's while the server is up, the store's while
         # it is down. Shown in the Queue list's title and, while no job runs, the work status.
         self.queue_hold = HoldState()
-        # How much of draw-things-cli's output the TUI streams and shows (Milestone 04); read once, changed by /verbose.
+        # How much of draw-things-cli's output the TUI streams and shows; read once, changed by /verbose.
         self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
         # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
         self._low_notice_due = self.verbose_level == "low"
         self._feed = QueueFeed(self)
-        # Whether a deletion (Milestone 06) is being asked about or sent.
+        # Whether a deletion is being asked about or sent.
         self._deleting = False
         self.signals = SignalGuard(self.handle_signal)
         self.quit_press = QuitPress(QUIT_PRESS_SECONDS)
@@ -161,7 +161,7 @@ class FramecontrolApp(App[None]):
     def handle_signal(self, received: signal.Signals) -> None:
         """SIGHUP, SIGINT, or SIGTERM: exit at once, with the code the CLI would give the same signal. Nothing here
         needs stopping first -- fc serve is the only thing that ever runs a job now, and quitting the TUI does not
-        touch it (Milestone 03)."""
+        touch it."""
         self.exit(return_code=exit_code_for_signal(received))
 
     @property
@@ -199,7 +199,7 @@ class FramecontrolApp(App[None]):
 
     async def action_quit(self) -> None:
         """Ends the app at once, whether or not a job is running: fc serve is what runs it, and quitting the TUI
-        does not stop that (Milestone 03, the same change /apply's own retirement makes)."""
+        does not stop that."""
         self.exit()
 
     def start_flow(self, path: Path) -> None:
@@ -340,7 +340,7 @@ class FramecontrolApp(App[None]):
         self.delete_executions(DeleteSelection(tuple(numbers)))
 
     def delete_executions(self, selection: DeleteSelection) -> None:
-        """``d`` and ``/delete`` (Milestone 06), through the API. One deletion is asked about at a time: a second one
+        """``d`` and ``/delete``, through the API. One deletion is asked about at a time: a second one
         while a dialog is open is refused rather than stacked on it."""
         if self._deleting:
             self.say("A deletion is already being asked about", "yellow")

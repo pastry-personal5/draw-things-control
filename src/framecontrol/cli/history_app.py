@@ -1,4 +1,4 @@
-"""``fc history``: deleting executions from the history (Milestone 06), through fc serve's API, as the TUI does. The
+"""``fc history``: deleting executions from the history, through fc serve's API, as the TUI does. The
 selection is read in full, and checked with a dry run of the same endpoint, before anything is deleted."""
 
 from __future__ import annotations

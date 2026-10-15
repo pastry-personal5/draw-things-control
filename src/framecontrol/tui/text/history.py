@@ -9,7 +9,7 @@ from rich.text import Text
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.tui.text.common import STATUS_STYLE
 
-# Before the ID of a row marked for deletion (Milestone 06): a prefix, not a column of its own, which would widen
+# Before the ID of a row marked for deletion: a prefix, not a column of its own, which would widen
 # the pane past its narrowest (36 columns) with no rows at all.
 MARK = "*"
 

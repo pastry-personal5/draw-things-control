@@ -341,7 +341,7 @@ class ExecutionTests(StoreCase):
 
 
 class IdTests(StoreCase):
-    """Milestone 10: execution numbers and job numbers, which only go up, and the remembered settings."""
+    """Execution numbers and job numbers, which only go up, and the remembered settings."""
 
     def number(self, execution_id: int) -> int:
         return self.stored(execution_id).execution_number
@@ -428,7 +428,7 @@ class MilestoneTenDatabaseTests(StoreCase):
 
 
 class SchemaEightTests(StoreCase):
-    """Milestone 09's columns: each run's anchor and corrected copy, the execution's first image, and a queued resume's."""
+    """The color columns: each run's anchor and corrected copy, the execution's first image, and a queued resume's."""
 
     def test_a_version_7_database_gains_the_color_columns_with_its_rows_kept(self) -> None:
         from framecontrol.state.schema import MIGRATIONS
@@ -465,7 +465,7 @@ class SchemaEightTests(StoreCase):
 
 
 class SchemaNineTests(StoreCase):
-    """Milestone 10's column: each queue entry's submitter."""
+    """Each queue entry's submitter."""
 
     def test_a_version_8_database_with_queue_entries_gains_the_submitter_with_its_rows_kept(self) -> None:
         from framecontrol.state.schema import MIGRATIONS
@@ -496,7 +496,7 @@ class SchemaNineTests(StoreCase):
 
 
 class SchemaTenTests(StoreCase):
-    """Milestone 12's tagged queue snapshots and generated-execution source kind."""
+    """Tagged queue snapshots and generated-execution source kind."""
 
     def test_a_version_9_job_and_resume_row_keep_their_meaning_in_a_job_snapshot(self) -> None:
         from framecontrol.state.schema import MIGRATIONS
