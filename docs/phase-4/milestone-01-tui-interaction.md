@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 4](README.md)
 **Status:** done
-**Depends on:** Phase 3's TUI, including its focusable lists, execution detail, status line, and Textual event feed.
+**Depends on:** [Phase 3](../archive/phase-3/README.md)'s TUI, including its focusable lists, execution detail, status line, and Textual event feed.
 
 ## Goal
 

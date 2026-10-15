@@ -35,11 +35,9 @@ The rules for changing `framecontrol`, for people and AI agents alike.
 - Subpackages: `core/` (paths, errors, arguments, configuration, the runner),
   `jobs/` (job definition and parsing, the executor, records, inputs, media),
   `state/` (the SQLite store), `services/` (the use cases front ends share),
-  `cli/` (Typer app), `tui/`, and, in phase 3, `server/` and `mcp_server/`.
-- Dependencies point one way: `cli`, `tui`, `server` -> `services` -> `state` ->
-  `jobs` -> `core`. `tests/test_architecture.py` fails on an import against it. Front ends never import each other, except that three
-  commands in `cli/app.py` start one: `fc tui` the TUI app, `fc serve` the HTTP API and gRPC service, and `fc mcp` the MCP server (none of those imports `cli`); `mcp_server` imports nothing else from the package and talks to
-  `server` over HTTP only, with no gRPC.
+  `cli/` (Typer app), `tui/`, `server/`, and `mcp_server/`.
+- Dependencies point one way, from the front ends down to `core`, and front ends never import each other (the exceptions are in
+  [architecture.md](architecture.md#source-layout)). `tests/test_architecture.py` fails on an import against it.
 - Imports are absolute (`from framecontrol.core... import ...`).
 - Entry point: the `fc` console script, or `python -m framecontrol`.
 - No module holds a path of its own: a directory comes from `ProjectPaths`
@@ -77,11 +75,15 @@ Keep documents current in the same change that alters behavior.
 | Document | Purpose |
 |----------|---------|
 | `README.md` | Concise overview and quick start |
-| [user-guide.md](user-guide.md) | How a person uses the CLI |
+| [docs/README.md](README.md) | Index of the project documents |
+| [user-guide.md](user-guide.md) | How a person uses every interface |
+| [ux-terms.md](ux-terms.md) | Canonical names for the TUI's visible components and interactions |
+| [user-guide-for-http-based-mcp.md](user-guide-for-http-based-mcp.md) | HTTP API examples with curl |
 | [architecture.md](architecture.md) | How the code is organized and supervised |
 | this file | Rules for changing the project |
 | `AGENTS.md` | Short instructions for AI agents |
 | `docs/research/` | Saved upstream help and background notes |
+| `docs/releases/` | Release notes, one file per version |
 | `docs/phase-<n>/` | Plans and decisions of the current and planned phases, described below |
 | `docs/archive/phase-<n>/` | A finished phase's documents, moved here unchanged when the phase is done |
 

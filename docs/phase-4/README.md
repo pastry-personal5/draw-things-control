@@ -27,20 +27,22 @@ Improve the product experience, make chained generation support multiple backend
 
 ## Milestones
 
-1. [Milestone 01: TUI interaction and contextual shortcut help](milestone-01-tui-interaction.md) — done
-2. [Milestone 02: Refactor for multiple backends](milestone-02-multiple-backends.md) — done
-3. [Milestone 03: H3 image-to-audio-video support](milestone-03-h3-i2av.md) — in progress
-4. [Milestone 04: Rename to Framechain](milestone-04-framechain-rename.md) — done
-5. [Milestone 05: H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) — in progress
-6. [Milestone 06: H3 video color tags and correction](milestone-06-h3-color.md) — done
-7. [Milestone 07: Check performance](milestone-07-check-performance.md) — done
-8. [Milestone 08: Rename to Framecontrol](milestone-08-framecontrol-rename.md) — done
-9. [Milestone 09: Unified job definitions and per-run knobs](milestone-09-job-definition.md) — done
-10. [Milestone 20: Graph-based metadata](milestone-20-graph-metadata.md) — planned
+| # | Milestone | Status |
+|---|-----------|--------|
+| 01 | [TUI interaction and contextual shortcut help](milestone-01-tui-interaction.md) | done |
+| 02 | [Refactor for multiple backends](milestone-02-multiple-backends.md) | done |
+| 03 | [H3 image-to-audio-video support](milestone-03-h3-i2av.md) | in-progress |
+| 04 | [Rename to Framechain](milestone-04-framechain-rename.md) | done |
+| 05 | [H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) | in-progress |
+| 06 | [H3 video color tags and correction](milestone-06-h3-color.md) | done |
+| 07 | [Check performance](milestone-07-check-performance.md) | done |
+| 08 | [Rename to Framecontrol](milestone-08-framecontrol-rename.md) | done |
+| 09 | [Unified job definitions and per-run knobs](milestone-09-job-definition.md) | done |
+| 20 | [Graph-based metadata](milestone-20-graph-metadata.md) | planned |
 
 ## Depends on
 
-- Phase 3's TUI, queue, state store, and server event feed.
+- [Phase 3](../archive/phase-3/README.md)'s TUI, queue, state store, and server event feed.
 - Milestone 03 depends on Milestone 02's backend boundary and the local [h3.c](https://github.com/antirez/h3.c) executable and model snapshot. See the [H3 research notes](../research/h3-c.md).
 - Milestone 05 depends on Milestone 03's H3 runtime, staged MP4 finishing, and queue snapshot contract.
 - Milestone 06 depends on Milestone 03's H3 `i2av` output and handoff contract, and Milestone 05's mixed `i2av`/`r2av` pipeline; M06 applies color tags to both pipelines.

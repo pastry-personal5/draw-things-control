@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 4](README.md)
 **Status:** done
-**Depends on:** Phase 3's shared job executor, queue, state store, and front ends.
+**Depends on:** [Phase 3](../archive/phase-3/README.md)'s shared job executor, queue, state store, and front ends.
 
 ## Goal
 

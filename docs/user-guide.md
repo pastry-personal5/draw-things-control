@@ -1528,7 +1528,7 @@ permitted request gets HTTP 422.
 A refusal names the `code` (`timeout_required`, `outside_directory`,
 `limit_exceeded`), the field, and, for a limit, the limit and the job's
 value. These limits
-apply to every caller, `fc queue` (Milestone 03) included: the API cannot
+apply to every caller, `fc queue` included: the API cannot
 tell a person from an agent.
 
 **Writing job files.** `POST /validate` is always available and returns the resolved job plus `sha256`, calculated from the submitted UTF-8 text. `PUT` and `DELETE` exist only when the server started with `--allow-write`; otherwise they return API-shaped `405 writes_off`. Names are 1–64 lowercase letters, digits, and hyphens, and must equal the YAML `name:`. Job text is stored exactly as submitted, including comments and line endings. `GET /jobs/{job}` also returns `sha256`, even for an invalid job; send that value as `expected_sha256` before a replace or deletion. For a local file with invalid UTF-8, `text` contains replacement characters and the hash still covers its original bytes. A stale value returns `409 conflict` with `current_sha256`.
@@ -1802,7 +1802,8 @@ read `config/server-token` can call any endpoint as `cli`, `tui`, or `api`,
 including `POST /v1/executions/delete` with or without `--allow-write`. The
 MCP tool list guides an agent that uses it; it does not restrict a token holder.
 `--allow-write` enables job-file creation, replacement, and deletion and
-advertises MCP's execution deletion tool. `run-server.sh` enables it. Replaced
+advertises MCP's execution deletion tool. `run-loopback-server.sh` and
+`run-host-network-device-server.sh` enable it. Replaced
 files stay in `data/jobs/.backups/`, deleted files in `data/jobs/.trash/`, and
 the audit rows in `state/framecontrol.db`. The [API limits](#server-http-api-and-grpc-monitoring)
 bound each submission and request. Cancel and server stop lose the current
