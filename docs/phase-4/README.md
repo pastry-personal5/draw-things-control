@@ -17,7 +17,7 @@ Improve the product experience, make chained generation support multiple backend
 - Faster, deterministic local and CI validation in Milestone 07.
 - Framecontrol product, app, package, interface, and state database naming in Milestone 08.
 - Unified per-run job definitions, scoped knob defaults, run-specific timing, and mixed backend chains in Milestone 09.
-- Producing and consuming graph-based metadata in Milestone 10.
+- Producing and consuming graph-based metadata in Milestone 20.
 
 ## Non-goals
 
@@ -36,7 +36,7 @@ Improve the product experience, make chained generation support multiple backend
 7. [Milestone 07: Check performance](milestone-07-check-performance.md) — done
 8. [Milestone 08: Rename to Framecontrol](milestone-08-framecontrol-rename.md) — done
 9. [Milestone 09: Unified job definitions and per-run knobs](milestone-09-job-definition.md) — done
-10. [Milestone 10: Graph-based metadata](milestone-10-graph-metadata.md) — planned
+10. [Milestone 20: Graph-based metadata](milestone-20-graph-metadata.md) — planned
 
 ## Depends on
 
@@ -45,7 +45,7 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 05 depends on Milestone 03's H3 runtime, staged MP4 finishing, and queue snapshot contract.
 - Milestone 06 depends on Milestone 03's H3 `i2av` output and handoff contract, and Milestone 05's mixed `i2av`/`r2av` pipeline; M06 applies color tags to both pipelines.
 - Milestone 09 depends on the backend contracts, H3 handoff behavior, reference-pipeline validation, and backend-specific color finishing from Milestones 02, 03, 05, and 06.
-- Milestone 10 follows Milestones 05, 06, and 09 so its provenance graph can record frozen references, retained video copies, and each run's backend and pipeline.
+- Milestone 20 follows Milestones 05, 06, and 09 so its provenance graph can record frozen references, retained video copies, and each run's backend and pipeline.
 
 ## Changelog
 
@@ -61,4 +61,4 @@ Decisions and notable changes are recorded in
 - H3 generated videos carry truthful color tags when verified; otherwise a warning identifies the original output and any conflicting tags it retains. `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
 - Framecontrol is the product and app name, with `fc` as its installed command and existing state safely migrated.
 - Version-2 jobs resolve named profiles and scoped defaults into a frozen per-run plan; H3 duration and Draw Things temporal control can vary by run without duplicated H3 frame values.
-- Graph-based metadata is produced, consumed, and documented as defined in Milestone 10.
+- Graph-based metadata is produced, consumed, and documented as defined in Milestone 20.

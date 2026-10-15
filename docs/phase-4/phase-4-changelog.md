@@ -3,6 +3,10 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 4](README.md). Newest first.
 
+## 2026-10-15
+
+- **Owner decision** [M10, M20]: Renumber the planned graph-based metadata milestone from M10 to M20 (`milestone-20-graph-metadata.md`). Its status, scope, and plan are unchanged. Earlier changelog entries retain their original milestone labels, so the entries tagged [M10] below, and their mentions of "Milestone 10", refer to this milestone.
+
 ## 2026-10-14
 
 - **Change** [M09]: Job format version 2 is the only authoring format. Every live entry point (`validate-job`, queue submission, and the HTTP and MCP validate, preview, create, replace, and submit calls) refuses a version-1 or unversioned file at field `version`, with one message pointing to the new format; a `version: 2` file that still holds a removed version-1 key fails at that key and names where it lives now. `GET /v1/capabilities` gains `job_format` (the backends and pipelines, the knob names, and the Draw Things models that can take `seconds`). The four checked-in examples are converted and four more are added under `data/jobs/`, all validated by a test; the owner's own untracked version-1 files under `data/jobs/` are not rewritten and show as invalid until converted.
