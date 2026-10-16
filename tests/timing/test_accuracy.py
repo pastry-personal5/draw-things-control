@@ -102,14 +102,13 @@ class AgainstTheFrozenEstimatorTests(unittest.TestCase):
 
 
 class ThinHistoryTests(unittest.TestCase):
-    def test_with_under_3_runs_of_the_signature_and_under_6_of_the_backend_the_forecast_waits_for_two_readings(self) -> None:
+    def test_with_thin_history_the_broad_forecast_starts_at_once(self) -> None:
         executions = [HistoryExecution(number, CooldownPolicy("off"), (dt_run(number, 1), dt_run(number, 2))) for number in (1, 2)]
         report = replay_leave_one_out(executions, BUILTIN_ESTIMATORS["forecast"])
         self.assertTrue(report.traces)
         for trace in report.traces:
-            # The step counter's first reading is at 14 s and its second one step, 50 s, later.
-            self.assertEqual(trace.first_number, 64.0)
-        # The old estimator priced the run at once, from the one unlike run before it, and is listed beside it, not compared.
+            self.assertEqual(trace.first_number, 0.0)
+        # The old estimator also had an immediate number, from one unlike run, for comparison.
         old = replay_leave_one_out(executions, FrozenReplayEstimator)
         self.assertTrue(all(trace.first_number == 0.0 for trace in old.traces))
 

@@ -18,10 +18,10 @@ from typing import Any
 
 import numpy as np
 
-from framecontrol.jobs.timing.factory import DrawThingsFactoryPoint, H3FactoryPoint, factory_point
+from framecontrol.jobs.timing.factory import H3_R2AV_E0051_E0054, DrawThingsFactoryPoint, H3FactoryPoint, factory_point, heuristic_anchor
 from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, stage_keys, step_series
 
-TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_FACTORY, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "factory", "live_only"
+TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_FACTORY, TIER_HEURISTIC, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "factory", "heuristic", "live_only"
 LIVE, LOG, POOLED = "live", "log", "pooled"
 
 # The thresholds are provisional, pinned by tests.
@@ -45,6 +45,11 @@ MIN_FIRST_SD = 0.02
 DEFAULT_STAGE_SIGMA, MIN_STAGE_SIGMA = 0.15, 0.03
 # Seconds of spread for a stage the history has not seen, when the backend has no stage history at all.
 DEFAULT_OTHER_SD = 20.0
+# A measured point transferred to another workload is useful immediately, but much less certain than an exact match.
+HEURISTIC_LOG_SPREAD, HEURISTIC_STAGE_SPREAD = 0.75, 0.60
+# The H3 color-finishing evidence is 38-46 seconds altogether; these rough shares let each actual stage start match
+# the plan, while keeping the same 42-second total. They are replaced by sparse stage measurements when available.
+H3_COPY_RAW_SECONDS, H3_CORRECT_SECONDS, H3_LAST_FRAME_SECONDS = 8.0, 33.0, 1.0
 # The ridge penalties tried, by leave-one-execution-out error.
 PENALTIES = (0.01, 0.1, 1.0, 10.0, 100.0)
 MIN_VARIANCE = 1e-12
@@ -117,6 +122,42 @@ class IterativeStage:
 StagePlan = FixedStage | IterativeStage
 
 
+def _positive_pixels_frames(workload: Mapping[str, Any]) -> tuple[float, int] | None:
+    pixels, frames = workload.get("pixels"), workload.get("frames")
+    if not isinstance(pixels, int | float) or isinstance(pixels, bool) or not isinstance(frames, int) or isinstance(frames, bool) or frames <= 0:
+        return None
+    try:
+        value = float(pixels)
+    except OverflowError:
+        return None
+    return (value, frames) if math.isfinite(value) and value > 0 else None
+
+
+def _insert_before(stages: list[StagePlan], before: str, item: FixedStage) -> None:
+    index = next((index for index, stage in enumerate(stages) if stage.stage == before), len(stages))
+    stages.insert(index, item)
+
+
+def _insert_after(stages: list[StagePlan], after: str, item: FixedStage) -> None:
+    index = next((index + 1 for index, stage in enumerate(stages) if stage.stage == after), len(stages))
+    stages.insert(index, item)
+
+
+def _h3_finishing_stages(stages: list[StagePlan], pixels: float, frames: int, spread: float, correcting: bool) -> None:
+    """Fill the i2av-only stages at their real positions when a sparse row or r2av anchor lacks them."""
+    anchor = H3_R2AV_E0051_E0054
+    scale = pixels / (anchor.width * anchor.height) * frames / anchor.frames
+    median_factor = math.exp(-(spread**2) / 2)
+    if not any(stage.stage == "last_frame" for stage in stages):
+        _insert_before(stages, "promote", FixedStage("last_frame", "last_frame", "framecontrol", H3_LAST_FRAME_SECONDS * scale * median_factor, spread))
+    if correcting:
+        if not any(stage.stage == "correct" for stage in stages):
+            _insert_before(stages, "last_frame", FixedStage("correct", "correct", "framecontrol", H3_CORRECT_SECONDS * scale * median_factor, spread))
+        if not any(stage.stage == "copy_raw" for stage in stages):
+            next_stage = next((stage.stage for stage in stages if stage.stage in ("convert", "drift", "correct", "last_frame", "promote")), "correct")
+            _insert_before(stages, next_stage, FixedStage("copy_raw", "copy_raw", "framecontrol", H3_COPY_RAW_SECONDS * scale * median_factor, spread))
+
+
 @dataclass(frozen=True)
 class Plan:
     """Everything a forecast needs to price one run, and the basis it rests on."""
@@ -129,7 +170,7 @@ class Plan:
     skipped: int
     # The ridge penalty chosen by leave-one-execution-out error; None for the other tiers.
     penalty: float | None
-    # The run's stages in order (none for tier 4: with no history that qualifies, nothing after the steps is invented).
+    # The run's stages in order (empty only when no measured or heuristic plan can be built).
     stages: tuple[StagePlan, ...]
     # The log of the mean step time of this workload before the run's own speed factor, and the variance of that estimate.
     log_step: float | None
@@ -444,7 +485,159 @@ class FittedModel:
                     continue
                 return self._fit_plan(backend, pipeline, key, workload, environment, tier, fidelity, rows, fit, request, stats)
         factory = factory_point(backend, pipeline, workload, environment)
-        return self._factory_plan(factory) if factory is not None else self._live_only_plan(stats)
+        if factory is not None:
+            return self._factory_plan(factory)
+        heuristic = self._sparse_plan(backend, pipeline, key, workload, environment, stats) or self._heuristic_plan(backend, pipeline, workload)
+        return heuristic if heuristic is not None else self._live_only_plan(stats)
+
+    def _sparse_plan(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], environment: Mapping[str, Any], stats: _BackendStats) -> Plan | None:
+        """A small same-model sample is a better early guess than a different model's factory point."""
+        dimensions, steps = _positive_pixels_frames(workload), workload.get("steps")
+        model = environment.get("model")
+        if dimensions is None or not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0 or not isinstance(model, str) or not model:
+            return None
+        pixels, frames = dimensions
+        candidates = [row for row in self._rows[backend] if row.run.pipeline == pipeline and row.run.environment.get("model") == model and row.y is not None and math.isfinite(row.y) and _positive_pixels_frames(row.run.workload) is not None]
+        if not candidates:
+            return None
+        live = [row for row in candidates if row.run.fidelity == LIVE]
+        candidates = live or candidates
+        build_keys = ("executable_bytes", "executable_mtime")
+        if all(environment.get(name) is not None for name in build_keys):
+            same_build = [row for row in candidates if all(row.run.environment.get(name) == environment[name] for name in build_keys)]
+            candidates = same_build or candidates
+        same = [row for row in candidates if row.signature == key]
+        if same:
+            sample = max(same, key=lambda row: row.run.order)
+            by_execution: dict[int, list[float]] = defaultdict(list)
+            for row in same:
+                assert row.y is not None
+                by_execution[row.execution].append(row.y)
+            rate = math.exp(statistics.mean(statistics.mean(values) for values in by_execution.values()))
+            spread = 0.40
+        else:
+            sample = min(candidates, key=lambda row: (abs(math.log(pixels / row.run.workload["pixels"])) + abs(math.log(frames / row.run.workload["frames"])), -row.run.execution, -row.run.run))
+            assert sample.y is not None
+            frame_exponent = 1.6 if backend == "h3" else 1.0
+            rate = math.exp(sample.y) * (pixels / sample.run.workload["pixels"]) * (frames / sample.run.workload["frames"]) ** frame_exponent
+            spread = HEURISTIC_LOG_SPREAD
+        if not math.isfinite(rate) or rate <= 0:
+            return None
+        build_changed = self._build_changed([sample], environment)
+        if build_changed:
+            spread = HEURISTIC_LOG_SPREAD
+        stages: list[StagePlan] = []
+        duration_scale = pixels / sample.run.workload["pixels"] * frames / sample.run.workload["frames"]
+        stage_spread = HEURISTIC_STAGE_SPREAD
+        for name, stage in sample.keyed.items():
+            if name == sample.iterative_key:
+                stages.append(IterativeStage(name, stage.stage, stage.source, steps))
+            elif stage.stage not in ("correct", "copy_raw") or workload.get("color_corrects"):
+                duration = stage.duration * (duration_scale if stage.stage in ("ffmpeg", "finishing", "copy_raw", "correct") else 1.0)
+                stages.append(FixedStage(name, stage.stage, stage.source, max(duration, 0.001) * math.exp(-(stage_spread**2) / 2), stage_spread))
+        if backend == "h3" and pipeline == "i2av":
+            _h3_finishing_stages(stages, float(pixels), frames, stage_spread, bool(workload.get("color_corrects")))
+        elif backend == "draw-things-cli" and workload.get("color_corrects") and not any(stage.stage == "correct" for stage in stages):
+            anchor = heuristic_anchor(backend)
+            assert anchor is not None
+            scale = pixels / (anchor.width * anchor.height) * frames / anchor.frames
+            _insert_after(stages, "last_frame", FixedStage("correct", "correct", "framecontrol", 6.847 * scale * math.exp(-(stage_spread**2) / 2), stage_spread))
+        if not any(isinstance(stage, IterativeStage) for stage in stages):
+            return None
+        prior_var = spread**2 + stats.tau**2
+        return Plan(
+            tier=TIER_HEURISTIC,
+            fidelity=sample.run.fidelity,
+            runs=len(same) if same else 1,
+            executions=len({row.execution for row in same}) if same else 1,
+            build_changed=build_changed,
+            skipped=self.skipped,
+            penalty=None,
+            stages=tuple(stages),
+            log_step=math.log(rate) - prior_var / 2,
+            log_step_var=spread**2,
+            tau=stats.tau,
+            rho=stats.rho,
+            extra_var=0.0,
+            df=1.0,
+            slope=stats.slope,
+            first_ratio=stats.first_ratio,
+            step_noise=stats.step_noise,
+            stage_factor=stats.stage_factor,
+            other_sd=max(stats.other_sd, rate * steps * 0.2),
+            slope_sd=stats.slope_sd,
+            first_sd=max(stats.first_sd, 0.15) if stats.first_ratio is not None else 0.0,
+            pause_share=stats.pause_share,
+            overhead_mean=max(0.0, sample.unaccounted),
+            overhead_sd=max(stats.other_sd, sample.unaccounted * 0.5),
+        )
+
+    def _heuristic_plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any]) -> Plan | None:
+        """Scale a backend's measured rate by pixels and effective frames when history cannot fit this workload.
+
+        These exponents are only a starting guess. A broad predictive range and the run's own steps carry the forecast
+        until enough matching history supports a fit.
+        """
+        anchor = heuristic_anchor(backend)
+        dimensions, steps = _positive_pixels_frames(workload), workload.get("steps")
+        if anchor is None or pipeline is None or dimensions is None or not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0:
+            return None
+        pixels, frames = dimensions
+        pixel_ratio = pixels / (anchor.width * anchor.height)
+        frame_ratio = frames / anchor.frames
+        # The H3 evidence at 5, 8, 10 and 15 seconds grows faster than linearly with frames.
+        # A still-image job does not become 33 times cheaper than E0053's video merely because it has one output frame.
+        frame_exponent = 1.6 if backend == "h3" else 0.5 if pipeline == "i2i" else 1.0
+        rate = anchor.step_seconds * pixel_ratio * frame_ratio**frame_exponent
+        if not math.isfinite(rate) or rate <= 0:
+            return None
+        fixed_spread = HEURISTIC_STAGE_SPREAD
+        fixed_median_factor = math.exp(-(fixed_spread**2) / 2)
+        stages: list[StagePlan] = []
+        references = workload.get("reference_count")
+        reference_count = references if isinstance(references, int) and not isinstance(references, bool) else 1
+        for stage in anchor.stages:
+            if stage.name == "correct" and not workload.get("color_corrects"):
+                continue
+            if backend == "h3" and stage.name in ("video_encode", "vision") and stage.key.endswith(("#2", "#3")) and int(stage.key[-1]) > reference_count:
+                continue
+            if stage.iterative:
+                stages.append(IterativeStage(stage.key, stage.name, stage.source, steps))
+            else:
+                duration = stage.seconds
+                if stage.name in ("ffmpeg", "finishing", "correct"):
+                    duration *= pixel_ratio * frame_ratio
+                stages.append(FixedStage(stage.key, stage.name, stage.source, duration * fixed_median_factor, fixed_spread))
+        if backend == "h3" and pipeline == "i2av":
+            _h3_finishing_stages(stages, float(pixels), frames, fixed_spread, bool(workload.get("color_corrects")))
+        log_spread = 1.0 if pipeline != anchor.pipeline else HEURISTIC_LOG_SPREAD
+        prior_var = log_spread**2 + anchor.tau**2
+        return Plan(
+            tier=TIER_HEURISTIC,
+            fidelity="heuristic",
+            runs=0,
+            executions=0,
+            build_changed=False,
+            skipped=self.skipped,
+            penalty=None,
+            stages=tuple(stages),
+            log_step=math.log(rate) - prior_var / 2,
+            log_step_var=log_spread**2,
+            tau=anchor.tau,
+            rho=anchor.rho,
+            extra_var=0.0,
+            df=1.0,
+            slope=anchor.slope if pipeline == anchor.pipeline else 0.0,
+            first_ratio=anchor.first_ratio if pipeline == anchor.pipeline else None,
+            step_noise=max(anchor.step_noise, DEFAULT_STEP_NOISE),
+            stage_factor=anchor.stage_factor,
+            other_sd=max(anchor.other_sd, rate * steps * 0.2),
+            slope_sd=anchor.slope_sd,
+            first_sd=max(anchor.first_sd, 0.15),
+            pause_share=0.0,
+            overhead_mean=0.0,
+            overhead_sd=0.0,
+        )
 
     def _factory_plan(self, factory: DrawThingsFactoryPoint | H3FactoryPoint) -> Plan:
         stages: tuple[StagePlan, ...] = tuple(IterativeStage(stage.key, stage.name, stage.source, factory.steps) if stage.iterative else FixedStage(stage.key, stage.name, stage.source, stage.seconds, factory.spread) for stage in factory.stages)

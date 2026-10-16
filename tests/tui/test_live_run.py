@@ -64,6 +64,19 @@ class LiveRunTests(FeedTestCase):
         self.assertIn("Job started: walk (i2v, 2 runs, seed 1 (job), model base.ckpt)", self.said)
         self.assertIn("Job succeeded: 2/2 runs completed", self.log())
 
+    async def test_forecast_published_before_job_started_is_shown_immediately(self) -> None:
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.connect(pilot)
+            await self.received(pilot, [self.server.send_queue_entry("Q0001", "running")])
+            early = forecast_dict(stage=None, done=None, total=None)
+            await self.push_forecast(pilot, "Q0001", early)
+            await self.push(pilot, job_started())
+            shown = self.text(app, "work-status").split("\n")
+        assert app.live is not None
+        self.assertEqual(app.live.forecast, early)
+        self.assertIn("ends ~", shown[1])
+
     async def test_only_the_followed_entrys_forecast_is_shown_and_a_cleared_one_is_gone(self) -> None:
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:

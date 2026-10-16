@@ -382,3 +382,16 @@ class DescribeRunTests(MixedChainTestCase):
         described = self.executor().describe_run(job, 2, executable="draw-things-cli")
         self.assertEqual(described.workload["knobs"]["seconds"], 4)
         self.assertNotIn("seed", described.workload["knobs"])
+
+    def test_h3_timing_marks_only_an_active_i2av_color_correction(self) -> None:
+        def colored(strength: float) -> Any:
+            data = small_job()
+            data["settings_profiles"]["h3-wide"]["settings"]["color"] = {"anchor": "first", "strength": strength}
+            return load_job(self.write_job(data), self.global_config, self.params, backends=self.backends)
+
+        active = colored(1)
+        executor = self.executor()
+        self.assertNotIn("color_corrects", executor.describe_run(active, 1, executable="draw-things-cli").workload)
+        self.assertIs(executor.describe_run(active, 2, executable="draw-things-cli").workload["color_corrects"], True)
+        identity = colored(0)
+        self.assertNotIn("color_corrects", executor.describe_run(identity, 2, executable="draw-things-cli").workload)

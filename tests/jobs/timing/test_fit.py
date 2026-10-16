@@ -59,10 +59,27 @@ class FactoryDrawThingsTests(unittest.TestCase):
         self.assertAlmostEqual(fixed(plan, "correct").median, 6.847, places=3)
         estimated = sum(stage.median for stage in plan.stages if isinstance(stage, FixedStage)) + 25 * math.exp(plan.log_step or 0.0) * plan.stage_factor
         self.assertAlmostEqual(estimated, (353.620 + 369.037) / 2, delta=0.2)
-        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "frames": 17}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "color_corrects": False}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {"model": "another.ckpt"}).tier, "live_only")
-        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "live_only")
+        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "frames": 17}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "color_corrects": False}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {"model": "another.ckpt"}).tier, "heuristic")
+        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "heuristic")
+
+    def test_cold_start_scales_the_measured_rate_and_omits_unused_correction(self) -> None:
+        workload = {**self.WORKLOAD, "frames": 66, "steps": 40, "color_corrects": False}
+        plan = FittedModel([]).plan(DT, "i2v", workload, {"model": "another.ckpt"})
+        self.assertEqual(plan.tier, "heuristic")
+        self.assertEqual(iterative(plan).steps, 40)
+        self.assertNotIn("correct", [stage.stage for stage in plan.stages])
+        assert plan.log_step is not None
+        self.assertAlmostEqual(math.exp(plan.log_step + plan.prior_var / 2), 2 * 13.6710, places=4)
+
+    def test_still_image_cold_start_does_not_divide_the_video_rate_by_33(self) -> None:
+        workload = {**self.WORKLOAD, "frames": 1, "mode": "i2i", "color_corrects": False}
+        plan = FittedModel([]).plan(DT, "i2i", workload, {"model": "image.ckpt"})
+        self.assertEqual(plan.tier, "heuristic")
+        self.assertEqual(plan.log_step_var, 1.0)
+        assert plan.log_step is not None
+        self.assertAlmostEqual(math.exp(plan.log_step + plan.prior_var / 2), 13.6710 / math.sqrt(33), places=4)
 
 
 class FactoryH3Tests(unittest.TestCase):
@@ -81,12 +98,61 @@ class FactoryH3Tests(unittest.TestCase):
         self.assertAlmostEqual(estimated, (4421.824 + 4291.886) / 2, delta=0.2)
         unrelated = FittedModel([h3_run(1, 1)]).plan(H3, "r2av", self.WORKLOAD, self.ENVIRONMENT)
         self.assertEqual((unrelated.tier, unrelated.tau, unrelated.rho, unrelated.step_noise, unrelated.first_sd, unrelated.pause_share), (plan.tier, plan.tau, plan.rho, plan.step_noise, plan.first_sd, plan.pause_share))
-        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "frames": 360}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "knobs": {**self.WORKLOAD["knobs"], "seconds": 10}}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "dit_layers": 36}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "compatibility": {"bf16_attention_output": True}}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "color_corrects": True}, self.ENVIRONMENT).tier, "live_only")
-        self.assertEqual(model.plan(H3, "r2av", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "frames": 360}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "knobs": {**self.WORKLOAD["knobs"], "seconds": 10}}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "dit_layers": 36}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "compatibility": {"bf16_attention_output": True}}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "color_corrects": True}, self.ENVIRONMENT).tier, "heuristic")
+        self.assertEqual(model.plan(H3, "r2av", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "heuristic")
+
+    def test_h3_cold_start_uses_effective_frames_and_prices_i2av_correction(self) -> None:
+        workload = {**self.WORKLOAD, "pipeline": "i2av", "frames": 242, "seconds": 242 / 24, "references": {}, "reference_count": 0, "color_corrects": True}
+        plan = FittedModel([]).plan(H3, "i2av", workload, {"model": "another-h3"})
+        self.assertEqual(plan.tier, "heuristic")
+        self.assertEqual(iterative(plan).steps, 30)
+        self.assertEqual([stage.stage for stage in plan.stages[-7:]], ["verify", "copy_raw", "convert", "drift", "correct", "last_frame", "promote"])
+        self.assertAlmostEqual(sum(fixed(plan, name).mean for name in ("copy_raw", "correct", "last_frame")), 42.0 * 242 / 362, places=4)
+        assert plan.log_step is not None
+        self.assertAlmostEqual(math.exp(plan.log_step + plan.prior_var / 2), 138.6683 * (242 / 362) ** 1.6, places=4)
+
+
+class SparseHeuristicTests(unittest.TestCase):
+    def test_one_same_model_run_supplies_its_rate_and_stage_order(self) -> None:
+        history = [dt_run(1, 1, step=50.0)]
+        plan = plan_of(history)
+        self.assertEqual((plan.tier, plan.fidelity, plan.runs), ("heuristic", "live", 1))
+        self.assertEqual([stage.stage for stage in plan.stages], ["prepare", "starting", "processing", "sampling", "finishing", "verify"])
+        assert plan.log_step is not None
+        self.assertAlmostEqual(math.exp(plan.log_step + plan.prior_var / 2), 50.0, places=4)
+
+    def test_a_matching_executable_build_wins_over_a_newer_different_build(self) -> None:
+        old = dt_run(1, 1, step=40.0, environment=ENVIRONMENT)
+        rebuilt = dt_run(2, 1, step=90.0, environment={**ENVIRONMENT, "executable_bytes": 200})
+        plan = plan_of([old, rebuilt])
+        self.assertEqual((plan.tier, plan.runs, plan.build_changed), ("heuristic", 1, False))
+        assert plan.log_step is not None
+        self.assertAlmostEqual(math.exp(plan.log_step + plan.prior_var / 2), 40.0, places=4)
+        changed = plan_of([old], environment={**ENVIRONMENT, "executable_bytes": 300})
+        self.assertTrue(changed.build_changed)
+        self.assertGreater(changed.log_step_var, plan.log_step_var)
+
+    def test_sparse_h3_stages_keep_color_finishing_in_order_even_when_history_lacks_it(self) -> None:
+        base = h3_workload()
+        sample = h3_run(1, 1, workload={**base, "pipeline": "i2av"})
+        workload = {**base, "pipeline": "i2av", "color_corrects": True}
+        plan = FittedModel([sample]).plan(H3, "i2av", workload, sample.environment)
+        self.assertEqual(plan.tier, "heuristic")
+        self.assertEqual([stage.stage for stage in plan.stages[-4:]], ["verify", "copy_raw", "correct", "last_frame"])
+
+    def test_nonfinite_sparse_dimensions_are_ignored(self) -> None:
+        malformed = dt_run(1, 1, workload={**dt_workload(), "pixels": float("inf")})
+        plan = plan_of([malformed])
+        self.assertEqual((plan.tier, plan.runs), ("heuristic", 0))
+
+    def test_rows_without_a_named_model_do_not_count_as_same_model_history(self) -> None:
+        anonymous = dt_run(1, 1, step=100.0, environment={})
+        plan = FittedModel([anonymous]).plan(DT, "i2v", anonymous.workload, {})
+        self.assertEqual((plan.tier, plan.runs, plan.fidelity), ("heuristic", 0, "heuristic"))
 
 
 class StudentTTests(unittest.TestCase):
@@ -145,10 +211,10 @@ class TierOneTests(unittest.TestCase):
 
     def test_runs_from_one_execution_are_not_enough(self) -> None:
         history = [dt_run(1, 1), dt_run(1, 2), dt_run(1, 3)]
-        self.assertEqual(plan_of(history).tier, "live_only")
+        self.assertEqual(plan_of(history).tier, "heuristic")
 
     def test_two_runs_are_not_enough(self) -> None:
-        self.assertEqual(plan_of([dt_run(1, 1), dt_run(2, 1)]).tier, "live_only")
+        self.assertEqual(plan_of([dt_run(1, 1), dt_run(2, 1)]).tier, "heuristic")
 
     def test_a_log_row_never_has_the_signature_of_a_live_one(self) -> None:
         history = [log_run(1, 1), log_run(2, 1), log_run(3, 1)]
@@ -177,14 +243,14 @@ class TierTwoTests(unittest.TestCase):
         self.assertIn(plan.penalty, PENALTIES)
 
     def test_it_needs_six_runs_from_three_executions(self) -> None:
-        self.assertEqual(plan_of(spread(5, pixels=PIXELS, frames=FRAMES, per_execution=1), workload=dt_workload(pixels=450_000)).tier, "live_only")
-        self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=3), workload=dt_workload(pixels=450_000)).tier, "live_only")
+        self.assertEqual(plan_of(spread(5, pixels=PIXELS, frames=FRAMES, per_execution=1), workload=dt_workload(pixels=450_000)).tier, "heuristic")
+        self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=3), workload=dt_workload(pixels=450_000)).tier, "heuristic")
         self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=2), workload=dt_workload(pixels=450_000)).tier, "backend_fit")
 
     def test_a_knob_that_never_varies_is_not_extrapolated(self) -> None:
         history = spread(12, pixels=PIXELS, frames=FRAMES)
         self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=7.5)).tier, "backend_fit")
-        self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=3.5)).tier, "live_only")
+        self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=3.5)).tier, "heuristic")
 
     def test_a_knob_that_varies_is_part_of_the_fit(self) -> None:
         history = []
@@ -226,8 +292,8 @@ class OtherBackendTests(unittest.TestCase):
     def test_the_other_backends_history_never_qualifies(self) -> None:
         history = [h3_run(execution, run) for execution in range(1, 8) for run in (1, 2)]
         plan = plan_of(history)
-        self.assertEqual((plan.tier, plan.runs, plan.executions), ("live_only", 0, 0))
-        self.assertEqual(plan.stages, ())
+        self.assertEqual((plan.tier, plan.runs, plan.executions), ("heuristic", 0, 0))
+        self.assertEqual(iterative(plan).steps, 10)
 
     def test_an_h3_run_is_priced_from_h3_history(self) -> None:
         history = [h3_run(1, 1, step=58.0), h3_run(2, 1, step=60.0), h3_run(2, 2, step=62.0)] + [dt_run(5, 1, step=1.0), dt_run(6, 1, step=1.0), dt_run(7, 1, step=1.0)]
@@ -295,10 +361,12 @@ class RobustnessTests(unittest.TestCase):
         plan = plan_of([dt_run(1, 1), dt_run(2, 1), dt_run(3, 1), broken], skipped=2)
         self.assertEqual((plan.tier, plan.runs, plan.skipped), ("signature", 3, 2))
 
-    def test_an_empty_history_gives_a_live_only_plan(self) -> None:
+    def test_an_empty_history_gives_a_broad_backend_heuristic(self) -> None:
         plan = plan_of([])
-        self.assertEqual((plan.tier, plan.runs, plan.executions, plan.stages), ("live_only", 0, 0, ()))
-        self.assertIsNone(plan.log_step)
+        self.assertEqual((plan.tier, plan.runs, plan.executions), ("heuristic", 0, 0))
+        self.assertEqual(iterative(plan).steps, 10)
+        self.assertGreater(plan.log_step_var, 0.5)
+        self.assertIsNotNone(plan.log_step)
 
     def test_a_row_with_odd_workload_values_does_not_raise(self) -> None:
         odd = replace(dt_run(9, 1), workload={"pixels": float("nan"), "frames": "many", "knobs": "none"})

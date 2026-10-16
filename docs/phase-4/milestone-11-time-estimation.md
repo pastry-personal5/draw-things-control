@@ -8,6 +8,8 @@
 
 Replace the step-counter heuristics with one stage-aware forecast of the running job: the active run's seconds left, the job's seconds left, and a time-weighted share done, each with an honest range. The server computes the forecast once, and the TUI's work status, `fc queue add --wait`, `fc queue show`, the HTTP API, gRPC, and MCP show it. Its accuracy is measured by replaying recorded runs against the current estimator, not asserted.
 
+**Implementation update (2026-10-16):** The fallback-tier design below records the original M11 plan. The current estimator also publishes at `JobStarted` and uses an exact factory point or a broad `heuristic` tier from sparse same-model history or a scaled backend point when no fit qualifies. See the [phase changelog](phase-4-changelog.md) and [user guide](../user-guide.md#the-work-status) for the current behavior.
+
 ## Evidence
 
 **What the TUI does now** (`src/framecontrol/tui/estimate.py`). Before the first step reading, a run is estimated from the last successful run of any job. At the first reading it uses that run's time per step, and from the second on the mean pace since the first reading. A job's later runs are priced at the mean full time of its finished runs, and waits come from the cooldown policy. Every front end that wants progress would have to repeat this, because the server publishes only the last `n/N` it saw (`current_step`, `current_step_total`).

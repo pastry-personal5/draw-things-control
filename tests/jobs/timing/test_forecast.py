@@ -187,27 +187,41 @@ class RunForecastTests(unittest.TestCase):
         self.assertEqual(before.basis.unseen, ())
         self.assertGreater(during.run.high - during.run.low, before.run.high - before.run.low)
 
-    def test_without_history_there_is_no_number_until_the_steps_have_two_readings(self) -> None:
+    def test_an_unexpected_final_stage_keeps_time_in_the_forecast(self) -> None:
+        base = dt_run(9, 1)
+        final = HistoryStage("other", "child", base.seconds, base.seconds + 30.0)
+        odd = replace(base, stages=(*base.stages, final))
+        forecast = Playback(HISTORY, HistoryExecution(9, CooldownPolicy("off"), (odd,))).at(base.seconds)
+        assert forecast is not None and forecast.run is not None
+        self.assertEqual(forecast.basis.unseen, ("other",))
+        self.assertGreaterEqual(forecast.run.end_at - (ORIGIN + base.seconds), 19.0)
+
+    def test_without_history_the_broad_early_number_refines_from_steps(self) -> None:
         playback = Playback([], single_run())
         start, one = playback.at(0.0), playback.at(SAMPLING_START + 1.0)
         assert start is not None and one is not None
-        self.assertEqual((start.run, start.job, one.run, one.job), (None, None, None, None))
+        self.assertIsNotNone(start.run)
+        self.assertIsNotNone(start.job)
+        self.assertIsNotNone(one.run)
+        self.assertEqual(start.basis.tier, "heuristic")
         two = playback.at(SAMPLING_START + 50.0)
         assert two is not None
         self.assertIsNotNone(two.run)
         forecast = playback.at(SAMPLING_START + 2 * 50.0)
         assert forecast is not None and forecast.run is not None
-        self.assertEqual(forecast.basis.tier, "live_only")
+        self.assertEqual(forecast.basis.tier, "heuristic")
         now = ORIGIN + SAMPLING_START + 100.0
-        self.assertAlmostEqual(forecast.run.end_at - now, 8 * 50.0, delta=0.05 * 400.0)
+        self.assertAlmostEqual(forecast.run.end_at - now, 8 * 50.0, delta=0.15 * 400.0)
         self.assertGreater(forecast.run.high - forecast.run.low, 0.0)
 
-    def test_the_other_backends_history_does_not_price_a_run(self) -> None:
+    def test_the_other_backends_history_does_not_narrow_the_heuristic(self) -> None:
         history = [h3_run(execution, 1) for execution in range(1, 6)]
         forecast = Playback(history, single_run()).at(0.0)
+        empty = Playback([], single_run()).at(0.0)
         assert forecast is not None
-        self.assertIsNone(forecast.run)
-        self.assertEqual(forecast.basis.tier, "live_only")
+        assert empty is not None
+        self.assertEqual(forecast.run, empty.run)
+        self.assertEqual(forecast.basis.tier, "heuristic")
 
 
 class JobForecastTests(unittest.TestCase):
@@ -310,11 +324,14 @@ class JobForecastTests(unittest.TestCase):
         assert forecast is not None and forecast.job is not None
         self.assertAlmostEqual(forecast.job.end_at - ORIGIN, 2 * RUN_SECONDS + 100.0, delta=0.015 * 1154.0)
 
-    def test_a_later_run_with_no_history_leaves_the_job_unpriced_until_a_run_of_its_kind_has_finished(self) -> None:
+    def test_a_later_run_with_no_history_is_priced_at_job_start(self) -> None:
         playback = Playback([], self.chain(CooldownPolicy("manual", seconds=100.0), count=3))
+        start = playback.at(0.0)
+        assert start is not None
+        self.assertIsNotNone(start.job)
         during = playback.at(SAMPLING_START + 2 * 50.0)
         assert during is not None and during.run is not None
-        self.assertIsNone(during.job)
+        self.assertIsNotNone(during.job)
         between = playback.at(RUN_SECONDS + 20.0)
         assert between is not None and between.job is not None
         self.assertAlmostEqual(between.job.end_at, ORIGIN + RUN_SECONDS + 100.0 + 2 * RUN_SECONDS + 100.0, delta=0.05 * 2 * RUN_SECONDS)

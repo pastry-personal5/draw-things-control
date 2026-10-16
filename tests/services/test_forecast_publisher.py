@@ -118,11 +118,14 @@ class PublishingRuleTests(unittest.TestCase):
         publisher, sink, events = publisher_for(HISTORY, HistoryExecution(9, CooldownPolicy("off"), (dt_run(9, 1),)))
         kinds = [type(event).__name__ for _, event in events[:4]]
         self.assertEqual(kinds, ["JobStarted", "RunStarted", "TimingStarted", "StageStarted"])
-        play(publisher, events[:3])
-        # JobStarted has no run yet, RunStarted publishes, and TimingStarted leaves every figure where it was.
-        self.assertEqual(len(sink.published), 1)
+        play(publisher, events[:1])
+        self.assertIsNotNone(sink.forecasts[0].run)
+        self.assertIsNotNone(sink.forecasts[0].job)
+        play(publisher, events[1:3])
+        # JobStarted publishes the first rough forecast; RunStarted publishes its actual start.
+        self.assertEqual(len(sink.published), 2)
         play(publisher, events[3:4])
-        self.assertEqual([forecast.stage for forecast in sink.forecasts], [None, "prepare"])
+        self.assertEqual([forecast.stage for forecast in sink.forecasts], [None, None, "prepare"])
 
     def test_a_line_of_output_that_is_not_a_reading_costs_no_forecast(self) -> None:
         from unittest import mock
@@ -253,12 +256,14 @@ class SafetyTests(unittest.TestCase):
         self.assertIsNone(publisher.latest)
         self.assertIsNone(sink.published[-1])
 
-    def test_a_run_with_no_history_publishes_a_forecast_without_a_number(self) -> None:
+    def test_a_run_with_no_history_publishes_a_broad_number_at_start(self) -> None:
         publisher, sink, events = publisher_for([], HistoryExecution(9, CooldownPolicy("off"), (dt_run(9, 1),)))
         play(publisher, events, until=ORIGIN + 5.0)
         self.assertIsNotNone(publisher.latest)
         assert publisher.latest is not None
-        self.assertEqual((publisher.latest.run, publisher.latest.job, publisher.latest.basis.tier), (None, None, "live_only"))
+        self.assertIsNotNone(publisher.latest.run)
+        self.assertIsNotNone(publisher.latest.job)
+        self.assertEqual(publisher.latest.basis.tier, "heuristic")
 
     def test_without_an_explicit_time_the_clock_is_used(self) -> None:
         sink = Sink()

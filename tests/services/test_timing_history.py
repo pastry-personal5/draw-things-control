@@ -32,9 +32,9 @@ class TimingHistoryTests(StoreCase):
     def plan(self, history: TimingHistory):
         return history.model().plan("draw-things-cli", "i2v", WORKLOAD, ENVIRONMENT)
 
-    def test_an_empty_store_gives_a_model_that_prices_nothing(self) -> None:
+    def test_an_empty_store_gives_a_broad_heuristic(self) -> None:
         plan = self.plan(TimingHistory(self.store))
-        self.assertEqual((plan.tier, plan.runs, plan.skipped), ("live_only", 0, 0))
+        self.assertEqual((plan.tier, plan.runs, plan.skipped), ("heuristic", 0, 0))
 
     def test_complete_live_runs_of_a_signature_price_the_next_one(self) -> None:
         for days in (3, 2, 1):
@@ -46,7 +46,7 @@ class TimingHistoryTests(StoreCase):
         for days in (3, 2):
             self.keep(f"walk-{days}", days)
         self.keep("walk-1", 1, complete=False)
-        self.assertEqual(self.plan(TimingHistory(self.store)).tier, "live_only")
+        self.assertEqual(self.plan(TimingHistory(self.store)).tier, "heuristic")
 
     def test_a_row_rebuilt_from_a_log_never_forms_a_signature_with_a_live_one(self) -> None:
         for days in (3, 2, 1):
@@ -68,6 +68,14 @@ class TimingHistoryTests(StoreCase):
         self.assertEqual(skipped, 0)
         self.assertEqual((executions[0].runs[0].workload["frames"], executions[0].runs[0].workload["steps"]), (33, 2))
         self.assertEqual(stale["frames"], 17)
+
+    def test_old_color_policy_flag_is_removed_when_the_pipeline_cannot_correct(self) -> None:
+        for backend, pipeline in (("h3", "r2av"), ("draw-things-cli", "t2v")):
+            execution = self.add(f"old-{backend}", started=iso(1), finished=iso(1))
+            self.store.timing.replace_run(execution, 1, backend=backend, pipeline=pipeline, workload={**WORKLOAD, "color_corrects": True}, environment=ENVIRONMENT, fidelity="live", complete=True, spans=spans())
+        executions, skipped = load_executions(self.store)
+        self.assertEqual(skipped, 0)
+        self.assertTrue(all("color_corrects" not in run.workload for execution in executions for run in execution.runs))
 
     def test_a_phase_the_model_has_never_seen_loads_like_any_other(self) -> None:
         for days in (3, 2, 1):
@@ -99,7 +107,7 @@ class TimingHistoryTests(StoreCase):
         history = TimingHistory(self.store)
         with mock.patch.object(type(self.store.timing), "complete_runs", side_effect=sqlite3.OperationalError("database is locked")):
             plan = self.plan(history)
-        self.assertEqual((plan.tier, plan.runs), ("live_only", 0))
+        self.assertEqual((plan.tier, plan.runs), ("heuristic", 0))
 
 
 class LoadExecutionsTests(StoreCase):

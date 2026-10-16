@@ -54,8 +54,12 @@ def _history_run(row: CompleteTiming) -> HistoryRun:
         sampling = next((stage for stage in stages if stage.stage == "sampling" and stage.source == "child" and stage.done == stage.total and stage.total is not None and stage.total > 0), None)
         if sampling is not None:
             workload["steps"] = sampling.total
-    if row.backend in ("draw-things-cli", "h3") and any(stage.stage == "correct" and stage.source == "framecontrol" for stage in stages):
+    corrected = any(stage.stage == "correct" and stage.source == "framecontrol" for stage in stages)
+    if row.backend in ("draw-things-cli", "h3") and corrected:
         workload["color_corrects"] = True
+    elif (row.backend == "h3" and row.pipeline == "r2av") or (row.backend == "draw-things-cli" and row.pipeline == "t2v" and row.run == 1):
+        # Older workload hooks marked the job's color policy, even for a run with no correction input.
+        workload.pop("color_corrects", None)
     return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, workload, row.environment, stages, row.output_frames)
 
 

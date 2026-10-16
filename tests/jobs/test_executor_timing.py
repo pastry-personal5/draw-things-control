@@ -304,6 +304,12 @@ class ExecutorTimingTests(JobTestCase):
         job = load_job(self.write_job(data), self.global_config, self.params)
         self.assertIs(self.service.describe_run(job, 1, executable="draw-things-cli").workload["color_corrects"], True)
 
+    def test_t2v_first_run_does_not_price_a_correction_without_an_input(self) -> None:
+        data = job_data(mode="t2v", input=None, run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}], color={"anchor": "previous", "strength": 1, "regions": False})
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        self.assertNotIn("color_corrects", self.service.describe_run(job, 1, executable="draw-things-cli").workload)
+        self.assertIs(self.service.describe_run(job, 2, executable="draw-things-cli").workload["color_corrects"], True)
+
     def test_the_description_of_a_run_before_it_starts_is_what_its_timing_records(self) -> None:
         job = self.job(run_count=2)
         recorder = self.observe(job)

@@ -185,7 +185,7 @@ class DrawThingsBackend:
                 config[config_key] = override[name]
         width, height = settings.size or (config.get("width"), config.get("height"))
         workload: dict[str, Any] = {"width": width, "height": height, "pixels": width * height if is_int(width) and is_int(height) else None, "frames": config.get("numFrames"), "steps": config.get("steps"), "mode": job.mode.value}
-        if job.color.corrects:
+        if job.mode.is_video and job.color.corrects and not (job.mode.value == "t2v" and run_number == 1):
             workload["color_corrects"] = True
         for name, key in (("guidance_scale", "guidanceScale"), ("strength", "strength"), ("shift", "shift")):
             if config.get(key) is not None:

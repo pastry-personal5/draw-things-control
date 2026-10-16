@@ -141,3 +141,12 @@ def factory_point(backend: str, pipeline: str | None, workload: Mapping[str, Any
     if backend == "h3" and H3_R2AV_E0051_E0054.matches(backend, pipeline, workload, environment):
         return H3_R2AV_E0051_E0054
     return None
+
+
+def heuristic_anchor(backend: str) -> DrawThingsFactoryPoint | H3FactoryPoint | None:
+    """A measured backend rate to scale for a cold start, with uncertainty supplied by the caller."""
+    if backend == "draw-things-cli":
+        return DRAW_THINGS_I8X_E0053
+    if backend == "h3":
+        return H3_R2AV_E0051_E0054
+    return None

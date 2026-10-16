@@ -38,6 +38,8 @@ WHOLE_STAGE_SIGMA = 0.1
 ANALOG_SPREAD = 0.1
 # Units a stage that counts any must have shown before it is projected from its own pace.
 MIN_PACE_UNITS = 2
+# An unfamiliar stage needs an actual duration allowance even when the known stages have zero observed variation.
+DEFAULT_OTHER_STAGE_SECONDS = 20.0
 
 
 @dataclass(frozen=True)
@@ -274,6 +276,10 @@ class Forecaster:
             return
         if isinstance(event, JobStarted):
             self._started_at = now
+            if self._planned:
+                first = min(self._planned)
+                planned = self._planned[first]
+                self._run = self._start(first, now, planned.backend, planned.signature, self._plans[first])
         elif isinstance(event, RunStarted):
             planned = self._planned.get(event.number)
             self._between = None
@@ -419,7 +425,7 @@ class Forecaster:
     # ---------------------------------------------------------------- forecast
 
     def forecast(self, now: float) -> Forecast | None:
-        """What is expected at ``now``; None once the entry has been cancelled or has finished, or before a run starts."""
+        """What is expected at ``now``; None once cancelled or finished, or before the job starts."""
         if self._cancelled or self._finished or self._started_at is None:
             return None
         if self._run is not None:
@@ -508,8 +514,11 @@ class Forecaster:
                 total.add(mean, sd)
                 child_mean += mean if stage.source == SOURCE_CHILD else 0.0
             else:
-                # A phase the history has not seen adds nothing to the sum and widens the range by the pooled spread.
-                total.add(0.0, plan.other_sd)
+                # An unseen stage still needs time to finish. Treat its pooled spread as a rough duration and widen the
+                # range; otherwise a stage after the planned tail would claim the run is already done.
+                mean, sd = lognormal_left(max(DEFAULT_OTHER_STAGE_SECONDS, min(plan.other_sd, 60.0)), 0.75, elapsed)
+                total.add(mean, math.hypot(sd, plan.other_sd))
+                child_mean += mean if stage.source == SOURCE_CHILD else 0.0
         for item in plan.stages[run.position + 1 :]:
             if isinstance(item, FixedStage):
                 total.add(item.mean, item.sd)

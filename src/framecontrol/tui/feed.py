@@ -48,6 +48,7 @@ class QueueFeed:
     def __init__(self, app: FramecontrolApp) -> None:
         self._app = app
         self._last_event_id = FORCE_RESET_ID
+        self._early_forecast: tuple[str, dict[str, Any] | None] | None = None
         # The next open must force Reset: true at startup, and after any health-check failure during a gap (a
         # resumed real ID could, in a vanishingly rare race, be clamped by a freshly restarted server with no Reset).
         self._reopen_fresh = True
@@ -150,6 +151,9 @@ class QueueFeed:
         live = self._app.live
         if live is not None and live.queue_id == data["queue_id"] and not live.ended:
             live.apply_forecast(data["forecast"])
+        elif self._app.pending_queue_id == data["queue_id"]:
+            # The worker publishes before its JobStarted event reaches the feed.
+            self._early_forecast = (data["queue_id"], data["forecast"])
 
     def _apply_park_changed(self, data: dict[str, Any]) -> None:
         """A park reservation made or withdrawn anywhere (this TUI, another, or ``fc queue``), for the followed entry;
@@ -163,6 +167,9 @@ class QueueFeed:
             live.apply(job_event)
             live.queue_id = app.pending_queue_id
             live.park_requested = app.pending_park_requested
+            if self._early_forecast is not None and self._early_forecast[0] == live.queue_id:
+                live.apply_forecast(self._early_forecast[1])
+            self._early_forecast = None
             app.pending_queue_id = None
             app.pending_park_requested = False
             app.live = live
@@ -185,6 +192,7 @@ class QueueFeed:
             self._app.main.running.job_ended()
 
     async def _reseed(self, http: httpx.AsyncClient) -> None:
+        self._early_forecast = None
         self._app.refresh_queue()
         response = await http.get("/v1/queue", params={"state": "running"})
         response.raise_for_status()
