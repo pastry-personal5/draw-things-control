@@ -143,6 +143,9 @@ def _plain(value: Any) -> Any:
         return round(value, 6)
     if isinstance(value, list | tuple):
         return tuple(_plain(item) for item in value)
+    if isinstance(value, Mapping):
+        # A mapping inside a list is not flattened, and a dict is not hashable, which a signature has to be.
+        return tuple(sorted((str(key), _plain(item)) for key, item in value.items()))
     return value
 
 

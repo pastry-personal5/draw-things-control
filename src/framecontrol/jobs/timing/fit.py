@@ -398,7 +398,7 @@ class FittedModel:
             self._read[id(run)] = row
         self._stats_cache: dict[str, _BackendStats] = {}
         self._fit_cache: dict[tuple[str, str | None, str, bool], _Ridge | None] = {}
-        self._stage_cache: dict[tuple[str, str | None, str], tuple[float, float, float, float]] = {}
+        self._stage_cache: dict[tuple[str, str | None, str, int], tuple[float, float, float, float]] = {}
         self._frames: dict[Signature, int] = {}
         joined: dict[Signature, list[int]] = defaultdict(list)
         for rows in self._rows.values():
@@ -602,7 +602,8 @@ class FittedModel:
     def _stage_fit(self, backend: str, pipeline: str | None, name: str, rows: list[_Row]) -> tuple[float, float, float, float]:
         """The log of the stage's duration fitted on log pixels and log frames, with a small ridge on the slopes: its
         intercept, the two coefficients, and the residual spread."""
-        cache_key = (backend, pipeline, name)
+        # The rows differ by tier (a pipeline's own, or all of the backend's), so their count is part of the key.
+        cache_key = (backend, pipeline, name, len(rows))
         if cache_key not in self._stage_cache:
             design = np.array([[1.0, row.features["log_pixels"], row.features.get("log_frames", 0.0)] for row in rows])
             target = np.log(np.maximum([row.keyed[name].duration for row in rows], 1e-3))
