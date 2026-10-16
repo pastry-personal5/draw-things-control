@@ -7,8 +7,10 @@ conjugate rule after each step of the active stage, so the weight of history fal
 times the median of the steps so far (three times the predicted step before three exist) is a pause: it counts toward
 elapsed time and not toward the rate. A step still running past its prediction is conditioned on having lasted this long,
 so the end moves and the range widens. The job adds the runs still to come, the waits between them (the policy applied to
-the run's predicted child time), and the state the runs of an execution share. The range is the 80% interval from a
-Student-t quantile, summed in seconds. Nothing here reads a file, a database, or the clock."""
+the run's predicted child time), and the state the runs of an execution share; from ``JobStarted`` to the first run it is
+those runs alone. A later run the history cannot price is priced from this job's own runs: a finished one, or the run in
+progress as it projects, scaled to its work. The range is the 80% interval from a Student-t quantile, summed in seconds.
+Nothing here reads a file, a database, or the clock."""
 
 from __future__ import annotations
 
@@ -20,8 +22,8 @@ from typing import Any
 
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, StageFinished, StageStarted, TimingStarted
-from framecontrol.jobs.timing.features import Signature, signature
-from framecontrol.jobs.timing.fit import FittedModel, FixedStage, IterativeStage, Plan, StagePlan, student_t_90
+from framecontrol.jobs.timing.features import Signature, signature, size_values
+from framecontrol.jobs.timing.fit import SCALE_SIGMA, FittedModel, FixedStage, IterativeStage, Plan, StagePlan, student_t_90, work_change, work_exponent
 from framecontrol.jobs.timing.model import SOURCE_CHILD
 from framecontrol.jobs.timing.parsers import STEP_STAGES
 
@@ -115,6 +117,10 @@ class PlannedRun:
     @property
     def signature(self) -> Signature:
         return signature(self.backend, self.pipeline, self.workload, self.environment)
+
+    @property
+    def sizes(self) -> dict[str, float]:
+        return size_values(self.workload)
 
 
 @dataclass(frozen=True)
@@ -258,8 +264,10 @@ class Forecaster:
         self._finished = False
         # The state the runs of this execution share, per backend, after the runs so far: its mean and variance in the log.
         self._carry: dict[str, tuple[float, float]] = {}
-        # What the runs of this job have taken, for a later run of the same kind that has no history of its own.
-        self._actual: dict[Signature, tuple[float, float]] = {}
+        # What the runs of this job have taken, for a later run that has no history of its own: by run number, the seconds
+        # and the child's seconds.
+        self._actual: dict[int, tuple[float, float]] = {}
+        self._runs_started = False
 
     # ------------------------------------------------------------------ events
 
@@ -277,6 +285,7 @@ class Forecaster:
         elif isinstance(event, RunStarted):
             planned = self._planned.get(event.number)
             self._between = None
+            self._runs_started = True
             self._run = self._start(event.number, now, planned.backend, planned.signature, self._plans[event.number]) if planned is not None else None
         elif isinstance(event, TimingStarted):
             self._timing_started(event)
@@ -389,8 +398,10 @@ class Forecaster:
         if run.plan.log_step is None:
             return False
         # The prior's prediction, not the posterior's: a step is judged against what was expected before the data it
-        # would update, or one wild early reading would make every normal step after it look like a pause.
-        return seconds > PAUSE_FACTOR * math.exp(run.plan.log_step + run.prior_mean + shape)
+        # would update, or one wild early reading would make every normal step after it look like a pause. Widened by how
+        # unsure that prediction is, so a run priced roughly (from another size, or a built-in run) that is simply slower
+        # is not read as pausing at every step.
+        return seconds > PAUSE_FACTOR * math.exp(run.plan.log_step + run.prior_mean + shape + 2.0 * math.sqrt(run.plan.log_step_var))
 
     def _run_finished(self, event: RunFinished, now: float) -> None:
         run = self._run
@@ -399,7 +410,7 @@ class Forecaster:
         self._carry[run.backend] = self._carried(run)
         child = event.seconds if event.seconds is not None else run.child_done
         if event.status == RunStatus.SUCCEEDED:
-            self._actual[run.signature] = (now - run.origin, child)
+            self._actual[run.number] = (now - run.origin, child)
         wait_until = None
         if event.status == RunStatus.SUCCEEDED and any(number > event.number for number in self._planned):
             seconds = self._job.cooldown.wait_after(child).seconds
@@ -426,7 +437,18 @@ class Forecaster:
             return self._in_run(self._run, now)
         if self._between is not None:
             return self._between_runs(self._between, now)
+        if not self._runs_started and self._job.runs:
+            return self._before_runs(now)
         return None
+
+    def _before_runs(self, now: float) -> Forecast:
+        """From ``JobStarted`` to the first ``RunStarted`` (the input being prepared): the job is every run still to come."""
+        assert self._started_at is not None
+        numbers = list(self._planned)
+        # A park reserved this early ends the job after the run that starts first.
+        future = self._future(numbers[:1] if self._parking else numbers, None, now)
+        job = self._span(self._started_at, now, future, self._plans[numbers[0]].df) if future is not None else None
+        return Forecast(now, None, None, None, None, job, self._basis(self._plans[numbers[0]], ()))
 
     def _in_run(self, run: _Run, now: float) -> Forecast:
         stage = run.stage
@@ -444,7 +466,7 @@ class Forecaster:
         plan = self._plans[later[0] if later else between.number]
         job = None
         if later and not self._parking and self._started_at is not None:
-            future = self._future(later, None)
+            future = self._future(later, None, now)
             if future is not None:
                 total = _Sum(max(between.wait_until - now, 0.0) if between.wait_until is not None else 0.0)
                 total.merge(future)
@@ -458,7 +480,7 @@ class Forecaster:
         total.merge(current.total, self._wait_slope(current.child_mean) if later else 1.0)
         if later:
             total.mean += self._job.cooldown.wait_after(current.child_mean).seconds
-            future = self._future(later, (run, current))
+            future = self._future(later, (run, current), now)
             if future is None:
                 return None
             total.merge(future)
@@ -525,11 +547,11 @@ class Forecaster:
         return _Estimate(total, exposure, child_mean, u_sd)
 
     def _live_only(self, run: _Run, now: float) -> _Estimate | None:
-        """With no history that qualifies, a number only once the steps have two readings: the pace they show, with the
-        spread of a stage not in the history added for everything that comes after."""
+        """With no history that qualifies: once the steps have two readings, the pace they show, with the spread of a stage not
+        in the history added for everything that comes after; before that, this job's runs before it, if it has any."""
         stage = run.stage
         if stage is None or stage.name not in STEP_STAGES or not stage.readings or run.pace_weight == 0 or run.steps_total is None:
-            return None
+            return self._analog_estimate(run, now)
         plan = run.plan
         n = stage.total or run.steps_total
         level = math.exp(run.pace_level + plan.step_noise**2 / run.pace_weight / 2)
@@ -537,7 +559,21 @@ class Forecaster:
         total = _Sum()
         total.add(mean, sd)
         total.add(0.0, plan.other_sd)
-        return _Estimate(total, 0.0, 0.0, 0.0)
+        child = run.child_done + (max(0.0, now - (run.origin + stage.start)) + mean if stage.source == SOURCE_CHILD else 0.0)
+        return _Estimate(total, 0.0, child, 0.0)
+
+    def _analog_estimate(self, run: _Run, now: float) -> _Estimate | None:
+        """A run with no history and no pace of its own yet, priced from this job's finished runs (``_analog``) and conditioned
+        on having lasted this long; None when the job has none."""
+        planned = self._planned.get(run.number)
+        built = self._analog(planned, None, now) if planned is not None else None
+        if built is None:
+            return None
+        whole, child = built
+        left, sd = lognormal_left(whole.mean, whole.sd / whole.mean if whole.mean > 0 else WHOLE_STAGE_SIGMA, max(0.0, now - run.origin))
+        total = _Sum()
+        total.add(left, sd)
+        return _Estimate(total, 0.0, child, 0.0)
 
     def _step_level(self, plan: Plan, u_mean: float, u_var: float) -> float:
         """The mean step time of a plan's stage for a run with this speed factor, before the stage's shape."""
@@ -597,12 +633,35 @@ class Forecaster:
 
     # --------------------------------------------------------------- the rest
 
-    def _future(self, numbers: list[int], active: tuple[_Run, _Estimate] | None) -> _Sum | None:
+    def _analog(self, planned: PlannedRun, active: tuple[_Run, _Estimate] | None, now: float) -> tuple[_Sum, float] | None:
+        """A run the history cannot price, from this job's own runs of its backend: one of the same signature before any other,
+        and a finished one before the run in progress (as it projects, once it has a number), the newest of those; the same
+        signature taken as it is and another scaled to the run's work. None when the job has no such run yet."""
+        known: list[tuple[tuple[bool, bool, int], PlannedRun, float, float, float]] = []
+        for number, (seconds, child) in self._actual.items():
+            done = self._planned.get(number)
+            if done is not None and done.backend == planned.backend:
+                known.append(((done.signature == planned.signature, True, number), done, seconds, child, ANALOG_SPREAD * seconds))
+        if active is not None and active[0].backend == planned.backend and active[0].number in self._planned:
+            run, estimate = active
+            projected = max(0.0, now - run.origin) + estimate.total.mean
+            reference = self._planned[run.number]
+            known.append(((reference.signature == planned.signature, False, run.number), reference, projected, estimate.child_mean or projected, math.hypot(ANALOG_SPREAD * projected, estimate.total.sd)))
+        if not known:
+            return None
+        _, reference, seconds, child, sd = max(known, key=lambda item: item[0])
+        change = work_change(planned.sizes, reference.sizes)
+        factor = math.exp(work_exponent(planned.backend) * change)
+        total = _Sum()
+        total.add(seconds * factor, math.hypot(sd * factor, SCALE_SIGMA * abs(change) * seconds * factor))
+        return total, child * factor
+
+    def _future(self, numbers: list[int], active: tuple[_Run, _Estimate] | None, now: float) -> _Sum | None:
         """The runs still to come and the waits between them (not the wait after the run in progress); None when a run
         has no history and no run of this job to be priced from."""
         total = _Sum()
         for index, number in enumerate(numbers):
-            built = self._future_run(number, active)
+            built = self._future_run(number, active, now)
             if built is None:
                 return None
             run_sum, child_mean = built
@@ -612,15 +671,11 @@ class Forecaster:
                 total.mean += self._job.cooldown.wait_after(child_mean).seconds
         return total
 
-    def _future_run(self, number: int, active: tuple[_Run, _Estimate] | None) -> tuple[_Sum, float] | None:
+    def _future_run(self, number: int, active: tuple[_Run, _Estimate] | None, now: float) -> tuple[_Sum, float] | None:
         planned, plan = self._planned[number], self._plans[number]
         total = _Sum()
         if plan.log_step is None or not plan.stages:
-            actual = self._actual.get(planned.signature)
-            if actual is None:
-                return None
-            total.add(actual[0], ANALOG_SPREAD * actual[0])
-            return total, actual[1]
+            return self._analog(planned, active, now)
         backend = planned.backend
         own = max(plan.prior_var - plan.shared_var, 0.0)
         groups: list[tuple[Hashable, float]]

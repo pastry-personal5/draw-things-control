@@ -331,6 +331,12 @@ class QueueCliTests(JobTestCase):
         result = self.invoke("show", "Q0001")
         self.assertIn("  forecast: denoise 12/30; run ends ~14:20 (in 20 min), job ends ~14:40 (in 40 min)", result.stdout)
         self.assertIn("  based on: 8 runs from 4 executions (signature, live)", result.stdout)
+        rough = {**forecast, "basis": {**forecast["basis"], "tier": "nearest", "runs": 2, "executions": 2}}
+        self.route(lambda request: self.json_response(200, {**detail, "forecast": rough}))
+        self.assertIn("  based on: the 2 nearest runs from 2 executions, scaled to this one (rough, until the steps correct it)", self.invoke("show", "Q0001").stdout)
+        factory = {**forecast, "basis": {**forecast["basis"], "tier": "factory", "fidelity": "builtin", "runs": 0, "executions": 0}}
+        self.route(lambda request: self.json_response(200, {**detail, "forecast": factory}))
+        self.assertIn("  based on: no history of this backend yet, so a built-in run from measured ones", self.invoke("show", "Q0001").stdout)
         self.route(lambda request: self.json_response(200, {**detail, "forecast": None}))
         self.assertNotIn("forecast", self.invoke("show", "Q0001").stdout)
 

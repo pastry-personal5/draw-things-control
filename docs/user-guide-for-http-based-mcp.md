@@ -101,6 +101,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/queue/Q0001 | jq
 ```
 
+A running entry carries `forecast`: the active `stage` with `stage_done` and `stage_total`, a `run` and a `job` span
+(`started_at`, `end_at`, the 80% range `low` to `high`, all epoch seconds, and the `floor` a progress bar never falls
+below, with `progress` and `seconds_left` as of the read), and the `basis` it rests on (`tier`: `signature`,
+`backend_fit`, `pipeline_fit`, `nearest`, `factory`, or `live_only`). A span is `null` when the server has no number for
+it; `forecast` is `null` for an entry that is not running. MCP's `get_queue_entry` returns the same object, and a new
+forecast does not end its wait.
+
 ## Watch an entry over SSE
 
 ```bash

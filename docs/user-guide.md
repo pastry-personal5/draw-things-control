@@ -1151,8 +1151,13 @@ The Activity log says it could not be saved.
 - The ends and the bars come from one forecast that `fc serve` makes and publishes; the TUI holds no model of
   its own, so `fc queue show`, `fc queue add --wait`, the HTTP API, and MCP say the same thing. It prices a run
   from the history of runs with the same settings (or, with too few, from a fit over the backend's runs), never
-  from the other backend's, and corrects itself from the run's own steps as they arrive. A run with no history
-  says `estimating` until its steps have shown two readings. A bar never moves back. The range is the server's
+  from the other backend's, and corrects itself from the run's own steps as they arrive. With too little history
+  for that it still gives a number from the run's start, roughly and with a wide range: from the backend's
+  nearest runs (one or two of the same settings, else runs of another size scaled to this one's pixels and
+  frames), or, for H3 on a host that has timed none, from a built-in run assembled from measured ones. The Job
+  bar has a number from the job's start, and a later run with no history is priced from this job's own runs.
+  Only a Draw Things run on a host with no Draw Things history says `estimating`, until its steps have shown two
+  readings. `fc queue show` says what a forecast rests on (`based on:`). A bar never moves back. The range is the server's
   80% interval. Its times are the server's clock, as the cooldown's are, so the TUI and the server are expected
   to share one. It is published when a reading arrives, not on a timer, so a step that outlasts its prediction
   shows `finishing` until its next reading comes.

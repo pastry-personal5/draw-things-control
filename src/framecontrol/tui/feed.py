@@ -51,6 +51,9 @@ class QueueFeed:
         # The next open must force Reset: true at startup, and after any health-check failure during a gap (a
         # resumed real ID could, in a vanishingly rare race, be clamped by a freshly restarted server with no Reset).
         self._reopen_fresh = True
+        # The forecast last published and the entry it is for. The server publishes the one it makes at a job's start before
+        # it sends JobStarted, so it is kept until that JobStarted makes the job this TUI follows.
+        self._forecast: tuple[str, dict[str, Any] | None] | None = None
 
     @property
     def last_event_id(self) -> int:
@@ -147,6 +150,7 @@ class QueueFeed:
     def _apply_forecast(self, data: dict[str, Any]) -> None:
         """The server republished the running job's forecast, or cleared it. Kept for the followed entry only; it is shown at
         the next render (at verbose low the status refreshes once a minute, whatever arrives)."""
+        self._forecast = (data["queue_id"], data["forecast"])
         live = self._app.live
         if live is not None and live.queue_id == data["queue_id"] and not live.ended:
             live.apply_forecast(data["forecast"])
@@ -165,6 +169,8 @@ class QueueFeed:
             live.park_requested = app.pending_park_requested
             app.pending_queue_id = None
             app.pending_park_requested = False
+            if self._forecast is not None and live.queue_id is not None and self._forecast[0] == live.queue_id:
+                live.apply_forecast(self._forecast[1])
             app.live = live
             if app.main is not None:
                 app.main.running.job_started()

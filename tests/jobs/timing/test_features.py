@@ -58,6 +58,10 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual(one, two)
         self.assertNotEqual(one, signature("draw-things-cli", "i2v", {"guidance_scale": 7.6}, {"model": "m"}))
 
+    def test_a_list_of_mappings_in_a_workload_still_makes_a_hashable_signature(self) -> None:
+        workload = {"steps": 30, "loras": [{"file": "a", "weight": 1.0}, {"file": "b", "weight": 0.5}]}
+        self.assertEqual(hash(signature("h3", "r2av", workload, {})), hash(signature("h3", "r2av", {"loras": [{"weight": 1.0, "file": "a"}, {"file": "b", "weight": 0.5}], "steps": 30}, {})))
+
     def test_a_run_with_no_frames_has_the_signature_it_will_have_once_its_frames_are_joined(self) -> None:
         planned = history_run(workload={"width": 832, "height": 448, "pixels": 372736, "frames": None, "steps": 40, "mode": "i2v"})
         loaded = history_run(workload=planned.workload, output_frames=81)

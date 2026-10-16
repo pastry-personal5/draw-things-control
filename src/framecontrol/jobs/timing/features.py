@@ -143,6 +143,9 @@ def _plain(value: Any) -> Any:
         return round(value, 6)
     if isinstance(value, list | tuple):
         return tuple(_plain(item) for item in value)
+    if isinstance(value, Mapping):
+        # A mapping inside a list is not flattened, and a dict is not hashable, which a signature has to be.
+        return tuple(sorted((str(key), _plain(item)) for key, item in value.items()))
     return value
 
 
@@ -267,6 +270,18 @@ def feature_values(workload: Mapping[str, Any], output_frames: int | None = None
         for key, value in knobs.items():
             if key not in IGNORED_KNOBS and key != "frames":
                 values.update(_knob_value(f"knob.{key}", value))
+    return values
+
+
+def size_values(workload: Mapping[str, Any], output_frames: int | None = None) -> dict[str, float]:
+    """The log of the pixels and of the frames a workload asks for, each only when it says (``feature_values`` takes an
+    unknown frame count as one frame, which a comparison of sizes must not)."""
+    values = {name: value for name, value in feature_values(workload, output_frames).items() if name == "log_pixels"}
+    frames = workload.get("frames")
+    if not _is_number(frames):
+        frames = output_frames
+    if _is_number(frames) and frames > 0:
+        values["log_frames"] = math.log(frames)
     return values
 
 

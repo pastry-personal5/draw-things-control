@@ -80,6 +80,20 @@ class LiveRunTests(FeedTestCase):
         self.assertIn("stage denoise 12/30", followed)
         self.assertNotIn("stage", cleared)
 
+    async def test_the_forecast_made_at_the_jobs_start_reaches_its_job_bar_although_it_comes_before_job_started(self) -> None:
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.connect(pilot)
+            self.server.send_queue_entry("Q0001", "running")
+            # The server publishes the forecast it makes at JobStarted before it sends JobStarted itself.
+            await self.received(pilot, [self.server.send_forecast("Q0001", forecast_dict(stage=None, done=None, total=None, run=False))])
+            await self.push(pilot, job_started(total_runs=2))
+            await self.wait_for(pilot, lambda: app.live is not None, "the job to start")
+            app.main.running.tick(force=True)  # type: ignore[union-attr]
+            await pilot.pause()
+            lines = self.text(app, "work-status").split("\n")
+        self.assertIn("ends ~", lines[1])
+
     async def test_a_media_check_reaches_messages_and_an_unknown_event_kind_is_skipped(self) -> None:
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:

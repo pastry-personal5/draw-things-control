@@ -83,8 +83,8 @@ message ForecastSpan {
   double floor = 5;
 }
 
-// What a forecast rests on: the history tier (signature, backend_fit, pipeline_fit, live_only), whether that history is
-// live or pooled with rows rebuilt from logs, how many runs and executions, whether the newest was timed on another
+// What a forecast rests on: the history tier (signature, backend_fit, pipeline_fit, nearest, factory, live_only), whether
+// that history is live, pooled with rows rebuilt from logs, or the built-in reference run (builtin), how many runs and executions, whether the newest was timed on another
 // build, the stages the history had not seen, the ridge penalty, and the rows that could not be read.
 message ForecastBasis {
   string tier = 1;

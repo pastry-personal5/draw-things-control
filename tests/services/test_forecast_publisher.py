@@ -119,10 +119,12 @@ class PublishingRuleTests(unittest.TestCase):
         kinds = [type(event).__name__ for _, event in events[:4]]
         self.assertEqual(kinds, ["JobStarted", "RunStarted", "TimingStarted", "StageStarted"])
         play(publisher, events[:3])
-        # JobStarted has no run yet, RunStarted publishes, and TimingStarted leaves every figure where it was.
-        self.assertEqual(len(sink.published), 1)
+        # JobStarted publishes the job ahead of its runs, RunStarted publishes the run, and TimingStarted leaves every figure
+        # where it was.
+        self.assertEqual(len(sink.published), 2)
+        self.assertEqual((sink.forecasts[0].run is None, sink.forecasts[0].job is not None), (True, True))
         play(publisher, events[3:4])
-        self.assertEqual([forecast.stage for forecast in sink.forecasts], [None, "prepare"])
+        self.assertEqual([forecast.stage for forecast in sink.forecasts], [None, None, "prepare"])
 
     def test_a_line_of_output_that_is_not_a_reading_costs_no_forecast(self) -> None:
         from unittest import mock

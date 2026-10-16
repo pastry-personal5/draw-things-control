@@ -6,6 +6,7 @@ import math
 import time
 import unittest
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 
@@ -102,10 +103,10 @@ class TierOneTests(unittest.TestCase):
 
     def test_runs_from_one_execution_are_not_enough(self) -> None:
         history = [dt_run(1, 1), dt_run(1, 2), dt_run(1, 3)]
-        self.assertEqual(plan_of(history).tier, "live_only")
+        self.assertEqual(plan_of(history).tier, "nearest")
 
     def test_two_runs_are_not_enough(self) -> None:
-        self.assertEqual(plan_of([dt_run(1, 1), dt_run(2, 1)]).tier, "live_only")
+        self.assertEqual(plan_of([dt_run(1, 1), dt_run(2, 1)]).tier, "nearest")
 
     def test_a_log_row_never_has_the_signature_of_a_live_one(self) -> None:
         history = [log_run(1, 1), log_run(2, 1), log_run(3, 1)]
@@ -134,14 +135,14 @@ class TierTwoTests(unittest.TestCase):
         self.assertIn(plan.penalty, PENALTIES)
 
     def test_it_needs_six_runs_from_three_executions(self) -> None:
-        self.assertEqual(plan_of(spread(5, pixels=PIXELS, frames=FRAMES, per_execution=1), workload=dt_workload(pixels=450_000)).tier, "live_only")
-        self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=3), workload=dt_workload(pixels=450_000)).tier, "live_only")
+        self.assertEqual(plan_of(spread(5, pixels=PIXELS, frames=FRAMES, per_execution=1), workload=dt_workload(pixels=450_000)).tier, "nearest")
+        self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=3), workload=dt_workload(pixels=450_000)).tier, "nearest")
         self.assertEqual(plan_of(spread(6, pixels=PIXELS, frames=FRAMES, per_execution=2), workload=dt_workload(pixels=450_000)).tier, "backend_fit")
 
     def test_a_knob_that_never_varies_is_not_extrapolated(self) -> None:
         history = spread(12, pixels=PIXELS, frames=FRAMES)
         self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=7.5)).tier, "backend_fit")
-        self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=3.5)).tier, "live_only")
+        self.assertEqual(plan_of(history, workload=dt_workload(pixels=450_000, guidance=3.5)).tier, "nearest")
 
     def test_a_knob_that_varies_is_part_of_the_fit(self) -> None:
         history = []
@@ -193,6 +194,63 @@ class OtherBackendTests(unittest.TestCase):
         assert plan.log_step is not None
         self.assertAlmostEqual(math.exp(plan.log_step), 60.0, delta=0.6)
         self.assertEqual((iterative(plan).stage, iterative(plan).steps), ("denoise", 30))
+
+
+class HeuristicTierTests(unittest.TestCase):
+    H3_ENVIRONMENT = {"model": "h3-model", "executable_bytes": 200, "executable_mtime": 2.0}
+
+    def h3_plan(self, history: list[HistoryRun], *, pipeline: str = "r2av", **workload: Any) -> Plan:
+        return plan_of(history, backend=H3, pipeline=pipeline, workload=h3_workload(pipeline=pipeline, **workload), environment=self.H3_ENVIRONMENT)
+
+    def test_too_few_runs_of_the_signature_price_it_from_them_with_a_wider_range_than_a_tier(self) -> None:
+        plan = plan_of([dt_run(1, 1, step=48.0), dt_run(2, 1, step=52.0)])
+        self.assertEqual((plan.tier, plan.fidelity, plan.runs, plan.executions), ("nearest", "live", 2, 2))
+        assert plan.log_step is not None
+        self.assertAlmostEqual(plan.log_step, (math.log(48.0) + math.log(52.0)) / 2, places=9)
+        self.assertEqual([stage.stage for stage in plan.stages], ["prepare", "starting", "processing", "sampling", "finishing", "verify"])
+        tier_one = plan_of([dt_run(1, 1, step=48.0), dt_run(2, 1, step=52.0), dt_run(3, 1, step=50.0)])
+        self.assertGreater(plan.prior_var, tier_one.prior_var)
+
+    def test_a_run_of_another_size_is_priced_by_scaling_the_nearest_runs_to_its_work_and_is_less_sure(self) -> None:
+        history = [dt_run(1, 1, step=50.0), dt_run(2, 1, step=50.0)]
+        same = plan_of(history)
+        bigger = plan_of(history, workload=dt_workload(pixels=2 * BASE_PIXELS, frames=162))
+        self.assertEqual(bigger.tier, "nearest")
+        assert bigger.log_step is not None
+        self.assertAlmostEqual(math.exp(bigger.log_step), 50.0 * 4.0**1.2, delta=0.01)
+        self.assertGreater(bigger.log_step_var, same.log_step_var)
+
+    def test_a_pipeline_the_history_has_no_run_of_goes_through_the_backends_newest_stages(self) -> None:
+        plan = plan_of([dt_run(1, 1), dt_run(2, 1)], pipeline="i2i", workload=dt_workload(mode="i2i"))
+        self.assertEqual(plan.tier, "nearest")
+        self.assertEqual(iterative(plan).stage, "sampling")
+
+    def test_an_h3_run_with_no_history_is_priced_from_the_built_in_run_of_milestone_10s_measurements(self) -> None:
+        plan = self.h3_plan([])
+        self.assertEqual((plan.tier, plan.fidelity, plan.runs, plan.executions, plan.build_changed), ("factory", "builtin", 0, 0, False))
+        assert plan.log_step is not None
+        # 243-frame 832x448 runs took 63.5 to 74.3 s per step.
+        self.assertAlmostEqual(math.exp(plan.log_step), 69.0, delta=0.01)
+        self.assertEqual((iterative(plan).stage, iterative(plan).steps), ("denoise", 30))
+        self.assertEqual(plan.stages[0].stage, "prepare")
+        self.assertEqual(plan.stages[-1].stage, "verify")
+        # Its range is the widest a plan gives.
+        self.assertGreater(plan.log_step_var, plan_of([dt_run(1, 1), dt_run(2, 1)]).log_step_var)
+
+    def test_the_built_in_run_follows_the_measured_growth_with_the_clip_length(self) -> None:
+        # 5 s clips took 19 to 24 s per step and 8 s clips 39 to 54 s.
+        for frames, low, high in ((121, 19.0, 24.0), (193, 39.0, 54.0)):
+            plan = self.h3_plan([], frames=frames)
+            assert plan.log_step is not None
+            self.assertTrue(low <= math.exp(plan.log_step) <= high, (frames, math.exp(plan.log_step)))
+        self.assertEqual(iterative(self.h3_plan([], steps=20)).steps, 20)
+
+    def test_an_h3_runs_own_history_replaces_the_built_in_run_and_another_backends_never_does(self) -> None:
+        self.assertEqual(self.h3_plan([h3_run(1, 1)]).tier, "nearest")
+        self.assertEqual(self.h3_plan([dt_run(1, 1), dt_run(2, 1)]).tier, "factory")
+
+    def test_draw_things_has_no_built_in_run(self) -> None:
+        self.assertEqual(plan_of([]).tier, "live_only")
 
 
 class SpreadTests(unittest.TestCase):
