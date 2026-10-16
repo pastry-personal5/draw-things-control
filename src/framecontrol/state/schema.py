@@ -223,7 +223,42 @@ ALTER TABLE runs ADD COLUMN input_run INTEGER;
 ALTER TABLE runs ADD COLUMN input_role TEXT
 """
 
+# Stage timing. One row per span of a run, written when its stage finishes (a crash keeps every finished span), and one row
+# per run, written when its timing starts, marked incomplete until the run succeeds. Both are keyed by execution and run, as
+# ``media_checks`` is, and cascade from the execution: ``history_retention_days`` pruning and deleting an execution take
+# them with it, so there is no second rule for how long timing is kept. Offsets are seconds after the run started (work
+# done for it before then has negative ones). ``marks`` is JSON: [offset, units done] pairs, the first with a trailing 1 when
+# its offset is an estimate. ``fidelity`` is ``live`` for a run timed as it ran and ``log`` for one rebuilt from a job log.
+SCHEMA_V14 = """
+CREATE TABLE run_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id INTEGER NOT NULL REFERENCES executions (id) ON DELETE CASCADE,
+    run INTEGER NOT NULL,
+    stage TEXT NOT NULL,
+    phase TEXT,
+    source TEXT NOT NULL,
+    start_offset REAL NOT NULL,
+    end_offset REAL NOT NULL,
+    units_done INTEGER,
+    units_total INTEGER,
+    unit TEXT,
+    marks TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX run_stages_run ON run_stages (execution_id, run, start_offset);
+CREATE TABLE run_timing (
+    execution_id INTEGER NOT NULL REFERENCES executions (id) ON DELETE CASCADE,
+    run INTEGER NOT NULL,
+    backend TEXT NOT NULL,
+    pipeline TEXT,
+    workload TEXT NOT NULL DEFAULT '{}',
+    environment TEXT NOT NULL DEFAULT '{}',
+    fidelity TEXT NOT NULL DEFAULT 'live',
+    complete INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (execution_id, run)
+)
+"""
+
 # Forward-only: migration N runs when the database is at N - 1. The list index is the version reached. Any open migrates,
 # a browsing one too (owner decision): an upgrade is the one write a read-only screen may make.
-MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12, SCHEMA_V13)
+MIGRATIONS: tuple[str, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12, SCHEMA_V13, SCHEMA_V14)
 SCHEMA_VERSION = len(MIGRATIONS)

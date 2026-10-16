@@ -41,7 +41,7 @@ def run_started(number: int = 1, total: int = 2) -> RunStarted:
 
 
 def run_output(text: str, *, number: int = 1, stream: str = "stdout", progress: tuple[int, int] | None = None, percent: int | None = None) -> RunOutput:
-    return RunOutput(at=AT, number=number, stream=stream, text=text, progress=progress, percent=percent)
+    return RunOutput(at=AT, number=number, stream=stream, text=text, progress=progress, percent=percent, phase=None, offset=0.0)
 
 
 def run_finished(number: int = 1, seconds: float = 30.0) -> RunFinished:

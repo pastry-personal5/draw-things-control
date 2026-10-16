@@ -20,6 +20,7 @@ from framecontrol.jobs.media.stream_color import StreamColor
 from framecontrol.jobs.media.toolkit import MediaTools
 from framecontrol.jobs.planning import PlannedRun
 from framecontrol.jobs.records import RunRecord
+from framecontrol.jobs.timing.timeline import NO_TIMER, StageTimer
 
 if TYPE_CHECKING:
     from framecontrol.jobs.color_run import CorrectionResult
@@ -44,10 +45,12 @@ class RunColor:
 class RunFinisher:
     """Finishes a successful run: tags a video's colors, extracts its last frame, and measures what the file holds."""
 
-    def __init__(self, media: MediaTools, report: Callable[[int, MediaCheck], None] | None = None) -> None:
+    def __init__(self, media: MediaTools, report: Callable[[int, MediaCheck], None] | None = None, timer: StageTimer = NO_TIMER) -> None:
         self._media = media
         # Receives each media check with its run's number; the executor makes it an event.
         self._report = report
+        # Times each step of the finishing as a stage of the run.
+        self._timer = timer
 
     def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], run_color: RunColor | None = None) -> tuple[RunStatus, int] | None:
         """Finish ``run``, updating ``record``; None when it succeeded, else the run's status and exit code.
@@ -58,13 +61,16 @@ class RunFinisher:
         video = job.mode.is_video
         checker = self._media.checker if video and self._report is not None else None
         # Read before the tagger, which adds a colr box that ffprobe would then report instead of the stream's own.
-        color = self._media.color_reader(run.output) if video and self._media.color_reader is not None else StreamColor()
-        written = checker.probe(run.output) if checker is not None else None
+        with self._timer.stage("verify"):
+            color = self._media.color_reader(run.output) if video and self._media.color_reader is not None else StreamColor()
+            written = checker.probe(run.output) if checker is not None else None
         if self._media.video_tagger is not None and video:
-            self._tag_video(run.output, color)
+            with self._timer.stage("tag"):
+                self._tag_video(run.output, color)
         tagged = None
         if checker is not None and written is not None:
-            check, tagged = checker.output(run.output, job.video_format, written, color)
+            with self._timer.stage("verify"):
+                check, tagged = checker.output(run.output, job.video_format, written, color)
             self._reported(run.number, check)
         if run.last_frame is not None:
             corrector = self._media.corrector
@@ -72,29 +78,38 @@ class RunFinisher:
             # A correcting run extracts the uncorrected frame beside the handoff, which the correction then writes.
             extracted = run.raw_last_frame if correcting and run.raw_last_frame is not None else run.last_frame
             try:
-                self._media.frame_extractor(run.output, extracted, color)
+                with self._timer.stage("last_frame"):
+                    self._media.frame_extractor(run.output, extracted, color)
             except ValueError as error:
                 stop = stop_requested()
                 if stop is not None:
                     return RunStatus.INTERRUPTED, exit_code_for_signal(stop)
                 logger.error("{}", error)
                 return RunStatus.FAILED, 1
-            result = self._correct(job, run, record, run_color, color) if correcting else None
+            result = None
+            if correcting:
+                with self._timer.stage("correct"):
+                    result = self._correct(job, run, record, run_color, color)
             if result is None and extracted != run.last_frame:
                 return RunStatus.FAILED, 1
             record.last_frame = run.last_frame.name
             if checker is not None:
-                self._reported(run.number, checker.last_frame(run.last_frame, tagged, color))
+                with self._timer.stage("verify"):
+                    last_frame_check = checker.last_frame(run.last_frame, tagged, color)
+                self._reported(run.number, last_frame_check)
             # Every video run measures its color drift, whether or not its job corrects (owner decision); a correction
             # measures it in its own first pass.
             drift = result.drift if result is not None else None
             if drift is not None:
                 self._reported(run.number, drift)
             elif checker is not None:
-                self._reported(run.number, checker.color_drift(run.output, color, run.input, run_color.first_image, run_color.notes))
+                with self._timer.stage("drift"):
+                    drift_check = checker.color_drift(run.output, color, run.input, run_color.first_image, run_color.notes)
+                self._reported(run.number, drift_check)
             for check in result.checks if result is not None else ():
                 self._reported(run.number, check)
-        self._measure(run.output, record)
+        with self._timer.stage("measure"):
+            self._measure(run.output, record)
         return None
 
     def _correct(self, job: JobDefinition, run: PlannedRun, record: RunRecord, run_color: RunColor, color: StreamColor) -> CorrectionResult | None:

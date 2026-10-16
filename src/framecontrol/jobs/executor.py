@@ -5,11 +5,13 @@ from __future__ import annotations
 import random
 import shutil
 import signal
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -34,7 +36,11 @@ from framecontrol.jobs.media.tools import find_ffmpeg
 from framecontrol.jobs.output_naming import RandomNumber, random_four_digits
 from framecontrol.jobs.planning import JobPlanner, JobPreview, PlannedRun
 from framecontrol.jobs.records import JobManifest, JobRecords, RunRecord
+from framecontrol.jobs.run_timing import BeforeStart, RunTiming
 from framecontrol.jobs.text import report_ignored_config, seconds_text
+from framecontrol.jobs.timing.environment import HostLoad
+from framecontrol.jobs.timing.environment import host_load as read_host_load
+from framecontrol.jobs.timing.parsers import StageParser
 
 if TYPE_CHECKING:
     from framecontrol.jobs.inputs.resize import TemporaryInput
@@ -42,6 +48,8 @@ if TYPE_CHECKING:
 # Waits up to the given seconds between runs and returns the seconds actually waited. It may return early; the executor
 # waits again, for the rest, only when a park ended the wait and was withdrawn before it took effect.
 Cooldown = Callable[[float], float]
+# Work done for a run before it starts that took less than this gets no span of its own.
+MIN_BEFORE_START_SECONDS = 0.001
 
 
 @dataclass(frozen=True)
@@ -141,8 +149,14 @@ class JobExecutor:
         handle_signals: bool = True,
         cooldown: Cooldown | None = None,
         backends: BackendRegistry = DEFAULT_BACKENDS,
+        monotonic: Callable[[], float] = time.monotonic,
+        host_load: Callable[[], HostLoad | None] = read_host_load,
     ) -> None:
         self._clock = clock
+        # The clock every run's stage timeline reads, apart from the wall clock above and the run timer the launcher keeps.
+        self._monotonic = monotonic
+        self._host_load = host_load
+        self._find_executable = find_executable
         self._random_number = random_number
         self._handle_signals = handle_signals
         self._backends = backends
@@ -154,6 +168,11 @@ class JobExecutor:
         self._observer: JobObserver | None = None
         self._log_writer = JobLogWriter()
         self._on_child_start: ChildStartCallback | None = None
+        # The run in progress's timing, and work done for the runs to come before they have started (resizing the input, staging
+        # references), by the number of the run it serves.
+        self._timing: RunTiming | None = None
+        self._timing_read_failed = False
+        self._before_start: dict[int, list[BeforeStart]] = {}
 
     def preview(self, job: JobDefinition, *, executable: str, seed: int | None = None) -> JobPreview:
         """Validate that the job can start and describe every run without running anything (see ``JobPlanner.preview``)."""
@@ -172,6 +191,7 @@ class JobExecutor:
         self._token.begin()
         self._observer, self._on_child_start = options.observer, options.on_child_start
         self._log_writer = JobLogWriter()
+        self._timing, self._before_start = None, {}
         try:
             return self._run(job, options)
         finally:
@@ -239,6 +259,15 @@ class JobExecutor:
     def _timestamp(self) -> str:
         return local_timestamp(self._clock())
 
+    @contextmanager
+    def _before_start_stage(self, stage: str, run: int) -> Iterator[None]:
+        """Time the block as work done for run ``run`` before it starts, which that run's timing takes up, unless it took no time worth a span."""
+        started = self._monotonic()
+        yield
+        ended = self._monotonic()
+        if ended - started >= MIN_BEFORE_START_SECONDS:
+            self._before_start.setdefault(run, []).append((stage, started, ended))
+
     def _run(self, job: JobDefinition, options: JobRunOptions) -> JobOutcome:
         if options.shutdown_grace < 0:
             raise InputError("--shutdown-grace must not be negative")
@@ -258,14 +287,16 @@ class JobExecutor:
                 prepare_job = getattr(self._backends.get(effective.backend), "prepare_job", None)
                 backend_job = effective.backend_job
                 if prepare_job is not None:
-                    backend_job, cleanup = prepare_job(backend_job)
+                    with self._before_start_stage("stage_references", effective.number):
+                        backend_job, cleanup = prepare_job(backend_job)
                     cleanups.append(cleanup)
                 prepared_runs.append(replace(effective, backend_job=backend_job))
             job = replace(job, effective_runs=tuple(prepared_runs))
         else:
             prepare_job = getattr(self._backends.get(job.backend), "prepare_job", None)
             if prepare_job is not None:
-                job, cleanup = prepare_job(job)
+                with self._before_start_stage("stage_references", first_run):
+                    job, cleanup = prepare_job(job)
                 cleanups.append(cleanup)
         temporary_input: TemporaryInput | None = None
         try:
@@ -275,7 +306,9 @@ class JobExecutor:
             else:
                 seed, seed_source = self._planner.seed(job, None)
                 # Resize before the output directory, manifest, or log exist, so a bad image leaves nothing behind.
-                temporary_input = self._temporary_input(job)
+                # A job with no copy to make returns at once, which is under the span threshold.
+                with self._before_start_stage("prepare_input", first_run):
+                    temporary_input = self._temporary_input(job)
             # Taken last of the checks, so a job refused above never uses up a number; a job that cannot get one does not start.
             execution_id = options.reserve_execution_id() if options.reserve_execution_id is not None else None
             return self._run_with_records(job, options, seed, seed_source, temporary_input, execution_id)
@@ -329,7 +362,8 @@ class JobExecutor:
         if chain.temporary_input is not None:
             logger.info("Run 1 input: temporary copy {} (removed after run 1)", chain.temporary_input.path)
             current_input = chain.temporary_input.path
-        self._check_input(chain, start, current_input)
+        with self._before_start_stage("check_input", start):
+            self._check_input(chain, start, current_input)
         completed = 0
         exit_code = 0
         # A resume that lands after an independent segment start holds to the anchor it was given, not to run 1's image.
@@ -459,6 +493,7 @@ class JobExecutor:
             record.status = RunStatus.FAILED
             if _fresh_t2v(chain, number):
                 self._drop_t2v_first_image(chain, "Run 1 failed, so no first image is kept.")
+            self._finish_timing(complete=False)
             # The run raised, so a file counts as kept only if it exists; the record itself is left as the manifest has it.
             self._finish_run(number, record, None, output=record.output if run.output.exists() else None)
             raise
@@ -471,6 +506,7 @@ class JobExecutor:
                 self._keep_t2v_first_image(chain, run)
             else:
                 self._drop_t2v_first_image(chain, f"Run 1 {status.replace('_', ' ')}, so no first image is kept.")
+        self._finish_timing(complete=status == RunStatus.SUCCEEDED)
         self._finish_run(number, record, exit_code, output=record.output)
         if number == 1 and chain.temporary_input is not None:
             chain.temporary_input.cleanup()
@@ -490,7 +526,8 @@ class JobExecutor:
             return current_input
         from framecontrol.jobs.inputs.resize import TemporaryInput
 
-        copy = TemporaryInput(current_input, plan_input(consumer.backend_job, current_input), find_ffmpeg())
+        with self._before_start_stage("handoff_copy", number):
+            copy = TemporaryInput(current_input, plan_input(consumer.backend_job, current_input), find_ffmpeg())
         chain.boundary_copy, chain.boundary_source = copy, current_input
         logger.info("Run {} input: {}'s handoff prepared by profile {} as {} (removed after run {})", number, producer.settings_profile, consumer.settings_profile, copy.path, number)
         return copy.path
@@ -562,8 +599,41 @@ class JobExecutor:
             record.knobs["seed"], record.knob_sources["seed"] = run.seed, "execution_seed"
         chain.records.manifest.runs.append(record)
         chain.records.save()
+        self._timing_read_failed = False
+        timing = self._timing = RunTiming(run.number, self._monotonic, self._stage_parser(chain.job, run.number), self._emit, self._timestamp, self._host_load)
         self._emit(run_started_event(record, run, chain.total))
+        before_start = self._before_start.pop(run.number, [])
+        # Under the backend's own id, whichever spelling the file used, so runs of one backend group together.
+        timing.begin(self._backends.get(chain.job.run_backend(run.number)).id, record.pipeline or chain.job.mode.value, *self._timing_facts(chain, record, run.number), before_start)
         return record
+
+    def _stage_parser(self, job: JobDefinition, number: int) -> StageParser | None:
+        """The parser of run ``number``'s output into stage readings, or None for a backend without one."""
+        try:
+            make = getattr(self._backends.get(job.run_backend(number)), "stage_parser", None)
+            return make() if make is not None else None
+        except Exception:
+            # Timing never stops a run.
+            logger.exception("Run {}'s stage parser could not be made; its output is read for no stages", number)
+            return None
+
+    def _timing_facts(self, chain: _Chain, record: RunRecord, number: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        """What run ``number``'s timing is judged by: its workload and its environment, as its backend describes them."""
+        try:
+            job = chain.job.job_for_run(number)
+            backend = self._backends.get(chain.job.run_backend(number))
+            workload_of = getattr(backend, "timing_workload", None)
+            environment_of = getattr(backend, "timing_environment", None)
+            workload = workload_of(job, number) if workload_of is not None else {}
+            knobs = {name: value for name, value in record.knobs.items() if name != "seed"}
+            if knobs:
+                workload = {**workload, "knobs": knobs}
+            environment = environment_of(job, self._find_executable(chain.options.executable)) if environment_of is not None else {}
+            return workload, environment
+        except Exception:
+            # Timing never stops a run.
+            logger.exception("Run {} could not be described for its timing; it is timed with no workload", number)
+            return {}, {}
 
     def _cool_down(self, chain: _Chain, record: RunRecord, next_run: int, wait: CooldownWait, parks: int) -> tuple[signal.Signals, str] | _ParkedInCooldown | None:
         """Wait ``wait`` after ``record``'s run; return the signal that cut it short and where, a park that ended it, or None.
@@ -617,17 +687,37 @@ class JobExecutor:
         self._emit(RunFinished(at=self._timestamp(), number=number, status=record.status, exit_code=exit_code, seconds=record.seconds, output=output, last_frame=record.last_frame, output_width=record.output_width, output_height=record.output_height, output_frames=record.output_frames, output_frame_rate=record.output_frame_rate, output_duration=record.output_duration, audio_codec=record.audio_codec, audio_sample_rate=record.audio_sample_rate, audio_channels=record.audio_channels, audio_duration=record.audio_duration, corrected_output=record.corrected_output))
 
     def _output_callback(self, number: int) -> MessageCallback | None:
-        """A callback that turns each child line of run ``number`` into a RunOutput, or None without an observer."""
-        if self._observer is None:
-            return None
+        """A callback that turns each child line of run ``number`` into a RunOutput, and reads it as a stage reading."""
 
         def on_message(message: ProcessMessage) -> None:
-            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent))
+            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent, phase=self._read_phase(message), offset=self._timing.run_offset(message.elapsed_seconds) if self._timing is not None else message.elapsed_seconds))
 
         return on_message
 
+    def _read_phase(self, message: ProcessMessage) -> str | None:
+        """The phase ``message`` names, read into the run's timeline; None for a line that names none. A parser that fails
+        ends the run's reading of stages, not the run (timing never stops a run)."""
+        if self._timing is None or self._timing_read_failed:
+            return None
+        try:
+            return self._timing.reading(message.text, message.elapsed_seconds)
+        except Exception:
+            self._timing_read_failed = True
+            logger.exception("Reading the child's output for stages failed; the rest of this run's lines are shown with no stage")
+            return None
+
+    def _finish_timing(self, *, complete: bool) -> None:
+        """Close the run's timeline: its stages add up to the run, every gap named, and it is complete or not."""
+        timing, self._timing = self._timing, None
+        if timing is None:
+            return
+        try:
+            timing.finish(complete)
+        except Exception:
+            logger.exception("Closing the run's timing failed; the run is unaffected")
+
     def _execute_run(self, chain: _Chain, run: PlannedRun, record: RunRecord, finish_state: object | None) -> tuple[RunStatus, int]:
-        return self._launcher.launch(chain.job.job_for_run(run.number), run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, finish_state=finish_state)
+        return self._launcher.launch(chain.job.job_for_run(run.number), run, record, shutdown_grace=chain.options.shutdown_grace, on_message=self._output_callback(run.number), on_start=self._on_child_start, finish_state=finish_state, timeline=self._timing.timeline if self._timing is not None else None)
 
 
 def _copy_first_image(chain: _Chain, source: Path, path: Path) -> bool:

@@ -3,6 +3,7 @@ stored, and are redacted again as they are served (``redact_command``), so an ol
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from framecontrol.state.audit import AuditRow
 from framecontrol.state.execution_rows import ExecutionRow, MediaCheckRow, RunRow
 from framecontrol.state.ids import execution_id_text, queue_id_text
 from framecontrol.state.queue import QueueRow
+from framecontrol.state.timing import RunTimingRow, StageRow
 
 
 def job_summary(row: JobRow) -> dict[str, Any]:
@@ -125,6 +127,47 @@ def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things
         **({} if brief else {"command": redact_command(run.command)}),
         "checks": [brief_check(check) if brief else media_check(check) for check in run.checks],
     }
+
+
+def timing_detail(timing: RunTimingRow | None, stages: Sequence[StageRow], *, marks: bool = False) -> dict[str, Any]:
+    """A run's stage timing, as ``GET /executions/{id}/runs/{run}/stages`` and ``?stages=1`` give it: what the run was judged
+    by, whether its timing is whole, and each stage's span, share of the run, and units. ``seconds`` is the run's time as its
+    stages add up; work done for the run before it started (negative offsets) is listed with no share. ``marks`` (``?marks=1``)
+    adds each stage's per-unit marks, which a response for an agent leaves out."""
+    if timing is None and not stages:
+        return {"recorded": False, "stages": []}
+    total = sum(stage.duration for stage in stages if stage.start >= 0)
+    return {
+        "recorded": True,
+        "backend": timing.backend if timing is not None else None,
+        "pipeline": timing.pipeline if timing is not None else None,
+        "fidelity": timing.fidelity if timing is not None else None,
+        "complete": timing.complete if timing is not None else False,
+        "workload": timing.workload if timing is not None else {},
+        "environment": timing.environment if timing is not None else {},
+        "seconds": round(total, 3),
+        "stages": [stage_entry(stage, total, marks=marks) for stage in stages],
+    }
+
+
+def stage_entry(stage: StageRow, total: float, *, marks: bool = False) -> dict[str, Any]:
+    counted = stage.start >= 0 and total > 0
+    entry: dict[str, Any] = {
+        "stage": stage.stage,
+        "phase": stage.phase,
+        "source": stage.source,
+        "start": round(stage.start, 3),
+        "end": round(stage.end, 3),
+        "duration": round(stage.duration, 3),
+        "share": round(stage.duration / total, 6) if counted else None,
+        "done": stage.done,
+        "total": stage.total,
+        "unit": stage.unit,
+        "uncertain": stage.uncertain,
+    }
+    if marks:
+        entry["marks"] = [[round(offset, 3), done] for offset, done in stage.marks]
+    return entry
 
 
 def media_check(check: MediaCheckRow) -> dict[str, Any]:

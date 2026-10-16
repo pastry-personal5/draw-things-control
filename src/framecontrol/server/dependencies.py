@@ -48,6 +48,21 @@ def get_page(limit: int | None = None, cursor: str | None = None) -> Page:
     return Page(offset=decode_cursor(cursor), limit=clamp_limit(limit))
 
 
+def get_stages(stages: str | None = None) -> bool:
+    """``?stages=1``: a run with its stage timing. Any other value is refused, naming ``stages``, as ``brief`` is."""
+    if stages not in (None, "1"):
+        raise InputError("'stages' must be 1", field="stages")
+    return stages == "1"
+
+
+def get_marks(marks: str | None = None) -> bool:
+    """``?marks=1``: each stage's per-unit marks too (up to 1000 pairs a stage), which a plot or a fit reads and an agent does not.
+    Any other value is refused, naming ``marks``, as ``stages`` is."""
+    if marks not in (None, "1"):
+        raise InputError("'marks' must be 1", field="marks")
+    return marks == "1"
+
+
 def get_brief(brief: str | None = None) -> bool:
     """``?brief=1``: the smaller view of an execution or a job, for an agent that reads every byte.
     Any other value is refused, naming ``brief``, as ``overwrite`` is."""

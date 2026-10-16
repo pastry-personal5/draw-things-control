@@ -19,6 +19,9 @@ from framecontrol.jobs.inputs.size import ResizePlan, copy_plan, read_image_info
 from framecontrol.jobs.media.checks import MediaCheck
 from framecontrol.jobs.media.toolkit import MediaTools
 from framecontrol.jobs.output_naming import corrected_output_path, last_frame_path, raw_last_frame_path
+from framecontrol.jobs.timing.environment import executable_facts
+from framecontrol.jobs.timing.parsers import DrawThingsStageParser, StageParser
+from framecontrol.jobs.timing.timeline import NO_TIMER, StageTimer
 
 if TYPE_CHECKING:
     from framecontrol.jobs.definition import ColorPolicy, ConfigOverride, JobDefinition, PromptPair
@@ -167,9 +170,28 @@ class DrawThingsBackend:
     def redact(self, command: Sequence[str]) -> tuple[str, ...]:
         return tuple(redact_command(command))
 
-    def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], finish_state: object | None, media: MediaTools, report: Callable[[int, MediaCheck], None] | None) -> tuple[RunStatus, int] | None:
+    def stage_parser(self) -> StageParser:
+        """Reads the CLI's `Starting...`, `Processing...`, `Sampling... n / N`, and `Finishing...` lines as stage readings."""
+        return DrawThingsStageParser()
+
+    def timing_workload(self, job: JobDefinition, run_number: int) -> dict[str, Any]:
+        """The features a run's time is fitted on: its pixels, frames, and steps, and the settings that change the work."""
+        settings = cast(DrawThingsJobSettings, job.backend_data)
+        config = build_config_json(settings.base_config, settings.override.as_dict())
+        width, height = settings.size or (config.get("width"), config.get("height"))
+        workload: dict[str, Any] = {"width": width, "height": height, "pixels": width * height if is_int(width) and is_int(height) else None, "frames": config.get("numFrames"), "steps": config.get("steps"), "mode": job.mode.value}
+        for name, key in (("guidance_scale", "guidanceScale"), ("strength", "strength"), ("shift", "shift")):
+            if config.get(key) is not None:
+                workload[name] = config[key]
+        return workload
+
+    def timing_environment(self, job: JobDefinition, executable: str | None) -> dict[str, Any]:
+        """The build a run was timed on: the CLI's size and modification time, and the model."""
+        return {**executable_facts(executable), "model": cast(DrawThingsJobSettings, job.backend_data).model}
+
+    def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], finish_state: object | None, media: MediaTools, report: Callable[[int, MediaCheck], None] | None, timer: StageTimer = NO_TIMER) -> tuple[RunStatus, int] | None:
         from framecontrol.jobs.run_finisher import RunColor, RunFinisher
 
         if not isinstance(finish_state, RunColor):
             raise TypeError("Draw Things finishing requires its prepared run state")
-        return RunFinisher(media, report).finish(job, run, record, stop_requested, finish_state)
+        return RunFinisher(media, report, timer).finish(job, run, record, stop_requested, finish_state)

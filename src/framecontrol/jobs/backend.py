@@ -12,6 +12,7 @@ from framecontrol.core.arguments import CommandArguments
 from framecontrol.core.errors import InputError
 from framecontrol.jobs.media.checks import MediaCheck
 from framecontrol.jobs.media.toolkit import MediaTools
+from framecontrol.jobs.timing.timeline import NO_TIMER, StageTimer
 
 if TYPE_CHECKING:
     from framecontrol.jobs.definition import JobDefinition, PromptPair
@@ -59,7 +60,12 @@ class RunContext:
 
 
 class JobBackend(Protocol):
-    """One installed, process-based generator; shared chain code uses only this contract."""
+    """One installed, process-based generator; shared chain code uses only this contract.
+
+    Three more hooks are optional, found by name as ``child_output`` and ``prepare_job`` are, so an adapter that has
+    none still runs and its runs are timed as a single child stage: ``stage_parser()`` (a ``StageParser`` for the run's
+    output lines), ``timing_workload(job, run_number)`` (the features a forecast fits on), and
+    ``timing_environment(job, executable)`` (the build the run was timed on)."""
 
     id: str
 
@@ -90,7 +96,7 @@ class JobBackend(Protocol):
 
     def redact(self, command: Sequence[str]) -> tuple[str, ...]: ...
 
-    def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], finish_state: object | None, media: MediaTools, report: Callable[[int, MediaCheck], None] | None) -> tuple[RunStatus, int] | None: ...
+    def finish(self, job: JobDefinition, run: PlannedRun, record: RunRecord, stop_requested: Callable[[], signal.Signals | None], finish_state: object | None, media: MediaTools, report: Callable[[int, MediaCheck], None] | None, timer: StageTimer = NO_TIMER) -> tuple[RunStatus, int] | None: ...
 
 
 class BackendRegistry:

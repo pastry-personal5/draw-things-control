@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import time
 import unittest
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import anyio
 
+from framecontrol.mcp_server.api import ApiClient
 from framecontrol.mcp_server.app import build_server
-from framecontrol.mcp_server.watch import FINISHED_STATES, WaitTimes
+from framecontrol.mcp_server.watch import FINISHED_STATES, WaitTimes, _next_change
 from framecontrol.server.context import ServerContext
 from framecontrol.state.queue import FINISHED_STATES as STORE_FINISHED_STATES
 from framecontrol.state.queue import QueueState
@@ -24,6 +27,33 @@ from tests.server.test_queue_watch import ScriptedWorker
 class FinishedStatesTests(unittest.TestCase):
     def test_the_copy_of_the_finished_states_is_the_stores(self) -> None:
         self.assertEqual(FINISHED_STATES, {str(state) for state in STORE_FINISHED_STATES})
+
+
+class FakeWatchApi:
+    """An API whose watch streams the given SSE lines."""
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+
+    @asynccontextmanager
+    async def stream(self, path: str, *, silence: float) -> AsyncIterator[AsyncIterator[str]]:
+        async def generate() -> AsyncIterator[str]:
+            for line in self.lines:
+                yield line
+
+        yield generate()
+
+    async def get(self, path: str) -> dict[str, Any]:
+        return {}
+
+
+class UnknownWatchEventTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_event_kind_the_watch_does_not_know_is_skipped(self) -> None:
+        running = '{"state": "running", "execution_id": "E0001", "error": null, "park_requested": false, "queue_held": false, "cooldown_until": null, "current_run": 2}'
+        finished = running.replace('"running"', '"succeeded"')
+        lines = ["event: stage_finished", 'data: {"kind": "stage_finished", "stage": "denoise"}', "", "event: snapshot", f"data: {running}", "", "event: timing_finished", 'data: {"complete": true}', "", "event: snapshot", f"data: {finished}", ""]
+        read = {"state": "running", "execution_id": "E0001", "error": None, "park_requested": False, "queue_held": False, "cooldown_until": None, "current_run": 2}
+        self.assertTrue(await _next_change(cast(ApiClient, FakeWatchApi(lines)), "/v1/queue/Q0001", read, 1.0))
 
 
 class InProcessWaitTests(McpCase):

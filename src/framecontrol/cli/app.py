@@ -16,6 +16,7 @@ from framecontrol.cli.api_client import AllowRemoteServerOption, ServerUrlOption
 from framecontrol.cli.context import CliServices, errors_exit, services_of
 from framecontrol.cli.history_app import history_app
 from framecontrol.cli.queue_app import queue_app
+from framecontrol.cli.timing_app import timing_app
 from framecontrol.core.client_config import DEFAULT_SERVER_URL, check_server_host
 from framecontrol.core.draw_things_config import load_config
 from framecontrol.core.errors import InputError, LimitExceededError
@@ -29,10 +30,12 @@ from framecontrol.jobs.text import job_summary, report_ignored_config
 from framecontrol.services.toolkit import Toolkit
 from framecontrol.state.history_import import import_history
 from framecontrol.state.store import StateError, Store, StoreMode
+from framecontrol.state.timing_import import import_timing
 
 app = typer.Typer(help="Framecontrol: chained image and video generation.", no_args_is_help=True)
 app.add_typer(queue_app, name="queue")
 app.add_typer(history_app, name="history")
+app.add_typer(timing_app, name="timing")
 
 
 @contextmanager
@@ -180,6 +183,19 @@ def import_history_command(
     for given, recorded, manifest in report.given:
         typer.echo(f"  {given}: {manifest}{f' (its manifest says {recorded})' if recorded is not None else ''}")
     typer.echo(f"Imported {report.imported}, skipped {report.skipped} already imported, {report.expired} older than the retention period, {report.unreadable} unreadable, from {search}")
+
+
+@timing_app.command("import")
+def timing_import_command(ctx: typer.Context, global_config: GlobalConfigOption = None) -> None:
+    """Rebuild stage timing from the job logs that still exist, for executions recorded before runs were timed as they
+    ran. Safe to repeat: an execution that has timing is left alone, and a log is only read."""
+    paths = services_of(ctx).paths
+    settings = read_settings_or_exit(global_config, paths)
+    with open_state(paths, settings) as store:
+        report = import_timing(store)
+    for label, reason in report.skipped:
+        typer.echo(f"  {label}: {reason}")
+    typer.echo(f"Imported timing for {report.runs} run{'s' if report.runs != 1 else ''} of {report.executions} execution{'s' if report.executions != 1 else ''} from their logs, skipped {len(report.skipped)}")
 
 
 @app.command("tui")

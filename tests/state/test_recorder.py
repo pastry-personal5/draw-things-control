@@ -227,3 +227,31 @@ class RecorderTests(JobTestCase):
         self.assertEqual(row.manifest_path, str(saved_manifest(outcome).resolve()))
         # A run through a symlinked directory would store the same key the import looks up.
         self.assertTrue(self.store.executions.has_manifest(str((link / saved_manifest(outcome).relative_to(self.output_directory)).resolve())))
+
+    def test_a_runs_stages_are_kept_as_they_finish_and_its_timing_is_complete_when_it_succeeds(self) -> None:
+        recorder = ExecutionRecorder(self.store)
+        outcome = run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=1, write_records=True, observer=recorder, reserve_execution_id=recorder.reserve)
+        self.assertEqual(outcome.completed_runs, 2)
+        execution_id = recorder.execution_id
+        assert execution_id is not None
+        for number in (1, 2):
+            row = self.store.timing.timing_of(execution_id, number)
+            assert row is not None
+            self.assertEqual((row.backend, row.pipeline, row.fidelity, row.complete), ("draw-things-cli", "i2v", "live", True))
+            self.assertIn("load_end", row.environment)
+            stages = self.store.timing.stages_of(execution_id, number)
+            self.assertEqual(stages[0].stage, "prepare" if number > 1 else stages[0].stage)
+            self.assertIn("prepare", [stage.stage for stage in stages])
+            self.assertTrue({"child", "verify"} <= {stage.stage for stage in stages})
+        self.assertEqual(len(self.store.timing.stages_of(execution_id, 1)) > 0, True)
+
+    def test_a_failed_run_is_kept_incomplete(self) -> None:
+        self.results[1] = FakeResult(return_code=3)
+        recorder = ExecutionRecorder(self.store)
+        run_job_with(self.service, self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]), executable="draw-things-cli", shutdown_grace=1, write_records=True, observer=recorder, reserve_execution_id=recorder.reserve)
+        execution_id = recorder.execution_id
+        assert execution_id is not None
+        row = self.store.timing.timing_of(execution_id, 1)
+        assert row is not None
+        self.assertFalse(row.complete)
+        self.assertIsNone(self.store.timing.timing_of(execution_id, 2))

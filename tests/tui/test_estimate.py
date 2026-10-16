@@ -47,7 +47,7 @@ class EstimateTests(JobTestCase):
 
     def step(self, live: LiveRun, at: float, step: int, total: int = 40) -> None:
         self.at(at)
-        live.apply(RunOutput(at=self.stamp(), number=live.active_run or 0, stream="stdout", text=f"{step}/{total}", progress=(step, total), percent=None))
+        live.apply(RunOutput(at=self.stamp(), number=live.active_run or 0, stream="stdout", text=f"{step}/{total}", progress=(step, total), percent=None, phase=None, offset=0.0))
 
     def finish(self, live: LiveRun, at: float, number: int, seconds: float, status: RunStatus = RunStatus.SUCCEEDED) -> None:
         self.at(at)

@@ -30,7 +30,7 @@ from framecontrol.jobs.media.tools import find_ffprobe
 from framecontrol.jobs.media.video_color import read_colr, tag_video_colors
 from framecontrol.jobs.text import media_check_text
 from framecontrol.tui.text.events import event_text
-from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with, without_timing
 from tests.jobs.test_executor import FakeResult, FakeRunner, saved_log
 
 DISPLAY_P3 = Path("/System/Library/ColorSync/Profiles/Display P3.icc")
@@ -369,7 +369,7 @@ class ExecutorCheckTests(JobTestCase):
     def run_and_observe(self, **changes: object) -> list:
         events: list = []
         job = self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "walk"}], output={"video_format": "prores4444"}, **changes)
-        self.outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        self.outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=without_timing(events.append))
         return events
 
     def job(self, **changes: object) -> JobDefinition:
@@ -410,7 +410,7 @@ class ExecutorCheckTests(JobTestCase):
         job = self.job(run_count=3, input="photo.jpg", desired_input_width=850, prompt_pairs=[{"name": "only", "positive": "walk"}])
         events: list = []
         resume = ResumePoint(first_run=3, input=self.output_directory / "walk-2-last-frame.png", seed=7, resumes_execution="E0016")
-        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, resume=resume)
+        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=without_timing(events.append), resume=resume)
         self.assertEqual(self.checker.asked[0], "handoff walk-2-last-frame.png")
         [check] = [event for event in events if isinstance(event, MediaChecked) and event.stage == "input"]
         self.assertEqual((check.run, check.summary), (3, "a last frame"))
@@ -427,7 +427,7 @@ class ExecutorCheckTests(JobTestCase):
         kept.write_bytes(b"png")
         events: list = []
         resume = ResumePoint(first_run=3, input=self.output_directory / "walk-2-last-frame.png", seed=7, resumes_execution="E0016", first_image=kept)
-        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append, resume=resume)
+        run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=without_timing(events.append), resume=resume)
         self.assertEqual(self.checker.drift_asked[0][1:], (kept, ()))
         self.assertEqual(events[0].first_image, str(kept))
 

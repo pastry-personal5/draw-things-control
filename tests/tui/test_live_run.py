@@ -14,14 +14,14 @@ from unittest import mock
 
 from framecontrol.core.arguments import redact_command
 from framecontrol.core.run_lock import RunLock
-from framecontrol.jobs.events import MediaChecked
+from framecontrol.jobs.events import MediaChecked, StageFinished, StageStarted, TimingFinished, TimingStarted
 from framecontrol.services.history import HistoryReader
 from framecontrol.state.executions import ExecutionRow, NewExecution, NewRun
 from framecontrol.state.store import Store
 from framecontrol.tui.live_run import MAX_OUTPUT_LINES, PastRun
 from framecontrol.tui.panes.execution import ExecutionDetailPane
 from framecontrol.tui.panes.history import ExecutionHistoryList
-from tests.tui.fake_server import job_finished, job_started, run_finished, run_output, run_started
+from tests.tui.fake_server import AT, job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
 OLD = (datetime.now().astimezone() - timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
@@ -67,6 +67,25 @@ class LiveRunTests(FeedTestCase):
             await self.received(pilot, [unknown])
             await self.push(pilot, check, run_started(1, 1), run_finished(1), job_finished(1))
         self.assertIn("Last frame check (run 1): o-last-frame.png: PNG 64x48, 16-bit RGBA: warning. It has alpha.", self.log())
+        self.assertIn("Job succeeded: 1/1 runs completed", self.log())
+
+    async def test_stage_and_timing_events_mid_run_change_nothing_a_person_sees(self) -> None:
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.connect(pilot)
+            await self.start_job(pilot, total_runs=1)
+            await self.push(pilot, run_started(1, 1), run_output("Loading model base.ckpt"))
+            before = (self.pane(app), self.text(app, "run-summary"), self.text(app, "work-status"))
+            timing = [
+                TimingStarted(at=AT, number=1, backend="draw-things-cli", pipeline="i2v", workload={"steps": 40}, environment={}),
+                StageStarted(at=AT, number=1, stage="sampling", phase="Sampling", source="child", start=17.1),
+                StageFinished(at=AT, number=1, stage="sampling", phase="Sampling", source="child", start=17.1, end=2123.0, done=40, total=40, unit="steps", marks=((17.1, 0), (2123.0, 40))),
+                TimingFinished(at=AT, number=1, complete=True, load_end=None),
+            ]
+            await self.push(pilot, *timing)
+            after = (self.pane(app), self.text(app, "run-summary"), self.text(app, "work-status"))
+            await self.push(pilot, run_finished(1), job_finished(1))
+        self.assertEqual(after, before)
         self.assertIn("Job succeeded: 1/1 runs completed", self.log())
 
     async def test_a_new_job_replaces_the_last_ones_output(self) -> None:

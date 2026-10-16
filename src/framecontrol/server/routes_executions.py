@@ -1,5 +1,5 @@
 """``GET /v1/executions``, ``GET /v1/executions/{execution_id}``, ``GET /v1/executions/{execution_id}/outputs``,
-``GET /v1/executions/{execution_id}/runs/{run}``, and ``POST /v1/executions/delete``, which writes one audit log entry per
+``GET /v1/executions/{execution_id}/runs/{run}`` (with ``?stages=1`` its stage timing), ``GET /v1/executions/{execution_id}/runs/{run}/stages``, and ``POST /v1/executions/delete``, which writes one audit log entry per
 execution it names."""
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from framecontrol.core.clock import local_timestamp
 from framecontrol.core.errors import FramecontrolError, InputError, NotFoundError
 from framecontrol.server.caller import audit_caller
 from framecontrol.server.context import ServerContext
-from framecontrol.server.dependencies import Page, get_brief, get_context, get_page, require_auth
+from framecontrol.server.dependencies import Page, get_brief, get_context, get_marks, get_page, get_stages, require_auth
 from framecontrol.server.job_reference import resolve_job_reference
 from framecontrol.server.pagination import MAX_LIMIT, next_cursor
-from framecontrol.server.serializers import delete_report, execution_detail, execution_outputs, execution_summary, run_summary
-from framecontrol.state.execution_rows import ExecutionRow
+from framecontrol.server.serializers import delete_report, execution_detail, execution_outputs, execution_summary, run_summary, timing_detail
+from framecontrol.state.execution_rows import ExecutionRow, RunRow
 from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -98,9 +98,30 @@ def get_execution(execution_id: str, context: ServerContext = Depends(get_contex
 
 
 @router.get("/v1/executions/{execution_id}/runs/{run}")
-def get_execution_run(execution_id: str, run: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
+def get_execution_run(execution_id: str, run: str, context: ServerContext = Depends(get_context), stages: bool = Depends(get_stages), marks: bool = Depends(get_marks)) -> dict[str, object]:
     """One run, as the full answer gives it. ``run`` is its number in the chain, so a resumed
-    execution's first is not 1."""
+    execution's first is not 1. ``?stages=1`` adds its stage timing as ``timing``, with each stage's marks under ``?marks=1``."""
+    row, found = _run(context, execution_id, run)
+    summary = run_summary(found, backend=row.backend)
+    if stages:
+        summary["timing"] = _timing(context, row, found, marks)
+    return summary
+
+
+@router.get("/v1/executions/{execution_id}/runs/{run}/stages")
+def get_execution_run_stages(execution_id: str, run: str, context: ServerContext = Depends(get_context), marks: bool = Depends(get_marks)) -> dict[str, object]:
+    """What each stage of one run took: the child's stages as its output named them, and Framecontrol's own.
+    ``?marks=1`` adds each stage's per-unit marks."""
+    row, found = _run(context, execution_id, run)
+    return {"execution_id": row.label, "run": found.number, **_timing(context, row, found, marks)}
+
+
+@router.get("/v1/executions/{execution_id}/outputs")
+def get_execution_outputs(execution_id: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
+    return execution_outputs(_execution(context, execution_id))
+
+
+def _run(context: ServerContext, execution_id: str, run: str) -> tuple[ExecutionRow, RunRow]:
     number = run.lstrip("0")
     if not (run.isascii() and run.isdigit() and number):
         raise InputError("'run' must be a positive integer", field="run")
@@ -109,12 +130,11 @@ def get_execution_run(execution_id: str, run: str, context: ServerContext = Depe
     found = next((candidate for candidate in row.runs if str(candidate.number) == number), None)
     if found is None:
         raise NotFoundError(f"{row.label} has no run {number}")
-    return run_summary(found, backend=row.backend)
+    return row, found
 
 
-@router.get("/v1/executions/{execution_id}/outputs")
-def get_execution_outputs(execution_id: str, context: ServerContext = Depends(get_context)) -> dict[str, object]:
-    return execution_outputs(_execution(context, execution_id))
+def _timing(context: ServerContext, row: ExecutionRow, found: RunRow, marks: bool) -> dict[str, object]:
+    return timing_detail(context.store.timing.timing_of(row.id, found.number), context.store.timing.stages_of(row.id, found.number), marks=marks)
 
 
 def _execution(context: ServerContext, execution_id: str) -> ExecutionRow:

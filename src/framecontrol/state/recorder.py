@@ -7,7 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from framecontrol.jobs.events import CooldownEnded, FirstImageDropped, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted
+from framecontrol.jobs.events import CooldownEnded, FirstImageDropped, JobEvent, JobFinished, JobStarted, MediaChecked, RunFinished, RunStarted, StageFinished, TimingFinished, TimingStarted
+from framecontrol.jobs.timing.model import StageSpan
 from framecontrol.state.database import StateError
 from framecontrol.state.executions import ExecutionSettings, MediaCheckRow, NewExecution, NewRun
 from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
@@ -19,17 +20,20 @@ class ExecutionRecorder:
 
     A failure is logged once and stops recording for this execution, so later events never update rows that
     were not created; the generation carries on. A media check is the exception (owner decision): it is a diagnostic
-    that no later event depends on, so one that cannot be stored is skipped, logged once, and recording goes on.
+    that no later event depends on, so one that cannot be stored is skipped, logged once, and recording goes on. A run's
+    timing is the same (owner decision): a span or a timing row that cannot be stored never stops the history.
     """
 
     def __init__(self, store: Store) -> None:
         self._executions = store.executions
+        self._timings = store.timing
         self._path = store.path
         self._execution_id: int | None = None
         self._label: str | None = None
         self._last_run: int | None = None
         self._failed = False
         self._check_failed = False
+        self._timing_failed = False
 
     @property
     def execution_id(self) -> int | None:
@@ -72,6 +76,8 @@ class ExecutionRecorder:
             self._cooldown_ended(self._execution_id, event)
         elif isinstance(event, MediaChecked):
             self._media_checked(self._execution_id, event)
+        elif isinstance(event, TimingStarted | StageFinished | TimingFinished):
+            self._timing(self._execution_id, event)
         elif isinstance(event, FirstImageDropped):
             self._executions.set_first_image(self._execution_id, None)
         elif isinstance(event, JobFinished):
@@ -85,6 +91,22 @@ class ExecutionRecorder:
             if not self._check_failed:
                 self._check_failed = True
                 logger.exception("Storing a media check failed; it is skipped (as is any other that fails), and the rest of this job is still recorded")
+
+    def _timing(self, execution_id: int, event: TimingStarted | StageFinished | TimingFinished) -> None:
+        """Keep a run's timing: its row when the timing starts (incomplete), each span as it finishes, its row again when it ends."""
+        timing = self._timings
+        try:
+            if isinstance(event, TimingStarted):
+                timing.start(execution_id, event.number, event.backend, event.pipeline, event.workload, event.environment)
+            elif isinstance(event, StageFinished):
+                timing.add_stage(execution_id, event.number, StageSpan(event.stage, event.phase, event.source, event.start, event.end, event.done, event.total, event.unit, event.marks))
+            else:
+                timing.finish(execution_id, event.number, complete=event.complete, environment={"load_end": list(event.load_end) if event.load_end is not None else None})
+        # Whatever breaks storing timing, the runs and the job's end are still recorded.
+        except Exception:
+            if not self._timing_failed:
+                self._timing_failed = True
+                logger.exception("Storing a run's timing failed; it is skipped (as is any other that fails), and the rest of this job is still recorded")
 
     def _job_started(self, event: JobStarted) -> None:
         # The number reserved before the job started; a job run without one takes the next when it is recorded.

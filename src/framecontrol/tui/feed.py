@@ -277,7 +277,7 @@ def _seed_active_run(live: LiveRun, detail: dict[str, Any]) -> None:
     if live.run_started_at is not None:
         live.run_started_at = live.now() - elapsed
     if detail.get("current_step") is not None and detail.get("current_step_total") is not None:
-        live.apply(RunOutput(at="", number=detail["current_run"], stream="stdout", text="", progress=(detail["current_step"], detail["current_step_total"])))
+        live.apply(RunOutput(at="", number=detail["current_run"], stream="stdout", text="", progress=(detail["current_step"], detail["current_step_total"]), percent=None, phase=None, offset=0.0))
 
 
 def _seed_cooldown(live: LiveRun, detail: dict[str, Any]) -> None:

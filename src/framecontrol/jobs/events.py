@@ -117,7 +117,12 @@ class RunOutput:
     # (current, total) when the line reports progress.
     progress: tuple[int, int] | None
     # 0-100 when the line shows a percentage, such as the progress bar's.
-    percent: int | None = None
+    percent: int | None
+    # The backend's phase text when the line is a stage reading (``denoise``, ``Sampling``); None for any other line.
+    phase: str | None
+    # Seconds after RunStarted that the line was written (stamped as its last byte arrived), on the same clock as a stage's
+    # offsets.
+    offset: float
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,66 @@ class RunFinished:
     audio_duration: float | None = None
     # The corrected copy of the video, <clip>-cc.<ext>, when the job corrects and the correction succeeded.
     corrected_output: str | None = None
+
+
+@dataclass(frozen=True)
+class StageStarted:
+    """A stage of a run began: the child's (a phase its output named) or Framecontrol's own (preparing, verifying, correcting)."""
+
+    at: str
+    number: int
+    stage: str
+    # The backend's raw phase text; None for a Framecontrol stage.
+    phase: str | None
+    # child or framecontrol.
+    source: str
+    # Seconds after RunStarted; negative for work done before it for this run (resizing the input, staging references).
+    start: float
+
+
+@dataclass(frozen=True)
+class StageFinished:
+    """A stage of a run ended: the span it took, with the units it counted and, for steps and frames, the time of each."""
+
+    at: str
+    number: int
+    stage: str
+    phase: str | None
+    source: str
+    start: float
+    end: float
+    # Units done and total (steps, frames, or a phase's own counter); None for a stage that counts none.
+    done: int | None
+    total: int | None
+    # steps or frames when the stage keeps marks.
+    unit: str | None
+    # (offset, units done at that offset), whole up to 1000 per stage and evenly thinned beyond that.
+    marks: tuple[tuple[float, int], ...]
+
+
+@dataclass(frozen=True)
+class TimingStarted:
+    """What a run's timing will be judged by: the workload it is asked to do and the environment it does it in."""
+
+    at: str
+    number: int
+    backend: str
+    pipeline: str | None
+    # Pixels, frames, steps, reference counts, and the knobs a forecast fits on, frozen when the run starts.
+    workload: dict[str, Any]
+    # The executable's size and modification time, the model, and the host's load at the start.
+    environment: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class TimingFinished:
+    """A run's timing ended. ``complete`` is true only when the run succeeded and its finishing ended."""
+
+    at: str
+    number: int
+    complete: bool
+    # The host's 1, 5, and 15 minute load averages at the end; None where the host gives none.
+    load_end: tuple[float, float, float] | None
 
 
 @dataclass(frozen=True)
@@ -221,7 +286,7 @@ class JobFinished:
     signal: str | None
 
 
-JobEvent = JobStarted | RunStarted | RunOutput | RunFinished | CooldownStarted | CooldownEnded | MediaChecked | FirstImageDropped | JobFinished
+JobEvent = JobStarted | RunStarted | RunOutput | StageStarted | StageFinished | TimingStarted | TimingFinished | RunFinished | CooldownStarted | CooldownEnded | MediaChecked | FirstImageDropped | JobFinished
 JobObserver = Callable[[JobEvent], None]
 
 
@@ -248,6 +313,10 @@ EVENT_KINDS: dict[type, str] = {
     JobStarted: "job_started",
     RunStarted: "run_started",
     RunOutput: "run_output",
+    StageStarted: "stage_started",
+    StageFinished: "stage_finished",
+    TimingStarted: "timing_started",
+    TimingFinished: "timing_finished",
     RunFinished: "run_finished",
     CooldownStarted: "cooldown_started",
     CooldownEnded: "cooldown_ended",
@@ -302,7 +371,10 @@ def _typed(value: Any, hint: Any) -> Any:
     if isinstance(hint, type) and issubclass(hint, StrEnum):
         return hint(value)
     if get_origin(hint) is tuple:
-        return tuple(value)
+        arguments = get_args(hint)
+        if len(arguments) == 2 and arguments[1] is Ellipsis:
+            return tuple(_typed(item, arguments[0]) for item in value)
+        return tuple(_typed(item, argument) for item, argument in zip(value, arguments, strict=True))
     return value
 
 

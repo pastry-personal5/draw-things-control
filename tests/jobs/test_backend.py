@@ -92,7 +92,7 @@ class FakeBackend:
         index = values.index("--label")
         return (*values[: index + 1], "[redacted]")
 
-    def finish(self, job: JobDefinition, run: Any, record: Any, stop_requested: Any, finish_state: object | None, media: MediaTools, report: Any) -> tuple[RunStatus, int] | None:
+    def finish(self, job: JobDefinition, run: Any, record: Any, stop_requested: Any, finish_state: object | None, media: MediaTools, report: Any, timer: Any = None) -> tuple[RunStatus, int] | None:
         return None if run.output.stat().st_size else (RunStatus.FAILED, 1)
 
 

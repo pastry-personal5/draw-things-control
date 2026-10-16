@@ -9,7 +9,7 @@ from framecontrol.tui.live_run import LiveRun
 
 
 def line(text: str, *, progress: tuple[int, int] | None = None, percent: int | None = None) -> RunOutput:
-    return RunOutput(at="", number=1, stream="stdout", text=text, progress=progress, percent=percent)
+    return RunOutput(at="", number=1, stream="stdout", text=text, progress=progress, percent=percent, phase=None, offset=0.0)
 
 
 class OutputLinesTests(unittest.TestCase):

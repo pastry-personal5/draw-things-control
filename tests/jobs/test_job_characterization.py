@@ -62,6 +62,9 @@ class JobCharacterizationTests(JobTestCase):
             handle_signals=False,
             cooldown=self.wait,
             output_measurer=lambda output: MediaInfo(832, 448, 81),
+            # The stage timeline's clock: each reading is half a second after the one before.
+            monotonic=itertools.count(step=0.5).__next__,
+            host_load=lambda: (0.5, 0.25, 0.125),
         )
         # Each run takes 12.5 s: the service reads the clock at the start and the end of a run.
         readings = itertools.count(step=12.5)

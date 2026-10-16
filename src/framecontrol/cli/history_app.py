@@ -18,7 +18,7 @@ from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_ty
 if TYPE_CHECKING:
     import httpx
 
-history_app = typer.Typer(help="Delete executions from the history; fc serve's API does the deleting.")
+history_app = typer.Typer(help="Delete executions from the history; fc serve's API does the deleting. This group only deletes: see fc timing for what a run's stages took.")
 
 # The most IDs one request to POST /v1/executions/delete may name (the server's MAX_LIMIT).
 DELETE_BATCH = 200

@@ -5,6 +5,7 @@ client is a real grpc.aio channel, not a network socket in the sense of anything
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 import unittest
@@ -159,6 +160,27 @@ class WatchEventsTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase):
         event = await self.read(call)
         self.assertEqual(event.kind, "run_output")
         call.cancel()
+
+    async def test_timing_events_arrive_whole_and_in_order_even_without_run_output(self) -> None:
+        from framecontrol.jobs.events import StageFinished, StageStarted, TimingFinished, TimingStarted, event_from_dict
+        from framecontrol.services.queue_events import QueueEventPublisher
+
+        at = "2026-10-16T10:00:00+00:00"
+        sent = [
+            TimingStarted(at=at, number=1, backend="h3", pipeline="r2av", workload={"frames": 243}, environment={"load_start": [1.0, 0.5, 0.25]}),
+            StageStarted(at=at, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5),
+            StageFinished(at=at, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5, end=2174.2, done=30, total=30, unit="steps", marks=((120.5, 1), (2174.2, 30))),
+            TimingFinished(at=at, number=1, complete=True, load_end=(2.0, 1.0, 0.5)),
+        ]
+        first = self.context.event_backlog.append("job_started", {})
+        publisher = QueueEventPublisher(self.context.event_backlog.append)
+        for event in sent:
+            publisher.job_event(event)
+        call = self.stub.WatchEvents(monitor_pb2.WatchEventsRequest(last_event_id=first.id, include_output=False), metadata=self.auth())
+        received = [await self.read(call) for _ in sent]
+        call.cancel()
+        self.assertEqual([event.kind for event in received], ["timing_started", "stage_started", "stage_finished", "timing_finished"])
+        self.assertEqual([event_from_dict(json.loads(event.data_json)) for event in received], sent)
 
     async def test_an_id_this_backlog_no_longer_holds_gets_reset(self) -> None:
         call = self.stub.WatchEvents(monitor_pb2.WatchEventsRequest(last_event_id=1), metadata=self.auth())

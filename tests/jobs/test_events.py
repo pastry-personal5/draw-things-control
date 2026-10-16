@@ -9,7 +9,7 @@ from unittest import mock
 
 from framecontrol.core.arguments import DrawThingsGenerateArguments
 from framecontrol.core.cooldown import CooldownPolicy
-from framecontrol.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, combine_observers, event_from_dict, event_to_dict, notify
+from framecontrol.jobs.events import EVENT_KINDS, CooldownEnded, CooldownStarted, FirstImageDropped, JobEvent, JobFinished, JobStarted, JobStatus, MediaChecked, RunFinished, RunOutput, RunStarted, RunStatus, StageFinished, StageStarted, TimingFinished, TimingStarted, combine_observers, event_from_dict, event_to_dict, notify
 from framecontrol.jobs.planning import PlannedRun
 from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
 from tests.jobs.test_executor import FakeResult, FakeRunner
@@ -49,7 +49,11 @@ class EventJsonTests(unittest.TestCase):
         return [
             JobStarted(at=self.AT, job_name="walk", job_file="/jobs/walk.yaml", source_text="name: walk\n", mode="i2v", total_runs=2, output_directory="/out", input="/in/a.png", model="m.ckpt", seed=7, seed_source="config_file", cooldown=CooldownPolicy(mode="manual", seconds=90), cooldown_source="job", manifest=None, log=None, config_override={"steps": 8}, input_resize={"target": [832, 448]}, execution_id="E0001"),
             RunStarted(at=self.AT, number=1, total=2, pair="walk", positive="p", negative=None, input="/in/a.png", resized_input=None, output="o.mov", last_frame="o-last-frame.png", command=("draw-things-cli", "generate", "--api-key", "[redacted]")),
-            RunOutput(at=self.AT, number=1, stream="stdout", text="3/8", progress=(3, 8), percent=None),
+            RunOutput(at=self.AT, number=1, stream="stdout", text="3/8", progress=(3, 8), percent=None, phase="denoise", offset=12.25),
+            StageStarted(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5),
+            StageFinished(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5, end=2174.2, done=30, total=30, unit="steps", marks=((120.5, 1), (190.25, 2))),
+            TimingStarted(at=self.AT, number=1, backend="h3", pipeline="r2av", workload={"width": 832, "height": 448, "frames": 243, "steps": 30, "references": {"image": 2}}, environment={"executable_bytes": 1024, "load_start": [1.5, 1.25, 1.0]}),
+            TimingFinished(at=self.AT, number=1, complete=True, load_end=(2.0, 1.5, 1.25)),
             RunFinished(at=self.AT, number=1, status=RunStatus.SUCCEEDED, exit_code=0, seconds=12.5, output="o.mov", last_frame=None, output_width=832, output_height=448, output_frames=81),
             CooldownStarted(at=self.AT, after_run=1, seconds=90.0, until="10:01:30", mode="manual"),
             CooldownEnded(at=self.AT, waited_seconds=90.0, cut_short=False),
@@ -66,14 +70,15 @@ class EventJsonTests(unittest.TestCase):
             data = event_to_dict(event)
             self.assertEqual(json.loads(json.dumps(data)), data)
             kinds.append(data["kind"])
-        self.assertEqual(kinds, ["job_started", "run_started", "run_output", "run_finished", "cooldown_started", "cooldown_ended", "media_checked", "first_image_dropped", "job_finished"])
+        self.assertEqual(kinds, ["job_started", "run_started", "run_output", "stage_started", "stage_finished", "timing_started", "timing_finished", "run_finished", "cooldown_started", "cooldown_ended", "media_checked", "first_image_dropped", "job_finished"])
 
     def test_statuses_policies_and_tuples_become_plain_values(self) -> None:
-        started, run_started, output, finished, _cooldown, _ended, _checked, _dropped, job_finished = (event_to_dict(event) for event in self.every_event())
+        started, run_started, output, _stage_started, stage_finished, _timing_started, timing_finished, finished, _cooldown, _ended, _checked, _dropped, job_finished = (event_to_dict(event) for event in self.every_event())
         self.assertEqual(started["cooldown"], {"mode": "manual", "seconds": 90.0})
         self.assertEqual((run_started["command"], output["progress"]), (["draw-things-cli", "generate", "--api-key", "[redacted]"], [3, 8]))
         self.assertEqual((finished["status"], job_finished["status"]), ("succeeded", "interrupted"))
         self.assertIs(type(finished["status"]), str)
+        self.assertEqual((stage_finished["marks"], timing_finished["load_end"]), ([[120.5, 1], [190.25, 2]], [2.0, 1.5, 1.25]))
 
     def test_every_field_of_an_event_is_in_its_dict(self) -> None:
         for event in self.every_event():
@@ -82,6 +87,19 @@ class EventJsonTests(unittest.TestCase):
     def test_event_from_dict_round_trips_every_event_kind(self) -> None:
         for event in self.every_event():
             self.assertEqual(event_from_dict(json.loads(json.dumps(event_to_dict(event)))), event)
+
+    def test_marks_come_back_as_tuples_of_tuples(self) -> None:
+        finished = StageFinished(at=self.AT, number=2, stage="sampling", phase="Sampling", source="child", start=17.1, end=2123.0, done=40, total=40, unit="steps", marks=((17.1, 0), (56.0, 1)))
+        back = event_from_dict(json.loads(json.dumps(event_to_dict(finished))))
+        assert isinstance(back, StageFinished)
+        self.assertEqual(back.marks, ((17.1, 0), (56.0, 1)))
+        self.assertIsInstance(back.marks[0], tuple)
+
+    def test_an_output_event_without_its_phase_and_offset_is_refused(self) -> None:
+        data = event_to_dict(RunOutput(at=self.AT, number=1, stream="stdout", text="x", progress=None, percent=None, phase=None, offset=0.5))
+        del data["offset"]
+        with self.assertRaises(KeyError):
+            event_from_dict(data)
 
 
 class EventsOfARealJobTests(JobTestCase):

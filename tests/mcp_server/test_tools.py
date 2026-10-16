@@ -11,6 +11,7 @@ import httpx
 from mcp.shared.exceptions import MCPError
 
 from framecontrol.core.global_config import ApiLimits
+from framecontrol.jobs.timing.model import StageSpan
 from framecontrol.mcp_server.tools import TOOLS
 from tests.mcp_server.mcp_case import McpCase
 from tests.server.test_queue_routes import TOKEN
@@ -27,7 +28,7 @@ PATH_TOOLS: list[tuple[str, str, dict[str, Any], str, str]] = [
     ("park_queue_entry", "queue_id", {}, "POST", "/v1/queue/{}/park"),
     ("unpark_queue_entry", "queue_id", {}, "POST", "/v1/queue/{}/unpark"),
     ("get_execution", "execution_id", {}, "GET", "/v1/executions/{}?brief=1"),
-    ("get_execution_run", "execution_id", {"run": 1}, "GET", "/v1/executions/{}/runs/1"),
+    ("get_execution_run", "execution_id", {"run": 1}, "GET", "/v1/executions/{}/runs/1?stages=1"),
     ("list_outputs", "execution_id", {}, "GET", "/v1/executions/{}/outputs"),
 ]
 
@@ -85,7 +86,7 @@ class ReadToolTests(McpCase):
             ("get_queue_entry", {"queue_id": queue_id}, f"/v1/queue/{queue_id}"),
             ("list_executions", {"name": "walk", "status": "interrupted"}, "/v1/executions?limit=50&status=interrupted&name=walk"),
             ("get_execution", {"execution_id": execution_id}, f"/v1/executions/{execution_id}?brief=1"),
-            ("get_execution_run", {"execution_id": execution_id, "run": 2}, f"/v1/executions/{execution_id}/runs/2"),
+            ("get_execution_run", {"execution_id": execution_id, "run": 2}, f"/v1/executions/{execution_id}/runs/2?stages=1"),
             ("list_outputs", {"execution_id": execution_id}, f"/v1/executions/{execution_id}/outputs"),
         ]
         async with self.client() as client:
@@ -137,7 +138,13 @@ class FlowTests(McpCase):
             self.assertEqual((resumed["resumes"], resumed["submitted_by"]), (queue_id, "mcp"))
             brief = await self.ok(client, "get_execution", {"execution_id": execution_id})
             self.assertEqual(brief["runs"][0]["checks"], [{"stage": "video", "verdict": "pass"}])
-            self.assertIn("command", await self.ok(client, "get_execution_run", {"execution_id": execution_id, "run": 1}))
+            row = self.store.executions.row_of(int(execution_id[1:]))
+            assert row is not None
+            self.store.timing.start(row, 1, "draw-things-cli", "i2v", {"steps": 40}, {})
+            self.store.timing.add_stage(row, 1, StageSpan("sampling", "Sampling", "child", 0.0, 90.0, 40, 40, "steps", ((0.0, 0), (90.0, 40))))
+            run = await self.ok(client, "get_execution_run", {"execution_id": execution_id, "run": 1})
+            self.assertIn("command", run)
+            self.assertEqual([(stage["stage"], stage["done"], stage["unit"]) for stage in run["timing"]["stages"]], [("sampling", 40, "steps")])
             outputs = await self.ok(client, "list_outputs", {"execution_id": execution_id})
             self.assertEqual([output["complete"] for output in outputs["outputs"]], [True, True, True])
         audit = (await self.api("GET", "/v1/audit")).json()["audit"]

@@ -18,7 +18,7 @@ def run_started(number: int) -> RunStarted:
 
 
 def run_output(number: int, progress: tuple[int, int] | None) -> RunOutput:
-    return RunOutput(at="2026-09-28T12:00:00+00:00", number=number, stream="stdout", text="", progress=progress)
+    return RunOutput(at="2026-09-28T12:00:00+00:00", number=number, stream="stdout", text="", progress=progress, percent=None, phase=None, offset=0.0)
 
 
 def run_finished(number: int) -> RunFinished:

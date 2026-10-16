@@ -72,6 +72,8 @@ different file.
 | `serve` | Run the HTTP API and gRPC monitoring service for agents and other programs |
 | `queue` | Submit, list, cancel, resume, park, and hold queue entries through `fc serve` |
 | `history delete` | Delete executions from the history through `fc serve` |
+| `timing show EXECUTION` | Show what each stage of a run took, through `fc serve` |
+| `timing import` | Rebuild stage timing from the job logs that still exist |
 | `mcp` | Give AI agents typed tools over `fc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
@@ -1315,6 +1317,9 @@ execution IDs existed were numbered by start time, oldest first.
   execution was pruned, or `state/` was deleted), both are named:
   `E0040: /path/walk-job.json (its manifest says E0003)`.
 
+- Each run's stage timing (below) is kept with its execution, so
+  `history_retention_days` and deleting an execution remove it too.
+
 Only one run drives the GPU at a time. `fc serve` holds `state/run.lock` for
 its lifetime; `generate` submits to that server and never takes the lock itself.
 If another process holds it, the command exits with 75 and
@@ -1332,6 +1337,55 @@ ends, and never stops it for you. `--dry-run`, `validate-job`,
 be used (unwritable, a filesystem without SQLite WAL support, or a database
 written by a newer version), `fc serve` exits with 1 and the reason, and starts
 nothing.
+
+### Stage timing
+
+Every run, of either backend, records how long each stage took: the child's
+stages as its own output named them (for H3 the tokenizer, the encoders, the
+30 denoise steps, the audio and video decode, and FFmpeg; for Draw Things
+`Starting`, `Processing`, `Sampling`, and `Finishing`), then Framecontrol's own
+work after the child (verifying the output, color conversion, drift
+measurement, correction, extracting the last frame, tagging, and moving staged
+files into place). The time between named stages is shown as `unaccounted`, so
+the stages add up to the run. Work done for a run before it started, such as
+resizing its input, is listed with a negative start and is not part of the
+run's time.
+
+```bash
+uv run fc timing show E0012            # every run of the execution
+uv run fc timing show E0012 --run 3    # one run, by its number in the chain
+```
+
+For example (shortened):
+
+```text
+E0012 run 3: h3 r2av, live, complete, 2310.5 s
+stage          phase            source        start  duration  share  units
+prepare                         framecontrol   0.0s      0.4s   0.0%
+tokenize       tokenizer        child          0.4s      0.2s   0.0%  1/1
+...
+denoise        denoise enqueue  child         27.1s   2061.3s  89.2%  30/30 steps
+ffmpeg*        FFmpeg           child       2210.6s     58.0s   2.5%  243/243 frames
+correct                         framecontrol 2268.6s     41.2s   1.8%
+* the first reading of the stage is estimated from the log
+```
+
+Compare a row with the job log: `phase` is the text the backend printed, and
+`start` and `duration` are seconds on the run's clock. An H3 reading is stamped
+when its last byte was written, not one update later, so a denoise step shows
+when it finished.
+
+A run's timing is `live` when it was measured as it ran, and `complete` once the
+run succeeded and its finishing ended; a failed, stopped, or crashed run keeps
+the stages it finished and stays incomplete. For executions recorded before
+this existed, `uv run fc timing import` rebuilds the timing of every execution
+whose job log still exists, marked `log`. It reads the child's lines and the
+log's own lines, puts H3's readings back to when they were written, and marks a
+phase's first reading `*` when the log cannot say when it was written. It
+reports each execution it skips and why, never writes to a log, and is safe to
+repeat: an execution that already has timing is left alone. The API gives the
+same table as JSON (`GET /v1/executions/E0012/runs/3/stages`), and MCP's
+`get_execution_run` includes it as `timing`.
 
 ### Delete executions
 

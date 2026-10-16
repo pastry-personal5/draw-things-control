@@ -29,7 +29,7 @@ from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, combine_observers
 from framecontrol.jobs.executor import JobOutcome, ResumePoint
 from framecontrol.jobs.media.info import MediaInfo
-from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with
+from tests.fixtures import JobTestCase, job_data, job_executor, load_legacy_job, run_job_with, without_timing
 
 NOW = datetime(2026, 9, 24, 15, 30, 12)
 
@@ -722,7 +722,7 @@ class JobExecutorTests(JobTestCase):
 
     def observed(self, job: JobDefinition) -> tuple:
         events: list = []
-        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=events.append)
+        outcome = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=without_timing(events.append))
         return outcome, events
 
     def start_in_thread(self, job: JobDefinition) -> tuple[threading.Thread, dict]:
@@ -732,7 +732,7 @@ class JobExecutorTests(JobTestCase):
 
         def work() -> None:
             try:
-                result["outcome"] = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=self.events.append)
+                result["outcome"] = run_job_with(self.service, job, executable="draw-things-cli", shutdown_grace=2, write_records=True, observer=without_timing(self.events.append))
             except BaseException as error:
                 result["error"] = error
 
@@ -813,9 +813,10 @@ class JobExecutorTests(JobTestCase):
 
     def test_without_an_observer_the_factory_gets_no_callback(self) -> None:
         self.run_job(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
-        self.assertEqual(self.callbacks, [None])
         self.observed(self.job(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
-        self.assertTrue(callable(self.callbacks[1]))
+        # The run's stage timeline reads the child's output, so every run is given the callback, observed or not.
+        self.assertTrue(all(callable(callback) for callback in self.callbacks))
+        self.assertEqual(len(self.callbacks), 2)
 
     def test_a_runner_that_raises_still_closes_the_events(self) -> None:
         def cannot_start(arguments: DrawThingsGenerateArguments, timeout: float | None, grace: float, on_message: object = None, on_start: object = None) -> FakeRunner:
@@ -824,7 +825,7 @@ class JobExecutorTests(JobTestCase):
         self.service.knobs.runner_factory = cannot_start
         events: list = []
         with self.assertRaisesRegex(ValueError, "Could not start"):
-            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, observer=events.append)
+            run_job_with(self.service, self.job(), executable="draw-things-cli", shutdown_grace=2, observer=without_timing(events.append))
         self.assertEqual([type(event) for event in events], [JobStarted, RunStarted, RunFinished, JobFinished])
         # The runner never wrote the file, so the event does not name it, though the manifest record still does.
         self.assertEqual((events[2].status, events[2].exit_code, events[2].output), ("failed", None, None))

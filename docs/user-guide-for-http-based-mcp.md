@@ -55,7 +55,26 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8765/v1/jobs/J0001?b
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/inputs | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/queue | jq
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/executions | jq
+
+# What each stage of a run took: the child's stages and Framecontrol's own, with each stage's share of the run
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/executions/E0012/runs/3/stages | jq '.stages[] | {stage, start, duration, share, done, total, unit}'
+
+# The same stages inside the run, as `timing`
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8765/v1/executions/E0012/runs/3?stages=1" | jq .timing.complete
+
+# With each stage's per-unit marks, for a plot or a fit
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8765/v1/executions/E0012/runs/3/stages?marks=1" | jq '.stages[] | select(.stage == "denoise") | .marks'
 ```
+
+`/stages` answers `recorded: false` with no stages for a run that was never timed
+(an execution from before stage timing, until `fc timing import` rebuilds it).
+`seconds` is the run's time as its stages add up; a stage with a negative
+`start` was work done for the run before it started and has no `share`. A stage's
+`marks` are `[offset, units done]` pairs for its steps or frames (up to 1000 a
+stage). They are left out unless the request has `?marks=1`, on `/stages` and on
+`?stages=1` alike, so an answer an agent reads stays small; MCP's
+`get_execution_run` never asks for them. A first mark estimated from a job log is
+flagged by `uncertain`, which is always present.
 
 ## Validate and submit a job
 

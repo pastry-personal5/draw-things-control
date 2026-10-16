@@ -16,6 +16,7 @@ from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.core.global_config import GlobalConfig
 from framecontrol.core.paths import ProjectPaths
 from framecontrol.jobs.definition import JobDefinition
+from framecontrol.jobs.events import JobEvent, JobObserver, StageFinished, StageStarted, TimingFinished, TimingStarted
 from framecontrol.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
 from framecontrol.jobs.media.info import MediaInfo
 from framecontrol.jobs.media.toolkit import MediaTools
@@ -24,6 +25,19 @@ from framecontrol.services.toolkit import Toolkit
 from framecontrol.state.executions import ExecutionRow, ExecutionSettings, RunRow
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
+
+
+TIMING_EVENTS = (StageStarted, StageFinished, TimingStarted, TimingFinished)
+
+
+def without_timing(observer: JobObserver) -> JobObserver:
+    """An observer that hears every event but the timing ones, for a test that pins the order of the rest."""
+
+    def observe(event: JobEvent) -> None:
+        if not isinstance(event, TIMING_EVENTS):
+            observer(event)
+
+    return observe
 
 
 def job_data(**changes: Any) -> dict[str, Any]:

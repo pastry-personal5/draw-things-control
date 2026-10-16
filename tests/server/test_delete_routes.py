@@ -6,6 +6,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from framecontrol.jobs.timing.model import StageSpan
 from framecontrol.server import routes_queue
 from tests.server.test_queue_routes import QueueRoutesTestCase
 
@@ -29,6 +30,18 @@ class DeleteRouteTests(QueueRoutesTestCase):
         self.assertEqual((body["deleted"], body["resumes_ended"]), (["E0001"], [{"execution_id": "E0001", "queue_ids": ["Q0002"]}]))
         deletes = [row for row in self.audit() if row[0] == "delete_execution"]
         self.assertEqual(deletes, [("delete_execution", "E0001", "invalid_state", "cli"), ("delete_execution", "E0002", "not_found", "cli"), ("delete_execution", "E0001", "ok", "api")])
+
+    def test_deleting_an_execution_removes_its_timing_rows(self) -> None:
+        self.seed_resumable_entry()
+        row = self.store.executions.row_of(1)
+        assert row is not None
+        self.store.timing.start(row, 1, "draw-things-cli", "i2v", {}, {})
+        self.store.timing.add_stage(row, 1, StageSpan("sampling", "Sampling", "child", 0.0, 1.0))
+        self.assertEqual(self.delete("E0001", dry_run=True).json()["deleted"], ["E0001"])
+        self.assertEqual(len(self.store.timing.stages_of(row, 1)), 1)
+        self.assertEqual(self.delete("E0001").json()["deleted"], ["E0001"])
+        connection = self.store._database.connection()
+        self.assertEqual((connection.execute("SELECT COUNT(*) FROM run_stages").fetchone()[0], connection.execute("SELECT COUNT(*) FROM run_timing").fetchone()[0]), (0, 0))
 
     def test_a_dry_run_deletes_nothing_and_writes_no_audit_row(self) -> None:
         self.seed_resumable_entry()

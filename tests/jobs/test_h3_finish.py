@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -12,10 +13,11 @@ from unittest import mock
 
 from PIL import Image
 
+from framecontrol.core.process.output import OutputStream, ProcessMessage
 from framecontrol.jobs.backend import BackendRegistry, RunContext
 from framecontrol.jobs.backends.h3 import H3Backend, H3ColorState, H3JobData, H3Run, H3Runtime, _partial_path
 from framecontrol.jobs.definition import ColorPolicy
-from framecontrol.jobs.events import RunStatus
+from framecontrol.jobs.events import JobEvent, RunFinished, RunStarted, RunStatus, StageFinished
 from framecontrol.jobs.executor import JobExecutor, JobRunOptions
 from framecontrol.jobs.media.checks import MediaCheck
 from framecontrol.jobs.media.h3_color import DELIVERY, H3_RGB_CONVENTION_SHA256, NATIVE, H3Declarations
@@ -24,6 +26,7 @@ from framecontrol.jobs.output_naming import raw_output_path, uncorrected_output_
 from framecontrol.jobs.planning import JobPlanner
 from framecontrol.jobs.records import RunRecord
 from tests.fixtures import JobTestCase, job_data, load_legacy_job
+from tests.jobs.timing.transcripts import FakeClock, h3_r2av
 
 
 class FinishingH3Backend(H3Backend):
@@ -36,6 +39,18 @@ class FakeResult:
     return_code = 0
     timed_out = False
     termination_signal = None
+
+
+class RecordingTimer:
+    """A stage timer that notes the stages in the order they ran."""
+
+    def __init__(self) -> None:
+        self.stages: list[str] = []
+
+    @contextmanager
+    def stage(self, name: str) -> Iterator[None]:
+        self.stages.append(name)
+        yield
 
 
 class H3FinishingTests(JobTestCase):
@@ -157,7 +172,7 @@ class H3FinishingTests(JobTestCase):
         assert isinstance(unchanged.finish_state, H3ColorState)
         self.assertIsNone(unchanged.finish_state.reanchor_reason)
 
-    def _correcting_finish(self, *, correction_fails: bool) -> tuple[Any, RunRecord, list[MediaCheck]]:
+    def _correcting_finish(self, *, correction_fails: bool, timer: Any = None) -> tuple[Any, RunRecord, list[MediaCheck]]:
         job = replace(self.job, color=ColorPolicy(anchor="previous", strength=1, regions=False))
         run = self._planned_run()
         _partial_path(run.output).write_bytes(b"raw child")
@@ -187,7 +202,8 @@ class H3FinishingTests(JobTestCase):
             stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.measure_h3_drift", return_value={"first_to_last": {"lightness": 0}}))
             stack.enter_context(mock.patch("framecontrol.jobs.media.h3_correction.correct_h3_video", side_effect=correct))
             stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract))
-            result = self.backend.finish(job, run, record, lambda: None, H3ColorState(self.job.input, self.job.input, "initial i2av input"), MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _run, check: checks.append(check))
+            extra = {} if timer is None else {"timer": timer}
+            result = self.backend.finish(job, run, record, lambda: None, H3ColorState(self.job.input, self.job.input, "initial i2av input"), MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _run, check: checks.append(check), **extra)
         self.assertIsNone(result)
         return run, record, checks
 
@@ -233,3 +249,59 @@ class H3FinishingTests(JobTestCase):
         self.assertEqual(run.output.read_bytes(), b"native child")
         self.assertEqual(checks[0].facts["color"]["delivery"], "native_tagged")
         self.assertTrue(run.last_frame is not None and run.last_frame.exists())
+
+    def test_the_corrected_tail_is_timed_stage_by_stage_in_the_order_it_runs(self) -> None:
+        timer = RecordingTimer()
+        self._correcting_finish(correction_fails=False, timer=timer)
+        self.assertEqual(timer.stages, ["verify", "verify", "copy_raw", "convert", "drift", "correct", "last_frame", "promote"])
+
+    def test_a_failed_correction_still_times_the_stages_it_reached(self) -> None:
+        timer = RecordingTimer()
+        self._correcting_finish(correction_fails=True, timer=timer)
+        self.assertEqual(timer.stages, ["verify", "verify", "copy_raw", "convert", "drift", "correct", "last_frame", "promote"])
+
+    def test_an_h3_run_through_the_executor_has_the_spans_of_its_output_and_a_timed_tail_that_add_up_to_the_run(self) -> None:
+        clock = FakeClock()
+        transcript = h3_r2av()
+        events: list[JobEvent] = []
+        started: dict[int, float] = {}
+        finished: dict[int, float] = {}
+
+        def observe(event: JobEvent) -> None:
+            events.append(event)
+            if isinstance(event, RunStarted):
+                started[event.number] = clock.now
+            elif isinstance(event, RunFinished):
+                finished[event.number] = clock.now
+
+        class Runner:
+            def __init__(self, arguments: Any, on_message: Any) -> None:
+                self.arguments, self.on_message = arguments, on_message
+
+            def run(self) -> FakeResult:
+                for line in transcript.lines:
+                    self.on_message(ProcessMessage(stream=OutputStream.STDOUT, text=line.text, elapsed_seconds=line.offset))
+                clock.advance(transcript.exit_at)
+                self.arguments.output.write_bytes(b"verified child")
+                return FakeResult()
+
+            def request_shutdown(self, received_signal: signal.Signals = signal.SIGTERM) -> None:
+                pass
+
+        def extract(_source: Path, target: Path, _ffmpeg: str) -> None:
+            clock.advance(3.0)
+            Image.new("RGB", (64, 64)).save(target)
+
+        executor = JobExecutor(lambda arguments, _timeout, _grace, on_message=None, _on_start=None: Runner(arguments, on_message), lambda _: "ffmpeg", MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), handle_signals=False, backends=self.backends, monotonic=clock, host_load=lambda: None)
+        with self._known_source(), mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=self._facts()), mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract):
+            executor.run(self.job, JobRunOptions(executable="h3", shutdown_grace=1, write_records=True, observer=observe))
+        stages = [event for event in events if isinstance(event, StageFinished) and event.number == 1]
+        child = [event for event in stages if event.source == "child"]
+        self.assertEqual([event.stage for event in child], [span.stage for span in transcript.spans])
+        denoise = next(event for event in child if event.stage == "denoise")
+        self.assertEqual((denoise.done, denoise.total, denoise.unit, len(denoise.marks)), (30, 30, "steps", 31))
+        tail = [event.stage for event in stages if event.source == "framecontrol" and event.stage not in {"prepare", "unaccounted"}]
+        self.assertIn("last_frame", tail)
+        self.assertIn("promote", tail)
+        self.assertAlmostEqual(sum(event.end - event.start for event in stages if event.start >= 0), finished[1] - started[1], delta=0.1)
+        self.assertAlmostEqual(child[-1].end, next(event for event in stages if event.stage == "prepare").end + transcript.exit_at, places=6)

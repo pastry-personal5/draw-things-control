@@ -20,6 +20,7 @@ from framecontrol.state.job_ids import JobIdRepository
 from framecontrol.state.queue import QueueRepository
 from framecontrol.state.schema import SCHEMA_VERSION
 from framecontrol.state.settings import SettingsRepository
+from framecontrol.state.timing import TimingRepository
 
 SECONDS_PER_DAY = 86400
 DEFAULT_RETENTION_DAYS = 14
@@ -77,6 +78,7 @@ class Store:
         self.settings = SettingsRepository(database)
         self.queue = QueueRepository(database)
         self.audit = AuditRepository(database)
+        self.timing = TimingRepository(database)
 
     @classmethod
     def open(cls, path: Path, *, mode: StoreMode = StoreMode.RUN, retention_days: int = DEFAULT_RETENTION_DAYS, clock: Clock = datetime.now) -> Store:
