@@ -92,10 +92,10 @@ class SubmitV2Tests(QueueV2TestCase):
         self.write_base_config({"model": "base.ckpt", "numFrames": 9})
         self.write_image("tall.png", (200, 400))
         data = v2_job(input="tall.png")
-        data["settings_profiles"] = {"wan": {"backend": "draw-things", "settings": {"config_file": "base.yaml", "input_resize": {"desired_width": 128}}}}
+        data["settings_profiles"] = {"wan": {"backend": "draw-things-cli", "settings": {"config_file": "base.yaml", "input_resize": {"desired_width": 128}}}}
         data["prompt_pairs"] = {"paint": {"positive": "x"}}
-        data["defaults"] = [{"backend": "draw-things", "pipeline": "i2v", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"frames": 9, "timeout_seconds": 60}}]
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2v"}, {"backend": "draw-things", "pipeline": "i2v"}]
+        data["defaults"] = [{"backend": "draw-things-cli", "pipeline": "i2v", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"frames": 9, "timeout_seconds": 60}}]
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2v"}, {"backend": "draw-things-cli", "pipeline": "i2v"}]
         data.pop("reference_pairs")
         entry = self.submit(data)
         original = parse_snapshot(entry, self.global_config, self.params)()
@@ -123,7 +123,7 @@ class ReferenceCopyTests(QueueV2TestCase):
         data["reference_pairs"] = {"duo-a": {"references": [{"kind": "image", "path": "a.png"}]}, "duo-b": {"references": [{"kind": "image", "path": "b.png"}]}}
         data["defaults"] = [data["defaults"][0], data["defaults"][1]]
         data["defaults"][0]["knobs"].pop("reference_pair")
-        data["runs"] = [{"backend": "h3", "pipeline": "r2av", "knobs": {"reference_pair": "duo-a"}}, {"backend": "h3", "pipeline": "i2av"}, {"backend": "h3", "pipeline": "r2av", "knobs": {"reference_pair": "duo-b"}}]
+        data["runs"] = [{"backend": "h3-metal-cli", "pipeline": "r2av", "knobs": {"reference_pair": "duo-a"}}, {"backend": "h3-metal-cli", "pipeline": "i2av"}, {"backend": "h3-metal-cli", "pipeline": "r2av", "knobs": {"reference_pair": "duo-b"}}]
         del data["settings_profiles"]["wan"]
         data["prompt_pairs"].pop("paint")
         return data

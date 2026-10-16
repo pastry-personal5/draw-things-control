@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
 from framecontrol.core.clock import Clock, local_timestamp
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobStatus, RunStatus
@@ -99,7 +100,7 @@ class JobManifest:
     total_runs: int = 0
     # The chain's first image, a full path (see JobStarted); None without one.
     first_image: str | None = None
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
     backend_settings: dict[str, Any] = field(default_factory=dict)
 
 

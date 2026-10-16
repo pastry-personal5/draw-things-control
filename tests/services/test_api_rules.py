@@ -83,9 +83,9 @@ class ApiRulesTests(JobTestCase):
             check_job_limits(job, ApiLimits(max_job_runs=100, max_job_seconds=38_288))
 
     def test_h3_output_limit_counts_staged_correction_copies_and_remaining_runs(self) -> None:
-        data = job_data(backend="h3", mode="i2av", run_count=2, run_timeout_seconds=60, config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "previous"})
+        data = job_data(backend="h3-metal-cli", mode="i2av", run_count=2, run_timeout_seconds=60, config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "previous"})
         job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
-        backend = DEFAULT_BACKENDS.get("h3")
+        backend = DEFAULT_BACKENDS.get("h3-metal-cli")
         estimated = backend.estimated_output_bytes(job, 2)
         self.assertGreater(estimated, backend.estimated_output_bytes(job, 1))
         self.assertEqual(estimated, 2 * backend.estimated_output_bytes(job, 1))

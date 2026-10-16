@@ -2,7 +2,7 @@
 #
 # H3 is project-installed: contrib/backends/h3.c/h3 and its MiniMax-H3 model
 # snapshot must be present. `ffmpeg` and `ffprobe` must also be available.
-# Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3.yaml
+# Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-metal-cli.yaml
 
 version: 2
 name: autumn-street-audio
@@ -17,14 +17,14 @@ prompt_pairs:
 # Closed H3 settings; the duration and seed are per-run knobs below.
 settings_profiles:
   h3-portrait:
-    backend: h3
+    backend: h3-metal-cli
     settings:
       width: 768                  # multiples of 32, together no larger than 768 x 1344
       height: 1344
       steps: 30
 
 defaults:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: street
     settings_profile: h3-portrait
@@ -34,8 +34,8 @@ defaults:
       timeout_seconds: 3600
 
 runs:
-  - {backend: h3, pipeline: i2av}
-  - {backend: h3, pipeline: i2av, knobs: {seconds: 6}}    # a longer second run: 144 requested, 141 effective frames
+  - {backend: h3-metal-cli, pipeline: i2av}
+  - {backend: h3-metal-cli, pipeline: i2av, knobs: {seconds: 6}}    # a longer second run: 144 requested, 141 effective frames
 
 cooldown:
   mode: off

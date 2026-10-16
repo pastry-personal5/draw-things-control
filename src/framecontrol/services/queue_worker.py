@@ -13,6 +13,7 @@ from pathlib import Path
 from loguru import logger
 
 from framecontrol.core.arguments import redact_command
+from framecontrol.core.backend_ids import H3_BACKEND
 from framecontrol.core.clock import Clock, local_timestamp
 from framecontrol.core.global_config import GlobalConfig
 from framecontrol.core.paths import ProjectPaths
@@ -335,7 +336,7 @@ class QueueWorker:
         # always re-raises what it caught) does not overwrite a real outcome with a spurious 'failed'.
         finished = [False]
         try:
-            job = parse_snapshot(entry, self._global_config, self._paths.params, allow_missing_input=entry.backend == "h3" and (entry.resume_first_run or 1) > 1, backends=self._backends)()
+            job = parse_snapshot(entry, self._global_config, self._paths.params, allow_missing_input=entry.backend == H3_BACKEND and (entry.resume_first_run or 1) > 1, backends=self._backends)()
             resume = _resume_point_of(entry, self._store)
         except Exception as error:
             self._fail_to_start(entry, error)

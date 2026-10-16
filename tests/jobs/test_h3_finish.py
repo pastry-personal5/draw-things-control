@@ -58,7 +58,7 @@ class H3FinishingTests(JobTestCase):
         super().setUp()
         self.backend = FinishingH3Backend(H3Runtime(Path("/fake/h3"), Path("/fake/model")))
         self.backends = BackendRegistry((self.backend,))
-        self.job = load_legacy_job(self.write_legacy_job(job_data(backend="h3", mode="i2av", config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "a scene"}], backend_settings={"width": 64, "height": 64, "frames": 24, "seconds": 1, "steps": 2, "seed": 42}, output={"extension": "mp4"})), self.global_config, self.params, backends=self.backends)
+        self.job = load_legacy_job(self.write_legacy_job(job_data(backend="h3-metal-cli", mode="i2av", config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "a scene"}], backend_settings={"width": 64, "height": 64, "frames": 24, "seconds": 1, "steps": 2, "seed": 42}, output={"extension": "mp4"})), self.global_config, self.params, backends=self.backends)
         self.backend.check_tools(self.job, "h3", MediaTools(require_ffmpeg=lambda: "ffmpeg", frame_extractor=lambda *_args: None), lambda _: "ffmpeg")
 
     @staticmethod

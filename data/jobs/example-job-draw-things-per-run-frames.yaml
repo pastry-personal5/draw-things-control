@@ -18,7 +18,7 @@ prompt_pairs:
 
 settings_profiles:
   wan-landscape-corrected:
-    backend: draw-things
+    backend: draw-things-cli
     settings:
       config_file: image-to-video-wan-2-2.example.yaml
       config_override:
@@ -42,7 +42,7 @@ settings_profiles:
         regions: true
 
 defaults:
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     settings_profile: wan-landscape-corrected
     knobs:
@@ -51,15 +51,15 @@ defaults:
       timeout_seconds: 3600
 
 runs:
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     prompt_pair: walk
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     prompt_pair: wave
     knobs:
       frames: 49
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     prompt_pair: settle
     knobs:

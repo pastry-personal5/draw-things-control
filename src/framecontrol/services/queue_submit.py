@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from framecontrol.core.backend_ids import H3_BACKEND
 from framecontrol.core.clock import Clock, local_timestamp
 from framecontrol.core.cooldown import CooldownPolicy, parse_cooldown
 from framecontrol.core.errors import FramecontrolError, InputError
@@ -106,7 +107,7 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
 
 
 def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None, reference_assets: list[dict[str, object]] | None = None) -> NewQueueEntry:
-    snapshot = {"version": 7 if job.version == 2 else 6 if job.backend == "h3" else 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
+    snapshot = {"version": 7 if job.version == 2 else 6 if job.backend == H3_BACKEND else 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
     if job.version == 2:
         snapshot["effective_plan"] = list(job.effective_plan())
     if reference_assets:
@@ -178,7 +179,7 @@ def _first_input_plan(snapshot: dict[str, object]) -> ResizePlan | None:
 
 def _legacy_h3_frames(snapshot: dict[str, object]) -> int | None:
     """Preserve the upward alignment of H3 jobs submitted before snapshot v6."""
-    if snapshot.get("backend") != "h3" or snapshot.get("version") not in (3, 4, 5):
+    if snapshot.get("backend") != H3_BACKEND or snapshot.get("version") not in (3, 4, 5):
         return None
     settings = snapshot.get("settings")
     backend = settings.get("backend_settings") if isinstance(settings, dict) else None
@@ -276,9 +277,9 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                     base_config_text = None
                 first_input_plan = _first_input_plan(snapshot) if snapshot["version"] == 7 else None
                 job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=config_texts, allow_missing_input=missing_input_ok, first_input_plan=first_input_plan, reference_overrides=reference_overrides, require_reference_snapshots=bool(reference_assets), inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, legacy_h3_frames=_legacy_h3_frames(snapshot), allow_version_1=snapshot["version"] != 7, backends=backends)
-                if not reference_assets and any(run.backend == "h3" and run.knobs.get("reference_pair") for run in job.effective_runs):
+                if not reference_assets and any(run.backend == H3_BACKEND and run.knobs.get("reference_pair") for run in job.effective_runs):
                     raise InputError(f"{entry.label}: H3 references require a reference asset snapshot")
-                if not reference_assets and job.backend == "h3":
+                if not reference_assets and job.backend == H3_BACKEND:
                     from framecontrol.jobs.backends.h3 import H3JobData
 
                     if isinstance(job.backend_data, H3JobData) and job.backend_data.reference_pairs:
@@ -287,7 +288,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                     raise InputError(f"{entry.label}: backend differs between job text and queue snapshot", field="backend")
                 if snapshot["version"] in (3, 4, 5, 6, 7):
                     validated_settings = json.loads(_execution_settings(job).to_json())
-                    if snapshot["version"] in (3, 4) and job.backend == "h3":
+                    if snapshot["version"] in (3, 4) and job.backend == H3_BACKEND:
                         validated_settings["backend_settings"].pop("color_policy", None)
                     expected = snapshot["settings"]
                     if snapshot["version"] == 7 and missing_input_ok and job.input is not None and not job.input.is_file():

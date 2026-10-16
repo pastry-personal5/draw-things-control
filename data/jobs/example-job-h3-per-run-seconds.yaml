@@ -16,7 +16,7 @@ prompt_pairs:
 
 settings_profiles:
   h3-landscape-corrected:
-    backend: h3
+    backend: h3-metal-cli
     settings:
       width: 832
       height: 448
@@ -38,7 +38,7 @@ settings_profiles:
         regions: true
 
 defaults:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     settings_profile: h3-landscape-corrected
     knobs:
@@ -47,17 +47,17 @@ defaults:
       timeout_seconds: 3600
 
 runs:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: opening
     knobs:
       seconds: 4
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: turn
     knobs:
       seconds: 8
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: settle
     knobs:

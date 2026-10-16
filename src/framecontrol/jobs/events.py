@@ -10,6 +10,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 from loguru import logger
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
 from framecontrol.core.cooldown import CooldownPolicy
 
 # Every ``at`` is a local ISO 8601 timestamp with an offset, from the job service's clock.
@@ -72,7 +73,7 @@ class JobStarted:
     # start from: kept for every video execution that writes records, or the resumed execution's; None
     # without one. A t2v job's is run 1's last frame, written after run 1.
     first_image: str | None = None
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
     backend_settings: dict[str, Any] = field(default_factory=dict)
 
 

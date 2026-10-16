@@ -8,7 +8,7 @@ from typing import Any
 from framecontrol.jobs.timing.features import FRAMECONTROL, HistoryRun, HistoryStage
 from framecontrol.jobs.timing.forecast import Basis, Forecast, Span
 
-DT, H3 = "draw-things-cli", "h3"
+DT, H3 = "draw-things-cli", "h3-metal-cli"
 BASE_PIXELS = 832 * 448
 
 

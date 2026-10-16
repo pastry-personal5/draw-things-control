@@ -216,17 +216,17 @@ uv run fc queue add example-job-for-backend-draw-things-cli.yaml --wait
 3. `queue add --wait` submits the file and follows its runs.
 
 Start from `data/jobs/example-job-for-backend-draw-things-cli.yaml` or
-`data/jobs/example-job-for-backend-h3.yaml`, which are commented line by line.
+`data/jobs/example-job-for-backend-h3-metal-cli.yaml`, which are commented line by line.
 More examples show one idea each:
 
 | Example | Shows |
 |---------|-------|
-| `data/jobs/example-job-mixed-backends.yaml` | A chain `h3` `r2av`, `h3` `i2av`, `draw-things` `i2v`, `h3` `i2av`, each with its own profile and duration |
+| `data/jobs/example-job-mixed-backends.yaml` | A chain `h3-metal-cli` `r2av`, `h3-metal-cli` `i2av`, `draw-things-cli` `i2v`, `h3-metal-cli` `i2av`, each with its own profile and duration |
 | `data/jobs/example-job-h3-per-run-seconds.yaml` | Three H3 runs of 4, 8, and 12 seconds |
 | `data/jobs/example-job-h3-r2av-defaults.yaml` | `defaults` for an `r2av` run and its `i2av` successors, with one run overriding a knob |
 | `data/jobs/example-job-draw-things-per-run-frames.yaml` | Draw Things runs of 81, 49, and 97 frames |
-| `data/jobs/example-job-for-backend-h3-r2av-two-images.yaml` | One `r2av` run from two still images; replace its `./person-1.png` and `./person-2.png` with paths relative to `input_directory` |
-| `data/jobs/example-job-for-backend-h3-r2av-to-i2av-two-images.yaml` | A second `i2av` run that starts from the verified last frame of that `r2av` run |
+| `data/jobs/example-job-for-backend-h3-metal-cli-r2av-two-images.yaml` | One `r2av` run from two still images; replace its `./person-1.png` and `./person-2.png` with paths relative to `input_directory` |
+| `data/jobs/example-job-for-backend-h3-metal-cli-r2av-to-i2av-two-images.yaml` | A second `i2av` run that starts from the verified last frame of that `r2av` run |
 
 Invalid jobs are rejected before any generation starts. Job files must use
 `version: 2`; [Version-1 files](#version-1-files) says how to convert one.
@@ -252,7 +252,7 @@ job-wide output and cooldown.
 
 A run has `backend` and `pipeline` (required), and `prompt_pair`,
 `settings_profile`, and `knobs`. The pipelines are `i2i`, `t2v`, and `i2v` for
-`draw-things`, and `i2av` and `r2av` for `h3`. A run number, a top-level
+`draw-things-cli`, and `i2av` and `r2av` for `h3-metal-cli`. These are the only accepted backend names in runs, defaults, and settings profiles. A run number, a top-level
 `backend`, `mode`, or `run_count`, and every other version-1 key are refused
 with a message naming where the value lives now.
 
@@ -278,13 +278,13 @@ reference_pairs:
 
 settings_profiles:
   h3-portrait:
-    backend: h3
+    backend: h3-metal-cli
     settings:
       width: 768
       height: 1344
       steps: 30
   wan-portrait:
-    backend: draw-things
+    backend: draw-things-cli
     settings:
       config_file: image-to-video-wan-2-2.example.yaml
       config_override:
@@ -297,27 +297,27 @@ settings_profiles:
         video_format: prores4444
 
 defaults:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: r2av
     prompt_pair: establish-subjects
     settings_profile: h3-portrait
     knobs: {seconds: 5, seed: 42, timeout_seconds: 3600, reference_pair: two-subjects}
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: continue
     settings_profile: h3-portrait
     knobs: {seconds: 5, seed: 42, timeout_seconds: 3600}
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     prompt_pair: continue
     settings_profile: wan-portrait
     knobs: {frames: 81, seed: 42, timeout_seconds: 3600}
 
 runs:
-  - {backend: h3, pipeline: r2av}
-  - {backend: h3, pipeline: i2av, knobs: {seconds: 8}}
-  - {backend: draw-things, pipeline: i2v}
-  - {backend: h3, pipeline: i2av}
+  - {backend: h3-metal-cli, pipeline: r2av}
+  - {backend: h3-metal-cli, pipeline: i2av, knobs: {seconds: 8}}
+  - {backend: draw-things-cli, pipeline: i2v}
+  - {backend: h3-metal-cli, pipeline: i2av}
 
 output:
   directory: mixed-story
@@ -391,11 +391,11 @@ previous run and no fallback to a backend-wide block.
 
 | Knob | Applies to | Rule |
 |------|-----------|------|
-| `seconds` | `h3` `i2av` and `r2av`; `draw-things` `t2v` and `i2v` | Requested duration in seconds. H3: 1 to 15. Draw Things: only for a model whose frame rate is known, see [Duration](#duration) |
-| `frames` | `draw-things` `t2v` and `i2v` | An exact frame count, 1 or more; not with `seconds` |
+| `seconds` | `h3-metal-cli` `i2av` and `r2av`; `draw-things-cli` `t2v` and `i2v` | Requested duration in seconds. H3: 1 to 15. Draw Things: only for a model whose frame rate is known, see [Duration](#duration) |
+| `frames` | `draw-things-cli` `t2v` and `i2v` | An exact frame count, 1 or more; not with `seconds` |
 | `seed` | every run | An integer from 0 to 4294967295. Omitted: the whole job shares one random seed, drawn when it starts and kept by a resume |
 | `timeout_seconds` | every run | Time limit for the run, positive and finite; required after defaults |
-| `reference_pair` | `h3` `r2av` | The name of one declared reference pair; required there, forbidden elsewhere |
+| `reference_pair` | `h3-metal-cli` `r2av` | The name of one declared reference pair; required there, forbidden elsewhere |
 
 Job and execution details show every run's resolved knobs and where each came
 from: `run`, `defaults`, `settings_profile` (a Draw Things frame count taken
@@ -471,17 +471,17 @@ prompt_pairs:
     positive: "A calm autumn street; wind in leaves; distant city ambience."
 settings_profiles:
   h3-portrait:
-    backend: h3
+    backend: h3-metal-cli
     settings: {width: 768, height: 1344, steps: 30}
 defaults:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: street
     settings_profile: h3-portrait
     knobs: {seconds: 4, seed: 42, timeout_seconds: 3600}
 runs:
-  - {backend: h3, pipeline: i2av}
-  - {backend: h3, pipeline: i2av}
+  - {backend: h3-metal-cli, pipeline: i2av}
+  - {backend: h3-metal-cli, pipeline: i2av}
 cooldown:
   mode: off
 ```
@@ -500,7 +500,7 @@ input while correcting each run toward its prepared input:
 ```yaml
 settings_profiles:
   h3-portrait:
-    backend: h3
+    backend: h3-metal-cli
     settings:
       width: 768
       height: 1344
@@ -584,8 +584,8 @@ reference_pairs:
       - kind: audio
         path: singer-voice.wav
 runs:
-  - {backend: h3, pipeline: r2av, knobs: {reference_pair: singer}}
-  - {backend: h3, pipeline: i2av}
+  - {backend: h3-metal-cli, pipeline: r2av, knobs: {reference_pair: singer}}
+  - {backend: h3-metal-cli, pipeline: i2av}
 ```
 
 ### Configuration overrides

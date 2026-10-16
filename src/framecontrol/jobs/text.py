@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from framecontrol.core.backend_ids import H3_BACKEND
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.definition import ColorPolicy, EffectiveRun, JobDefinition, PromptPair
 
@@ -178,7 +179,7 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
     seed, source = job.configured_seed()
     seed_value = random_seed_text if seed is None and random_seed_text is not None else f"{seed if seed is not None else '(random, drawn when the job starts)'} ({source})"
     color_summary = color_text(job.color) if job.color.corrects else "none, measure only"
-    if job.backend == "h3":
+    if job.backend == H3_BACKEND:
         color_summary += " (H3 policy v1)"
     if job.effective_runs:
         return [
@@ -202,12 +203,12 @@ def job_summary(job: JobDefinition, *, random_seed_text: str | None = None) -> l
         ("input", str(job.input or "(none, text only)")),
         ("output directory", str(job.output_directory)),
         *([("output format", f"{job.video_format} (.{job.extension})")] if job.video_format is not None else []),
-        *([("color", color_summary)] if job.color.corrects or job.backend == "h3" else []),
+        *([("color", color_summary)] if job.color.corrects or job.backend == H3_BACKEND else []),
         ("config file", job.config_file),
         ("model", job.model),
         ("seed", seed_value),
     ]
-    if job.backend == "h3" and job.backend_data is not None:
+    if job.backend == H3_BACKEND and job.backend_data is not None:
         from framecontrol.jobs.backends.h3 import H3JobData
 
         if isinstance(job.backend_data, H3JobData):
@@ -233,7 +234,7 @@ def run_text(run: EffectiveRun) -> str:
     """One compiled run in a line: its backend and pipeline, prompt pair, profile, duration, seed, and time limit."""
     knobs = run.knobs
     parts = [f"{run.backend}/{run.pipeline}", f"pair {run.prompt_pair}", f"profile {run.settings_profile}"]
-    if run.backend == "h3":
+    if run.backend == H3_BACKEND:
         parts.append(f"{knobs['seconds']:g}s requested, {knobs['requested_frames']} frames requested, {knobs['effective_frames']} effective")
         if "reference_pair" in knobs:
             parts.append(f"references {knobs['reference_pair']}")
@@ -292,7 +293,7 @@ def plan_steps(job: JobDefinition, preview: JobPreview) -> list[PlanStep]:
         effective = job.effective_run(run.number)
         if effective is not None:
             detail += f" ({effective.backend}/{effective.pipeline}, profile {effective.settings_profile})"
-        elif job.backend == "h3" and isinstance(job.backend_data, H3JobData):
+        elif job.backend == H3_BACKEND and isinstance(job.backend_data, H3JobData):
             h3_run = job.backend_data.runs[run.number - 1]
             detail += f" ({h3_run.pipeline}" + (f", references {h3_run.reference_pair})" if h3_run.reference_pair else ")")
         result.append(PlanStep(planned_cooldown_text(job.cooldown, run.number - 1) if run.number > 1 else None, detail, run, command))

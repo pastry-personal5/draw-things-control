@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
 from framecontrol.core.clock import local_timestamp
 from framecontrol.core.numbers import positive_whole
 from framecontrol.jobs.events import JobStatus, RunStatus
@@ -99,7 +100,7 @@ def _settings(manifest: dict[str, Any]) -> ExecutionSettings:
         cooldown_seconds=manifest.get("cooldown_seconds"),
         cooldown_source=manifest.get("cooldown_source"),
         cooldown=cooldown,
-        backend=str(manifest.get("backend", "draw-things-cli")),
+        backend=str(manifest.get("backend", DRAW_THINGS_BACKEND)),
         backend_settings=manifest.get("backend_settings") if isinstance(manifest.get("backend_settings"), dict) else None,
     )
 
@@ -117,7 +118,7 @@ def _convert(manifest: dict[str, Any], path: Path, key: str, now: str) -> tuple[
         job_name=str(manifest["name"]),
         job_file=str(manifest["job_file"]),
         mode=str(manifest["mode"]),
-        backend=str(manifest.get("backend", "draw-things-cli")),
+        backend=str(manifest.get("backend", DRAW_THINGS_BACKEND)),
         status=JobStatus.INTERRUPTED if stale else str(manifest["status"]),
         seed=int(manifest["seed"]),
         seed_source=manifest.get("seed_source"),

@@ -21,7 +21,7 @@ class SizeAndShapeTests(unittest.TestCase):
         runs = history().runs
         self.assertGreaterEqual(len(runs), 2000)
         self.assertGreaterEqual(len({run.signature for run in runs}), 20)
-        self.assertEqual({run.backend for run in runs}, {"draw-things-cli", "h3"})
+        self.assertEqual({run.backend for run in runs}, {"draw-things-cli", "h3-metal-cli"})
 
     def test_an_execution_has_one_to_six_runs_numbered_from_one_and_a_cooldown(self) -> None:
         for execution in history().executions:
@@ -32,7 +32,7 @@ class SizeAndShapeTests(unittest.TestCase):
 
     def test_executions_are_numbered_in_time_order_and_a_signature_is_a_backend_and_a_pipeline(self) -> None:
         self.assertEqual([execution.number for execution in history().executions], list(range(1, len(history().executions) + 1)))
-        self.assertEqual({(run.backend, run.pipeline) for run in history().runs}, {("draw-things-cli", "i2v"), ("h3", "i2av"), ("h3", "r2av")})
+        self.assertEqual({(run.backend, run.pipeline) for run in history().runs}, {("draw-things-cli", "i2v"), ("h3-metal-cli", "i2av"), ("h3-metal-cli", "r2av")})
 
     def test_the_same_seed_gives_the_same_history_and_another_gives_another(self) -> None:
         self.assertEqual([run.stages for run in synthetic_history().runs[:50]], [run.stages for run in history().runs[:50]])
@@ -67,7 +67,7 @@ class RunLayoutTests(unittest.TestCase):
     def test_a_draw_things_run_has_the_stages_the_cli_prints_and_an_h3_run_its_phases(self) -> None:
         names = {run.backend: [stage.stage for stage in run.counted_stages] for run in history().runs[:20]}
         self.assertTrue({"starting", "processing", "sampling", "finishing"} <= set(names["draw-things-cli"]))
-        self.assertTrue({"tokenize", "text_encode", "load_core", "denoise", "audio_decode", "video_load", "ffmpeg"} <= set(names["h3"]))
+        self.assertTrue({"tokenize", "text_encode", "load_core", "denoise", "audio_decode", "video_load", "ffmpeg"} <= set(names["h3-metal-cli"]))
 
 
 @cache
@@ -97,20 +97,20 @@ class MisspecificationTests(unittest.TestCase):
         self.assertTrue(0.06 < falling / len(slopes) < 0.20)
 
     def test_an_h3_runs_first_gap_is_shorter_and_its_slope_has_no_consistent_sign(self) -> None:
-        series = [item for _, item in self.series("h3")]
+        series = [item for _, item in self.series("h3-metal-cli")]
         ratios = [item.first_ratio for item in series if item.first_ratio is not None]
         self.assertAlmostEqual(statistics.median(ratios), 0.74, delta=0.08)
         slopes = [item.slope for item in series if item.slope is not None]
         self.assertTrue(0.3 < sum(1 for slope in slopes if slope > 0) / len(slopes) < 0.7)
 
     def test_a_run_now_and_then_pauses(self) -> None:
-        pauses = [item.pauses for _, item in self.series("draw-things-cli") + self.series("h3")]
+        pauses = [item.pauses for _, item in self.series("draw-things-cli") + self.series("h3-metal-cli")]
         self.assertTrue(0.02 < sum(1 for count in pauses if count) / len(pauses) < 0.12)
 
     def test_a_signature_run_after_the_executable_was_rebuilt_is_slower_with_the_same_signature(self) -> None:
         by_build: dict[int, list[float]] = {}
-        busiest = self.busiest("h3")
-        for run, series in self.series("h3"):
+        busiest = self.busiest("h3-metal-cli")
+        for run, series in self.series("h3-metal-cli"):
             if run.signature == busiest:
                 by_build.setdefault(run.environment["executable_bytes"], []).append(series.mean_seconds)
         self.assertEqual(len(by_build), 2)

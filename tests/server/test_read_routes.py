@@ -105,7 +105,7 @@ class CapabilitiesTests(ReadRoutesTestCase):
     def test_capabilities_names_the_job_format_an_agent_may_write(self) -> None:
         job_format = self.get("/v1/capabilities").json()["job_format"]
         self.assertEqual(job_format["version"], 2)
-        self.assertEqual(job_format["backends"], {"draw-things": ["i2i", "t2v", "i2v"], "h3": ["i2av", "r2av"]})
+        self.assertEqual(job_format["backends"], {"draw-things-cli": ["i2i", "t2v", "i2v"], "h3-metal-cli": ["i2av", "r2av"]})
         self.assertEqual(job_format["knobs"], ["seconds", "frames", "seed", "timeout_seconds", "reference_pair"])
         # No Draw Things model has an established frame rate, so no model can take knobs.seconds.
         self.assertEqual(job_format["draw_things_seconds_models"], [])
@@ -224,7 +224,7 @@ class ExecutionRoutesTests(ReadRoutesTestCase):
 
     def test_h3_execution_exposes_anchor_basename(self) -> None:
         anchor = str(self.output_directory / "private-segment-anchor.png")
-        execution_id = self.store.executions.start(NewExecution(job_name="h3", job_file="h3.yaml", mode="i2av", started_at="2026-09-30T09:00:00+00:00", backend="h3", settings=ExecutionSettings(output_directory=str(self.output_directory))))
+        execution_id = self.store.executions.start(NewExecution(job_name="h3-metal-cli", job_file="h3.yaml", mode="i2av", started_at="2026-09-30T09:00:00+00:00", backend="h3-metal-cli", settings=ExecutionSettings(output_directory=str(self.output_directory))))
         self.store.executions.start_run(execution_id, 1, NewRun(pair="p", positive="text", started_at="2026-09-30T09:00:00+00:00", output="a.mp4", anchor=anchor))
         number = self.store.executions.number_of(execution_id)
         detail = self.get(f"/v1/executions/E{number:04d}").json()

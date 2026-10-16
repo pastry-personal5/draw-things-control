@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
+
 
 @dataclass(frozen=True)
 class FactoryStage:
@@ -20,7 +22,7 @@ class FactoryStage:
 class DrawThingsFactoryPoint:
     """E0053's two runs: one execution, so a narrow workload match and a wide prior spread."""
 
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
     pipeline: str = "i2v"
     model: str = "wan_v2.2_a14b_hne_i2v_i8x.ckpt"
     executable_bytes: int = 160477120
@@ -74,7 +76,7 @@ DRAW_THINGS_I8X_E0053 = DrawThingsFactoryPoint()
 class H3FactoryPoint:
     """E0051 and E0054: two independent executions at one overridden 15-second r2av workload."""
 
-    backend: str = "h3"
+    backend: str = H3_BACKEND
     pipeline: str = "r2av"
     model: str = "MiniMax-H3"
     executable_bytes: int = 558688
@@ -136,17 +138,17 @@ def draw_things_factory_point(backend: str, pipeline: str | None, workload: Mapp
 
 def factory_point(backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> DrawThingsFactoryPoint | H3FactoryPoint | None:
     """A measured point only where the run's resolved workload and build agree."""
-    if backend == "draw-things-cli":
+    if backend == DRAW_THINGS_BACKEND:
         return draw_things_factory_point(backend, pipeline, workload, environment)
-    if backend == "h3" and H3_R2AV_E0051_E0054.matches(backend, pipeline, workload, environment):
+    if backend == H3_BACKEND and H3_R2AV_E0051_E0054.matches(backend, pipeline, workload, environment):
         return H3_R2AV_E0051_E0054
     return None
 
 
 def heuristic_anchor(backend: str) -> DrawThingsFactoryPoint | H3FactoryPoint | None:
     """A measured backend rate to scale for a cold start, with uncertainty supplied by the caller."""
-    if backend == "draw-things-cli":
+    if backend == DRAW_THINGS_BACKEND:
         return DRAW_THINGS_I8X_E0053
-    if backend == "h3":
+    if backend == H3_BACKEND:
         return H3_R2AV_E0051_E0054
     return None

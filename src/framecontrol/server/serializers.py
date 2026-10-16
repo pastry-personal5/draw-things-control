@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from framecontrol.core.arguments import redact_command
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.jobs.definition import JobDefinition, PromptPair
 from framecontrol.jobs.planning import JobPreview
 from framecontrol.services.history_delete import DeleteReport
@@ -99,7 +100,7 @@ def audit_entry(row: AuditRow) -> dict[str, Any]:
     return {"at": row.at, "action": row.action, "target": row.target, "outcome": row.outcome, "caller": row.caller}
 
 
-def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things-cli") -> dict[str, Any]:
+def run_summary(run: RunRow, *, brief: bool = False, backend: str = DRAW_THINGS_BACKEND) -> dict[str, Any]:
     """One run, as ``GET /executions/{id}`` and ``GET /executions/{id}/runs/{run}`` give it; ``brief``
     leaves out its command and gives each check as its stage and verdict alone."""
     return {
@@ -123,7 +124,7 @@ def run_summary(run: RunRow, *, brief: bool = False, backend: str = "draw-things
         "audio_duration": run.audio_duration,
         # The corrected copy's file name, and the file the run's colors were held to.
         "corrected_output": run.corrected_output,
-        "anchor": Path(run.anchor).name if backend == "h3" and run.anchor is not None else run.anchor,
+        "anchor": Path(run.anchor).name if backend == H3_BACKEND and run.anchor is not None else run.anchor,
         **({} if brief else {"command": redact_command(run.command)}),
         "checks": [brief_check(check) if brief else media_check(check) for check in run.checks],
     }

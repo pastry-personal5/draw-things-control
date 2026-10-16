@@ -8,6 +8,7 @@ from collections import defaultdict
 
 from loguru import logger
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.core.cooldown import CooldownPolicy, parse_cooldown
 from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun, HistoryStage
 from framecontrol.jobs.timing.fit import FittedModel
@@ -45,7 +46,7 @@ class TimingHistory:
 def _history_run(row: CompleteTiming) -> HistoryRun:
     stages = tuple(HistoryStage(stage.stage, stage.source, stage.start, stage.end, stage.done, stage.total, stage.unit, stage.marks, stage.uncertain) for stage in row.stages)
     workload = dict(row.workload)
-    if row.backend == "draw-things-cli" and row.fidelity == "live":
+    if row.backend == DRAW_THINGS_BACKEND and row.fidelity == "live":
         # Older timing rows used base-config values even when per-run CLI flags won. Reconcile only where independent
         # recorded facts establish the actual work; leave the stored row intact.
         knobs = workload.get("knobs")
@@ -55,9 +56,9 @@ def _history_run(row: CompleteTiming) -> HistoryRun:
         if sampling is not None:
             workload["steps"] = sampling.total
     corrected = any(stage.stage == "correct" and stage.source == "framecontrol" for stage in stages)
-    if row.backend in ("draw-things-cli", "h3") and corrected:
+    if row.backend in (DRAW_THINGS_BACKEND, H3_BACKEND) and corrected:
         workload["color_corrects"] = True
-    elif (row.backend == "h3" and row.pipeline == "r2av") or (row.backend == "draw-things-cli" and row.pipeline == "t2v" and row.run == 1):
+    elif (row.backend == H3_BACKEND and row.pipeline == "r2av") or (row.backend == DRAW_THINGS_BACKEND and row.pipeline == "t2v" and row.run == 1):
         # Older workload hooks marked the job's color policy, even for a run with no correction input.
         workload.pop("color_corrects", None)
     return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, workload, row.environment, stages, row.output_frames)

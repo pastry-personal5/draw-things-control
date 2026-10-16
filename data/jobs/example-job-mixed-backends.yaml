@@ -47,7 +47,7 @@ reference_pairs:
 
 settings_profiles:
   h3-landscape-corrected:
-    backend: h3
+    backend: h3-metal-cli
     settings:
       width: 832
       height: 448
@@ -66,7 +66,7 @@ settings_profiles:
         strength: 0.5
         regions: true
   wan-landscape-corrected:
-    backend: draw-things
+    backend: draw-things-cli
     settings:
       config_file: image-to-video-wan-2-2.example.yaml
       config_override:
@@ -88,7 +88,7 @@ settings_profiles:
         regions: true
 
 defaults:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: r2av
     prompt_pair: establish
     settings_profile: h3-landscape-corrected
@@ -97,7 +97,7 @@ defaults:
       seed: 42
       timeout_seconds: 3600
       reference_pair: two-subjects
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: h3-continue
     settings_profile: h3-landscape-corrected
@@ -105,7 +105,7 @@ defaults:
       seconds: 5
       seed: 42
       timeout_seconds: 3600
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     prompt_pair: draw-things-continue
     settings_profile: wan-landscape-corrected
@@ -115,13 +115,13 @@ defaults:
       timeout_seconds: 3600
 
 runs:
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: r2av
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
-  - backend: h3
+  - backend: h3-metal-cli
     pipeline: i2av
     prompt_pair: h3-final
     knobs:

@@ -12,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
+from framecontrol.core.backend_ids import H3_BACKEND
 from framecontrol.jobs.backends.h3 import H3JobData
 from framecontrol.jobs.definition import JobDefinition
 
@@ -19,7 +20,7 @@ from framecontrol.jobs.definition import JobDefinition
 def snapshot_references(job: JobDefinition, directory: Path, max_file_bytes: int, max_total_bytes: int) -> tuple[Path | None, list[dict[str, Any]]]:
     """Copy every declared reference from its opened regular-file descriptor into private storage."""
     if job.effective_runs:
-        h3_jobs = [run.backend_job for run in job.effective_runs if run.backend == "h3" and isinstance(run.backend_job.backend_data, H3JobData)]
+        h3_jobs = [run.backend_job for run in job.effective_runs if run.backend == H3_BACKEND and isinstance(run.backend_job.backend_data, H3JobData)]
         if not h3_jobs:
             return None, []
         pairs = {}
@@ -32,7 +33,7 @@ def snapshot_references(job: JobDefinition, directory: Path, max_file_bytes: int
         template = h3_jobs[0]
         template_data = cast(H3JobData, template.backend_data)
         job = replace(template, backend_data=replace(template_data, reference_pairs=tuple(pairs.values())))
-    if job.backend != "h3" or not isinstance(job.backend_data, H3JobData) or not job.backend_data.reference_pairs:
+    if job.backend != H3_BACKEND or not isinstance(job.backend_data, H3JobData) or not job.backend_data.reference_pairs:
         return None, []
     root = directory / f"h3-references-{uuid.uuid4().hex}"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)

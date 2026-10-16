@@ -31,7 +31,7 @@ class SubmitJobTests(JobTestCase):
         from framecontrol.jobs.backends.h3 import H3JobData
 
         self.write_image("singer.png", (160, 160))
-        path = self.write_legacy_job(job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        path = self.write_legacy_job(job_data(backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
         entry = submit_legacy_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
         self.assertEqual(snapshot["version"], 6)
@@ -49,7 +49,7 @@ class SubmitJobTests(JobTestCase):
         self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
 
     def test_h3_color_policy_survives_snapshot_and_tampering_is_rejected(self) -> None:
-        path = self.write_legacy_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "first", "strength": 0.4, "regions": False}))
+        path = self.write_legacy_job(job_data(backend="h3-metal-cli", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}, color={"anchor": "first", "strength": 0.4, "regions": False}))
         entry = submit_legacy_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
         self.assertEqual(snapshot["version"], 6)
@@ -65,7 +65,7 @@ class SubmitJobTests(JobTestCase):
     def test_h3_snapshot_from_before_nearest_frame_alignment_keeps_its_plan(self) -> None:
         from framecontrol.jobs.backends.h3 import H3JobData
 
-        path = self.write_legacy_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        path = self.write_legacy_job(job_data(backend="h3-metal-cli", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
         entry = submit_legacy_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
         snapshot["version"] = 5
@@ -98,7 +98,7 @@ class SubmitJobTests(JobTestCase):
         self.assertEqual(caught.exception.field, "settings")
 
     def test_legacy_h3_snapshot_without_color_policy_resumes_as_none(self) -> None:
-        path = self.write_legacy_job(job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
+        path = self.write_legacy_job(job_data(backend="h3-metal-cli", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"}))
         entry = submit_legacy_job(path, self.global_config, self.params, self.store)
         snapshot = json.loads(entry.snapshot or "")
         snapshot["version"] = 3

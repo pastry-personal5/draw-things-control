@@ -70,7 +70,7 @@ class TimingHistoryTests(StoreCase):
         self.assertEqual(stale["frames"], 17)
 
     def test_old_color_policy_flag_is_removed_when_the_pipeline_cannot_correct(self) -> None:
-        for backend, pipeline in (("h3", "r2av"), ("draw-things-cli", "t2v")):
+        for backend, pipeline in (("h3-metal-cli", "r2av"), ("draw-things-cli", "t2v")):
             execution = self.add(f"old-{backend}", started=iso(1), finished=iso(1))
             self.store.timing.replace_run(execution, 1, backend=backend, pipeline=pipeline, workload={**WORKLOAD, "color_corrects": True}, environment=ENVIRONMENT, fidelity="live", complete=True, spans=spans())
         executions, skipped = load_executions(self.store)

@@ -13,8 +13,8 @@ from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.parsing import load_job, load_job_text
 from tests.fixtures import JobTestCase
 
-H3_PROFILE = {"backend": "h3", "settings": {"width": 832, "height": 448, "steps": 30}}
-WAN_PROFILE = {"backend": "draw-things", "settings": {"config_file": "base.yaml"}}
+H3_PROFILE = {"backend": "h3-metal-cli", "settings": {"width": 832, "height": 448, "steps": 30}}
+WAN_PROFILE = {"backend": "draw-things-cli", "settings": {"config_file": "base.yaml"}}
 
 
 def v2_job(**changes: Any) -> dict[str, Any]:
@@ -26,15 +26,15 @@ def v2_job(**changes: Any) -> dict[str, Any]:
         "reference_pairs": {"duo": {"references": [{"kind": "image", "path": "a.png"}, {"kind": "image", "path": "b.png"}]}},
         "settings_profiles": {"h3-wide": copy.deepcopy(H3_PROFILE), "wan": copy.deepcopy(WAN_PROFILE)},
         "defaults": [
-            {"backend": "h3", "pipeline": "r2av", "prompt_pair": "establish", "settings_profile": "h3-wide", "knobs": {"seconds": 5, "seed": 42, "timeout_seconds": 3600, "reference_pair": "duo"}},
-            {"backend": "h3", "pipeline": "i2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 4, "seed": 42, "timeout_seconds": 3600}},
-            {"backend": "draw-things", "pipeline": "i2v", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"frames": 81, "seed": 42, "timeout_seconds": 1800}},
+            {"backend": "h3-metal-cli", "pipeline": "r2av", "prompt_pair": "establish", "settings_profile": "h3-wide", "knobs": {"seconds": 5, "seed": 42, "timeout_seconds": 3600, "reference_pair": "duo"}},
+            {"backend": "h3-metal-cli", "pipeline": "i2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 4, "seed": 42, "timeout_seconds": 3600}},
+            {"backend": "draw-things-cli", "pipeline": "i2v", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"frames": 81, "seed": 42, "timeout_seconds": 1800}},
         ],
         "runs": [
-            {"backend": "h3", "pipeline": "r2av"},
-            {"backend": "h3", "pipeline": "i2av"},
-            {"backend": "draw-things", "pipeline": "i2v"},
-            {"backend": "h3", "pipeline": "i2av", "knobs": {"seconds": 8}},
+            {"backend": "h3-metal-cli", "pipeline": "r2av"},
+            {"backend": "h3-metal-cli", "pipeline": "i2av"},
+            {"backend": "draw-things-cli", "pipeline": "i2v"},
+            {"backend": "h3-metal-cli", "pipeline": "i2av", "knobs": {"seconds": 8}},
         ],
     }
     for key, value in changes.items():
@@ -66,8 +66,8 @@ class CompiledRunTests(CompileV2TestCase):
     def test_a_mixed_job_compiles_each_run_with_its_own_backend_pipeline_and_knobs(self) -> None:
         job = self.load()
         self.assertEqual((job.version, job.run_count, job.backend, job.mode_label), (2, 4, "mixed", "mixed"))
-        self.assertEqual([(run.number, run.backend, run.pipeline, run.prompt_pair, run.settings_profile) for run in job.effective_runs], [(1, "h3", "r2av", "establish", "h3-wide"), (2, "h3", "i2av", "go", "h3-wide"), (3, "draw-things", "i2v", "paint", "wan"), (4, "h3", "i2av", "go", "h3-wide")])
-        self.assertEqual([job.run_backend(number) for number in range(1, 5)], ["h3", "h3", "draw-things", "h3"])
+        self.assertEqual([(run.number, run.backend, run.pipeline, run.prompt_pair, run.settings_profile) for run in job.effective_runs], [(1, "h3-metal-cli", "r2av", "establish", "h3-wide"), (2, "h3-metal-cli", "i2av", "go", "h3-wide"), (3, "draw-things-cli", "i2v", "paint", "wan"), (4, "h3-metal-cli", "i2av", "go", "h3-wide")])
+        self.assertEqual([job.run_backend(number) for number in range(1, 5)], ["h3-metal-cli", "h3-metal-cli", "draw-things-cli", "h3-metal-cli"])
         self.assertEqual([job.run_needs_visual_input(number) for number in range(1, 6)], [False, True, True, True, False])
         self.assertEqual([pair.name for pair in job.schedule()], ["establish", "go", "paint", "go"])
         self.assertIsNone(job.input)
@@ -95,7 +95,7 @@ class CompiledRunTests(CompileV2TestCase):
 
     def test_draw_things_runs_take_exact_frames_per_run(self) -> None:
         data = v2_job()
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2v", "knobs": {"frames": 49}}, {"backend": "draw-things", "pipeline": "i2v"}]
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2v", "knobs": {"frames": 49}}, {"backend": "draw-things-cli", "pipeline": "i2v"}]
         data["input"] = "first-frame.png"
         data["defaults"] = [data["defaults"][2]]
         for key in ("reference_pairs",):
@@ -105,7 +105,7 @@ class CompiledRunTests(CompileV2TestCase):
         job = self.load(data)
         self.assertEqual([(run.knobs["frames"], run.knob_sources["frames"]) for run in job.effective_runs], [(49, "run"), (81, "defaults")])
         self.assertEqual([run.backend_job.config_override.frame_count for run in job.effective_runs], [49, 81])
-        self.assertEqual((job.backend, job.mode_label), ("draw-things", "i2v"))
+        self.assertEqual((job.backend, job.mode_label), ("draw-things-cli", "i2v"))
 
     def test_a_draw_things_run_without_a_temporal_knob_keeps_the_profile_frame_count(self) -> None:
         self.write_base_config({"model": "base.ckpt", "width": 832, "height": 448, "numFrames": 33})
@@ -153,7 +153,7 @@ class CompiledRunTests(CompileV2TestCase):
 
     def _draw_things_only(self) -> dict[str, Any]:
         data = v2_job()
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2v"}]
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2v"}]
         data["input"] = "first-frame.png"
         data["defaults"] = [data["defaults"][2]]
         data.pop("reference_pairs")
@@ -165,7 +165,7 @@ class CompiledRunTests(CompileV2TestCase):
 class DrawThingsSecondsTests(CompileV2TestCase):
     def draw_things_only(self, **knobs: Any) -> dict[str, Any]:
         data = v2_job(input="first-frame.png")
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2v", "knobs": knobs}]
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2v", "knobs": knobs}]
         data["defaults"] = [data["defaults"][2]]
         data["defaults"][0]["knobs"].pop("frames")
         data.pop("reference_pairs")
@@ -191,7 +191,7 @@ class DrawThingsSecondsTests(CompileV2TestCase):
         self.assertEqual(run.settings["frames"], 80)
 
     def test_a_model_without_a_rate_still_fails_when_another_has_one(self) -> None:
-        backends = BackendRegistry((DrawThingsBackend({"other.ckpt": FrameRate(24.0, "note")}), DEFAULT_BACKENDS.get("h3")))
+        backends = BackendRegistry((DrawThingsBackend({"other.ckpt": FrameRate(24.0, "note")}), DEFAULT_BACKENDS.get("h3-metal-cli")))
         self.invalid_with(backends, self.draw_things_only(seconds=5), "runs[0].knobs.seconds")
 
     def invalid_with(self, backends: BackendRegistry, data: dict[str, Any], field: str) -> None:
@@ -205,7 +205,7 @@ class DrawThingsSecondsTests(CompileV2TestCase):
         self.assertEqual(self.load(data).effective_runs[0].knobs["frames"], 40)
         data = self.draw_things_only(frames=3, seconds=2)
         self.invalid(data, "runs[0].knobs", "both seconds and frames")
-        backends = BackendRegistry((DrawThingsBackend({"base.ckpt": FrameRate(10.0, "note")}), DEFAULT_BACKENDS.get("h3")))
+        backends = BackendRegistry((DrawThingsBackend({"base.ckpt": FrameRate(10.0, "note")}), DEFAULT_BACKENDS.get("h3-metal-cli")))
         data = self.draw_things_only(seconds=3)
         data["defaults"][0]["knobs"]["frames"] = 81
         run = self.load(data, backends=backends).effective_runs[0]
@@ -237,10 +237,10 @@ class DefaultsTests(CompileV2TestCase):
     def test_duplicate_unused_and_unknown_defaults_fail_at_their_own_field(self) -> None:
         data = v2_job()
         data["defaults"].append(copy.deepcopy(data["defaults"][0]))
-        self.invalid(data, "defaults[3]", "duplicates the defaults for h3/r2av")
+        self.invalid(data, "defaults[3]", "duplicates the defaults for h3-metal-cli/r2av")
         data = v2_job()
-        data["defaults"].append({"backend": "draw-things", "pipeline": "t2v"})
-        self.invalid(data, "defaults", "unused selector draw-things/t2v")
+        data["defaults"].append({"backend": "draw-things-cli", "pipeline": "t2v"})
+        self.invalid(data, "defaults", "unused selector draw-things-cli/t2v")
         data = v2_job()
         data["defaults"][1]["extra"] = 1
         self.invalid(data, "defaults[1].extra", "not a known key")
@@ -267,7 +267,7 @@ class DefaultsTests(CompileV2TestCase):
         data = v2_job()
         data["defaults"][0]["settings_profile"] = "wan"
         data["runs"][0]["settings_profile"] = "h3-wide"
-        self.invalid(data, "defaults[0].settings_profile", "draw-things profile, not a h3 one")
+        self.invalid(data, "defaults[0].settings_profile", "draw-things-cli profile, not a h3-metal-cli one")
         data = v2_job()
         data["defaults"][0]["knobs"]["reference_pair"] = "ghost"
         data["runs"][0]["knobs"] = {"reference_pair": "duo"}
@@ -277,8 +277,8 @@ class DefaultsTests(CompileV2TestCase):
         for knobs, field, text in (
             ({"seed": None}, "knobs.seed", "must not be null"),
             ({"colour": 1}, "knobs.colour", "not a known key"),
-            ({"frames": 5}, "knobs.frames", "does not apply to h3/i2av"),
-            ({"reference_pair": "duo"}, "knobs.reference_pair", "does not apply to h3/i2av"),
+            ({"frames": 5}, "knobs.frames", "does not apply to h3-metal-cli/i2av"),
+            ({"reference_pair": "duo"}, "knobs.reference_pair", "does not apply to h3-metal-cli/i2av"),
             ({"seed": 2**32}, "knobs.seed", "0 to 4294967295"),
             ({"seconds": 0}, "knobs.seconds", "positive"),
             ({"seconds": float("inf")}, "knobs.seconds", "finite"),
@@ -292,10 +292,10 @@ class DefaultsTests(CompileV2TestCase):
     def test_an_i2i_run_has_no_temporal_knob(self) -> None:
         data = self._i2i_job()
         data["runs"][0]["knobs"] = {"seconds": 2}
-        self.invalid(data, "runs[0].knobs.seconds", "does not apply to draw-things/i2i")
+        self.invalid(data, "runs[0].knobs.seconds", "does not apply to draw-things-cli/i2i")
         data = self._i2i_job()
         data["runs"][0]["knobs"] = {"frames": 2}
-        self.invalid(data, "runs[0].knobs.frames", "does not apply to draw-things/i2i")
+        self.invalid(data, "runs[0].knobs.frames", "does not apply to draw-things-cli/i2i")
         run = self.load(self._i2i_job()).effective_runs[0]
         self.assertEqual(set(run.knobs), {"timeout_seconds", "seed"})
         self.assertEqual(run.backend_job.extension, "png")
@@ -306,8 +306,8 @@ class DefaultsTests(CompileV2TestCase):
             prompt_pairs={"paint": {"positive": "x"}},
             reference_pairs=None,
             settings_profiles={"wan": copy.deepcopy(WAN_PROFILE)},
-            defaults=[{"backend": "draw-things", "pipeline": "i2i", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"timeout_seconds": 60, "seed": 5}}],
-            runs=[{"backend": "draw-things", "pipeline": "i2i"}],
+            defaults=[{"backend": "draw-things-cli", "pipeline": "i2i", "prompt_pair": "paint", "settings_profile": "wan", "knobs": {"timeout_seconds": 60, "seed": 5}}],
+            runs=[{"backend": "draw-things-cli", "pipeline": "i2i"}],
         )
 
     def test_required_values_have_no_silent_fallback(self) -> None:
@@ -346,7 +346,7 @@ class ShapeTests(CompileV2TestCase):
         for key, value, text in (
             ("mode", "i2v", "pipeline"),
             ("run_count", 3, "length of 'runs'"),
-            ("backend", "h3", "runs"),
+            ("backend", "h3-metal-cli", "runs"),
             ("h3_runs", [], "runs"),
             ("backend_settings", {}, "settings profile"),
             ("config_file", "base.yaml", "settings.config_file"),
@@ -360,7 +360,7 @@ class ShapeTests(CompileV2TestCase):
             with self.subTest(key=key):
                 self.invalid(v2_job(**{key: value}), key, text)
         self.invalid(v2_job(output={"extension": "mov"}), "output.extension", "settings profile")
-        self.invalid(v2_job(output={"video_format": "h264"}), "output.video_format", "draw-things settings profile")
+        self.invalid(v2_job(output={"video_format": "h264"}), "output.video_format", "draw-things-cli settings profile")
         data = v2_job()
         data["runs"][0]["run"] = 1
         self.invalid(data, "runs[0].run", "position in 'runs'")
@@ -371,11 +371,11 @@ class ShapeTests(CompileV2TestCase):
         data["runs"][0]["settings"] = {}
         self.invalid(data, "runs[0].settings", "not a known key")
         data = v2_job()
-        data["runs"][0] = {"backend": "h3"}
+        data["runs"][0] = {"backend": "h3-metal-cli"}
         self.invalid(data, "runs[0]", "backend and pipeline")
         data = v2_job()
-        data["runs"][0]["backend"] = "draw-things-cli"
-        self.invalid(data, "runs[0].backend", "draw-things or h3")
+        data["runs"][0]["backend"] = "draw-things"
+        self.invalid(data, "runs[0].backend", "draw-things-cli or h3-metal-cli")
         data = v2_job()
         data["runs"][0]["pipeline"] = "i2v"
         self.invalid(data, "runs[0].pipeline", "i2av, r2av for h3")
@@ -463,7 +463,7 @@ class ShapeTests(CompileV2TestCase):
         data["settings_profiles"]["wan"]["settings"]["input_resize"]["max_crop_percent"] = 1
         error = self.invalid(data, "settings_profiles.wan.settings.input_resize.max_crop_percent", "handoff-from-run-2")
         self.assertNotIn("max_input_crop_percent", str(error))
-        self.invalid({**data, "settings_profiles": {**data["settings_profiles"], "wan": {"backend": "draw-things", "settings": {"config_file": "base.yaml", "input_resize": {"max_crop_percent": 1}}}}}, "settings_profiles.wan.settings.input_resize.max_crop_percent", "requires exactly one")
+        self.invalid({**data, "settings_profiles": {**data["settings_profiles"], "wan": {"backend": "draw-things-cli", "settings": {"config_file": "base.yaml", "input_resize": {"max_crop_percent": 1}}}}}, "settings_profiles.wan.settings.input_resize.max_crop_percent", "requires exactly one")
         data["settings_profiles"]["wan"]["settings"]["input_resize"] = {"desired_w": 800}
         self.invalid(data, "settings_profiles.wan.settings.input_resize.desired_w", "not a known key")
 
@@ -520,9 +520,9 @@ class TextTests(CompileV2TestCase):
 
         rows = dict(job_summary(self.load()))
         self.assertEqual((rows["format"], rows["backend"], rows["mode"], rows["runs"]), ("version 2", "mixed", "mixed", "4 (establish, go, paint, go)"))
-        self.assertEqual(rows["run 1"], "h3/r2av, pair establish, profile h3-wide, 5s requested, 120 frames requested, 124 effective, references duo, seed 42, time limit 1 h")
-        self.assertEqual(rows["run 4"], "h3/i2av, pair go, profile h3-wide, 8s requested, 192 frames requested, 192 effective, seed 42, time limit 1 h")
-        self.assertEqual(rows["run 3"], "draw-things/i2v, pair paint, profile wan, 81 frames, seed 42, time limit 30 min")
+        self.assertEqual(rows["run 1"], "h3-metal-cli/r2av, pair establish, profile h3-wide, 5s requested, 120 frames requested, 124 effective, references duo, seed 42, time limit 1 h")
+        self.assertEqual(rows["run 4"], "h3-metal-cli/i2av, pair go, profile h3-wide, 8s requested, 192 frames requested, 192 effective, seed 42, time limit 1 h")
+        self.assertEqual(rows["run 3"], "draw-things-cli/i2v, pair paint, profile wan, 81 frames, seed 42, time limit 30 min")
 
     def test_an_unseeded_run_says_it_uses_the_execution_seed(self) -> None:
         from framecontrol.jobs.text import job_summary

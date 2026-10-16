@@ -47,10 +47,10 @@ class TimingRepositoryTests(StoreCase):
 
     def test_a_run_is_marked_incomplete_when_its_timing_starts_and_complete_when_it_ends(self) -> None:
         timing = self.store.timing
-        timing.start(self.execution, 1, "h3", "r2av", {"frames": 243}, {"load_start": [1.0, 1.0, 1.0]})
+        timing.start(self.execution, 1, "h3-metal-cli", "r2av", {"frames": 243}, {"load_start": [1.0, 1.0, 1.0]})
         row = timing.timing_of(self.execution, 1)
         assert row is not None
-        self.assertEqual((row.backend, row.pipeline, row.workload, row.fidelity, row.complete), ("h3", "r2av", {"frames": 243}, "live", False))
+        self.assertEqual((row.backend, row.pipeline, row.workload, row.fidelity, row.complete), ("h3-metal-cli", "r2av", {"frames": 243}, "live", False))
         timing.finish(self.execution, 1, complete=True, environment={"load_end": [2.0, 1.5, 1.0]})
         row = timing.timing_of(self.execution, 1)
         assert row is not None
@@ -96,13 +96,13 @@ class TimingRepositoryTests(StoreCase):
 
     def test_an_execution_knows_whether_it_has_timing(self) -> None:
         self.assertFalse(self.store.timing.has_timing(self.execution))
-        self.store.timing.start(self.execution, 1, "h3", None, {}, {})
+        self.store.timing.start(self.execution, 1, "h3-metal-cli", None, {}, {})
         self.assertTrue(self.store.timing.has_timing(self.execution))
 
 
 class TimingFollowsItsExecutionTests(StoreCase):
     def keep(self, execution_id: int) -> None:
-        self.store.timing.start(execution_id, 1, "h3", "r2av", {}, {})
+        self.store.timing.start(execution_id, 1, "h3-metal-cli", "r2av", {}, {})
         self.store.timing.add_stage(execution_id, 1, span())
 
     def counts(self) -> tuple[int, int]:
@@ -138,7 +138,7 @@ class RecorderTimingTests(StoreCase):
         from framecontrol.core.cooldown import CooldownPolicy
         from framecontrol.jobs.events import JobStarted, RunStarted
 
-        recorder(JobStarted(at=self.AT, job_name="walk", job_file="/jobs/walk.yaml", source_text="x", mode="i2v", total_runs=1, output_directory="/out", input=None, model="m", seed=1, seed_source="given", cooldown=CooldownPolicy(mode="off"), cooldown_source="job", manifest=None, log=None, backend="h3"))
+        recorder(JobStarted(at=self.AT, job_name="walk", job_file="/jobs/walk.yaml", source_text="x", mode="i2v", total_runs=1, output_directory="/out", input=None, model="m", seed=1, seed_source="given", cooldown=CooldownPolicy(mode="off"), cooldown_source="job", manifest=None, log=None, backend="h3-metal-cli"))
         recorder(RunStarted(at=self.AT, number=1, total=1, pair="p", positive="t", negative=None, input=None, resized_input=None, output="o.mp4", last_frame=None, command=()))
         return recorder
 
@@ -147,7 +147,7 @@ class RecorderTimingTests(StoreCase):
 
     def test_a_run_killed_mid_stage_keeps_its_finished_spans_and_stays_incomplete(self) -> None:
         recorder = self.recorder()
-        recorder(TimingStarted(at=self.AT, number=1, backend="h3", pipeline="r2av", workload={"frames": 243}, environment={}))
+        recorder(TimingStarted(at=self.AT, number=1, backend="h3-metal-cli", pipeline="r2av", workload={"frames": 243}, environment={}))
         recorder(StageStarted(at=self.AT, number=1, stage="prepare", phase=None, source="framecontrol", start=0.0))
         recorder(self.finished("prepare", 0.0, 0.5))
         recorder(self.finished("tokenize", 0.5, 0.7))
@@ -162,7 +162,7 @@ class RecorderTimingTests(StoreCase):
 
     def test_a_run_that_ends_well_is_complete_and_keeps_the_load_it_ended_under(self) -> None:
         recorder = self.recorder()
-        recorder(TimingStarted(at=self.AT, number=1, backend="h3", pipeline="i2av", workload={}, environment={"load_start": [1.0, 1.0, 1.0]}))
+        recorder(TimingStarted(at=self.AT, number=1, backend="h3-metal-cli", pipeline="i2av", workload={}, environment={"load_start": [1.0, 1.0, 1.0]}))
         recorder(TimingFinished(at=self.AT, number=1, complete=True, load_end=(2.0, 1.0, 1.0)))
         recorder(RunFinished(at=self.AT, number=1, status=RunStatus.SUCCEEDED, exit_code=0, seconds=1.0, output="o.mp4", last_frame=None))
         execution_id = recorder.execution_id

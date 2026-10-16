@@ -282,9 +282,9 @@ class ExecutorTimingTests(JobTestCase):
         self.assertEqual([event.status for event in recorder.events if isinstance(event, RunFinished)], ["succeeded"])
 
     def test_a_version_2_run_is_timed_under_the_backends_own_id_not_its_alias(self) -> None:
-        # A version-2 file says `draw-things` for the backend the registry knows as `draw-things-cli`.
+        # A version-2 file says `draw-things-cli`, which is the backend registry ID.
         job = load_job(self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])), self.global_config, self.params)
-        self.assertEqual(job.run_backend(1), "draw-things")
+        self.assertEqual(job.run_backend(1), "draw-things-cli")
         recorder = self.observe(job)
         (started,) = [event for event in recorder.events if isinstance(event, TimingStarted)]
         self.assertEqual((started.backend, started.pipeline), ("draw-things-cli", "i2v"))

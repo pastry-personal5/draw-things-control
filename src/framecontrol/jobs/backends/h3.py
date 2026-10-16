@@ -342,13 +342,13 @@ class H3Backend:
     def parse_job(self, parser: JobParser, data: dict[str, Any], source_text: str) -> JobDefinition:
         common = parser.parse_common(data)
         if common.mode not in (GenerationMode.I2AV, GenerationMode.H3AV):
-            parser.fail("mode", "is not supported by h3")
+            parser.fail("mode", "is not supported by h3-metal-cli")
         for key in ("config_file", "config_override", "desired_input_width", "desired_input_height", "max_input_crop_percent"):
             if key in data:
-                parser.fail(key, "is not supported by h3")
+                parser.fail(key, "is not supported by h3-metal-cli")
         for index, pair in enumerate(data["prompt_pairs"]):
             if isinstance(pair, dict) and "negative" in pair:
-                parser.fail(f"prompt_pairs[{index}].negative", "is not supported by h3")
+                parser.fail(f"prompt_pairs[{index}].negative", "is not supported by h3-metal-cli")
         settings = self._settings(parser, data.get("backend_settings"))
         if common.mode is GenerationMode.H3AV:
             runs = self._runs(parser, data.get("h3_runs"), common.run_count)
@@ -366,7 +366,7 @@ class H3Backend:
         directory = parser.output_directory(output, common.name, {"directory", "extension"})
         extension = output.get("extension", "mp4")
         if extension != "mp4":
-            parser.fail("output.extension", "must be mp4 for h3")
+            parser.fail("output.extension", "must be mp4 for h3-metal-cli")
         first_is_i2av = runs[0].pipeline == "i2av"
         if first_is_i2av and common.input is None:
             parser.fail("input", "is required when the first H3 run uses i2av")
@@ -625,7 +625,7 @@ class H3Backend:
 
     def check_tools(self, job: JobDefinition, executable: str, media: MediaTools, find_executable: Callable[[str], str | None]) -> None:
         if os.environ.get("H3_FFMPEG") or os.environ.get("H3_FFPROBE"):
-            raise InputError("H3_FFMPEG and H3_FFPROBE must not be set for h3 jobs")
+            raise InputError("H3_FFMPEG and H3_FFPROBE must not be set for h3-metal-cli jobs")
         if not self.runtime.executable.is_file() or not os.access(self.runtime.executable, os.X_OK):
             raise InputError(f"H3 executable is missing or not executable: {self.runtime.executable}")
         if not self.runtime.model_directory.is_dir():
@@ -633,9 +633,9 @@ class H3Backend:
         ffmpeg = find_executable("ffmpeg")
         ffprobe = find_executable("ffprobe")
         if ffmpeg is None:
-            raise InputError("ffmpeg is missing for h3")
+            raise InputError("ffmpeg is missing for h3-metal-cli")
         if ffprobe is None:
-            raise InputError("ffprobe is missing for h3")
+            raise InputError("ffprobe is missing for h3-metal-cli")
         self._ffmpeg, self._ffprobe = ffmpeg, ffprobe
         try:
             result = run_process((str(self.runtime.executable), "-d", str(self.runtime.model_directory), "--info"), capture_output=True, text=True, errors="replace", timeout=H3_INFO_TIMEOUT_SECONDS, check=False, cwd=self.runtime.executable.parent)

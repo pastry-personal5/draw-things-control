@@ -170,7 +170,7 @@ class WatchEventsTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase):
 
         at = "2026-10-16T10:00:00+00:00"
         sent = [
-            TimingStarted(at=at, number=1, backend="h3", pipeline="r2av", workload={"frames": 243}, environment={"load_start": [1.0, 0.5, 0.25]}),
+            TimingStarted(at=at, number=1, backend="h3-metal-cli", pipeline="r2av", workload={"frames": 243}, environment={"load_start": [1.0, 0.5, 0.25]}),
             StageStarted(at=at, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5),
             StageFinished(at=at, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5, end=2174.2, done=30, total=30, unit="steps", marks=((120.5, 1), (2174.2, 30))),
             TimingFinished(at=at, number=1, complete=True, load_end=(2.0, 1.0, 0.5)),

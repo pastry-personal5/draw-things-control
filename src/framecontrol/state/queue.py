@@ -13,6 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
 from framecontrol.core.clock import local_timestamp
 from framecontrol.state.database import Database, next_number
 from framecontrol.state.execution_rows import SUCCEEDED_COUNT, ExecutionSettings, epoch
@@ -101,7 +102,7 @@ class NewQueueEntry:
     # matching snapshot automatically in ``submit``; generation callers set these explicitly.
     kind: str = "job"
     snapshot: str | None = None
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,7 @@ class QueueRow:
     submitted_by: str | None = None
     kind: str = "job"
     snapshot: str | None = None
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
 
     @property
     def label(self) -> str:
@@ -193,7 +194,7 @@ class QueueRow:
             submitted_by=row["submitted_by"],
             kind=row["kind"] if "kind" in row.keys() else "job",
             snapshot=row["snapshot"] if "snapshot" in row.keys() else None,
-            backend=row["backend"] if "backend" in row.keys() else "draw-things-cli",
+            backend=row["backend"] if "backend" in row.keys() else DRAW_THINGS_BACKEND,
             error=row["error"],
             total_runs=row["total_runs"],
             succeeded=(exec_first_run or 1) - 1 + succeeded_count,

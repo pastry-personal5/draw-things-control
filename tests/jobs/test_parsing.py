@@ -72,7 +72,7 @@ class JobDefinitionTests(JobTestCase):
 
     def test_h3_i2av_has_a_closed_schema_and_a_center_crop_first_frame(self) -> None:
         data = job_data(
-            backend="h3",
+            backend="h3-metal-cli",
             mode="i2av",
             config_file=None,
             prompt_pairs=[{"name": "scene", "positive": "wind in trees", "default": True}],
@@ -80,7 +80,7 @@ class JobDefinitionTests(JobTestCase):
             output={"extension": "mp4"},
         )
         job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
-        self.assertEqual((job.backend, job.mode, job.extension, job.requested_seed), ("h3", GenerationMode.I2AV, "mp4", 42))
+        self.assertEqual((job.backend, job.mode, job.extension, job.requested_seed), ("h3-metal-cli", GenerationMode.I2AV, "mp4", 42))
         assert job.input_resize is not None
         self.assertEqual((job.input_resize.target_size, job.input_resize.fit), ((768, 1344), "crop"))
         self.assertEqual(job.backend_settings["effective_frames"], 90)
@@ -94,7 +94,7 @@ class JobDefinitionTests(JobTestCase):
 
     def test_h3_rejects_draw_things_fields_and_negative_prompt_key(self) -> None:
         base = {
-            "backend": "h3",
+            "backend": "h3-metal-cli",
             "mode": "i2av",
             "config_file": None,
             "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}],
@@ -107,7 +107,7 @@ class JobDefinitionTests(JobTestCase):
             self.assertEqual(caught.exception.field, field)
 
     def test_h3_color_policy_has_a_closed_schema_and_backend_defaults(self) -> None:
-        base = {"backend": "h3", "mode": "i2av", "config_file": None, "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}], "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, "output": {"extension": "mp4"}}
+        base = {"backend": "h3-metal-cli", "mode": "i2av", "config_file": None, "prompt_pairs": [{"name": "scene", "positive": "wind", "default": True}], "backend_settings": {"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, "output": {"extension": "mp4"}}
         plain = load_legacy_job(self.write_legacy_job(job_data(**base)), self.global_config, self.params)
         self.assertEqual(plain.backend_settings["color_policy"], {"version": 1, "anchor": "none"})
         self.assertFalse(plain.color.regions)
@@ -133,14 +133,14 @@ class JobDefinitionTests(JobTestCase):
             self.assertEqual(caught.exception.field, field)
 
     def test_h3_rejects_temporal_disagreement(self) -> None:
-        data = job_data(backend="h3", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 95, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
+        data = job_data(backend="h3-metal-cli", mode="i2av", config_file=None, prompt_pairs=[{"name": "scene", "positive": "wind", "default": True}], backend_settings={"width": 768, "height": 1344, "frames": 95, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
         with self.assertRaises(InputError) as caught:
             load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "backend_settings.frames")
 
     def test_h3av_resolves_mixed_runs_and_optional_controls(self) -> None:
         self.write_image("singer.png", (160, 160))
-        data = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}, {"run": 2, "pipeline": "i2av"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "dit_layers": 45, "reference_image_size": "max"}, output={"extension": "mp4"})
+        data = job_data(backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=2, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}, {"run": 2, "pipeline": "i2av"}], reference_pairs=[{"name": "voice", "references": [{"kind": "image", "path": "singer.png"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "dit_layers": 45, "reference_image_size": "max"}, output={"extension": "mp4"})
         job = load_legacy_job(self.write_legacy_job(data), self.global_config, self.params)
         self.assertIsNone(job.input)
         self.assertEqual(job.mode, GenerationMode.H3AV)
@@ -150,7 +150,7 @@ class JobDefinitionTests(JobTestCase):
         self.assertEqual((job.backend_data.runs[0].pipeline, job.backend_data.runs[0].reference_pair, job.backend_data.reference_pairs[0].references[0].basename), ("r2av", "voice", "singer.png"))
 
     def test_h3av_rejects_incompatible_reuse_controls_and_wrong_first_input(self) -> None:
-        base = job_data(backend="h3", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "i2av"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "core_reuse": 2}, output={"extension": "mp4"})
+        base = job_data(backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "i2av"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "core_reuse": 2}, output={"extension": "mp4"})
         with self.assertRaises(InputError) as caught:
             load_legacy_job(self.write_legacy_job(base), self.global_config, self.params)
         self.assertEqual(caught.exception.field, "backend_settings")

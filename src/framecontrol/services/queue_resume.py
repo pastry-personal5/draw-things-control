@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from framecontrol.core.backend_ids import H3_BACKEND
 from framecontrol.core.clock import Clock, local_timestamp
 from framecontrol.core.errors import InputError, NotFoundError
 from framecontrol.core.global_config import GlobalConfig
@@ -68,7 +69,7 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
         raise ResumeRefusedError(f"{entry.label} cannot be resumed: it is {entry.state}")
     if _resumed_by_some_entry(store, entry.queue_number):
         raise ResumeRefusedError(f"{entry.label} already has a resume; resume the newest one instead")
-    if entry.backend != "h3" and not is_version_2(entry):
+    if entry.backend != H3_BACKEND and not is_version_2(entry):
         _check_own_input(entry, global_config, params_directory, backends=backends)
     chain = _resolve_chain(store, entry)
     # decode_input=False: _check_own_input above already fully decoded this same input to confirm it is still
@@ -76,7 +77,7 @@ def resume_entry(store: Store, entry_id: int, global_config: GlobalConfig, param
     # decoding the image a second time here would be wasted work. Parsed unconditionally, not only inside
     # before_submit's own check, since total_runs below needs it on every resume, not only a checked one (a direct
     # call with no before_submit, as some tests make, still gets a total_runs).
-    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
+    job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == H3_BACKEND and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
     _check_resume_input(job, chain.input, chain.first_run)
     if before_submit is not None:
         before_submit(job, job.run_count - chain.first_run + 1)
@@ -131,10 +132,10 @@ def preview_resume(store: Store, entry: QueueRow, global_config: GlobalConfig, p
     if _resumed_by_some_entry(store, entry.queue_number):
         return ResumePreview(False, reason=f"{entry.label} already has a resume; resume the newest one instead")
     try:
-        if entry.backend != "h3" and not is_version_2(entry):
+        if entry.backend != H3_BACKEND and not is_version_2(entry):
             _check_own_input(entry, global_config, params_directory, decode_input=False, backends=backends)
         chain = _resolve_chain(store, entry)
-        job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == "h3" and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
+        job = parse_snapshot(entry, global_config, params_directory, decode_input=False, allow_missing_input=entry.backend == H3_BACKEND and chain.first_run > 1, first_run=chain.first_run, backends=backends)()
         _check_resume_input(job, chain.input, chain.first_run, decode=False)
     except InputError as error:
         return ResumePreview(False, reason=str(error))
@@ -170,7 +171,7 @@ def _check_resume_input(job: JobDefinition, handoff: Path, run: int, *, decode: 
         if not handoff.is_file():
             raise ResumeRefusedError(f"saved handoff is gone: {handoff}")
         previous = job.effective_run(run - 1)
-        if previous is None or previous.backend != effective.backend or previous.settings_profile != effective.settings_profile or effective.backend != "h3":
+        if previous is None or previous.backend != effective.backend or previous.settings_profile != effective.settings_profile or effective.backend != H3_BACKEND:
             # Another profile prepares this handoff when the run starts, and a Draw Things run reads it as it is.
             return
         backend_job = effective.backend_job
@@ -179,7 +180,7 @@ def _check_resume_input(job: JobDefinition, handoff: Path, run: int, *, decode: 
         if not isinstance(backend_job.backend_data, H3JobData):
             raise ResumeRefusedError("H3 resume has no validated run plan")
         expected_size = (backend_job.backend_data.settings.width, backend_job.backend_data.settings.height)
-    elif job.backend != "h3":
+    elif job.backend != H3_BACKEND:
         if not handoff.is_file():
             raise ResumeRefusedError(f"saved handoff is gone: {handoff}")
         return

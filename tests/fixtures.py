@@ -252,12 +252,12 @@ def to_version_2(data: dict[str, Any], params_directory: Path) -> dict[str, Any]
     output = data.get("output") or {}
     if "directory" in output:
         job["output"] = {"directory": output["directory"]}
-    if backend == "h3":
+    if backend == "h3-metal-cli":
         _h3(data, job, schedule, timeout)
     else:
         _draw_things(data, job, schedule, timeout, params_directory)
     first = job["runs"][0]
-    if (first["backend"], first["pipeline"]) not in (("h3", "r2av"), ("draw-things", "t2v")) and data.get("input") is not None:
+    if (first["backend"], first["pipeline"]) not in (("h3-metal-cli", "r2av"), ("draw-things-cli", "t2v")) and data.get("input") is not None:
         job["input"] = data["input"]
     return job
 
@@ -281,7 +281,7 @@ def _draw_things(data: dict[str, Any], job: dict[str, Any], schedule: list[str],
         settings["input_resize"] = resize
     if data.get("color") is not None:
         settings["color"] = data["color"]
-    job["settings_profiles"] = {"main": {"backend": "draw-things", "settings": settings}}
+    job["settings_profiles"] = {"main": {"backend": "draw-things-cli", "settings": settings}}
     runs = []
     for number, pair in enumerate(schedule, start=1):
         pipeline = "i2v" if mode == "t2v" and number > 1 else mode
@@ -290,7 +290,7 @@ def _draw_things(data: dict[str, Any], job: dict[str, Any], schedule: list[str],
             knobs["seed"] = seed
         if frames is not None and pipeline != "i2i":
             knobs["frames"] = frames
-        runs.append({"backend": "draw-things", "pipeline": pipeline, "prompt_pair": pair, "settings_profile": "main", "knobs": knobs})
+        runs.append({"backend": "draw-things-cli", "pipeline": pipeline, "prompt_pair": pair, "settings_profile": "main", "knobs": knobs})
     job["runs"] = runs
 
 
@@ -309,7 +309,7 @@ def _h3(data: dict[str, Any], job: dict[str, Any], schedule: list[str], timeout:
     profile: dict[str, Any] = dict(settings)
     if data.get("color") is not None:
         profile["color"] = data["color"]
-    job["settings_profiles"] = {"main": {"backend": "h3", "settings": profile}}
+    job["settings_profiles"] = {"main": {"backend": "h3-metal-cli", "settings": profile}}
     h3_runs = data.get("h3_runs") or [{"run": number, "pipeline": "i2av"} for number in range(1, data["run_count"] + 1)]
     if data.get("reference_pairs"):
         job["reference_pairs"] = {pair["name"]: {"references": pair["references"]} for pair in data["reference_pairs"]}
@@ -318,7 +318,7 @@ def _h3(data: dict[str, Any], job: dict[str, Any], schedule: list[str], timeout:
         knobs: dict[str, Any] = {"seconds": seconds, "seed": seed, "timeout_seconds": timeout}
         if item.get("reference_pair") is not None:
             knobs["reference_pair"] = item["reference_pair"]
-        runs.append({"backend": "h3", "pipeline": item["pipeline"], "prompt_pair": pair, "settings_profile": "main", "knobs": knobs})
+        runs.append({"backend": "h3-metal-cli", "pipeline": item["pipeline"], "prompt_pair": pair, "settings_profile": "main", "knobs": knobs})
     job["runs"] = runs
 
 

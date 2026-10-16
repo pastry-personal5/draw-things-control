@@ -38,19 +38,19 @@ class SignatureTests(unittest.TestCase):
 
     def test_the_same_workload_in_any_key_order_has_one_signature(self) -> None:
         reordered = dict(reversed(list(self.WORKLOAD.items())))
-        self.assertEqual(signature("h3", "r2av", self.WORKLOAD, {"model": "m"}), signature("h3", "r2av", reordered, {"model": "m"}))
+        self.assertEqual(signature("h3-metal-cli", "r2av", self.WORKLOAD, {"model": "m"}), signature("h3-metal-cli", "r2av", reordered, {"model": "m"}))
 
     def test_seconds_the_timeout_and_the_reference_pair_name_do_not_split_a_signature(self) -> None:
         other = {**self.WORKLOAD, "seconds": 8.0, "knobs": {**self.WORKLOAD["knobs"], "timeout_seconds": 60, "reference_pair": "other", "seconds": 8.0}}
-        self.assertEqual(signature("h3", "r2av", self.WORKLOAD, {"model": "m"}), signature("h3", "r2av", other, {"model": "m"}))
+        self.assertEqual(signature("h3-metal-cli", "r2av", self.WORKLOAD, {"model": "m"}), signature("h3-metal-cli", "r2av", other, {"model": "m"}))
 
     def test_backend_pipeline_model_and_every_other_workload_value_split_it(self) -> None:
-        base = signature("h3", "r2av", self.WORKLOAD, {"model": "m"})
+        base = signature("h3-metal-cli", "r2av", self.WORKLOAD, {"model": "m"})
         self.assertNotEqual(base, signature("draw-things-cli", "r2av", self.WORKLOAD, {"model": "m"}))
-        self.assertNotEqual(base, signature("h3", "i2av", self.WORKLOAD, {"model": "m"}))
-        self.assertNotEqual(base, signature("h3", "r2av", self.WORKLOAD, {"model": "n"}))
+        self.assertNotEqual(base, signature("h3-metal-cli", "i2av", self.WORKLOAD, {"model": "m"}))
+        self.assertNotEqual(base, signature("h3-metal-cli", "r2av", self.WORKLOAD, {"model": "n"}))
         for change in ({"steps": 31}, {"pixels": 1}, {"frames": 121}, {"references": {"image": 1, "video": 1}}, {"knobs": {"frames": 121}}):
-            self.assertNotEqual(base, signature("h3", "r2av", {**self.WORKLOAD, **change}, {"model": "m"}), change)
+            self.assertNotEqual(base, signature("h3-metal-cli", "r2av", {**self.WORKLOAD, **change}, {"model": "m"}), change)
 
     def test_floats_are_rounded_to_six_places_and_the_executable_is_not_part_of_it(self) -> None:
         one = signature("draw-things-cli", "i2v", {"guidance_scale": 7.5}, {"model": "m", "executable_bytes": 10, "executable_mtime": 1.0})
@@ -164,4 +164,4 @@ class ExpectedStagesTests(unittest.TestCase):
         other = history_run(execution=3, workload={**old.workload, "steps": 8}, stages=(stage("prepare", 0.0, 1.0, source="framecontrol"),))
         self.assertEqual([item.stage for item in expected_stages([old, new, other], old.signature, "draw-things-cli", "i2v")], ["prepare", "sampling", "correct"])
         self.assertEqual([item.stage for item in expected_stages([old, other], (("none", None),), "draw-things-cli", "i2v")], ["prepare"])
-        self.assertEqual(expected_stages([old, new], (("none", None),), "h3", "r2av"), [])
+        self.assertEqual(expected_stages([old, new], (("none", None),), "h3-metal-cli", "r2av"), [])

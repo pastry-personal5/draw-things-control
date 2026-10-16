@@ -348,7 +348,7 @@ class JobForecastTests(unittest.TestCase):
 class SpeedTests(unittest.TestCase):
     def test_a_forecast_update_takes_at_most_5_milliseconds_an_event(self) -> None:
         runs = synthetic_history().runs
-        target = next(run for run in runs if run.backend == "h3" and run.pipeline == "r2av" and run.execution > 300)
+        target = next(run for run in runs if run.backend == "h3-metal-cli" and run.pipeline == "r2av" and run.execution > 300)
         history = [run for run in runs if run.execution <= 300]
         execution = HistoryExecution(target.execution, CooldownPolicy("off"), (replace(target, run=1),))
         model, job = FittedModel(history), replay_job(execution, origin=ORIGIN)

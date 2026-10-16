@@ -90,16 +90,16 @@ class ImportHistoryTests(unittest.TestCase):
 
     def test_a_version_2_manifests_per_run_facts_are_copied_and_older_runs_have_none(self) -> None:
         data = manifest(runs=2, backend="mixed", mode="mixed")
-        data["runs"][0].update(backend="h3", pipeline="r2av", settings_profile="h3-wide", knobs={"seconds": 5, "seed": 7}, knob_sources={"seconds": "defaults", "seed": "run"})
-        data["runs"][1].update(backend="draw-things", pipeline="i2v", settings_profile="wan", knobs={"frames": 81}, knob_sources={"frames": "run"}, input_run=1, input_role="handoff")
+        data["runs"][0].update(backend="h3-metal-cli", pipeline="r2av", settings_profile="h3-wide", knobs={"seconds": 5, "seed": 7}, knob_sources={"seconds": "defaults", "seed": "run"})
+        data["runs"][1].update(backend="draw-things-cli", pipeline="i2v", settings_profile="wan", knobs={"frames": 81}, knob_sources={"frames": "run"}, input_run=1, input_role="handoff")
         self.write("mixed-job.json", data)
         self.write("old-job.json", manifest(days_ago=2), folder="old")
         self.assertEqual(self.run_import().imported, 2)
         newer, older = (self.stored(row.id) for row in self.store.executions.page())
         first, second = newer.runs
-        self.assertEqual((newer.backend, newer.mode, first.backend, first.pipeline, first.settings_profile), ("mixed", "mixed", "h3", "r2av", "h3-wide"))
+        self.assertEqual((newer.backend, newer.mode, first.backend, first.pipeline, first.settings_profile), ("mixed", "mixed", "h3-metal-cli", "r2av", "h3-wide"))
         self.assertEqual((first.knobs, first.knob_sources, first.input_run, first.input_role), ({"seconds": 5, "seed": 7}, {"seconds": "defaults", "seed": "run"}, None, None))
-        self.assertEqual((second.backend, second.pipeline, second.knobs, second.input_run, second.input_role), ("draw-things", "i2v", {"frames": 81}, 1, "handoff"))
+        self.assertEqual((second.backend, second.pipeline, second.knobs, second.input_run, second.input_role), ("draw-things-cli", "i2v", {"frames": 81}, 1, "handoff"))
         self.assertEqual([(run.backend, run.pipeline, run.settings_profile, run.knobs, run.input_run) for run in older.runs], [(None, None, None, {}, None)] * 2)
 
     def test_measured_outputs_are_copied_and_manifests_without_them_still_import(self) -> None:

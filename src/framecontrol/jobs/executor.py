@@ -277,7 +277,7 @@ class JobExecutor:
         # Only an H3 run still to come depends on the H3 executable, so a Draw Things tail resumes whatever H3 did.
         runs_h3 = any(job.run_backend(number) == H3_BACKEND for number in range(first_run, job.run_count + 1))
         if options.resume is not None and options.resume.backend_fingerprint is not None and runs_h3:
-            current = getattr(self._backends.get("h3"), "_installation", {}).get("executable_sha256")
+            current = getattr(self._backends.get(H3_BACKEND), "_installation", {}).get("executable_sha256")
             if current != options.resume.backend_fingerprint:
                 raise InputError("H3 executable changed since the previous execution; refusing resume")
 

@@ -76,9 +76,9 @@ class TimingReplayCliTests(JobTestCase):
 
     def test_a_backend_with_no_runs_says_so(self) -> None:
         self.keep(4)
-        result = self.invoke("--backend", "h3")
+        result = self.invoke("--backend", "h3-metal-cli")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("No complete h3 runs to replay", result.stdout)
+        self.assertIn("No complete h3-metal-cli runs to replay", result.stdout)
 
     def test_with_no_database_or_no_timing_it_says_so_and_creates_nothing(self) -> None:
         result = self.invoke()

@@ -34,7 +34,7 @@ class ExampleJobTests(JobTestCase):
 
     def test_there_are_examples_to_check(self) -> None:
         names = {path.name for path in EXAMPLES}
-        for expected in ("example-job-for-backend-draw-things-cli.yaml", "example-job-for-backend-h3.yaml", "example-job-for-backend-h3-r2av-two-images.yaml", "example-job-for-backend-h3-r2av-to-i2av-two-images.yaml", "example-job-mixed-backends.yaml"):
+        for expected in ("example-job-for-backend-draw-things-cli.yaml", "example-job-for-backend-h3-metal-cli.yaml", "example-job-for-backend-h3-metal-cli-r2av-two-images.yaml", "example-job-for-backend-h3-metal-cli-r2av-to-i2av-two-images.yaml", "example-job-mixed-backends.yaml"):
             self.assertIn(expected, names)
 
     def test_every_example_is_a_valid_version_2_job(self) -> None:
@@ -47,8 +47,8 @@ class ExampleJobTests(JobTestCase):
 
     def test_the_mixed_example_runs_the_chain_the_guide_describes(self) -> None:
         job = load_job(ROOT / "data/jobs/example-job-mixed-backends.yaml", self.global_config, self.params)
-        self.assertEqual([(run.backend, run.pipeline) for run in job.effective_runs], [("h3", "r2av"), ("h3", "i2av"), ("draw-things", "i2v"), ("h3", "i2av")])
-        self.assertEqual([run.knobs["seconds"] for run in job.effective_runs if run.backend == "h3"], [5, 5, 8])
+        self.assertEqual([(run.backend, run.pipeline) for run in job.effective_runs], [("h3-metal-cli", "r2av"), ("h3-metal-cli", "i2av"), ("draw-things-cli", "i2v"), ("h3-metal-cli", "i2av")])
+        self.assertEqual([run.knobs["seconds"] for run in job.effective_runs if run.backend == "h3-metal-cli"], [5, 5, 8])
         self.assertEqual(job.effective_runs[2].knobs["frames"], 81)
 
     def test_the_per_run_examples_show_what_they_name(self) -> None:

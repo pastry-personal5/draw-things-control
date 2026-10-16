@@ -19,7 +19,7 @@ def stage(name: str, source: str, start: float, end: float, total: float, *, pha
     return {"stage": name, "phase": phase, "source": source, "start": start, "end": end, "duration": end - start, "share": round((end - start) / total, 6) if counted else None, "done": done, "total": units, "unit": unit, "marks": [], "uncertain": uncertain}
 
 
-RUN_ONE = {"execution_id": "E0047", "run": 1, "recorded": True, "backend": "h3", "pipeline": "r2av", "fidelity": "live", "complete": True, "workload": {}, "environment": {}, "seconds": 100.0, "stages": [stage("prepare_input", "framecontrol", -2.0, -1.0, 100.0), stage("prepare", "framecontrol", 0.0, 0.5, 100.0), stage("tokenize", "child", 0.5, 0.7, 100.0, phase="tokenizer", done=1, units=1), stage("denoise", "child", 0.7, 90.7, 100.0, phase="denoise enqueue", done=30, units=30, unit="steps", uncertain=True), stage("correct", "framecontrol", 90.7, 100.0, 100.0)]}
+RUN_ONE = {"execution_id": "E0047", "run": 1, "recorded": True, "backend": "h3-metal-cli", "pipeline": "r2av", "fidelity": "live", "complete": True, "workload": {}, "environment": {}, "seconds": 100.0, "stages": [stage("prepare_input", "framecontrol", -2.0, -1.0, 100.0), stage("prepare", "framecontrol", 0.0, 0.5, 100.0), stage("tokenize", "child", 0.5, 0.7, 100.0, phase="tokenizer", done=1, units=1), stage("denoise", "child", 0.7, 90.7, 100.0, phase="denoise enqueue", done=30, units=30, unit="steps", uncertain=True), stage("correct", "framecontrol", 90.7, 100.0, 100.0)]}
 RUN_TWO = {**RUN_ONE, "run": 2, "recorded": False, "stages": []}
 
 

@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.jobs.timing.factory import H3_R2AV_E0051_E0054, DrawThingsFactoryPoint, H3FactoryPoint, factory_point, heuristic_anchor
 from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, stage_keys, step_series
 
@@ -518,7 +519,7 @@ class FittedModel:
         else:
             sample = min(candidates, key=lambda row: (abs(math.log(pixels / row.run.workload["pixels"])) + abs(math.log(frames / row.run.workload["frames"])), -row.run.execution, -row.run.run))
             assert sample.y is not None
-            frame_exponent = 1.6 if backend == "h3" else 1.0
+            frame_exponent = 1.6 if backend == H3_BACKEND else 1.0
             rate = math.exp(sample.y) * (pixels / sample.run.workload["pixels"]) * (frames / sample.run.workload["frames"]) ** frame_exponent
             spread = HEURISTIC_LOG_SPREAD
         if not math.isfinite(rate) or rate <= 0:
@@ -535,9 +536,9 @@ class FittedModel:
             elif stage.stage not in ("correct", "copy_raw") or workload.get("color_corrects"):
                 duration = stage.duration * (duration_scale if stage.stage in ("ffmpeg", "finishing", "copy_raw", "correct") else 1.0)
                 stages.append(FixedStage(name, stage.stage, stage.source, max(duration, 0.001) * math.exp(-(stage_spread**2) / 2), stage_spread))
-        if backend == "h3" and pipeline == "i2av":
+        if backend == H3_BACKEND and pipeline == "i2av":
             _h3_finishing_stages(stages, float(pixels), frames, stage_spread, bool(workload.get("color_corrects")))
-        elif backend == "draw-things-cli" and workload.get("color_corrects") and not any(stage.stage == "correct" for stage in stages):
+        elif backend == DRAW_THINGS_BACKEND and workload.get("color_corrects") and not any(stage.stage == "correct" for stage in stages):
             anchor = heuristic_anchor(backend)
             assert anchor is not None
             scale = pixels / (anchor.width * anchor.height) * frames / anchor.frames
@@ -587,7 +588,7 @@ class FittedModel:
         frame_ratio = frames / anchor.frames
         # The H3 evidence at 5, 8, 10 and 15 seconds grows faster than linearly with frames.
         # A still-image job does not become 33 times cheaper than E0053's video merely because it has one output frame.
-        frame_exponent = 1.6 if backend == "h3" else 0.5 if pipeline == "i2i" else 1.0
+        frame_exponent = 1.6 if backend == H3_BACKEND else 0.5 if pipeline == "i2i" else 1.0
         rate = anchor.step_seconds * pixel_ratio * frame_ratio**frame_exponent
         if not math.isfinite(rate) or rate <= 0:
             return None
@@ -599,7 +600,7 @@ class FittedModel:
         for stage in anchor.stages:
             if stage.name == "correct" and not workload.get("color_corrects"):
                 continue
-            if backend == "h3" and stage.name in ("video_encode", "vision") and stage.key.endswith(("#2", "#3")) and int(stage.key[-1]) > reference_count:
+            if backend == H3_BACKEND and stage.name in ("video_encode", "vision") and stage.key.endswith(("#2", "#3")) and int(stage.key[-1]) > reference_count:
                 continue
             if stage.iterative:
                 stages.append(IterativeStage(stage.key, stage.name, stage.source, steps))
@@ -608,7 +609,7 @@ class FittedModel:
                 if stage.name in ("ffmpeg", "finishing", "correct"):
                     duration *= pixel_ratio * frame_ratio
                 stages.append(FixedStage(stage.key, stage.name, stage.source, duration * fixed_median_factor, fixed_spread))
-        if backend == "h3" and pipeline == "i2av":
+        if backend == H3_BACKEND and pipeline == "i2av":
             _h3_finishing_stages(stages, float(pixels), frames, fixed_spread, bool(workload.get("color_corrects")))
         log_spread = 1.0 if pipeline != anchor.pipeline else HEURISTIC_LOG_SPREAD
         prior_var = log_spread**2 + anchor.tau**2

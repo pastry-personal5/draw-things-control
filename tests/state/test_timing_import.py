@@ -18,9 +18,9 @@ class TimingImportTests(StoreCase):
         if log_text is not None:
             log.write_text(log_text, encoding="utf-8")
         executions = self.store.executions
-        execution_id = executions.start(NewExecution(job_name=name, job_file=f"{name}.yaml", mode="i2av" if backend == "h3" else "i2v", backend=backend, started_at=iso(1), settings=ExecutionSettings(output_directory="/out"), log_path=str(log)))
+        execution_id = executions.start(NewExecution(job_name=name, job_file=f"{name}.yaml", mode="i2av" if backend == "h3-metal-cli" else "i2v", backend=backend, started_at=iso(1), settings=ExecutionSettings(output_directory="/out"), log_path=str(log)))
         for number in range(1, runs + 1):
-            executions.start_run(execution_id, number, NewRun(pair="p", positive="text", started_at=iso(1), pipeline="r2av" if backend == "h3" else None, knobs={"seed": 5, "steps": 30}))
+            executions.start_run(execution_id, number, NewRun(pair="p", positive="text", started_at=iso(1), pipeline="r2av" if backend == "h3-metal-cli" else None, knobs={"seed": 5, "steps": 30}))
             executions.finish_run(execution_id, number, status=run_status, exit_code=0, seconds=1.0, output="a.mp4", last_frame=None, output_width=832, output_height=448, output_frames=243)
         executions.finish(execution_id, status=status, exit_code=0, signal=None, finished_at=iso(1))
         return execution_id
@@ -39,11 +39,11 @@ class TimingImportTests(StoreCase):
         self.assertTrue(all(stage.source == "framecontrol" for stage in stages if stage.stage in ("prepare", "finalize")))
 
     def test_an_h3_log_is_shifted_back_and_its_first_readings_marked(self) -> None:
-        execution_id = self.execution("duo", job_log(h3_r2av(), lagged=True), backend="h3")
+        execution_id = self.execution("duo", job_log(h3_r2av(), lagged=True), backend="h3-metal-cli")
         import_timing(self.store)
         row = self.store.timing.timing_of(execution_id, 1)
         assert row is not None
-        self.assertEqual((row.backend, row.pipeline, row.workload["steps"]), ("h3", "r2av", 30))
+        self.assertEqual((row.backend, row.pipeline, row.workload["steps"]), ("h3-metal-cli", "r2av", 30))
         stages = {stage.stage: stage for stage in self.store.timing.stages_of(execution_id, 1)}
         self.assertTrue(stages["ffmpeg"].uncertain)
         self.assertTrue(stages["denoise"].uncertain)
@@ -102,7 +102,7 @@ class TimingImportTests(StoreCase):
         self.assertEqual((hashlib.sha256(log.read_bytes()).hexdigest(), log.stat().st_mtime_ns), before)
 
     def test_a_log_stamped_as_read_is_not_shifted(self) -> None:
-        execution_id = self.execution("duo", job_log(h3_r2av(), lagged=False, stamped=True), backend="h3")
+        execution_id = self.execution("duo", job_log(h3_r2av(), lagged=False, stamped=True), backend="h3-metal-cli")
         import_timing(self.store)
         self.assertFalse(any(stage.uncertain for stage in self.store.timing.stages_of(execution_id, 1)))
 

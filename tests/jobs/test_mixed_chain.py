@@ -157,9 +157,9 @@ class MixedExecutionTests(MixedChainTestCase):
         data["input"] = "first-frame.png"
         self.write_image("first-frame.png", SIZE)
         data["prompt_pairs"]["still"] = {"positive": "a still"}
-        data["settings_profiles"]["still-image"] = {"backend": "draw-things", "settings": {"config_file": "base.yaml"}}
-        data["defaults"].append({"backend": "draw-things", "pipeline": "i2i", "prompt_pair": "still", "settings_profile": "still-image", "knobs": {"timeout_seconds": 60}})
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2i"}, {"backend": "draw-things", "pipeline": "i2v"}]
+        data["settings_profiles"]["still-image"] = {"backend": "draw-things-cli", "settings": {"config_file": "base.yaml"}}
+        data["defaults"].append({"backend": "draw-things-cli", "pipeline": "i2i", "prompt_pair": "still", "settings_profile": "still-image", "knobs": {"timeout_seconds": 60}})
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2i"}, {"backend": "draw-things-cli", "pipeline": "i2v"}]
         data.pop("reference_pairs")
         del data["settings_profiles"]["h3-wide"]
         data["defaults"] = data["defaults"][2:]
@@ -179,7 +179,7 @@ class MixedExecutionTests(MixedChainTestCase):
         manifest = self.manifest(self.run_chain(small_job()))
         self.assertEqual((manifest["backend"], manifest["mode"], manifest["total_runs"]), ("mixed", "mixed", 4))
         runs = manifest["runs"]
-        self.assertEqual([(run["backend"], run["pipeline"], run["settings_profile"], run["pair"]) for run in runs], [("h3", "r2av", "h3-wide", "establish"), ("h3", "i2av", "h3-wide", "go"), ("draw-things", "i2v", "wan", "paint"), ("h3", "i2av", "h3-wide", "go")])
+        self.assertEqual([(run["backend"], run["pipeline"], run["settings_profile"], run["pair"]) for run in runs], [("h3-metal-cli", "r2av", "h3-wide", "establish"), ("h3-metal-cli", "i2av", "h3-wide", "go"), ("draw-things-cli", "i2v", "wan", "paint"), ("h3-metal-cli", "i2av", "h3-wide", "go")])
         self.assertEqual(runs[1]["knobs"]["seconds"], 4)
         self.assertEqual(runs[3]["knob_sources"]["seconds"], "run")
         self.assertEqual(runs[2]["knobs"]["frames"], 81)
@@ -222,7 +222,7 @@ class MixedExecutionTests(MixedChainTestCase):
 
     def test_only_the_backends_a_remaining_run_selects_are_checked(self) -> None:
         data = small_job()
-        data["runs"] = [{"backend": "draw-things", "pipeline": "i2v"}, {"backend": "draw-things", "pipeline": "i2v"}]
+        data["runs"] = [{"backend": "draw-things-cli", "pipeline": "i2v"}, {"backend": "draw-things-cli", "pipeline": "i2v"}]
         data["input"] = "first-frame.png"
         data["defaults"] = [data["defaults"][2]]
         data.pop("reference_pairs")
@@ -267,19 +267,19 @@ class HandoffAvailabilityTests(MixedChainTestCase):
     def h3_pair(self, second: str) -> dict[str, Any]:
         """An H3 `i2av` run followed by an `i2av` or `r2av` one, at the size the fake children serve."""
         self.write_image("first-frame.png", SIZE)
-        defaults = [{"backend": "h3", "pipeline": "i2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 4, "seed": 42, "timeout_seconds": 3600}}]
+        defaults = [{"backend": "h3-metal-cli", "pipeline": "i2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 4, "seed": 42, "timeout_seconds": 3600}}]
         data: dict[str, Any] = {
             "version": 2,
             "name": "story",
             "input": "first-frame.png",
             "prompt_pairs": {"go": {"positive": "they walk"}},
-            "settings_profiles": {"h3-wide": {"backend": "h3", "settings": {"width": 64, "height": 64, "steps": 30}}},
+            "settings_profiles": {"h3-wide": {"backend": "h3-metal-cli", "settings": {"width": 64, "height": 64, "steps": 30}}},
             "defaults": defaults,
-            "runs": [{"backend": "h3", "pipeline": "i2av"}, {"backend": "h3", "pipeline": second}],
+            "runs": [{"backend": "h3-metal-cli", "pipeline": "i2av"}, {"backend": "h3-metal-cli", "pipeline": second}],
         }
         if second == "r2av":
             data["reference_pairs"] = {"duo": {"references": [{"kind": "image", "path": "a.png"}]}}
-            defaults.append({"backend": "h3", "pipeline": "r2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 5, "seed": 42, "timeout_seconds": 3600, "reference_pair": "duo"}})
+            defaults.append({"backend": "h3-metal-cli", "pipeline": "r2av", "prompt_pair": "go", "settings_profile": "h3-wide", "knobs": {"seconds": 5, "seed": 42, "timeout_seconds": 3600, "reference_pair": "duo"}})
         return data
 
     def test_a_run_that_needs_the_missing_handoff_stops_the_job_before_it_launches(self) -> None:
@@ -317,7 +317,7 @@ class MixedRecordingTests(MixedChainTestCase):
         execution = self.record(small_job())
         self.assertEqual((execution.backend, execution.mode, execution.total_runs, execution.status), ("mixed", "mixed", 4, "succeeded"))
         runs = execution.runs
-        self.assertEqual([(run.backend, run.pipeline, run.settings_profile) for run in runs], [("h3", "r2av", "h3-wide"), ("h3", "i2av", "h3-wide"), ("draw-things", "i2v", "wan"), ("h3", "i2av", "h3-wide")])
+        self.assertEqual([(run.backend, run.pipeline, run.settings_profile) for run in runs], [("h3-metal-cli", "r2av", "h3-wide"), ("h3-metal-cli", "i2av", "h3-wide"), ("draw-things-cli", "i2v", "wan"), ("h3-metal-cli", "i2av", "h3-wide")])
         self.assertEqual([(run.input_run, run.input_role) for run in runs], [(None, None), (1, "handoff"), (2, "handoff"), (3, "handoff")])
         self.assertEqual(runs[3].knobs["seconds"], 8)
         self.assertEqual(runs[3].knob_sources["seconds"], "run")
@@ -330,7 +330,7 @@ class MixedRecordingTests(MixedChainTestCase):
 
         execution = self.record(small_job())
         runs = execution_detail(execution)["runs"]
-        self.assertEqual(runs[1]["backend"], "h3")
+        self.assertEqual(runs[1]["backend"], "h3-metal-cli")
         self.assertEqual((runs[1]["pipeline"], runs[1]["settings_profile"], runs[1]["input_run"], runs[1]["input_role"]), ("i2av", "h3-wide", 1, "handoff"))
         self.assertEqual(runs[1]["knobs"]["seconds"], 4)
         job = load_job(self.write_job(small_job()), self.global_config, self.params, backends=self.backends)
@@ -371,7 +371,7 @@ class DescribeRunTests(MixedChainTestCase):
         with self.h3_media():
             run_job_with(executor, job, executable="draw-things-cli", shutdown_grace=1, write_records=True, observer=events.append)
         recorded = [event for event in events if isinstance(event, TimingStarted)]
-        self.assertEqual([event.backend for event in recorded], ["h3", "h3", "draw-things-cli", "h3"])
+        self.assertEqual([event.backend for event in recorded], ["h3-metal-cli", "h3-metal-cli", "draw-things-cli", "h3-metal-cli"])
         for event in recorded:
             described = executor.describe_run(job, event.number, executable="draw-things-cli")
             environment = {key: value for key, value in event.environment.items() if key != "load_start"}

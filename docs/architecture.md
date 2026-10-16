@@ -128,7 +128,7 @@ profile's base-configuration text, backend identity, resolved directories, and
 cooldown policy. A version-2 snapshot (version 7) also stores its compiled plan,
 which is compared with what the frozen text recompiles to on every read, so a
 resume reads the snapshot and never a live file, profile, or reference. H3 queue snapshots also store private copies, digests, and media facts for every reference pair. Retention removes those copies when their queue snapshots are gone. H3 snapshots deliberately exclude the mutable local model snapshot, which is rechecked before execution and resume. Older
-snapshots and rows without a backend read as Draw Things. A queued one-off
+rows without a backend read as Draw Things. Backend IDs in older queued snapshots are not translated; a snapshot naming `draw-things` or `h3` must be resubmitted with `draw-things-cli` or `h3-metal-cli`. A queued one-off
 generation stores its resolved request and also identifies Draw Things as its
 backend. Later file edits therefore do not change queued work. Resuming copies
 the original snapshot and backend into a new entry at the next unfinished run

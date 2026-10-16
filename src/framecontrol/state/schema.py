@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
+
 SCHEMA_V1 = """
 CREATE TABLE executions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,9 +195,9 @@ ALTER TABLE executions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'job';
 
 # The generator is independent of a queue entry's source kind and a job's mode. Existing jobs
 # and one-off generations are Draw Things; old records acquire that identity without reparsing their saved text.
-SCHEMA_V11 = """
-ALTER TABLE queue ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli';
-ALTER TABLE executions ADD COLUMN backend TEXT NOT NULL DEFAULT 'draw-things-cli'
+SCHEMA_V11 = f"""
+ALTER TABLE queue ADD COLUMN backend TEXT NOT NULL DEFAULT '{DRAW_THINGS_BACKEND}';
+ALTER TABLE executions ADD COLUMN backend TEXT NOT NULL DEFAULT '{DRAW_THINGS_BACKEND}'
 """
 
 # Native H3 audio is part of a successful run's artifact,

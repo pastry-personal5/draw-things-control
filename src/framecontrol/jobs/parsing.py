@@ -148,7 +148,7 @@ class JobParser:
     def parse_draw_things(self, data: dict[str, Any], source_text: str) -> JobDefinition:
         for key in ("h3_runs", "reference_pairs"):
             if key in data:
-                self._fail(key, "is supported only by the h3 backend")
+                self._fail(key, "is supported only by the h3-metal-cli backend")
         if "config_file" not in data:
             self._fail("config_file", "is required")
         settings = data.get("backend_settings", {})

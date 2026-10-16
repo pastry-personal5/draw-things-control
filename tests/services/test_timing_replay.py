@@ -104,7 +104,7 @@ class CheckpointTests(unittest.TestCase):
         mixed = [execution(number) for number in range(1, 5)] + [HistoryExecution(number, CooldownPolicy("off"), (h3_run(number, 1),)) for number in range(5, 9)]
         report = replay_leave_one_out(mixed, lambda context: Oracle(context))
         groups = {(cell.backend, cell.pipeline) for cell in cells_of(report.observations, ("backend", "pipeline"))}
-        self.assertEqual(groups, {("draw-things-cli", "i2v"), ("h3", "r2av")})
+        self.assertEqual(groups, {("draw-things-cli", "i2v"), ("h3-metal-cli", "r2av")})
 
     def test_the_percentile_interpolates(self) -> None:
         self.assertEqual(percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.5), 3.0)
@@ -182,8 +182,8 @@ class CrossValidationTests(unittest.TestCase):
 
     def test_only_a_backend_asked_for_is_scored(self) -> None:
         mixed = [execution(number) for number in range(1, 5)] + [HistoryExecution(number, CooldownPolicy("off"), (h3_run(number, 1),)) for number in range(5, 9)]
-        report = replay_leave_one_out(mixed, lambda context: Oracle(context), backend="h3")
-        self.assertEqual({item.backend for item in report.observations}, {"h3"})
+        report = replay_leave_one_out(mixed, lambda context: Oracle(context), backend="h3-metal-cli")
+        self.assertEqual({item.backend for item in report.observations}, {"h3-metal-cli"})
 
 
 class QualifiedTests(unittest.TestCase):

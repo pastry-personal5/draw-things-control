@@ -176,7 +176,7 @@ class TuiTests(TuiTestCase):
         self.write_data_job("b-walk.yaml")
         self.write_data_job("a-still.yml", mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])
         self.write_data_job("c-bad.yaml", mode="t2i")
-        (self.data / "d-bad-pairs.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), "runs": [{"backend": "draw-things", "pipeline": "i2v", "prompt_pair": "ghost", "settings_profile": "main", "knobs": {"timeout_seconds": 60}}]}, sort_keys=False), encoding="utf-8")
+        (self.data / "d-bad-pairs.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), "runs": [{"backend": "draw-things-cli", "pipeline": "i2v", "prompt_pair": "ghost", "settings_profile": "main", "knobs": {"timeout_seconds": 60}}]}, sort_keys=False), encoding="utf-8")
         (self.data / ".hidden.yaml").write_text("not: a job\n", encoding="utf-8")
         (self.data / "notes.txt").write_text("not a job\n", encoding="utf-8")
         for directory in (".trash", "nested"):

@@ -54,7 +54,7 @@ def timing_show(
 @timing_app.command("replay")
 def timing_replay(
     ctx: typer.Context,
-    backend: Annotated[str | None, typer.Option("--backend", help="Only the runs of this backend (h3 or draw-things-cli); default: both.")] = None,
+    backend: Annotated[str | None, typer.Option("--backend", help="Only the runs of this backend (draw-things-cli or h3-metal-cli); default: both.")] = None,
     estimator: Annotated[str, typer.Option("--estimator", help=f"What to replay the runs through: {', '.join(ESTIMATOR_NAMES)}.")] = "forecast",
 ) -> None:
     """Replay the retained runs through an estimator as if they were running, leaving out the execution each is scored

@@ -12,10 +12,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND, KNOWN_BACKENDS
 from framecontrol.core.cooldown import replaced_cooldown_message
 from framecontrol.core.errors import InputError
 from framecontrol.core.numbers import is_int, is_number
-from framecontrol.jobs.backend import DRAW_THINGS_V2_BACKEND, H3_BACKEND
 from framecontrol.jobs.definition import ColorPolicy, ConfigOverride, EffectiveRun, JobDefinition, PromptPair
 from framecontrol.jobs.overrides import MAX_SEED
 from framecontrol.jobs.prompt_pairs import NAME_PATTERN
@@ -29,8 +29,8 @@ JOB_KEYS = {"version", "name", "input", "prompt_pairs", "reference_pairs", "sett
 REQUIRED_KEYS = ("version", "name", "prompt_pairs", "settings_profiles", "runs")
 RUN_KEYS = {"backend", "pipeline", "prompt_pair", "settings_profile", "knobs"}
 KNOB_KEYS = ("seconds", "frames", "seed", "timeout_seconds", "reference_pair")
-BACKENDS = (DRAW_THINGS_V2_BACKEND, H3_BACKEND)
-PIPELINES = {DRAW_THINGS_V2_BACKEND: ("i2i", "t2v", "i2v"), H3_BACKEND: ("i2av", "r2av")}
+BACKENDS = KNOWN_BACKENDS
+PIPELINES = {DRAW_THINGS_BACKEND: ("i2i", "t2v", "i2v"), H3_BACKEND: ("i2av", "r2av")}
 VISUAL_INPUT_PIPELINES = ("i2i", "i2v", "i2av")
 TIMED_PIPELINES = ("i2v", "t2v", "i2av", "r2av")
 H3_SETTINGS = {"width", "height", "steps", "render_width", "render_height", "denoise_reuse", "dit_layers", "core_reuse", "token_reduction", "ssd_streaming", "int8_row_fc2", "reference_rope", "reference_image_size", "compatibility", "color", "output"}
@@ -43,20 +43,20 @@ REMOVED_KEYS = {
     "mode": "was removed in version 2; set 'pipeline' on each entry of 'runs'",
     "run_count": "was removed in version 2; the length of 'runs' is the run count",
     "backend": "was removed in version 2; set 'backend' on each entry of 'runs'",
-    "h3_runs": "was removed in version 2; set 'backend: h3' and 'pipeline' on each entry of 'runs'",
+    "h3_runs": "was removed in version 2; set 'backend: h3-metal-cli' and 'pipeline' on each entry of 'runs'",
     "backend_settings": "was removed in version 2; put these controls in a settings profile's 'settings'",
-    "config_file": "was removed in version 2; set it in a draw-things settings profile's 'settings.config_file'",
-    "config_override": "was removed in version 2; set it in a draw-things settings profile's 'settings.config_override'",
+    "config_file": "was removed in version 2; set it in a draw-things-cli settings profile's 'settings.config_file'",
+    "config_override": "was removed in version 2; set it in a draw-things-cli settings profile's 'settings.config_override'",
     "color": "was removed in version 2; set it in a settings profile's 'settings.color'",
     "run_timeout_seconds": "was removed in version 2; set 'knobs.timeout_seconds' on a run or in 'defaults'",
-    "desired_input_width": "was removed in version 2; set it as 'desired_width' in a draw-things settings profile's 'settings.input_resize'",
-    "desired_input_height": "was removed in version 2; set it as 'desired_height' in a draw-things settings profile's 'settings.input_resize'",
-    "max_input_crop_percent": "was removed in version 2; set it as 'max_crop_percent' in a draw-things settings profile's 'settings.input_resize'",
+    "desired_input_width": "was removed in version 2; set it as 'desired_width' in a draw-things-cli settings profile's 'settings.input_resize'",
+    "desired_input_height": "was removed in version 2; set it as 'desired_height' in a draw-things-cli settings profile's 'settings.input_resize'",
+    "max_input_crop_percent": "was removed in version 2; set it as 'max_crop_percent' in a draw-things-cli settings profile's 'settings.input_resize'",
 }
 REMOVED_RUN_KEYS = {"run": "was removed in version 2; the position in 'runs' is the run number"}
 REMOVED_OUTPUT_KEYS = {
     "extension": "was removed in version 2; set 'output.extension' in the settings profile",
-    "video_format": "was removed in version 2; set 'output.video_format' in a draw-things settings profile",
+    "video_format": "was removed in version 2; set 'output.video_format' in a draw-things-cli settings profile",
 }
 
 
@@ -64,7 +64,7 @@ def job_format_summary(backends: BackendRegistry) -> dict[str, Any]:
     """What a client may write in a job file, for ``GET /capabilities``: the format version, each backend's pipelines,
     the knob names, and the Draw Things models whose frame rate is established (the only ones ``seconds`` can name)."""
     try:
-        models = list(getattr(backends.get(DRAW_THINGS_V2_BACKEND), "frame_rate_models", lambda: ())())
+        models = list(getattr(backends.get(DRAW_THINGS_BACKEND), "frame_rate_models", lambda: ())())
     except InputError:
         models = []
     return {"version": 2, "backends": {backend: list(PIPELINES[backend]) for backend in BACKENDS}, "knobs": list(KNOB_KEYS), "draw_things_seconds_models": models}
@@ -265,13 +265,13 @@ class RunCompiler:
         if "settings_profile" in item and profiles[item["settings_profile"]][0] != backend:
             parser.fail(f"{field}.settings_profile", f"is a {profiles[item['settings_profile']][0]} profile, not a {backend} one")
         if "prompt_pair" in item and backend == H3_BACKEND and prompts[item["prompt_pair"]].negative is not None:
-            parser.fail(f"prompt_pairs.{item['prompt_pair']}.negative", "is not supported by h3")
+            parser.fail(f"prompt_pairs.{item['prompt_pair']}.negative", "is not supported by h3-metal-cli")
 
     def _applicable(self, backend: str, pipeline: str) -> set[str]:
         keys = {"seed", "timeout_seconds"}
         if pipeline in TIMED_PIPELINES:
             keys.add("seconds")
-        if backend == DRAW_THINGS_V2_BACKEND and pipeline in ("i2v", "t2v"):
+        if backend == DRAW_THINGS_BACKEND and pipeline in ("i2v", "t2v"):
             keys.add("frames")
         if backend == H3_BACKEND and pipeline == "r2av":
             keys.add("reference_pair")
@@ -295,7 +295,7 @@ class RunCompiler:
             if not self._positive(knobs["seconds"]):
                 parser.fail(f"{field}.seconds", "must be a positive, finite number of seconds")
             if backend == H3_BACKEND and not H3_MIN_SECONDS <= float(knobs["seconds"]) <= H3_MAX_SECONDS:
-                parser.fail(f"{field}.seconds", f"must be a finite number from {H3_MIN_SECONDS} to {H3_MAX_SECONDS} for h3")
+                parser.fail(f"{field}.seconds", f"must be a finite number from {H3_MIN_SECONDS} to {H3_MAX_SECONDS} for h3-metal-cli")
         if "frames" in knobs and (not is_int(knobs["frames"]) or knobs["frames"] < 1):
             parser.fail(f"{field}.frames", "must be an integer >= 1")
         if "seconds" in knobs and "frames" in knobs:
@@ -330,7 +330,7 @@ class RunCompiler:
         if profile is None:
             parser.fail(f"{field}.settings_profile", "is required on the run or in the matching defaults")
         if backend == H3_BACKEND and prompts[prompt].negative is not None:
-            parser.fail(f"prompt_pairs.{prompt}.negative", "is not supported by h3")
+            parser.fail(f"prompt_pairs.{prompt}.negative", "is not supported by h3-metal-cli")
         own = item.get("knobs", {})
         if not isinstance(own, dict):
             parser.fail(f"{field}.knobs", "must be a mapping")
@@ -468,7 +468,7 @@ class RunCompiler:
     def _frame_rate(self, model: Any) -> tuple[float, str] | None:
         if not isinstance(model, str) or not model:
             return None
-        lookup = getattr(self._parser.backends.get(DRAW_THINGS_V2_BACKEND), "frame_rate", None)
+        lookup = getattr(self._parser.backends.get(DRAW_THINGS_BACKEND), "frame_rate", None)
         found = lookup(model) if lookup is not None else None
         return (float(found.fps), found.source) if found is not None else None
 
@@ -482,7 +482,7 @@ class RunCompiler:
             self._parser.fail(f"{field}.output", "must be a mapping")
         self._parser.check_keys(output, {"extension"}, f"{field}.output.")
         if output.get("extension", "mp4") != "mp4":
-            self._parser.fail(f"{field}.output.extension", "must be mp4 for h3")
+            self._parser.fail(f"{field}.output.extension", "must be mp4 for h3-metal-cli")
         profile.update(frames=knobs["requested_frames"], seconds=float(knobs["seconds"]), seed=knobs.get("seed", 0))
         mapping: dict[str, Any] = {
             "version": 1,
@@ -546,7 +546,7 @@ class RunCompiler:
             for key, legacy in INPUT_RESIZE_KEYS.items():
                 if key in resize:
                     mapping[legacy] = resize[key]
-        view = self._parse_view(DRAW_THINGS_V2_BACKEND, mapping, source_text, context, profile=context.profile, handoff_size=handoff_size)
+        view = self._parse_view(DRAW_THINGS_BACKEND, mapping, source_text, context, profile=context.profile, handoff_size=handoff_size)
         # A version-2 run takes its seed only from its knob or the execution; the base configuration's seed is not used.
         from framecontrol.jobs.backends.draw_things import DrawThingsJobSettings
 
@@ -555,7 +555,7 @@ class RunCompiler:
         if "seed" in view.base_config:
             ignored["seed"] = view.base_config["seed"]
         data = replace(view.backend_data, base_config=base_config) if isinstance(view.backend_data, DrawThingsJobSettings) else view.backend_data
-        return replace(view, base_config=base_config, backend_data=data, ignored_config=ignored, backend=DRAW_THINGS_V2_BACKEND, requested_seed=knobs.get("seed"), requested_seed_source="run" if "seed" in knobs else "execution_seed")
+        return replace(view, base_config=base_config, backend_data=data, ignored_config=ignored, backend=DRAW_THINGS_BACKEND, requested_seed=knobs.get("seed"), requested_seed_source="run" if "seed" in knobs else "execution_seed")
 
     @staticmethod
     def _pair_data(pair: PromptPair) -> dict[str, Any]:

@@ -52,7 +52,7 @@ class EventJsonTests(unittest.TestCase):
             RunOutput(at=self.AT, number=1, stream="stdout", text="3/8", phase="denoise", offset=12.25, stage="denoise", done=3, total=8),
             StageStarted(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5),
             StageFinished(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5, end=2174.2, done=30, total=30, unit="steps", marks=((120.5, 1), (190.25, 2))),
-            TimingStarted(at=self.AT, number=1, backend="h3", pipeline="r2av", workload={"width": 832, "height": 448, "frames": 243, "steps": 30, "references": {"image": 2}}, environment={"executable_bytes": 1024, "load_start": [1.5, 1.25, 1.0]}),
+            TimingStarted(at=self.AT, number=1, backend="h3-metal-cli", pipeline="r2av", workload={"width": 832, "height": 448, "frames": 243, "steps": 30, "references": {"image": 2}}, environment={"executable_bytes": 1024, "load_start": [1.5, 1.25, 1.0]}),
             TimingFinished(at=self.AT, number=1, complete=True, load_end=(2.0, 1.5, 1.25)),
             RunFinished(at=self.AT, number=1, status=RunStatus.SUCCEEDED, exit_code=0, seconds=12.5, output="o.mov", last_frame=None, output_width=832, output_height=448, output_frames=81),
             CooldownStarted(at=self.AT, after_run=1, seconds=90.0, until="10:01:30", mode="manual"),

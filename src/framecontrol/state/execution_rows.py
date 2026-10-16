@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND
 from framecontrol.jobs.events import JobStatus, RunStatus
 from framecontrol.state.ids import execution_id_text
 
@@ -32,17 +33,17 @@ class ExecutionSettings:
     config_file: str | None = None
     config_override: dict[str, Any] | None = None
     input_resize: dict[str, Any] | None = None
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
     backend_settings: dict[str, Any] | None = None
 
     def to_json(self) -> str:
         """The keys that are set, as JSON."""
-        return json.dumps({name: value for name, value in self.__dict__.items() if value is not None and (name != "backend" or value != "draw-things-cli")}, ensure_ascii=False)
+        return json.dumps({name: value for name, value in self.__dict__.items() if value is not None and (name != "backend" or value != DRAW_THINGS_BACKEND)}, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, text: str) -> ExecutionSettings:
         data = json.loads(text) if text else {}
-        return cls(**{name: data.get(name, "draw-things-cli" if name == "backend" else None) for name in cls.__dataclass_fields__})
+        return cls(**{name: data.get(name, DRAW_THINGS_BACKEND if name == "backend" else None) for name in cls.__dataclass_fields__})
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ class NewExecution:
     first_image: str | None = None
     # ``job`` for every historical execution, ``generate`` for one-off generation requests.
     source_kind: str = "job"
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
 
 
 @dataclass(frozen=True)
@@ -256,7 +257,7 @@ class ExecutionRow:
     # The chain's first image, a full path; None for an execution recorded before first images were kept, or without one.
     first_image: str | None = None
     source_kind: str = "job"
-    backend: str = "draw-things-cli"
+    backend: str = DRAW_THINGS_BACKEND
     # Media checks of a run that never started (a stop during the input checks), which no run row can show; filled, like
     # ``runs``, only when the execution is read by itself.
     checks: tuple[MediaCheckRow, ...] = ()
@@ -295,7 +296,7 @@ class ExecutionRow:
             resumes=row["resumes"] if "resumes" in row.keys() else None,
             first_image=row["first_image"] if "first_image" in row.keys() else None,
             source_kind=row["source_kind"] if "source_kind" in row.keys() else "job",
-            backend=row["backend"] if "backend" in row.keys() else "draw-things-cli",
+            backend=row["backend"] if "backend" in row.keys() else DRAW_THINGS_BACKEND,
         )
 
     @property

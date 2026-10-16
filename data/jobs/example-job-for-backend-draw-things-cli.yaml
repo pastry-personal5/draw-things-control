@@ -29,7 +29,7 @@ prompt_pairs:
 # Named settings for one backend. Everything that does not change from run to run belongs here.
 settings_profiles:
   wan:
-    backend: draw-things
+    backend: draw-things-cli
     settings:
       # Base configuration for every run using this profile: data/params/image-to-video-wan-2-2.example.yaml.
       # It must be a YAML file (.yaml or .yml); a .json name is rejected.
@@ -71,7 +71,7 @@ settings_profiles:
 
 # One block per backend and pipeline that the runs use: what a run takes when it names nothing itself.
 defaults:
-  - backend: draw-things
+  - backend: draw-things-cli
     pipeline: i2v
     settings_profile: wan
     knobs:
@@ -81,13 +81,13 @@ defaults:
 
 # The chain: run k+1 starts from run k's last frame. Seven runs: walk, wave, walk, wave, walk, idle, idle.
 runs:
-  - {backend: draw-things, pipeline: i2v, prompt_pair: walk}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: wave}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: walk}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: wave}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: walk}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: idle}
-  - {backend: draw-things, pipeline: i2v, prompt_pair: idle, knobs: {frames: 33}}   # a run's own knob replaces the default's
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: walk}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: wave}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: walk}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: wave}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: walk}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: idle}
+  - {backend: draw-things-cli, pipeline: i2v, prompt_pair: idle, knobs: {frames: 33}}   # a run's own knob replaces the default's
 
 # output:
 #   directory: sunset-walk              # under the global output_directory; omitted: <output_directory>/<name>

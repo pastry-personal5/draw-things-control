@@ -9,7 +9,7 @@ Improve the product experience, make chained generation support multiple backend
 ## Scope
 
 - TUI terminology, shortcuts, and status feedback in Milestone 01.
-- A backend boundary for `draw-things-cli`, H3, and future generators in Milestone 02.
+- A backend boundary for `draw-things-cli`, `h3-metal-cli`, and future generators in Milestone 02.
 - H3 image-to-audio-video (`i2av`) jobs through the existing front ends in Milestone 03.
 - Framechain product, package, command, and state database naming in Milestone 04.
 - H3 performance controls and mixed `i2av`/reference-to-audio-video (`r2av`, H3's Ref2VA model family) pipelines in Milestone 05.

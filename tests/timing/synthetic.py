@@ -22,7 +22,7 @@ import numpy as np
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.timing.features import FRAMECONTROL, HistoryExecution, HistoryRun, HistoryStage
 
-DRAW_THINGS, H3 = "draw-things-cli", "h3"
+DRAW_THINGS, H3 = "draw-things-cli", "h3-metal-cli"
 P0, DT_F0, H3_F0 = 832 * 448, 81, 243
 CHILD = "child"
 COOLDOWNS = (CooldownPolicy("auto", ratio=0.5, minimum_seconds=60.0, maximum_seconds=900.0), CooldownPolicy("auto", ratio=0.25), CooldownPolicy("manual", seconds=120.0), CooldownPolicy("off"))
