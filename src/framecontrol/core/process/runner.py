@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import codecs
 import contextlib
+import os
 import queue
+import select
 import signal
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, TextIO, TypeVar
+from typing import IO, Any, Protocol, TypeVar
 
 from loguru import logger
 
 from framecontrol.core.arguments import CommandArguments, DrawThingsGenerateArguments
 from framecontrol.core.process.groups import process_group_alive, send_to_process_group
 from framecontrol.core.process.output import MessageCallback, OutputProcessor, OutputStream, ProcessMessage
+from framecontrol.core.process.segments import PartialReading, SegmentSplitter
 from framecontrol.core.process.signals import install_signal_handlers, restore_signal_handlers
 from framecontrol.core.process.spawn import popen
 
@@ -48,6 +52,8 @@ class StoppableRunner(Runner, Protocol):
 
 # Receives the PID and executable name of a child once it has started, for example RunLock.record_child.
 ChildStartCallback = Callable[[int, str], None]
+# What a reader thread asks the operating system for at a time.
+READ_SIZE = 65536
 
 
 R_co = TypeVar("R_co", bound=Runner, covariant=True)
@@ -83,7 +89,13 @@ class ProcessResult:
 
 
 class DrawThingsProcessRunner:
-    """Run a prepared command with live output and bounded process-group shutdown."""
+    """Run a prepared command with live output and bounded process-group shutdown.
+
+    Each reader thread reads its pipe as bytes and stamps every segment (a line ended by ``\\n`` or ``\\r``) with the time its
+    last byte arrived, so an offset says when the child wrote a line, not when the supervisor next drained the queue. A
+    backend whose redraws end with no terminator (H3) offers, in its arguments, ``unterminated_reading``: a predicate
+    that says whether text so far already reads as a whole reading. A segment it accepts is released once nothing more
+    arrives within ``idle_release_seconds``, with its own stamp."""
 
     def __init__(
         self,
@@ -97,6 +109,7 @@ class DrawThingsProcessRunner:
         handle_signals: bool = True,
         capture_output: bool = True,
         on_start: Callable[[int], None] | None = None,
+        idle_release_seconds: float = 0.2,
     ) -> None:
         if shutdown_grace_seconds < 0:
             raise ValueError("shutdown_grace_seconds must not be negative")
@@ -106,9 +119,13 @@ class DrawThingsProcessRunner:
             raise ValueError("output_drain_seconds must not be negative")
         if kill_wait_seconds < 0:
             raise ValueError("kill_wait_seconds must not be negative")
+        if idle_release_seconds < 0:
+            raise ValueError("idle_release_seconds must not be negative")
         self._command = arguments.command
         self._environment = getattr(arguments, "environment", None)
         self._cwd = getattr(arguments, "cwd", None)
+        self._partial_reading: PartialReading | None = getattr(arguments, "unterminated_reading", None)
+        self._idle_release_seconds = idle_release_seconds
         if not self._command:
             raise ValueError("command must not be empty")
         self._output_processor = output_processor or OutputProcessor()
@@ -128,15 +145,15 @@ class DrawThingsProcessRunner:
     def run(self) -> ProcessResult:
         """Run the command, relaying output until completion or bounded shutdown."""
         started_at = time.monotonic()
-        output_queue: queue.Queue[tuple[OutputStream, str]] = queue.Queue()
+        output_queue: queue.Queue[tuple[OutputStream, str, float]] = queue.Queue()
         # Install handlers before the child exists, so a signal in between cannot orphan it.
         previous_handlers = install_signal_handlers(self.request_shutdown) if self._handle_signals else None
-        process: subprocess.Popen[str] | None = None
+        process: subprocess.Popen[bytes] | None = None
         readers: tuple[threading.Thread, ...] = ()
         completed = False
         try:
             process = self._start_process()
-            logger.info("Started subprocess (PID {})", process.pid)
+            logger.info("Started subprocess (PID {}, output stamped as read)", process.pid)
             self._report_start(process.pid)
             if self._capture_output:
                 readers = self._start_readers(process, output_queue)
@@ -156,7 +173,7 @@ class DrawThingsProcessRunner:
                     self._join_readers(readers)
             restore_signal_handlers(previous_handlers)
 
-    def _supervise(self, process: subprocess.Popen[str], readers: tuple[threading.Thread, ...], output_queue: queue.Queue[tuple[OutputStream, str]], started_at: float) -> None:
+    def _supervise(self, process: subprocess.Popen[bytes], readers: tuple[threading.Thread, ...], output_queue: queue.Queue[tuple[OutputStream, str, float]], started_at: float) -> None:
         """Relay output until the child is done, or its group is gone, or a shutdown has run its bounded course."""
         process_group_id = process.pid
         timeout_at = started_at + self._timeout_seconds if self._timeout_seconds is not None else None
@@ -189,7 +206,7 @@ class DrawThingsProcessRunner:
                     return
             time.sleep(0.02)
 
-    def _result(self, process: subprocess.Popen[str], started_at: float) -> ProcessResult:
+    def _result(self, process: subprocess.Popen[bytes], started_at: float) -> ProcessResult:
         return_code = process.poll()
         logger.info("Subprocess finished with exit code {}", return_code if return_code is not None else 125)
         return ProcessResult(
@@ -239,7 +256,7 @@ class DrawThingsProcessRunner:
         for reader in readers:
             reader.join(timeout=max(0.0, deadline - time.monotonic()))
 
-    def _cleanup_process_group(self, process_group_id: int, process: subprocess.Popen[str]) -> None:
+    def _cleanup_process_group(self, process_group_id: int, process: subprocess.Popen[bytes]) -> None:
         if not self._shutdown_requested.is_set() or not process_group_alive(process_group_id, denied_means_alive=False):
             return
         if self._kill_sent_at is not None:
@@ -258,7 +275,7 @@ class DrawThingsProcessRunner:
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=max(0.1, self._output_drain_seconds))
 
-    def _start_process(self) -> subprocess.Popen[str]:
+    def _start_process(self) -> subprocess.Popen[bytes]:
         # Without capture the child inherits the terminal, so it can preview images inline.
         pipe = subprocess.PIPE if self._capture_output else None
         try:
@@ -266,9 +283,7 @@ class DrawThingsProcessRunner:
                 self._command,
                 stdout=pipe,
                 stderr=pipe,
-                text=True,
-                errors="replace",
-                bufsize=1,
+                bufsize=0,
                 start_new_session=True,
                 env=self._environment,
                 cwd=self._cwd,
@@ -276,29 +291,54 @@ class DrawThingsProcessRunner:
         except OSError as error:
             raise ValueError(f"Could not start executable {self._command[0]}: {error.strerror or error}") from error
 
-    @staticmethod
-    def _start_readers(process: subprocess.Popen[str], output_queue: queue.Queue[tuple[OutputStream, str]]) -> tuple[threading.Thread, threading.Thread]:
-        def read_stream(stream: TextIO, source: OutputStream) -> None:
-            try:
-                for line in iter(stream.readline, ""):
-                    output_queue.put((source, line))
-            finally:
-                stream.close()
-
+    def _start_readers(self, process: subprocess.Popen[bytes], output_queue: queue.Queue[tuple[OutputStream, str, float]]) -> tuple[threading.Thread, threading.Thread]:
         assert process.stdout is not None
         assert process.stderr is not None
         readers = (
-            threading.Thread(target=read_stream, args=(process.stdout, OutputStream.STDOUT), daemon=True),
-            threading.Thread(target=read_stream, args=(process.stderr, OutputStream.STDERR), daemon=True),
+            threading.Thread(target=self._read_stream, args=(process.stdout, OutputStream.STDOUT, output_queue), daemon=True),
+            threading.Thread(target=self._read_stream, args=(process.stderr, OutputStream.STDERR, output_queue), daemon=True),
         )
         for reader in readers:
             reader.start()
         return readers
 
-    def _drain_output(self, output_queue: queue.Queue[tuple[OutputStream, str]], started_at: float) -> None:
+    def _read_stream(self, stream: IO[bytes], source: OutputStream, output_queue: queue.Queue[tuple[OutputStream, str, float]]) -> None:
+        """Queue each segment of ``stream`` with the time its last byte arrived, until the stream ends."""
+        # Undecodable bytes become U+FFFD, and a character split across two reads is whole.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        splitter = SegmentSplitter(self._partial_reading, idle_seconds=self._idle_release_seconds)
+
+        def deliver(segments: list[Any]) -> None:
+            for segment in segments:
+                output_queue.put((source, segment.text, segment.arrived))
+
+        try:
+            descriptor = stream.fileno()
+            while True:
+                deadline = splitter.idle_deadline()
+                if deadline is not None:
+                    ready, _, _ = select.select([descriptor], [], [], max(0.0, deadline - time.monotonic()))
+                    if not ready:
+                        deliver(splitter.release_idle(time.monotonic()))
+                        continue
+                data = os.read(descriptor, READ_SIZE)
+                if not data:
+                    break
+                deliver(splitter.feed(decoder.decode(data), time.monotonic()))
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                deliver(splitter.feed(tail, time.monotonic()))
+        except (OSError, ValueError):
+            # The pipe was closed under the reader as the run was torn down; what it had read is still delivered.
+            pass
+        finally:
+            deliver(splitter.flush())
+            stream.close()
+
+    def _drain_output(self, output_queue: queue.Queue[tuple[OutputStream, str, float]], started_at: float) -> None:
         while True:
             try:
-                stream, text = output_queue.get_nowait()
+                stream, text, arrived = output_queue.get_nowait()
             except queue.Empty:
                 return
-            self._output_processor.process(stream, text, time.monotonic() - started_at)
+            self._output_processor.process(stream, text, max(0.0, arrived - started_at))

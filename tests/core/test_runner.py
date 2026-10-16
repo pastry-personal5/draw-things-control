@@ -1,6 +1,7 @@
 """Tests for process output and shutdown behavior."""
 
 import io
+import json
 import os
 import signal
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
@@ -182,3 +184,101 @@ class RunnerStartHookTests(unittest.TestCase):
             raise RuntimeError("lock file is gone")
 
         self.assertTrue(DrawThingsProcessRunner(command, handle_signals=False, on_start=broken).run().succeeded)
+
+
+# A child that writes the given bytes (hex) with a pause after each, noting the time of each write in a file.
+STAMPED_CHILD = "import json, os, sys, time\nlog = open(sys.argv[1], 'w')\nfor data, pause in json.loads(sys.argv[2]):\n    os.write(1, bytes.fromhex(data))\n    log.write(repr(time.monotonic()) + '\\n')\n    log.flush()\n    time.sleep(pause)\n"
+
+
+def hexed(text: str) -> str:
+    return text.encode("utf-8").hex()
+
+
+@dataclass(frozen=True)
+class RedrawCommand:
+    """A backend's command whose output may be read before its terminator, as H3's is."""
+
+    command: tuple[str, ...]
+    unterminated_reading: Callable[[str], bool] | None = None
+    cwd: Path | None = None
+
+
+def counter_ends_text(text: str) -> bool:
+    head, _, tail = text.rpartition(" ")
+    counted = tail.split("/", 1)
+    return bool(head) and len(counted) == 2 and all(part.isdigit() for part in counted)
+
+
+class SourceStampingTests(unittest.TestCase):
+    def run_child(self, writes: list[tuple[str, float]], *, accepts: Callable[[str], bool] | None = counter_ends_text, idle: float = 0.2, stop_after: str | None = None) -> tuple[list[ProcessMessage], list[float], list[float]]:
+        """Run a child making ``writes``; return its messages, the times it wrote at, and when each message reached the callback.
+        The child is stopped when the message ``stop_after`` arrives."""
+        arrivals: list[float] = []
+        runner: DrawThingsProcessRunner
+
+        def record(message: ProcessMessage) -> None:
+            arrivals.append(time.monotonic())
+            if message.text == stop_after:
+                runner.request_shutdown(signal.SIGTERM)
+
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "writes"
+            command = RedrawCommand((sys.executable, "-c", STAMPED_CHILD, str(log), json.dumps(writes)), accepts)
+            runner = DrawThingsProcessRunner(command, output_processor=OutputProcessor(callback=record), idle_release_seconds=idle, handle_signals=False, shutdown_grace_seconds=1)
+            result = runner.run()
+            times = [float(line) for line in log.read_text(encoding="utf-8").split()]
+        return list(result.messages), times, arrivals
+
+    def assert_stamped_like_the_writes(self, messages: list[ProcessMessage], times: list[float], indexes: list[int]) -> None:
+        # The runner's clock and the child's differ by a constant, so compare each stamp with the first one's.
+        for message, index in zip(messages, indexes, strict=True):
+            self.assertAlmostEqual(message.elapsed_seconds - messages[0].elapsed_seconds, times[index] - times[indexes[0]], delta=0.05, msg=message.text)
+
+    def test_a_redraw_is_stamped_when_it_was_written_not_when_the_next_one_ended_it(self) -> None:
+        writes = [(hexed(f"\rdenoise {step}/30"), 0.4) for step in range(1, 5)]
+        messages, times, _arrivals = self.run_child(writes, accepts=None)
+        self.assertEqual([message.text for message in messages], [f"denoise {step}/30" for step in range(1, 5)])
+        self.assert_stamped_like_the_writes(messages, times, [0, 1, 2, 3])
+
+    def test_a_write_that_splits_a_number_gives_the_whole_reading_stamped_by_its_last_byte(self) -> None:
+        writes = [(hexed("\rdenoise 2/30"), 0.4), (hexed("\rdenoise 3/3"), 0.03), (hexed("0"), 0.5), (hexed("\rdenoise 4/30"), 0.4)]
+        messages, times, _arrivals = self.run_child(writes)
+        self.assertEqual([message.text for message in messages], ["denoise 2/30", "denoise 3/30", "denoise 4/30"])
+        self.assert_stamped_like_the_writes(messages, times, [0, 2, 3])
+
+    def test_a_write_that_splits_a_multi_byte_character_keeps_it_whole(self) -> None:
+        encoded = "\rcaf\u00e9 1/2\n".encode()
+        cut = encoded.index(b"\xc3") + 1
+        writes = [(encoded[:cut].hex(), 0.05), (encoded[cut:].hex(), 0.05)]
+        messages, times, _arrivals = self.run_child(writes)
+        self.assertEqual([message.text for message in messages], ["caf\u00e9 1/2"])
+        self.assertEqual(len(times), 2)
+
+    def test_a_reading_that_is_never_terminated_is_delivered_once_the_idle_window_passes(self) -> None:
+        writes = [(hexed("\rdenoise 7/30"), 30.0)]
+        messages, times, arrivals = self.run_child(writes, stop_after="denoise 7/30")
+        self.assertEqual([message.text for message in messages], ["denoise 7/30"])
+        # The child sleeps 30 s after writing and nothing ends the reading; the window did, long before that.
+        self.assertLess(arrivals[0] - times[0], 1.0)
+
+    def test_text_the_predicate_does_not_accept_is_not_released_early(self) -> None:
+        writes = [(hexed("loading weights"), 0.6)]
+        messages, times, arrivals = self.run_child(writes)
+        self.assertEqual([message.text for message in messages], ["loading weights"])
+        self.assertGreater(arrivals[0] - times[0], 0.4)
+
+    def test_without_a_predicate_a_backend_that_terminates_its_lines_is_read_as_before(self) -> None:
+        messages, _times, _arrivals = self.run_child([(hexed("one\ntwo\r\nthree"), 0.05)], accepts=None)
+        self.assertEqual([message.text for message in messages], ["one", "two", "three"])
+
+
+class StartLogTests(unittest.TestCase):
+    def test_the_start_is_logged_with_a_note_that_output_is_stamped_as_read(self) -> None:
+        logged: list[str] = []
+        sink = logger.add(lambda message: logged.append(str(message)), format="{message}", level="INFO")
+        try:
+            DrawThingsProcessRunner(ProcessCommand((sys.executable, "-c", "pass")), handle_signals=False).run()
+        finally:
+            logger.remove(sink)
+        # fc timing import reads this note to know that a log's readings need no shift.
+        self.assertTrue(any(line.startswith("Started subprocess (PID ") and line.rstrip().endswith(", output stamped as read)") for line in logged), logged)
