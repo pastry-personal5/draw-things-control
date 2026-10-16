@@ -74,6 +74,7 @@ different file.
 | `history delete` | Delete executions from the history through `fc serve` |
 | `timing show EXECUTION` | Show what each stage of a run took, through `fc serve` |
 | `timing import` | Rebuild stage timing from the job logs that still exist |
+| `timing replay` | Replay the retained runs through an estimator and print how close its remaining time was |
 | `mcp` | Give AI agents typed tools over `fc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
@@ -963,7 +964,7 @@ The screen, top to bottom:
 - **Work status** (top left, 7 lines): the job at a glance (see
   [Work status](#work-status)). Empty until a job runs.
 - **Generation output** (below it, 15 lines): the run summary (the running run's
-  number, elapsed time, step progress, and output file, or the cooldown
+  number, elapsed time, stage and its units (`denoise 12/30`), and output file, or the cooldown
   countdown), then the last 2000 lines `draw-things-cli` printed. stderr is
   in red, and progress-bar lines (`Sampling... 4 / 40 [ ] 10  %`) are shown
   as lines too, as well as updating the run summary. `/verbose` changes how
@@ -1127,7 +1128,7 @@ The Activity log says it could not be saved.
 |-------|--------------------------|--------------------------------------|
 | `high` (default) | Every output line, live | Refreshed every second |
 | `medium` | Every line is streamed, but the pane shows only each run's first minute (`(output hidden: verbose medium, after 1 min)` marks the end, once per run) | Every second |
-| `low` | No output: `fc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; neither the run summary nor the work status shows step progress |
+| `low` | No output: `fc serve` is asked not to send it, and the pane says `(output hidden: verbose low; status updates once a minute)` | Once a minute, and at once when a run starts or ends, a cooldown starts, the job ends, a stop is confirmed, or a Ctrl-C prompt appears; the stage and the bars keep going, since the server's forecast is not run output |
 
 - Typing `/verbose medium` while a run is going opens a fresh minute at that moment, so output shows at once. A line
   medium or low hides is never shown later, and `high` shows only the lines that arrive after the switch.
@@ -1142,29 +1143,23 @@ The Activity log says it could not be saved.
 | Line | What it shows |
 |------|---------------|
 | 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `parking after run 3/7`, `parking on its last run`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  E0012: walk  run 2/3` |
-| 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)`, or `parking` while the entry has a park reservation |
+| 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)`; when the range the server gives is wide (over 3% of the time left) it stands in for the time left, `ends ~16:42 (16:31 to 16:58)`; `estimating` where the server has no number; or `parking` while the entry has a park reservation |
 | 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
-| 4 | The step counter (`step 28/40`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
+| 4 | The stage and its units (`denoise 12/30`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
 | 5 | `last run took 7 min 12 s`: the job's last successful run, its `draw-things-cli` time without the cooldown |
 
-- A run is estimated from its first moment. Until `draw-things-cli`
-  reports a step, the estimate is a past run's time less the time so far:
-  the job's own last successful run, or before it has one, the latest
-  successful run of any job. At the first step report it becomes that past
-  run's time per step times the steps left, when the past run counted the
-  same number of steps (otherwise the past run's time less the time so far
-  stands), and from the second report on
-  the live rate: the time since the first step divided by the steps since,
-  so loading the model is not counted. Without any past run, or once a run
-  has taken longer than the past one, it says `estimating` until the rate
-  exists. After the last step the run says `finishing` (the decode and
-  last-frame extraction have no counter).
-- The job estimate times each run still to come by the average full time
-  of this job's finished runs, and each wait by the job's `cooldown`
-  setting applied to their `draw-things-cli` time. On run 1 it starts from
-  the past run, so it has an estimate from the start; from run 2 on, it
-  keeps its estimate while a run loads. The job bar is the share of the job's
-  estimated time that has passed, cooldowns included.
+- The ends and the bars come from one forecast that `fc serve` makes and publishes; the TUI holds no model of
+  its own, so `fc queue show`, `fc queue add --wait`, the HTTP API, and MCP say the same thing. It prices a run
+  from the history of runs with the same settings (or, with too few, from a fit over the backend's runs), never
+  from the other backend's, and corrects itself from the run's own steps as they arrive. A run with no history
+  says `estimating` until its steps have shown two readings. A bar never moves back. The range is the server's
+  80% interval. Its times are the server's clock, as the cooldown's are, so the TUI and the server are expected
+  to share one. It is published when a reading arrives, not on a timer, so a step that outlasts its prediction
+  shows `finishing` until its next reading comes.
+- The job's end adds each run still to come and each wait, the job's `cooldown` setting applied to the run's
+  predicted `draw-things-cli` time. The job bar is the share of the job's time that has passed, cooldowns included.
+- `uv run fc timing replay [--backend B] [--estimator forecast]` replays the retained runs as if they were running and
+  prints how close each estimator was; it only reads the state database.
 - A time on another day starts with its date (`09-27 02:10`). On a narrow
   terminal the bars shrink and the text stays whole.
 - After a stop is requested, the bars stop moving and the end times read

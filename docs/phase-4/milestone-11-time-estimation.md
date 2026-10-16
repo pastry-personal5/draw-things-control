@@ -1,7 +1,7 @@
 # Milestone 11: Job completion time estimation
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
+**Status:** in-progress
 **Depends on:** [Milestone 10](milestone-10-stage-timing.md) (done): its stage timeline, the `run_stages` and `run_timing` rows, and `RunOutput`'s `phase` and `offset`; and the existing cooldown policy.
 
 ## Goal
