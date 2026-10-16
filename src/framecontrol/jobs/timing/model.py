@@ -29,8 +29,6 @@ class Reading:
     # offset. Otherwise it marks work done (H3 prints a unit's line as it completes): the stage before ended at its own
     # last reading.
     begins: bool = False
-    # False for a counter that runs beside the stage's own (H3's ``denoise enqueue``): it is the stage's activity, not its progress.
-    counted: bool = True
 
 
 @dataclass(frozen=True)

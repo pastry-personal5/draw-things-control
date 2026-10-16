@@ -71,17 +71,17 @@ class H3Phase:
     """One phase: its raw name, its total, and when each reading was written (``times``, one per reading, rising).
 
     h3.c reports ``0/N`` as a phase begins, then ``1/N`` to ``N/N`` as its units complete; ``start`` is when the ``0/N``
-    reading was written (none: the fixture leaves it out)."""
+    reading was written (none: the fixture leaves it out). ``units`` is N when the phase prints only its last readings
+    (the GPU path's ``denoise`` prints ``N/N`` once, its steps having been reported as ``denoise enqueue``)."""
 
     phase: str
     times: tuple[float, ...]
-    # Readings of an uncounted phase (``denoise enqueue``) are not the counter the stage reports.
-    counted: bool = True
     start: float | None = None
+    units: int | None = None
 
     @property
     def total(self) -> int:
-        return len(self.times)
+        return self.units if self.units is not None else len(self.times)
 
 
 def even(first: float, last: float, count: int) -> tuple[float, ...]:
@@ -92,9 +92,8 @@ def even(first: float, last: float, count: int) -> tuple[float, ...]:
 
 
 def h3_r2av(*, steps: int = 30, frames: int = 24, exit_at: float = 321.0) -> Transcript:
-    """An H3 ``r2av`` run: the setup phases, 30 denoise steps with the enqueue counter running ahead of them, then the tail."""
+    """An H3 ``r2av`` run on the GPU path: the setup phases, 30 denoise steps reported as ``denoise enqueue`` and ``denoise`` once at the end, then the tail."""
     denoise_times = even(40.0, 280.0, steps)
-    enqueue_times = tuple(round(40.0 + (time - 40.0) * 0.1, 3) for time in denoise_times[:-1]) + (denoise_times[-1],)
     phases = (
         H3Phase("tokenizer", (0.2,), start=0.1),
         H3Phase("video VAE encoder", even(0.4, 1.6, 9), start=0.3),
@@ -103,8 +102,8 @@ def h3_r2av(*, steps: int = 30, frames: int = 24, exit_at: float = 321.0) -> Tra
         H3Phase("refine text", (12.5,), start=9.5),
         H3Phase("precompute AdaLN", (13.0, 14.0), start=12.8),
         H3Phase("load transformer core", even(15.0, 24.0, 50), start=14.5),
-        H3Phase("denoise enqueue", enqueue_times, counted=False, start=24.4),
-        H3Phase("denoise", denoise_times, start=24.6),
+        H3Phase("denoise enqueue", denoise_times, start=24.4),
+        H3Phase("denoise", (denoise_times[-1],), units=steps),
         H3Phase("audio VAE", even(284.0, 290.0, 6), start=282.0),
         H3Phase("video VAE load", even(291.0, 292.0, 36), start=290.5),
         H3Phase("FFmpeg", even(293.0, 320.0, frames), start=292.5),
@@ -121,8 +120,8 @@ def h3_i2av(*, steps: int = 30, frames: int = 24, exit_at: float = 201.0) -> Tra
         H3Phase("text encoder", even(2.0, 6.0, 50), start=1.8),
         H3Phase("precompute AdaLN", (7.0, 8.0), start=6.5),
         H3Phase("load transformer core", even(9.0, 18.0, 50), start=8.5),
-        H3Phase("denoise enqueue", tuple(round(30.0 + (time - 30.0) * 0.1, 3) for time in denoise_times[:-1]) + (denoise_times[-1],), counted=False, start=18.4),
-        H3Phase("denoise", denoise_times, start=18.6),
+        H3Phase("denoise enqueue", denoise_times, start=18.4),
+        H3Phase("denoise", (denoise_times[-1],), units=steps),
         H3Phase("audio VAE", even(173.0, 178.0, 6), start=171.0),
         H3Phase("video VAE load", even(179.0, 180.0, 36), start=178.5),
         H3Phase("FFmpeg", even(181.0, 200.0, frames), start=180.5),
@@ -134,7 +133,7 @@ def h3_transcript(phases: tuple[H3Phase, ...], exit_at: float, *, header: tuple[
     """The lines of ``phases`` in the order they were written, and the spans they make: each stage runs from the end of
     the one before to its own last reading (the first from the child's start), and the last one to the child's exit."""
     readings = sorted(
-        [(phase.start, phase.phase, 0, phase.total) for phase in phases if phase.start is not None] + [(time, phase.phase, index + 1, phase.total) for phase in phases for index, time in enumerate(phase.times)],
+        [(phase.start, phase.phase, 0, phase.total) for phase in phases if phase.start is not None] + [(time, phase.phase, phase.total - len(phase.times) + index + 1, phase.total) for phase in phases for index, time in enumerate(phase.times)],
         key=lambda item: (item[0], phases_order(phases, item[1]), item[2]),
     )
     # h3.c writes `"\r%-25s %4d/%-4d"`: the phase padded to 25 columns, the number done right-aligned, the total padded.
@@ -147,7 +146,7 @@ def h3_transcript(phases: tuple[H3Phase, ...], exit_at: float, *, header: tuple[
             stages.append(H3_STAGE[phase.phase])
     for position, stage in enumerate(stages):
         members = [phase for phase in phases if H3_STAGE[phase.phase] == stage]
-        counter = next(phase for phase in members if phase.counted)
+        counter = max(members, key=lambda phase: len(phase.times))
         end = max(phase.times[-1] for phase in members)
         if position == len(stages) - 1:
             end = exit_at

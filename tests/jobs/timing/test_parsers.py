@@ -41,8 +41,9 @@ class H3ParserTests(unittest.TestCase):
         self.assertEqual(self.parser.readings("denoise 12/30", 900.0), (Reading("denoise", "denoise", 900.0, 12, 30, "steps"),))
         self.assertEqual(self.parser.readings("FFmpeg 100/243", 300.0), (Reading("ffmpeg", "FFmpeg", 300.0, 100, 243, "frames"),))
 
-    def test_the_enqueue_counter_extends_the_denoise_stage_without_being_its_counter(self) -> None:
-        self.assertEqual(self.parser.readings("denoise enqueue 29/30", 2100.0), (Reading("denoise", "denoise enqueue", 2100.0, 29, 30, "steps", counted=False),))
+    def test_the_enqueue_counter_is_the_denoise_steps_counter_on_the_gpu_path(self) -> None:
+        # h3_dit.c's GPU Euler loop reports `denoise enqueue` as each step completes and `denoise` once, at the end.
+        self.assertEqual(self.parser.readings("denoise enqueue 29/30", 2100.0), (Reading("denoise", "denoise enqueue", 2100.0, 29, 30, "steps"),))
 
     def test_every_known_phase_has_its_stage(self) -> None:
         phases = {"tokenizer": "tokenize", "video VAE encoder": "video_encode", "Qwen vision": "vision", "text encoder": "text_encode", "refine text": "refine_text", "precompute AdaLN": "adaln", "load transformer core": "load_core", "denoise enqueue": "denoise", "denoise": "denoise", "audio VAE encoder": "audio_encode", "audio VAE": "audio_decode", "preview VAE load": "preview_load", "video VAE load": "video_load", "FFmpeg": "ffmpeg"}

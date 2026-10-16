@@ -116,14 +116,15 @@ class H3LogTests(unittest.TestCase):
         denoise = next(span for span in shifted if span.stage == "denoise")
         # Step 2 was written at ~48 s, and was logged when step 3 began: the shift puts it back.
         written = next(offset for offset, done in transcript.spans[7].marks if done == 2)
-        logged = next(line.offset for line in transcript.lines if line.text.split() == ["denoise", "3/30"])
+        logged = next(line.offset for line in transcript.lines if line.text.split() == ["denoise", "enqueue", "3/30"])
         self.assertAlmostEqual(next(offset for offset, done in denoise.marks if done == 2), written + 0.002, delta=0.5)
         self.assertGreater(logged - written, 5.0)
 
     def test_the_first_reading_of_a_phase_that_cannot_be_recovered_is_marked_uncertain(self) -> None:
         run = parse_job_log(job_log(h3_r2av(), lagged=True), parsers(H3StageParser()))[1]
         flags = {span.stage: span.uncertain for span in child_spans(run) if span.marks}
-        self.assertEqual(flags, {"denoise": False, "ffmpeg": True})
+        # Each follows a phase's exact last reading, so the write time of its first reading is not in the log.
+        self.assertEqual(flags, {"denoise": True, "ffmpeg": True})
 
     def test_a_log_stamped_as_read_is_not_shifted(self) -> None:
         transcript = h3_r2av()

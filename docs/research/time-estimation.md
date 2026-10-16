@@ -3,7 +3,7 @@
 The measurements behind [Milestone 10](../phase-4/milestone-10-stage-timing.md) (how long each stage of a run
 took) and [Milestone 11](../phase-4/milestone-11-time-estimation.md) (the forecast fitted on them), and the owner-host
 checks of the recorder. The logs these numbers were read from expire with their executions (14 days by default) and, by
-owner decision, no copy is kept: this note and the two milestones are the record. The tests use synthetic transcripts
+owner decision, no copy is kept: this note and the two milestones are the record. Checked on 2026-10-16, the logs of E0028 to E0047 are already gone (deleted with their output folders, not by retention); only E0026 and E0027, until 2026-10-19 and 2026-10-20, and E0048 to E0050 still have one. The tests use synthetic transcripts
 written from the line formats below.
 
 ## Evidence
@@ -79,7 +79,13 @@ if (completed >= total) fputc('\n', stderr);   /* only a phase's last reading is
 - A phase reports `0/N` as it begins and `N/N` as it ends, and an identical reading is not written twice. The phases are
   `tokenizer`, `video VAE encoder`, `audio VAE encoder`, `Qwen vision`, `text encoder`, `refine text`, `precompute AdaLN`,
   `load transformer core`, `denoise enqueue`, `denoise`, `preview VAE load`, `audio VAE`, `video VAE load` (36 layers), and
-  `FFmpeg`; `denoise enqueue` runs ahead of `denoise`.
+  `FFmpeg`.
+- The denoise steps are reported on one of two counters, by the solver (`h3_dit.c`). The GPU Euler loop (lines 2674 to 2781,
+  the path `--reuse 1 --core-reuse 1` runs take) prints `denoise enqueue` as each step completes and `denoise N/N` once, at
+  the end. The RES solver (lines 2817 to 2973) prints `denoise` for every step and no enqueue. E0049, a GPU Euler run,
+  logged 31 `denoise enqueue` readings, 0/30 to 30/30, 57 to 81 s apart, and one `denoise 30/30` with the same stamp as
+  `denoise enqueue 30/30`. The step counter is whichever of the two carries the steps, and the recorder keeps both as the
+  denoise stage's marks.
 - Its other lines that hold an `n/N` (`h3: preview 3/30`, `h3: denoise preview 3/30, video frame 1/24 via kitty`,
   `h3: frame 5/24 via kitty`) begin `h3:`, are written only when a terminal graphics protocol is on, and are not phases.
 

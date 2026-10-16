@@ -95,13 +95,22 @@ class DrawThingsStatisticsTests(unittest.TestCase):
 
 
 class TrackerRuleTests(unittest.TestCase):
-    def test_the_enqueue_counter_adds_no_marks_and_does_not_make_the_step_counter_go_back(self) -> None:
+    def test_the_gpu_paths_enqueue_steps_are_the_marks_and_its_final_denoise_reading_adds_none(self) -> None:
+        # What h3_dit.c's GPU Euler loop prints: a reading per step as `denoise enqueue`, then `denoise 3/3` once.
         tracker = StageTracker()
-        for reading in (Reading("denoise", "denoise enqueue", 1.0, 3, 30, "steps", counted=False), Reading("denoise", "denoise", 2.0, 1, 30, "steps"), Reading("denoise", "denoise enqueue", 2.5, 4, 30, "steps", counted=False), Reading("denoise", "denoise", 3.0, 2, 30, "steps")):
+        for reading in (Reading("denoise", "denoise enqueue", 1.0, 0, 3, "steps"), Reading("denoise", "denoise enqueue", 11.0, 1, 3, "steps"), Reading("denoise", "denoise enqueue", 21.0, 2, 3, "steps"), Reading("denoise", "denoise enqueue", 31.0, 3, 3, "steps"), Reading("denoise", "denoise", 31.0, 3, 3, "steps")):
             tracker.feed(reading)
-        tracker.finish(4.0)
+        tracker.finish(32.0)
         (span,) = tracker.spans
-        self.assertEqual((span.done, span.marks), (2, ((2.0, 1), (3.0, 2))))
+        self.assertEqual((span.phase, span.done, span.total, span.marks), ("denoise enqueue", 3, 3, ((1.0, 0), (11.0, 1), (21.0, 2), (31.0, 3))))
+
+    def test_the_res_solvers_denoise_steps_are_the_marks_when_no_enqueue_is_printed(self) -> None:
+        tracker = StageTracker()
+        for reading in (Reading("denoise", "denoise", 1.0, 0, 2, "steps"), Reading("denoise", "denoise", 11.0, 1, 2, "steps"), Reading("denoise", "denoise", 21.0, 2, 2, "steps")):
+            tracker.feed(reading)
+        tracker.finish(22.0)
+        (span,) = tracker.spans
+        self.assertEqual((span.done, span.marks), (2, ((1.0, 0), (11.0, 1), (21.0, 2))))
 
     def test_a_counter_that_goes_back_opens_a_new_span_instead_of_rewinding(self) -> None:
         tracker = StageTracker()

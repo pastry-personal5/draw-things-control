@@ -46,7 +46,7 @@ class TimingImportTests(StoreCase):
         self.assertEqual((row.backend, row.pipeline, row.workload["steps"]), ("h3", "r2av", 30))
         stages = {stage.stage: stage for stage in self.store.timing.stages_of(execution_id, 1)}
         self.assertTrue(stages["ffmpeg"].uncertain)
-        self.assertFalse(stages["denoise"].uncertain)
+        self.assertTrue(stages["denoise"].uncertain)
         self.assertEqual((stages["denoise"].done, stages["denoise"].total, len(stages["denoise"].marks)), (30, 30, 31))
 
     def test_importing_again_changes_nothing(self) -> None:

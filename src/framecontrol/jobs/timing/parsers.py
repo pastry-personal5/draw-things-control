@@ -76,8 +76,10 @@ H3_STAGES = {
     "ffmpeg": "ffmpeg",
 }
 H3_UNITS = {"denoise": "steps", "ffmpeg": "frames"}
-# The enqueue counter runs ahead of the step counter and is not the stage's progress.
-H3_UNCOUNTED = frozenset({"denoise enqueue"})
+# h3_dit.c reports the denoise steps on one of two counters. Its GPU Euler loop prints `denoise enqueue` as each step
+# completes and `denoise N/N` once, at the end (E0049: 31 enqueue readings 57 to 81 s apart, then one `denoise 30/30`);
+# its RES solver prints `denoise` for every step and no enqueue. Both are the denoise stage's step counter, and the
+# tracker keeps a mark only when the count moves, so a final `denoise N/N` after `enqueue N/N` adds none.
 # h3.c writes `"\r%-25s %4d/%-4d"` to stderr: the phase padded to 25 columns, then the number done and the total. Its other lines
 # that hold an n/N (`h3: preview 3/30`, `h3: frame 5/24 via kitty`) start `h3:`, and a phase name never holds a colon.
 _H3_LINE = re.compile(r"^(?P<phase>[A-Za-z][A-Za-z0-9 _.\-]*?)\s+(?P<done>\d+)\s*/\s*(?P<total>\d+)(?!\d)")
@@ -98,7 +100,7 @@ class H3StageParser:
         phase = match.group("phase").strip()
         key = phase.lower()
         stage = H3_STAGES.get(key, "other")
-        return (Reading(stage, phase, offset, done, total, H3_UNITS.get(stage), counted=key not in H3_UNCOUNTED),)
+        return (Reading(stage, phase, offset, done, total, H3_UNITS.get(stage)),)
 
     def accepts(self, text: str) -> bool:
         return bool(self.readings(text, 0.0))

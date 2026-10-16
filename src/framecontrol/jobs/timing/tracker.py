@@ -63,12 +63,12 @@ class StageTracker:
                 current.marks.append((boundary, current.total))
             self._close(boundary)
             current = self._begin(reading, key, boundary)
-        elif reading.counted and _restarted(current, reading):
+        elif _restarted(current, reading):
             boundary = reading.offset if reading.begins else current.last
             self._close(boundary)
             current = self._begin(reading, key, boundary)
         current.last = max(current.last, reading.offset)
-        if reading.counted and reading.done is not None:
+        if reading.done is not None:
             current.done, current.total = reading.done, reading.total
             current.unit = reading.unit or current.unit
             if current.unit is not None and (not current.marks or current.marks[-1][1] != reading.done):
