@@ -14,6 +14,7 @@ import yaml
 from loguru import logger
 from rich.text import Text
 from textual.widgets import RichLog, Static
+from textual.worker import WorkerCancelled
 from watchdog.observers.polling import PollingObserver
 
 from framecontrol.core.global_config import GlobalConfig
@@ -87,7 +88,12 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
             readers = [worker for worker in pilot.app.workers if worker.group != "feed"]
             # An empty list would mean every worker to wait_for_complete.
             if readers:
-                await pilot.app.workers.wait_for_complete(readers)
+                try:
+                    await pilot.app.workers.wait_for_complete(readers)
+                except WorkerCancelled:
+                    # A poll replaced a reader before it finished (a pane that polls every 0.1 s in a test): there is nothing
+                    # left to wait for in the one cancelled, and the next pass waits for the one that replaced it.
+                    pass
             await pilot.pause()
 
     async def command(self, pilot: Any, line: str, *, settle: bool = True) -> None:
