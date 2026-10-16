@@ -35,6 +35,9 @@ MIN_SLOPE_EXECUTIONS, MIN_FIRST_GAP_RUNS = 3, 3
 DEFAULT_TAU, DEFAULT_RHO = 0.10, 0.5
 MIN_TAU = 0.02
 DEFAULT_STEP_NOISE = 0.10
+# The spread of a run's own within-stage slope about the backend's, when too few runs say, and the least it is taken to be.
+DEFAULT_SLOPE_SD, MIN_SLOPE_SD = 0.06, 0.02
+MIN_SLOPE_RUNS = 6
 # The spread of a stage duration in the log, when no history says, and the least it is taken to be.
 DEFAULT_STAGE_SIGMA, MIN_STAGE_SIGMA = 0.15, 0.03
 # Seconds of spread for a stage the history has not seen, when the backend has no stage history at all.
@@ -47,6 +50,21 @@ MIN_VARIANCE = 1e-12
 T90 = (3.0777, 1.8856, 1.6377, 1.5332, 1.4759, 1.4398, 1.4149, 1.3968, 1.3830, 1.3722, 1.3634, 1.3562, 1.3502, 1.3450, 1.3406, 1.3368, 1.3334, 1.3304, 1.3277, 1.3253, 1.3232, 1.3212, 1.3195, 1.3178, 1.3163, 1.3150, 1.3137, 1.3125, 1.3114, 1.3104)
 T975 = (12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042)
 NORMAL_90, NORMAL_975 = 1.2816, 1.9600
+
+
+def _variance(values: Sequence[float]) -> float:
+    """The sample variance, in plain floats (``statistics`` does exact fractions, which a forecast cannot afford)."""
+    centre = sum(values) / len(values)
+    return sum((value - centre) ** 2 for value in values) / (len(values) - 1)
+
+
+def _stdev(values: Sequence[float]) -> float:
+    return math.sqrt(_variance(values))
+
+
+def _pstdev(values: Sequence[float]) -> float:
+    centre = sum(values) / len(values)
+    return math.sqrt(sum((value - centre) ** 2 for value in values) / len(values))
 
 
 def _quantile(table: tuple[float, ...], normal: float, df: float) -> float:
@@ -126,6 +144,8 @@ class Plan:
     step_noise: float
     stage_factor: float
     other_sd: float
+    # How far a run's own slope strays from the backend's, which the steps still to come are uncertain by.
+    slope_sd: float
     # Time between the named stages: the mean and spread of a run's ``unaccounted`` seconds.
     overhead_mean: float
     overhead_sd: float
@@ -255,6 +275,7 @@ class _BackendStats:
     """What one backend's live history says that does not depend on the workload."""
 
     slope: float = 0.0
+    slope_sd: float = DEFAULT_SLOPE_SD
     first_ratio: float | None = None
     step_noise: float = DEFAULT_STEP_NOISE
     stage_factor: float = 1.0
@@ -308,7 +329,7 @@ def _slope(rows: Sequence[_Row]) -> float:
     if len(means) < MIN_SLOPE_EXECUTIONS:
         return 0.0
     average = sum(means) / len(means)
-    error = statistics.stdev(means) / math.sqrt(len(means))
+    error = _stdev(means) / math.sqrt(len(means))
     return average if abs(average) > student_t_975(len(means) - 1) * error else 0.0
 
 
@@ -320,6 +341,9 @@ def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
     ratios = [item.first_ratio for item in series if item.first_ratio is not None]
     if len(ratios) >= MIN_FIRST_GAP_RUNS:
         stats.first_ratio = statistics.median(ratios)
+    slopes = [item.slope for item in series if item.slope is not None]
+    if len(slopes) >= MIN_SLOPE_RUNS:
+        stats.slope_sd = max(MIN_SLOPE_SD, _stdev(slopes))
     factors = [row.stage_ratio for row in live if row.stage_ratio is not None]
     if factors:
         stats.stage_factor = sum(factors) / len(factors)
@@ -333,8 +357,8 @@ def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
                 durations[(row.run.pipeline, key)].append(stage.duration)
     groups = [values for values in durations.values() if len(values) >= 2]
     if groups:
-        stats.other_sd = math.sqrt(sum(statistics.variance(values) for values in groups) / len(groups))
-        logs = [statistics.stdev([math.log(max(value, 1e-3)) for value in values]) for values in groups]
+        stats.other_sd = math.sqrt(sum(_variance(values) for values in groups) / len(groups))
+        logs = [_stdev([math.log(max(value, 1e-3)) for value in values]) for values in groups]
         stats.stage_sigma = max(MIN_STAGE_SIGMA, statistics.median(logs))
     return stats
 
@@ -346,6 +370,7 @@ class FittedModel:
         self.skipped = skipped
         self._rows: dict[str, list[_Row]] = defaultdict(list)
         self._runs: dict[str, list[HistoryRun]] = defaultdict(list)
+        self._read: dict[int, _Row] = {}
         for run in history:
             try:
                 row = _read_row(run)
@@ -355,6 +380,7 @@ class FittedModel:
                 continue
             self._rows[run.backend].append(row)
             self._runs[run.backend].append(run)
+            self._read[id(run)] = row
         self._stats_cache: dict[str, _BackendStats] = {}
         self._fit_cache: dict[tuple[str, str | None, str, bool], _Ridge | None] = {}
         self._stage_cache: dict[tuple[str, str | None, str], tuple[float, float, float, float]] = {}
@@ -439,6 +465,7 @@ class FittedModel:
             step_noise=stats.step_noise,
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
+            slope_sd=stats.slope_sd,
             overhead_mean=overhead[0],
             overhead_sd=overhead[1],
         )
@@ -467,6 +494,7 @@ class FittedModel:
             step_noise=stats.step_noise,
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
+            slope_sd=stats.slope_sd,
             overhead_mean=overhead[0],
             overhead_sd=overhead[1],
         )
@@ -492,6 +520,7 @@ class FittedModel:
             step_noise=stats.step_noise,
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
+            slope_sd=stats.slope_sd,
             overhead_mean=0.0,
             overhead_sd=0.0,
         )
@@ -506,11 +535,11 @@ class FittedModel:
         return any(newest[name] != environment[name] for name in built)
 
     def _stages(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], same: list[_Row], scope: list[_Row]) -> tuple[tuple[StagePlan, ...], tuple[float, float]]:
-        runs = [row.run for row in self._rows[backend] if row.run.fidelity == LIVE] or [row.run for row in self._rows[backend]]
+        runs = [run for run in self._runs[backend] if run.fidelity == LIVE] or self._runs[backend]
         sequence = expected_run(runs, key, backend, pipeline)
         if sequence is None:
             return (), (0.0, 0.0)
-        read = _read_row(sequence)
+        read = self._read[id(sequence)]
         stats = self._backend_stats(backend)
         planned: list[StagePlan] = []
         features = feature_values(workload, self._frames.get(key))
@@ -522,7 +551,7 @@ class FittedModel:
             median, sigma = self._duration(backend, pipeline, name, features, samples, scope, stage.duration, stats.stage_sigma)
             planned.append(FixedStage(name, stage.stage, stage.source, median, sigma))
         totals = [row.unaccounted for row in (same if len(same) >= MIN_STAGE_SAMPLES else scope)]
-        overhead = (sum(totals) / len(totals), statistics.pstdev(totals)) if totals else (0.0, 0.0)
+        overhead = (sum(totals) / len(totals), _pstdev(totals)) if totals else (0.0, 0.0)
         return tuple(planned), overhead
 
     @staticmethod
@@ -539,7 +568,7 @@ class FittedModel:
         fit on pixels and frames over the scope, else the scope's median, else the one run that has it."""
         if len(samples) >= MIN_STAGE_SAMPLES:
             logs = [math.log(max(value, 1e-3)) for value in samples]
-            return statistics.median(samples), max(MIN_STAGE_SIGMA, statistics.stdev(logs))
+            return statistics.median(samples), max(MIN_STAGE_SIGMA, _stdev(logs))
         rows = [row for row in scope if name in row.keyed and "log_pixels" in row.features]
         if len(rows) >= 4 and len({row.features["log_pixels"] for row in rows}) >= 2:
             if "log_pixels" in features:

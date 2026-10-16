@@ -76,6 +76,8 @@ H3_STAGES = {
     "ffmpeg": "ffmpeg",
 }
 H3_UNITS = {"denoise": "steps", "ffmpeg": "frames"}
+# The stages that count steps: the ones a forecast reads a pace from.
+STEP_STAGES = frozenset({"sampling"} | {stage for stage, unit in H3_UNITS.items() if unit == "steps"})
 # h3_dit.c reports the denoise steps on one of two counters. Its GPU Euler loop prints `denoise enqueue` as each step
 # completes and `denoise N/N` once, at the end (E0049: 31 enqueue readings 57 to 81 s apart, then one `denoise 30/30`);
 # its RES solver prints `denoise` for every step and no enqueue. Both are the denoise stage's step counter, and the

@@ -10,6 +10,7 @@ import math
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any, TypeGuard
 
 import numpy as np
@@ -69,11 +70,11 @@ class HistoryRun:
     stages: tuple[HistoryStage, ...]
     output_frames: int | None = None
 
-    @property
+    @cached_property
     def signature(self) -> Signature:
         return signature(self.backend, self.pipeline, self.workload, self.environment)
 
-    @property
+    @cached_property
     def counted_stages(self) -> tuple[HistoryStage, ...]:
         """The stages of the run itself in time order, leaving out work done before it started (negative offsets)."""
         return tuple(sorted((stage for stage in self.stages if stage.start >= 0), key=lambda stage: (stage.start, stage.end)))
