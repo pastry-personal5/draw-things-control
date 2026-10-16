@@ -7,7 +7,7 @@ from typing import Any
 
 from framecontrol.jobs.events import JobEvent, StageFinished, StageStarted, TimingFinished, TimingStarted
 from framecontrol.jobs.timing.environment import HostLoad
-from framecontrol.jobs.timing.model import StageSpan
+from framecontrol.jobs.timing.model import Reading, StageSpan
 from framecontrol.jobs.timing.parsers import StageParser
 from framecontrol.jobs.timing.timeline import RunTimeline
 
@@ -34,8 +34,8 @@ class RunTiming:
         for stage, started, ended in before_start:
             self.timeline.before_start(stage, started, ended)
 
-    def reading(self, text: str, elapsed: float) -> str | None:
-        """Read a line the child wrote; the phase it names, or None."""
+    def reading(self, text: str, elapsed: float) -> Reading | None:
+        """Read a line the child wrote; the reading it gave, or None."""
         return self.timeline.reading(text, elapsed)
 
     def run_offset(self, elapsed: float) -> float:

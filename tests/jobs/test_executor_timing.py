@@ -142,6 +142,17 @@ class ExecutorTimingTests(JobTestCase):
         phases = {event.text.split("...")[0].split(" ")[0]: event.phase for event in outputs}
         self.assertEqual((phases["Starting"], phases["Sampling"], phases["Wrote:"]), ("Starting", "Sampling", None))
 
+    def test_a_stage_reading_carries_its_stage_and_counter_for_the_forecast(self) -> None:
+        recorder = self.observe(self.job())
+        outputs = [event for event in recorder.events if isinstance(event, RunOutput)]
+        sampling = [event for event in outputs if event.text.startswith("Sampling...")]
+        # Draw Things prints `Sampling... n / N` as step n starts: n - 1 steps are done, as the reading holds it.
+        self.assertEqual([(event.stage, event.done, event.total) for event in sampling[:2]], [("sampling", 0, 40), ("sampling", 1, 40)])
+        starting = next(event for event in outputs if event.text.startswith("Starting"))
+        self.assertEqual((starting.stage, starting.done, starting.total), ("starting", None, None))
+        other = next(event for event in outputs if event.text.startswith("Wrote:"))
+        self.assertEqual((other.stage, other.done, other.total), (None, None, None))
+
     def test_the_stages_add_up_to_the_run_for_a_run_that_fails_is_stopped_or_times_out(self) -> None:
         cases = {"failed": FakeResult(return_code=3), "stopped": FakeResult(return_code=0, termination_signal=signal.SIGTERM), "timed out": FakeResult(return_code=-15, timed_out=True, termination_signal=signal.SIGTERM)}
         for name, result in cases.items():

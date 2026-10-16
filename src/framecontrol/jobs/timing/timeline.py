@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Protocol
 
-from framecontrol.jobs.timing.model import SOURCE_FRAMECONTROL, StageSpan
+from framecontrol.jobs.timing.model import SOURCE_FRAMECONTROL, Reading, StageSpan
 from framecontrol.jobs.timing.parsers import StageParser
 from framecontrol.jobs.timing.tracker import SpanObserver, StageTracker
 
@@ -73,8 +73,8 @@ class RunTimeline:
         self._close_prepare(self._child_origin)
         self._tracker = StageTracker(origin=self._child_origin, on_started=self._started, on_finished=self._finished)
 
-    def reading(self, text: str, elapsed: float) -> str | None:
-        """Read a line the child wrote ``elapsed`` seconds after it started; the phase it names, or None for any other line."""
+    def reading(self, text: str, elapsed: float) -> Reading | None:
+        """Read a line the child wrote ``elapsed`` seconds after it started; the reading it gave, or None for any other line."""
         if self._tracker is None or self._child_origin is None or self._parser is None:
             return None
         readings = self._parser.readings(text, self._child_origin + elapsed)
@@ -82,7 +82,7 @@ class RunTimeline:
             return None
         for reading in readings:
             self._tracker.feed(reading)
-        return readings[0].phase
+        return readings[0]
 
     def child_finished(self, elapsed: float | None = None) -> None:
         """The child exited ``elapsed`` seconds after it started (now, when not given): its last stage runs to here."""

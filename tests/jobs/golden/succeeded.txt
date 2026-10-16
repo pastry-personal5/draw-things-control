@@ -27,8 +27,8 @@ INFO Job sunset-walk succeeded: 3/3 runs completed; manifest ROOT/output/sunset-
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "stage_started", "number": 1, "phase": null, "source": "framecontrol", "stage": "check_input", "start": -1.0}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "done": null, "end": -0.5, "kind": "stage_finished", "marks": [], "number": 1, "phase": null, "source": "framecontrol", "stage": "check_input", "start": -1.0, "total": null, "unit": null}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "done": null, "end": 0.5, "kind": "stage_finished", "marks": [], "number": 1, "phase": null, "source": "framecontrol", "stage": "prepare", "start": 0.0, "total": null, "unit": null}
-{"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "run_output", "number": 1, "offset": 1.0, "percent": null, "phase": null, "progress": [3, 8], "stream": "stdout", "text": "Sampling 3/8"}
-{"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "run_output", "number": 1, "offset": 1.0, "percent": null, "phase": null, "progress": null, "stream": "stderr", "text": "a warning"}
+{"at": "2026-09-24T15:30:12+ZZ:ZZ", "done": null, "kind": "run_output", "number": 1, "offset": 1.0, "percent": null, "phase": null, "progress": [3, 8], "stage": null, "stream": "stdout", "text": "Sampling 3/8", "total": null}
+{"at": "2026-09-24T15:30:12+ZZ:ZZ", "done": null, "kind": "run_output", "number": 1, "offset": 1.0, "percent": null, "phase": null, "progress": null, "stage": null, "stream": "stderr", "text": "a warning", "total": null}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "stage_started", "number": 1, "phase": null, "source": "child", "stage": "child", "start": 0.5}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "done": null, "end": 1.0, "kind": "stage_finished", "marks": [], "number": 1, "phase": null, "source": "child", "stage": "child", "start": 0.5, "total": null, "unit": null}
 {"at": "2026-09-24T15:30:12+ZZ:ZZ", "kind": "stage_started", "number": 1, "phase": null, "source": "framecontrol", "stage": "verify", "start": 1.5}

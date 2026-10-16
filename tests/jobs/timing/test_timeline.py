@@ -139,12 +139,14 @@ class RunTimelineTests(unittest.TestCase):
         self.assertEqual(sorted(span.stage for span in recorder.started), sorted(span.stage for span in recorder.finished))
         self.assertIn("unaccounted", [span.stage for span in recorder.finished])
 
-    def test_the_reading_a_line_gave_names_its_phase(self) -> None:
+    def test_the_reading_a_line_gave_is_returned_whole(self) -> None:
         clock, recorder = FakeClock(), Recorder()
         timeline = timeline_of(clock, H3StageParser(), recorder)
         timeline.begin()
         timeline.child_started()
-        self.assertEqual(timeline.reading("denoise 3/30", 100.0), "denoise")
+        reading = timeline.reading("denoise 3/30", 100.0)
+        assert reading is not None
+        self.assertEqual((reading.stage, reading.phase, reading.done, reading.total), ("denoise", "denoise", 3, 30))
         self.assertIsNone(timeline.reading("loading", 101.0))
 
     def test_without_a_timeline_a_timer_times_nothing(self) -> None:

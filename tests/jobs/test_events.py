@@ -49,7 +49,7 @@ class EventJsonTests(unittest.TestCase):
         return [
             JobStarted(at=self.AT, job_name="walk", job_file="/jobs/walk.yaml", source_text="name: walk\n", mode="i2v", total_runs=2, output_directory="/out", input="/in/a.png", model="m.ckpt", seed=7, seed_source="config_file", cooldown=CooldownPolicy(mode="manual", seconds=90), cooldown_source="job", manifest=None, log=None, config_override={"steps": 8}, input_resize={"target": [832, 448]}, execution_id="E0001"),
             RunStarted(at=self.AT, number=1, total=2, pair="walk", positive="p", negative=None, input="/in/a.png", resized_input=None, output="o.mov", last_frame="o-last-frame.png", command=("draw-things-cli", "generate", "--api-key", "[redacted]")),
-            RunOutput(at=self.AT, number=1, stream="stdout", text="3/8", progress=(3, 8), percent=None, phase="denoise", offset=12.25),
+            RunOutput(at=self.AT, number=1, stream="stdout", text="3/8", progress=(3, 8), percent=None, phase="denoise", offset=12.25, stage="denoise", done=3, total=8),
             StageStarted(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5),
             StageFinished(at=self.AT, number=1, stage="denoise", phase="denoise enqueue", source="child", start=24.5, end=2174.2, done=30, total=30, unit="steps", marks=((120.5, 1), (190.25, 2))),
             TimingStarted(at=self.AT, number=1, backend="h3", pipeline="r2av", workload={"width": 832, "height": 448, "frames": 243, "steps": 30, "references": {"image": 2}}, environment={"executable_bytes": 1024, "load_start": [1.5, 1.25, 1.0]}),

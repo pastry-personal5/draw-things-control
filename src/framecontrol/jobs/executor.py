@@ -40,6 +40,7 @@ from framecontrol.jobs.run_timing import BeforeStart, RunTiming
 from framecontrol.jobs.text import report_ignored_config, seconds_text
 from framecontrol.jobs.timing.environment import HostLoad
 from framecontrol.jobs.timing.environment import host_load as read_host_load
+from framecontrol.jobs.timing.model import Reading
 from framecontrol.jobs.timing.parsers import StageParser
 
 if TYPE_CHECKING:
@@ -690,12 +691,13 @@ class JobExecutor:
         """A callback that turns each child line of run ``number`` into a RunOutput, and reads it as a stage reading."""
 
         def on_message(message: ProcessMessage) -> None:
-            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent, phase=self._read_phase(message), offset=self._timing.run_offset(message.elapsed_seconds) if self._timing is not None else message.elapsed_seconds))
+            reading = self._read_stage(message)
+            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent, phase=reading.phase if reading is not None else None, offset=self._timing.run_offset(message.elapsed_seconds) if self._timing is not None else message.elapsed_seconds, stage=reading.stage if reading is not None else None, done=reading.done if reading is not None else None, total=reading.total if reading is not None else None))
 
         return on_message
 
-    def _read_phase(self, message: ProcessMessage) -> str | None:
-        """The phase ``message`` names, read into the run's timeline; None for a line that names none. A parser that fails
+    def _read_stage(self, message: ProcessMessage) -> Reading | None:
+        """The reading ``message`` gave, read into the run's timeline; None for a line that is none. A parser that fails
         ends the run's reading of stages, not the run (timing never stops a run)."""
         if self._timing is None or self._timing_read_failed:
             return None

@@ -123,6 +123,11 @@ class RunOutput:
     # Seconds after RunStarted that the line was written (stamped as its last byte arrived), on the same clock as a stage's
     # offsets.
     offset: float
+    # The stage a line read as a stage reading belongs to, and the units it counts (Draw Things' ``done`` is steps done,
+    # as ``Reading`` holds it); None for any other line, and ``done`` and ``total`` None for a reading with no counter.
+    stage: str | None = None
+    done: int | None = None
+    total: int | None = None
 
 
 @dataclass(frozen=True)
