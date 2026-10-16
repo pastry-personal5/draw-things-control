@@ -28,6 +28,9 @@ ALLOWED = {
 # The three imports between front ends, each by `cli/app.py` alone: `fc tui` starts the TUI app, `fc serve` the HTTP
 # API and gRPC service, and `fc mcp` the MCP server.
 FRONT_END_EXCEPTIONS = {(f"{PACKAGE}.cli.app", f"{PACKAGE}.tui.app"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.server.serve"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.mcp_server.app")}
+# A front end shows the forecast the server made; none builds one. The model and what feeds it are the server's alone.
+FORECAST_MODULES = {f"{PACKAGE}.jobs.timing.{name}" for name in ("features", "fit", "forecast")} | {f"{PACKAGE}.services.timing_history", f"{PACKAGE}.services.forecast_publisher"}
+FORECAST_FREE_LAYERS = {"cli", "tui", "mcp_server"}
 # The frameworks a front end owns; the layers below never import them.
 FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "mcp_types", "httpx", "rich", "grpc"}
 FRAMEWORK_LAYERS = {"core", "jobs", "state", "services"}
@@ -42,6 +45,15 @@ def imports_of(source: str) -> set[str]:
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             found.add(node.module)
+    return found
+
+
+def imported_modules(source: str) -> set[str]:
+    """Every module a source imports, and each name `from module import name` might name as a module."""
+    found = imports_of(source)
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            found.update(f"{node.module}.{alias.name}" for alias in node.names)
     return found
 
 
@@ -61,6 +73,8 @@ def violations(files: dict[str, str]) -> list[str]:
                     problems.append(f"{module} imports {imported}: {layer} may not import {target}")
             elif root in FRAMEWORKS and layer in FRAMEWORK_LAYERS:
                 problems.append(f"{module} imports {imported}: {layer} may not import a framework")
+        if layer in FORECAST_FREE_LAYERS:
+            problems.extend(f"{module} imports {imported}: {layer} shows a forecast and may not build one" for imported in sorted(imported_modules(source) & FORECAST_MODULES))
     return problems
 
 
@@ -156,6 +170,29 @@ class RuleTests(unittest.TestCase):
         for framework in ("typer", "textual.app", "fastapi", "rich.text"):
             self.assertEqual(len(self.bad("services.history", f"import {framework}")), 1, framework)
         self.assertEqual(self.bad("tui.app", "from textual.app import App"), [])
+
+
+class ForecastRuleTests(unittest.TestCase):
+    """A front end shows the forecast the server made; none may build one, so there is no second copy of the model."""
+
+    def bad(self, module: str, source: str) -> list[str]:
+        return violations({f"{PACKAGE}.{module}": source})
+
+    def test_a_front_end_may_not_import_the_model_or_what_feeds_it(self) -> None:
+        for front_end in ("tui.app", "cli.queue_app", "mcp_server.tools"):
+            for imported in ("jobs.timing.features", "jobs.timing.fit", "jobs.timing.forecast", "services.timing_history", "services.forecast_publisher"):
+                self.assertTrue(self.bad(front_end, f"from {PACKAGE}.{imported} import Anything"), f"{front_end} imports {imported}")
+        self.assertTrue(self.bad("tui.app", f"from {PACKAGE}.jobs.timing import forecast"))
+        self.assertTrue(self.bad("cli.queue_app", f"import {PACKAGE}.jobs.timing.fit"))
+
+    def test_the_server_and_the_services_may(self) -> None:
+        self.assertEqual(self.bad("services.queue_worker", f"from {PACKAGE}.services.forecast_publisher import ForecastPublisher"), [])
+        self.assertEqual(self.bad("services.queue_worker", f"from {PACKAGE}.jobs.timing.forecast import Forecaster"), [])
+        self.assertEqual(self.bad("server.entry_snapshot", f"from {PACKAGE}.jobs.timing.forecast import Forecast"), [])
+
+    def test_a_front_end_may_read_the_arithmetic_and_the_replay(self) -> None:
+        self.assertEqual(self.bad("tui.app", f"from {PACKAGE}.services.forecast_view import progress"), [])
+        self.assertEqual(self.bad("cli.timing_app", f"from {PACKAGE}.services.timing_replay import replay"), [])
 
 
 class McpServerImportTests(unittest.TestCase):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -71,6 +72,22 @@ class RunTimingRow:
         return cls(run=row["run"], backend=row["backend"], pipeline=row["pipeline"], workload=json.loads(row["workload"]), environment=json.loads(row["environment"]), fidelity=row["fidelity"], complete=bool(row["complete"]))
 
 
+@dataclass(frozen=True)
+class CompleteTiming:
+    """A complete run as the forecast reads it: its row, the frames its output measured, and its stages in time order."""
+
+    # The execution's public number (E0047 is 47), which is how history orders and groups.
+    execution: int
+    run: int
+    backend: str
+    pipeline: str | None
+    workload: dict[str, Any]
+    environment: dict[str, Any]
+    fidelity: str
+    output_frames: int | None
+    stages: tuple[StageRow, ...]
+
+
 def _marks_json(span: StageSpan) -> str:
     marks = [[offset, done] for offset, done in thin_marks(span.marks)]
     if span.uncertain and marks:
@@ -119,6 +136,37 @@ class TimingRepository:
     def timing_of(self, execution_id: int, run: int) -> RunTimingRow | None:
         row = self._database.connection().execute("SELECT * FROM run_timing WHERE execution_id = ? AND run = ?", (execution_id, run)).fetchone()
         return RunTimingRow.from_row(row) if row is not None else None
+
+    def complete_runs(self) -> tuple[list[CompleteTiming], int]:
+        """Every complete run with its stages, oldest first, and the number of rows that could not be read (a column that is not
+        what it should be) and were left out: the whole history in two queries."""
+        connection = self._database.connection()
+        heads = connection.execute("SELECT t.execution_id, e.execution_number, t.run, t.backend, t.pipeline, t.workload, t.environment, t.fidelity, r.output_frames FROM run_timing t JOIN executions e ON e.id = t.execution_id LEFT JOIN runs r ON r.execution_id = t.execution_id AND r.number = t.run WHERE t.complete = 1 ORDER BY e.execution_number, t.run").fetchall()
+        stage_rows = connection.execute("SELECT s.* FROM run_stages s JOIN run_timing t ON t.execution_id = s.execution_id AND t.run = s.run WHERE t.complete = 1 ORDER BY s.execution_id, s.run, s.start_offset, s.end_offset, s.id").fetchall()
+        by_run: dict[tuple[int, int], list[sqlite3.Row]] = defaultdict(list)
+        for row in stage_rows:
+            by_run[(row["execution_id"], row["run"])].append(row)
+        runs: list[CompleteTiming] = []
+        skipped = 0
+        for head in heads:
+            try:
+                workload, environment = json.loads(head["workload"]), json.loads(head["environment"])
+                if not isinstance(workload, dict) or not isinstance(environment, dict):
+                    raise ValueError("workload and environment are mappings")
+                stages = tuple(StageRow.from_row(row) for row in by_run.get((head["execution_id"], head["run"]), ()))
+            except (ValueError, TypeError, KeyError, IndexError):
+                skipped += 1
+                continue
+            runs.append(CompleteTiming(head["execution_number"], head["run"], head["backend"], head["pipeline"], workload, environment, head["fidelity"], head["output_frames"], stages))
+        return runs, skipped
+
+    def completion_mark(self) -> tuple[int, tuple[int, int] | None]:
+        """How many complete runs there are and the newest, as (execution number, run): what a fit made from them is cached
+        by, since a run that completes adds one and pruning removes some."""
+        connection = self._database.connection()
+        count = connection.execute("SELECT COUNT(*) FROM run_timing WHERE complete = 1").fetchone()[0]
+        newest = connection.execute("SELECT e.execution_number, t.run FROM run_timing t JOIN executions e ON e.id = t.execution_id WHERE t.complete = 1 ORDER BY e.execution_number DESC, t.run DESC LIMIT 1").fetchone()
+        return count, (newest["execution_number"], newest["run"]) if newest is not None else None
 
     def has_timing(self, execution_id: int) -> bool:
         """Whether any run of the execution has timing recorded."""

@@ -186,3 +186,55 @@ class RecorderTimingTests(StoreCase):
         execution = self.store.executions.get(execution_id)
         assert execution is not None
         self.assertEqual(execution.runs[0].status, "succeeded")
+
+
+class CompleteRunsTests(StoreCase):
+    """What the forecast fits on: the complete runs, each with its stages, in the order they ran."""
+
+    def keep(self, execution_id: int, run: int, *, complete: bool = True, fidelity: str = "live", spans: list[StageSpan] | None = None) -> None:
+        self.store.timing.replace_run(execution_id, run, backend="draw-things-cli", pipeline="i2v", workload={"steps": 2}, environment={"model": "m"}, fidelity=fidelity, complete=complete, spans=spans if spans is not None else [span()])
+
+    def test_only_complete_runs_are_read_with_their_stages_and_the_execution_number(self) -> None:
+        first = self.add("one", started=iso(3), finished=iso(3))
+        second = self.add("two", started=iso(2), finished=iso(2), runs=2)
+        self.keep(first, 1)
+        self.keep(second, 1)
+        self.keep(second, 2, complete=False)
+        rows, skipped = self.store.timing.complete_runs()
+        self.assertEqual(skipped, 0)
+        self.assertEqual([(row.execution, row.run) for row in rows], [(1, 1), (2, 1)])
+        self.assertEqual((rows[0].backend, rows[0].pipeline, rows[0].workload, rows[0].fidelity), ("draw-things-cli", "i2v", {"steps": 2}, "live"))
+        self.assertEqual([stage.stage for stage in rows[0].stages], ["denoise"])
+
+    def test_a_run_joins_the_frames_its_output_measured(self) -> None:
+        execution = self.add("walk", started=iso(1), finished=iso(1))
+        self.keep(execution, 1)
+        self.store.executions.finish_run(execution, 1, status="succeeded", exit_code=0, seconds=1.0, output="a.mov", last_frame=None, output_frames=81)
+        (row,), _ = self.store.timing.complete_runs()
+        self.assertEqual(row.output_frames, 81)
+
+    def test_a_row_whose_marks_cannot_be_read_is_skipped_and_counted(self) -> None:
+        execution = self.add("walk", started=iso(1), finished=iso(1), runs=2)
+        self.keep(execution, 1)
+        self.keep(execution, 2)
+        self.store.timing._database.connection().execute("UPDATE run_stages SET marks = 'not json' WHERE run = 2")
+        rows, skipped = self.store.timing.complete_runs()
+        self.assertEqual(([row.run for row in rows], skipped), ([1], 1))
+
+    def test_a_row_whose_workload_cannot_be_read_is_skipped_and_counted(self) -> None:
+        execution = self.add("walk", started=iso(1), finished=iso(1))
+        self.keep(execution, 1)
+        self.store.timing._database.connection().execute("UPDATE run_timing SET workload = '{broken'")
+        rows, skipped = self.store.timing.complete_runs()
+        self.assertEqual((rows, skipped), ([], 1))
+
+    def test_the_mark_changes_when_a_run_completes_and_when_one_is_pruned(self) -> None:
+        old = self.add("old", started=iso(15.5), finished=iso(15))
+        recent = self.add("recent", started=iso(1), finished=iso(1))
+        self.assertEqual(self.store.timing.completion_mark(), (0, None))
+        self.keep(old, 1)
+        self.keep(recent, 1)
+        count, newest = self.store.timing.completion_mark()
+        self.assertEqual((count, newest), (2, (2, 1)))
+        self.store.prune()
+        self.assertEqual(self.store.timing.completion_mark(), (1, (2, 1)))
