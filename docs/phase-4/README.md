@@ -71,5 +71,5 @@ Decisions and notable changes are recorded in
 - Framecontrol is the product and app name, with `fc` as its installed command and existing state safely migrated.
 - Version-2 jobs resolve named profiles and scoped defaults into a frozen per-run plan; H3 duration and Draw Things temporal control can vary by run without duplicated H3 frame values.
 - Every run of both backends records a measured stage timeline that is kept and pruned with its execution, as defined in Milestone 10.
-- The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI, `fc queue wait`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
+- The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI's work status, `fc queue add --wait` and `fc queue show`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
 - Graph-based metadata is produced, consumed, and documented as defined in Milestone 20.
