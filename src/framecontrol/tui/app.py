@@ -21,7 +21,7 @@ from framecontrol.services.store_provider import StoreProvider
 from framecontrol.services.toolkit import Toolkit
 from framecontrol.tui.deletion import DeleteFlow, DeleteSelection
 from framecontrol.tui.feed import QueueFeed
-from framecontrol.tui.live_run import LiveRun, PastRun, latest_past_run
+from framecontrol.tui.live_run import LiveRun
 from framecontrol.tui.panes.cli_output import LOW_MARKER
 from framecontrol.tui.preferences import VerboseLevel, load_verbose_level, save_verbose_level, wants_output
 from framecontrol.tui.queue_client import ApiError, cancel, hold, list_queue, park, release, resume, show, submit, unpark
@@ -143,8 +143,6 @@ class FramecontrolApp(App[None]):
         if live is not None and self.job_running:
             if level == "medium":
                 live.output_window_start = live.now()
-            elif level == "low":
-                live.forget_progress()
         if main is None:
             return
         if level == "low" and self.job_running:
@@ -365,12 +363,3 @@ class FramecontrolApp(App[None]):
             self.say(error.text, "red")
             return
         self.say(queue_entry_detail_text(entry))
-
-    def read_past_run(self) -> PastRun | None:
-        """The latest successful run of any job, to estimate a newly started (or seeded) one from; called off the
-        event loop (``asyncio.to_thread``), since it is a blocking read. None when the store cannot say."""
-        try:
-            store = self.store_provider.get(create=False)
-        except Exception:
-            return None
-        return latest_past_run(store) if store is not None else None

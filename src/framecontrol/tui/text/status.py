@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from rich.text import Text
 
 from framecontrol.core.yaml_files import is_yaml_file
+from framecontrol.jobs.events import RunStatus
 from framecontrol.jobs.text import duration_text
+from framecontrol.services.forecast_view import end_text, progress, seconds_left, show_range, stage_text, whole_duration
 from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_park_text import park_point
-from framecontrol.tui.estimate import Estimate, job_estimate, last_succeeded, moment, run_estimate, wait_fraction
-from framecontrol.tui.live_run import LiveRun
+from framecontrol.tui.live_run import FinishedRun, LiveRun
 from framecontrol.tui.preferences import VerboseLevel
 from framecontrol.tui.text.common import STATUS_STYLE
 
@@ -22,14 +23,23 @@ PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "coo
 _NOTICE_PHASES = ("starting", "stopping", "parking", "not_started", "ended")
 
 
-def progress_text(live: LiveRun) -> str | None:
-    """Step progress as ``3/8, 37%``, or None before the child reports any."""
-    parts = []
-    if live.progress is not None:
-        parts.append(f"{live.progress[0]}/{live.progress[1]}")
-    if live.percent is not None:
-        parts.append(f"{live.percent}%")
-    return ", ".join(parts) or None
+def moment(live: LiveRun) -> float:
+    """The time the elapsed seconds are read at: now, or when a stop was requested, so a stopping job's bars stay still."""
+    return live.stopped_at if live.stopped_at is not None else live.now()
+
+
+def wait_fraction(live: LiveRun, now: float) -> tuple[float, float] | None:
+    """During a cooldown: the share of the wait done and the seconds left."""
+    if live.cooldown is None or live.cooldown_ends_at is None:
+        return None
+    left = max(0.0, live.cooldown_ends_at - now)
+    seconds = live.cooldown.seconds
+    return (1.0 - left / seconds if seconds > 0 else 1.0), left
+
+
+def last_succeeded(live: LiveRun) -> FinishedRun | None:
+    """This job's last run that finished successfully; a failed run never replaces it."""
+    return next((run for run in reversed(live.finished_runs) if run.status == RunStatus.SUCCEEDED), None)
 
 
 def cooldown_text(live: LiveRun) -> Text:
@@ -43,18 +53,18 @@ def cooldown_text(live: LiveRun) -> Text:
 
 
 def run_summary_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text:
-    """The generation output's run summary: the active run, the cooldown, or what the job is doing. At verbose low no
-    progress is shown: it arrives only as run output, which low never receives, so it would freeze at a stale reading."""
+    """The generation output's run summary: the active run, the cooldown, or what the job is doing. The stage and its units
+    come from the server's forecast, which low receives too, so they are shown at every verbose level."""
     if live is None:
         return Text("No job has run in this session", style="dim")
     if live.active_run is not None and live.run_started_at is not None:
         elapsed = max(0.0, live.now() - live.run_started_at)
         text = Text(f"Run {live.active_run}/{len(live.runs)}", style="bold")
         text.append(f"  {duration_text(int(elapsed))} elapsed")
-        progress = progress_text(live) if level != "low" else None
-        if progress is not None:
-            text.append("  progress ", style="bold")
-            text.append(progress)
+        stage = stage_text(live.forecast)
+        if stage is not None:
+            text.append("  stage ", style="bold")
+            text.append(stage)
         text.append(f"  {live.active_output}", style="dim")
         if live.stop_requested:
             text.append("  stopping", style="bold yellow")
@@ -74,18 +84,6 @@ BAR_LEFT = "░"
 
 
 OTHER_PROCESS_TEXT = "A job is running in another process"
-
-
-def whole_duration(seconds: float) -> str:
-    """A duration in whole seconds, as the work status writes it: ``7 min 12 s``, never tenths."""
-    return duration_text(max(0, round(seconds)))
-
-
-def end_text(remaining: float, now: datetime) -> str:
-    """When something left ``remaining`` seconds from ``now`` ends: ``ends ~16:42 (in 23 min)``, dated when it is another day."""
-    end = now + timedelta(seconds=remaining)
-    clock = end.strftime("%H:%M") if end.date() == now.date() else end.strftime("%m-%d %H:%M")
-    return f"ends ~{clock} (in {whole_duration(remaining)})"
 
 
 def bar_line(label: str, fraction: float | None, tail: str, width: int) -> Text:
@@ -149,19 +147,18 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
         return lines
     if live.started is None:
         return lines
-    # Once a stop is requested, moment() stays at that time, so the bars stay where the stop found them. A park
+    # Once a stop is requested, the forecast is read at that moment, so the bars stay where the stop found them. A park
     # reservation does not freeze them, since the run goes on; the Job bar reads "parking" in place of its end.
-    now_moment, wall = moment(live), live.wall_now()
-    lines[1] = bar_line("Job", *_bar_parts(live, job_estimate(live, now_moment), wall, "parking" if live.park_requested else None), width)
+    now_moment, shown = moment(live), live.shown_at()
+    forecast = live.forecast or {}
+    lines[1] = bar_line("Job", *_bar_parts(live, forecast.get("job"), shown, "parking" if live.park_requested else None), width)
     waiting = wait_fraction(live, now_moment)
     if waiting is not None and live.cooldown is not None:
         fraction, left = waiting
-        lines[2] = bar_line("Wait", fraction, "stopping" if live.stop_requested else end_text(left, wall), width)
+        lines[2] = bar_line("Wait", fraction, "stopping" if live.stop_requested else end_text(left, live.wall_now()), width)
         lines[3] = Text(f"next: run {live.cooldown.after_run + 1}/{len(live.runs)}")
     elif live.active_run is not None:
-        run = run_estimate(live, now_moment)
-        tail = "finishing" if run.finishing else None
-        lines[2] = bar_line("Run", *_bar_parts(live, run, wall, tail), width)
+        lines[2] = bar_line("Run", *_bar_parts(live, forecast.get("run"), shown), width)
         lines[3] = _details_line(live, now_moment)
     return lines
 
@@ -176,14 +173,21 @@ def _finished_lines(live: LiveRun, lines: list[Text]) -> list[Text]:
     return lines
 
 
-def _bar_parts(live: LiveRun, estimate: Estimate, wall: datetime, tail: str | None = None) -> tuple[float | None, str]:
+def _bar_parts(live: LiveRun, span: dict[str, float] | None, shown: float, tail: str | None = None) -> tuple[float | None, str]:
+    """The share done and the words after it, from a published span read at ``shown`` (epoch seconds): its end, with the
+    range when that is wide enough to mention; ``estimating`` when the server gave no number."""
+    if span is None:
+        return None, "stopping" if live.stop_requested else tail or "estimating"
+    fraction = progress(span, shown)
     if live.stop_requested:
-        return estimate.fraction, "stopping"
+        return fraction, "stopping"
     if tail is not None:
-        return estimate.fraction, tail
-    if estimate.remaining is None:
-        return estimate.fraction, "estimating"
-    return estimate.fraction, end_text(estimate.remaining, wall)
+        return fraction, tail
+    left = seconds_left(span, shown)
+    if left <= 0:
+        return fraction, "finishing"
+    bounds = (max(0.0, span["low"] - shown), max(0.0, span["high"] - shown)) if show_range(span, shown) else None
+    return fraction, end_text(left, datetime.fromtimestamp(shown), bounds)
 
 
 def _phase_line(live: LiveRun) -> Text:
@@ -223,10 +227,9 @@ def job_display_name(path: Path) -> str:
 
 def _details_line(live: LiveRun, now: float) -> Text:
     parts = []
-    if live.last_step is not None:
-        parts.append(f"step {live.last_step.step}/{live.last_step.total}")
-    elif live.percent is not None:
-        parts.append(f"{live.percent}%")
+    stage = stage_text(live.forecast)
+    if stage is not None:
+        parts.append(stage)
     if live.run_started_at is not None:
         parts.append(f"{whole_duration(now - live.run_started_at)} elapsed")
     return Text("  ".join(parts))

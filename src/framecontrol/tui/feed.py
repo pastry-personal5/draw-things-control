@@ -22,7 +22,7 @@ from framecontrol.core.client_config import read_client_token
 from framecontrol.core.cooldown import CooldownPolicy, parse_cooldown
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.core.network import grpc_target
-from framecontrol.jobs.events import EVENT_TYPES_BY_KIND, CooldownStarted, JobEvent, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, event_from_dict
+from framecontrol.jobs.events import EVENT_TYPES_BY_KIND, CooldownStarted, JobEvent, JobStarted, RunFinished, RunStarted, RunStatus, event_from_dict
 from framecontrol.state.queue import FINISHED_STATES
 from framecontrol.tui.client import CALLER, CALLER_HEADER, GrpcStubFactory, MonitorStub
 from framecontrol.tui.generated import monitor_pb2, monitor_pb2_grpc
@@ -117,6 +117,9 @@ class QueueFeed:
             return
         self._last_event_id = event.id
         data = json.loads(event.data_json)
+        if event.kind == "forecast_updated":
+            self._apply_forecast(data)
+            return
         if event.kind.startswith("queue_"):
             self._app.refresh_queue()
             if event.kind == "queue_entry_changed":
@@ -141,6 +144,13 @@ class QueueFeed:
         if live is not None and live.queue_id == queue_id and not live.ended:
             self._end_followed(live)
 
+    def _apply_forecast(self, data: dict[str, Any]) -> None:
+        """The server republished the running job's forecast, or cleared it. Kept for the followed entry only; it is shown at
+        the next render (at verbose low the status refreshes once a minute, whatever arrives)."""
+        live = self._app.live
+        if live is not None and live.queue_id == data["queue_id"] and not live.ended:
+            live.apply_forecast(data["forecast"])
+
     def _apply_park_changed(self, data: dict[str, Any]) -> None:
         """A park reservation made or withdrawn anywhere (this TUI, another, or ``fc queue``), for the followed entry;
         shown at once at every verbose level, as a stop is."""
@@ -158,7 +168,6 @@ class QueueFeed:
             app.live = live
             if app.main is not None:
                 app.main.running.job_started()
-            live.past_run = await asyncio.to_thread(app.read_past_run)
             return
         if app.live is None:
             return
@@ -203,7 +212,6 @@ class QueueFeed:
         if execution is not None:
             _seed_runs(live, execution["runs"])
         _seed_active_run(live, detail)
-        live.past_run = await asyncio.to_thread(self._app.read_past_run)
         self._app.live = live
         if self._app.main is not None:
             self._app.main.running.job_started(seeded=True)
@@ -264,10 +272,12 @@ def _seed_runs(live: LiveRun, runs: list[dict[str, Any]]) -> None:
 
 
 def _seed_active_run(live: LiveRun, detail: dict[str, Any]) -> None:
-    """Layers the still-running run's live position on: its elapsed time (the seeded RunStarted above applied
-    "now" as its start, corrected here to the real start), and its step counter, when draw-things-cli has shown
-    one -- everything ``GET /queue/{id}``'s own current_run, current_run_elapsed_seconds, current_step, and
-    current_step_total cover about the active run that a finished run's stored row cannot."""
+    """Layers the still-running run's live position on: its elapsed time (the seeded RunStarted above applied "now" as its
+    start, corrected here to the real start), and the forecast the server last published -- everything
+    ``GET /queue/{id}``'s own current_run, current_run_elapsed_seconds, and forecast cover about the active run that a
+    finished run's stored row cannot. A forecast is absolute in time, so one replayed after a reconnect, or a switch out of
+    verbose low, is old but not wrong."""
+    live.apply_forecast(detail.get("forecast"))
     if detail.get("current_run") is None:
         _seed_cooldown(live, detail)
         return
@@ -276,8 +286,6 @@ def _seed_active_run(live: LiveRun, detail: dict[str, Any]) -> None:
         live.apply(RunStarted(at="", number=detail["current_run"], total=len(live.runs), pair="?", positive="", negative=None, input=None, resized_input=None, output="", last_frame=None, command=()))
     if live.run_started_at is not None:
         live.run_started_at = live.now() - elapsed
-    if detail.get("current_step") is not None and detail.get("current_step_total") is not None:
-        live.apply(RunOutput(at="", number=detail["current_run"], stream="stdout", text="", progress=(detail["current_step"], detail["current_step_total"]), percent=None, phase=None, offset=0.0))
 
 
 def _seed_cooldown(live: LiveRun, detail: dict[str, Any]) -> None:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -320,6 +321,19 @@ class QueueCliTests(JobTestCase):
         self.assertEqual(lines[0], "Queue held since 2026-09-29 12:04:05 (by Q0001)")
         self.assertEqual([line.split()[1] for line in lines[2:]], ["parking", "parked"])
 
+    def test_show_prints_the_forecast_of_a_running_entry_and_nothing_for_one_without(self) -> None:
+        base = datetime(2026, 9, 29, 14, 0, 0).timestamp()
+        run = {"started_at": base, "end_at": base + 1200, "low": base + 1195, "high": base + 1205, "floor": 0.3, "progress": 0.0, "seconds_left": 1200.0}
+        job = {"started_at": base, "end_at": base + 2400, "low": base + 2395, "high": base + 2405, "floor": 0.1, "progress": 0.0, "seconds_left": 2400.0}
+        forecast = {"as_of": base, "stage": "denoise", "stage_done": 12, "stage_total": 30, "run": run, "job": job, "basis": {"tier": "signature", "fidelity": "live", "runs": 8, "executions": 4, "build_changed": False, "unseen": [], "penalty": None, "skipped": 0}}
+        detail = {"queue_id": "Q0001", "state": "running", "job_path": "/jobs/walk.yaml", "execution_id": "E0001", "total_runs": 3, "succeeded": 1, "current_run": 2, "cooldown_until": None, "error": None, "resumable": False, "resume_refused_reason": "Q0001 is running"}
+        self.route(lambda request: self.json_response(200, {**detail, "forecast": forecast}))
+        result = self.invoke("show", "Q0001")
+        self.assertIn("  forecast: denoise 12/30; run ends ~14:20 (in 20 min), job ends ~14:40 (in 40 min)", result.stdout)
+        self.assertIn("  based on: 8 runs from 4 executions (signature, live)", result.stdout)
+        self.route(lambda request: self.json_response(200, {**detail, "forecast": None}))
+        self.assertNotIn("forecast", self.invoke("show", "Q0001").stdout)
+
     def test_show_names_the_park_reservation_and_the_hold(self) -> None:
         self.route(lambda request: self.json_response(200, self.entry_detail()))
         result = self.invoke("show", "Q0001")
@@ -359,6 +373,58 @@ class QueueCliTests(JobTestCase):
                 "Q0001 parked after run 5/7; 'fc queue resume Q0001' continues at run 6",
             ],
         )
+
+    def forecast_snapshot(self, *, run: int, done: int, now: float, minutes_left: float = 20.0, **changes: Any) -> monitor_pb2.QueueEntrySnapshot:
+        """A running snapshot with a forecast whose run ends in ``minutes_left`` minutes and whose job ends in twice that."""
+
+        def span(seconds: float) -> dict[str, float]:
+            return {"started_at": now - 600.0, "end_at": now + seconds, "low": now + seconds - 5.0, "high": now + seconds + 5.0, "floor": 0.0}
+
+        forecast = monitor_pb2.Forecast(as_of=now, stage="denoise", stage_done=done, stage_total=30, run=span(minutes_left * 60), job=span(minutes_left * 120), basis=monitor_pb2.ForecastBasis(tier="signature", fidelity="live", runs=8, executions=4))
+        return monitor_pb2.QueueEntrySnapshot(queue_id="Q0001", state="running", total_runs=3, current_run=run, park_requested=False, queue_held=False, forecast=forecast, **changes)
+
+    def test_add_wait_prints_the_stage_and_the_ends_with_each_runs_start_and_at_most_once_a_minute_after(self) -> None:
+        from unittest import mock
+
+        wall = datetime(2026, 9, 29, 14, 0, 0).timestamp()
+        snapshot = monitor_pb2.QueueEntrySnapshot
+        clock = [1000.0]
+        # Run 1 starts, its forecast is republished 20 s and 70 s after the first line, then run 2 starts.
+        script = [(0.0, 1, 3), (20.0, 1, 4), (70.0, 1, 7), (71.0, 2, 1)]
+        snapshots: list[monitor_pb2.QueueEntrySnapshot | type[KeyboardInterrupt]] = [self.forecast_snapshot(run=run, done=done, now=wall + moment) for moment, run, done in script]
+        snapshots.append(snapshot(queue_id="Q0001", state="succeeded", total_runs=3, current_run=2, park_requested=False, queue_held=False))
+        self.grpc_stub = FakeMonitorStub(snapshots)
+        self.route(self.wait_handler)
+        times = iter([moment for moment, _, _ in script])
+
+        def monotonic() -> float:
+            return 1000.0 + clock[0]
+
+        original = FakeQueueEntryCall.__anext__
+
+        async def advancing(call: FakeQueueEntryCall) -> monitor_pb2.QueueEntrySnapshot:
+            snapshot_ = await original(call)
+            clock[0] = next(times, clock[0])
+            return snapshot_
+
+        with mock.patch("framecontrol.cli.queue_wait._monotonic", monotonic), mock.patch("framecontrol.cli.queue_wait._wall_clock", lambda: wall), mock.patch.object(FakeQueueEntryCall, "__anext__", advancing):
+            result = self.invoke("add", "walk.yaml", "--wait")
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()[1:]
+        forecasts = [line for line in lines if "ends ~" in line]
+        # The first line of run 1, none 20 s later, one after more than a minute (70 s), and the first line of run 2.
+        self.assertEqual(len(forecasts), 3, lines)
+        self.assertTrue(all(line.startswith("  denoise ") for line in forecasts), forecasts)
+        self.assertIn("denoise 3/30; run ends ~14:20 (in 20 min), job ends ~14:40 (in 40 min)", forecasts[0])
+        self.assertIn("denoise 7/30", forecasts[1])
+        self.assertEqual(lines[0:2], ["run 1/3 started", forecasts[0]])
+
+    def test_add_wait_prints_nothing_extra_when_the_server_has_no_forecast(self) -> None:
+        snapshot = monitor_pb2.QueueEntrySnapshot
+        self.grpc_stub = FakeMonitorStub([snapshot(queue_id="Q0001", state="running", total_runs=2, current_run=1, park_requested=False, queue_held=False), snapshot(queue_id="Q0001", state="succeeded", total_runs=2, current_run=1, park_requested=False, queue_held=False)])
+        self.route(self.wait_handler)
+        result = self.invoke("add", "walk.yaml", "--wait")
+        self.assertEqual(result.stdout.splitlines()[1:], ["run 1/2 started", "run 1/2 succeeded", "Q0001 succeeded"])
 
     def test_add_wait_says_when_a_reservation_is_withdrawn(self) -> None:
         snapshot = monitor_pb2.QueueEntrySnapshot

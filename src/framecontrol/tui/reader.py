@@ -5,6 +5,7 @@ from __future__ import annotations
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.services.history import PAGE_SIZE, HistoryFilter, HistoryPage, HistoryReader
 from framecontrol.state.executions import ExecutionRow
+from framecontrol.state.timing import StageRow
 
 
 class PaneHistory:
@@ -55,6 +56,13 @@ class PaneHistory:
             return self._reader.execution(execution_id)
         except FramecontrolError as error:
             return str(error)
+
+    def stages(self, execution_id: int) -> dict[int, list[StageRow]]:
+        """The execution's stages by run; none when they cannot be read, since the detail is whole without them."""
+        try:
+            return self._reader.stages(execution_id)
+        except FramecontrolError:
+            return {}
 
     def numbered(self, number: int) -> ExecutionRow | str:
         try:

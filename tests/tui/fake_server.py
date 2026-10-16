@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,16 @@ def run_started(number: int = 1, total: int = 2) -> RunStarted:
 
 def run_output(text: str, *, number: int = 1, stream: str = "stdout", progress: tuple[int, int] | None = None, percent: int | None = None) -> RunOutput:
     return RunOutput(at=AT, number=number, stream=stream, text=text, progress=progress, percent=percent, phase=None, offset=0.0)
+
+
+def forecast_dict(*, stage: str | None = "denoise", done: int | None = 12, total: int | None = 30, run: bool = True, job: bool = True, now: float | None = None) -> dict[str, Any]:
+    """A published forecast, as a snapshot or a ``forecast_updated`` event carries it: a run 60 s in with 540 s to go, in a job
+    10 min in with 20 min to go, made at ``now`` (the clock, by default)."""
+    moment = time.time() if now is None else now
+    run_span = {"started_at": moment - 60.0, "end_at": moment + 540.0, "low": moment + 530.0, "high": moment + 550.0, "floor": 0.0}
+    job_span = {"started_at": moment - 600.0, "end_at": moment + 1200.0, "low": moment + 1190.0, "high": moment + 1210.0, "floor": 0.0}
+    basis = {"tier": "signature", "fidelity": "live", "runs": 8, "executions": 4, "build_changed": False, "unseen": [], "penalty": None, "skipped": 0}
+    return {"as_of": moment, "stage": stage, "stage_done": done, "stage_total": total, "run": run_span if run else None, "job": job_span if job else None, "basis": basis}
 
 
 def run_finished(number: int = 1, seconds: float = 30.0) -> RunFinished:
@@ -226,6 +237,9 @@ class FakeServer:
 
     def send_queue_entry(self, queue_id: str, state: str) -> monitor_pb2.Event:
         return self.send_raw("queue_entry_changed", {"queue_id": queue_id, "state": state})
+
+    def send_forecast(self, queue_id: str, forecast: dict[str, Any] | None) -> monitor_pb2.Event:
+        return self.send_raw("forecast_updated", {"queue_id": queue_id, "forecast": forecast})
 
     def send_park_changed(self, queue_id: str, park_requested: bool) -> monitor_pb2.Event:
         return self.send_raw("queue_park_changed", {"queue_id": queue_id, "park_requested": park_requested})

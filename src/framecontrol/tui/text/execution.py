@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from framecontrol.core.cooldown import parse_cooldown
 from framecontrol.jobs.text import MEDIA_CHECK_LABELS, knobs_text, media_check_result, policy_text, seconds_text
 from framecontrol.state.executions import ExecutionRow, MediaCheckRow, RunRow
 from framecontrol.state.ids import execution_id_text
+from framecontrol.state.timing import StageRow
 from framecontrol.tui.text.arguments import PreviousRun, argument_rows, arguments_text, execution_notes
 from framecontrol.tui.text.common import STATUS_STYLE, VIDEO_MODES
 from framecontrol.tui.text.prompts import prompt_block
@@ -215,6 +216,16 @@ class DetailRun:
 
 
 @dataclass(frozen=True)
+class DetailStage:
+    """One stage of a run as the detail lists it: its name, the units it counted, how long it took, and its share of the run."""
+
+    name: str
+    units: str
+    seconds: float
+    share: float
+
+
+@dataclass(frozen=True)
 class ExecutionDetail:
     """What the detail widget shows of an execution, read once, so a redraw neither reads the disk nor parses commands."""
 
@@ -224,10 +235,20 @@ class ExecutionDetail:
     runs: tuple[DetailRun, ...]
     # The execution it resumes (E0012), when it is a resume; None otherwise.
     resumes: str | None = None
+    # Each listed run's stages, by run number; a run with none recorded is missing.
+    stages: Mapping[int, tuple[DetailStage, ...]] | None = None
 
 
-def execution_detail(execution: ExecutionRow) -> ExecutionDetail:
-    """Read the execution for the detail widget; it looks for every output file, so it runs off the UI thread."""
+def _detail_stages(rows: Sequence[StageRow]) -> tuple[DetailStage, ...]:
+    """A run's stages as the detail lists them: those of the run itself, not the work done for it before it started."""
+    counted = [row for row in rows if row.start >= 0]
+    total = max((row.end for row in counted), default=0.0)
+    return tuple(DetailStage(row.stage.replace("_", " "), f"{row.done}/{row.total}" + (f" {row.unit}" if row.unit else "") if row.total is not None else "", row.duration, row.duration / total if total > 0 else 0.0) for row in counted)
+
+
+def execution_detail(execution: ExecutionRow, stages: Mapping[int, Sequence[StageRow]] | None = None) -> ExecutionDetail:
+    """Read the execution for the detail widget; it looks for every output file, so it runs off the UI thread. ``stages`` are
+    its runs' recorded stages, by run number."""
     video = str(execution.mode or "") in VIDEO_MODES
     runs = succeeded_runs(execution)
     listed = []
@@ -235,13 +256,23 @@ def execution_detail(execution: ExecutionRow) -> ExecutionDetail:
         path = execution.run_file(run.output)
         listed.append(DetailRun(int(run.number), run.output_frames if video else None, run_steps(run), run.seconds, run.output or None, path is not None and path.exists()))
     resumes = execution_id_text(execution.resumes) if execution.resumes is not None else None
-    return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed), resumes)
+    shown = {number: _detail_stages(rows) for number, rows in (stages or {}).items() if rows}
+    return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed), resumes, shown)
 
 
-def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | None) -> tuple[Text, list[int]]:
+def _stage_line(stage: DetailStage, width: int) -> str:
+    """A stage's line: its name at the left, and its units, time, and share at the right edge, whole; the name gives way."""
+    seconds = f"{stage.seconds:.1f} s" if stage.seconds < 10 else f"{stage.seconds:.0f} s"
+    figures = "  ".join(part for part in (stage.units, seconds, f"{stage.share * 100:.1f}%") if part)
+    name = cut_middle(stage.name, max(1, width - len(figures) - 2))
+    return name + " " * max(2, width - len(name) - len(figures)) + figures
+
+
+def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | None, running: str | None = None) -> tuple[Text, list[int]]:
     """The detail widget's content, and the run number each run's first line shows, in order.
 
-    Every line is cut to ``width``; a file name is a link, through a click action built from numbers, never markup.
+    Every line is cut to ``width``; a file name is a link, through a click action built from numbers, never markup. Under
+    the runs, the selected run's stages, and, for an execution still running, ``running``: the stage the forecast says it is in.
     """
     width = max(8, width)
     settings = detail.settings
@@ -271,6 +302,13 @@ def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | N
         else:
             text.append(cut_middle(Path(run.output).name, width - 3), style=Style(underline=True, meta={"@click": reveal_action(detail.execution_id, run.number)}))
         shown.append(run.number)
+    stages = (detail.stages or {}).get(selected) if selected is not None else None
+    if stages:
+        text.append(f"\n\nStages of run {selected}", style="bold")
+        for stage in stages:
+            text.append("\n" + _stage_line(stage, width))
+    if running is not None:
+        text.append(("\n\n" if not stages else "\n") + cut_middle(f"now: {running}", width), style="dim")
     return text, shown
 
 

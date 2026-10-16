@@ -14,6 +14,7 @@ from framecontrol.services.store_provider import StoreProvider
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.state.ids import execution_id_text
 from framecontrol.state.store import Store
+from framecontrol.state.timing import StageRow
 
 PAGE_SIZE = 200
 STATUSES = (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.INTERRUPTED, JobStatus.PARKED, JobStatus.RUNNING)
@@ -107,6 +108,10 @@ class HistoryReader:
         if execution is None:
             raise NotFoundError("That execution is no longer in the history")
         return execution
+
+    def stages(self, execution_id: int) -> dict[int, list[StageRow]]:
+        """What each run of the execution spent its time on, by run number; none for a run with no timing recorded."""
+        return self._read(lambda store: store.timing.stages_by_run(execution_id))
 
     def numbered(self, number: int) -> ExecutionRow:
         """One execution with its runs, by the number of its ID (E0012); raises NotFoundError when there is none."""

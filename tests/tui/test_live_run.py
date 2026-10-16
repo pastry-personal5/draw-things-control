@@ -18,10 +18,10 @@ from framecontrol.jobs.events import MediaChecked, StageFinished, StageStarted, 
 from framecontrol.services.history import HistoryReader
 from framecontrol.state.executions import ExecutionRow, NewExecution, NewRun
 from framecontrol.state.store import Store
-from framecontrol.tui.live_run import MAX_OUTPUT_LINES, PastRun
+from framecontrol.tui.live_run import MAX_OUTPUT_LINES
 from framecontrol.tui.panes.execution import ExecutionDetailPane
 from framecontrol.tui.panes.history import ExecutionHistoryList
-from tests.tui.fake_server import AT, job_finished, job_started, run_finished, run_output, run_started
+from tests.tui.fake_server import AT, forecast_dict, job_finished, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
 OLD = (datetime.now().astimezone() - timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
@@ -33,28 +33,52 @@ class LiveRunTests(FeedTestCase):
         await self.push(pilot, job_started(total_runs=total_runs))
         await self.wait_for(pilot, lambda: pilot.app.live is not None, "the job to start")
 
-    async def test_a_job_runs_with_progress_and_ends_with_its_result(self) -> None:
+    async def test_a_job_runs_with_its_forecast_and_ends_with_its_result(self) -> None:
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.connect(pilot)
             self.assertIn("No job has run in this session", self.text(app, "run-summary"))
             await self.start_job(pilot)
-            await self.push(pilot, run_started(1), run_output("Loading model base.ckpt"), run_output("Sampling... 4 / 8 [ ] 50  %", progress=(4, 8), percent=50))
+            await self.push(pilot, run_started(1), run_output("Loading model base.ckpt"), run_output("Sampling... 4 / 8 [ ] 50  %"))
+            before = self.text(app, "work-status").split("\n")
+            await self.push_forecast(pilot, "Q0001", forecast_dict())
             running = self.text(app, "work-status").split("\n")
             run_line = self.text(app, "run-summary")
             pane = self.pane(app)
             await self.push(pilot, run_finished(1), run_started(2), run_finished(2), job_finished())
             ended = self.text(app, "work-status").split("\n")
             final_run_line = self.text(app, "run-summary")
+            cleared = app.live.forecast  # type: ignore[union-attr]
         self.assertEqual(pane, ["Loading model base.ckpt", "Sampling... 4 / 8 [ ] 50  %"])
+        # Before the server has a forecast the bars say so; once it does they read its ends.
+        self.assertTrue(before[1].endswith("estimating") and before[2].endswith("estimating"), before)
         self.assertIn("Run 1/2", run_line)
-        self.assertIn("progress 4/8, 50%", run_line)
+        self.assertIn("stage denoise 12/30", run_line)
         self.assertEqual(running[0], "running  E0001: walk  run 1/2")
-        self.assertTrue(running[3].startswith("step 4/8  "), running)
+        self.assertIn("ends ~", running[1])
+        self.assertRegex(running[2], r"ends ~\d\d:\d\d \(in (9 min|8 min 5\d s)\)$")
+        self.assertTrue(running[3].startswith("denoise 12/30  "), running)
         self.assertEqual(ended[:2], ["finished (succeeded)  E0001: walk", "2/2 runs succeeded"])
         self.assertIn("walk: finished", final_run_line)
+        self.assertIsNone(cleared)
         self.assertIn("Job started: walk (i2v, 2 runs, seed 1 (job), model base.ckpt)", self.said)
         self.assertIn("Job succeeded: 2/2 runs completed", self.log())
+
+    async def test_only_the_followed_entrys_forecast_is_shown_and_a_cleared_one_is_gone(self) -> None:
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.connect(pilot)
+            await self.start_job(pilot, queue_id="Q0001")
+            await self.push(pilot, run_started(1))
+            await self.push_forecast(pilot, "Q0099", forecast_dict(stage="ffmpeg", done=1, total=2))
+            other = self.text(app, "run-summary")
+            await self.push_forecast(pilot, "Q0001", forecast_dict())
+            followed = self.text(app, "run-summary")
+            await self.push_forecast(pilot, "Q0001", None)
+            cleared = self.text(app, "run-summary")
+        self.assertNotIn("stage", other)
+        self.assertIn("stage denoise 12/30", followed)
+        self.assertNotIn("stage", cleared)
 
     async def test_a_media_check_reaches_messages_and_an_unknown_event_kind_is_skipped(self) -> None:
         app = self.make_app()
@@ -127,7 +151,7 @@ class LiveRunTests(FeedTestCase):
 
     async def test_attaching_to_a_running_entry_shows_where_it_is_and_marks_the_pane(self) -> None:
         self.server.running = [{"queue_id": "Q0003", "job_path": "/jobs/walk.yaml", "total_runs": 2, "submitted_at": "t"}]
-        self.server.details["Q0003"] = {"queue_id": "Q0003", "execution_id": None, "current_run": 1, "current_run_elapsed_seconds": 12.0, "current_step": 3, "current_step_total": 8}
+        self.server.details["Q0003"] = {"queue_id": "Q0003", "execution_id": None, "current_run": 1, "current_run_elapsed_seconds": 12.0, "forecast": forecast_dict(stage="denoise", done=3, total=8)}
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.connect(pilot)
@@ -136,7 +160,7 @@ class LiveRunTests(FeedTestCase):
             run_line = self.text(app, "run-summary")
             pane = self.pane(app)
         self.assertIn("Run 1/2", run_line)
-        self.assertIn("progress 3/8", run_line)
+        self.assertIn("stage denoise 3/8", run_line)
         self.assertEqual(pane, ["(earlier output not shown)"])
         self.assertEqual(self.server.requests[0].last_event_id, 1)
         self.assertIsInstance(app.live.path, Path)  # type: ignore[union-attr]
@@ -264,30 +288,3 @@ class StoreBackedTests(FeedTestCase):
         for widget in (self.log(), run_line):
             self.assertNotIn("sekret-value", widget)
             self.assertNotIn("hush-value", widget)
-
-    async def test_a_job_is_estimated_from_the_latest_successful_run_before_it_reports_a_step(self) -> None:
-        self.add_execution("other")
-        app = self.make_app()
-        async with app.run_test(size=(160, 60)) as pilot:
-            await self.connect(pilot)
-            await self.push(pilot, job_started())
-            await self.wait_for(pilot, lambda: app.live is not None and app.live.past_run is not None, "the past run")
-            await self.push(pilot, run_started(1))
-            past = app.live.past_run  # type: ignore[union-attr]
-            status = self.text(app, "work-status").split("\n")
-        self.assertEqual(past, PastRun(600.0, 30))
-        self.assertIn("ends ~", status[1])
-        self.assertIn("ends ~", status[2])
-        # 600 s less the moment the run has taken so far.
-        self.assertRegex(status[2], r"\(in (10 min|9 min 5\d s)\)$")
-
-    async def test_an_attached_job_is_estimated_from_the_past_run_too(self) -> None:
-        self.add_execution("other")
-        self.server.running = [{"queue_id": "Q0003", "job_path": "/jobs/walk.yaml", "total_runs": 2, "submitted_at": OLD}]
-        self.server.details["Q0003"] = {"queue_id": "Q0003", "execution_id": None, "current_run": 1, "current_run_elapsed_seconds": 10.0}
-        app = self.make_app()
-        async with app.run_test(size=(160, 60)) as pilot:
-            await self.connect(pilot)
-            await self.wait_for(pilot, lambda: app.live is not None and app.live.past_run is not None, "the past run")
-            past = app.live.past_run  # type: ignore[union-attr]
-        self.assertEqual(past, PastRun(600.0, 30))

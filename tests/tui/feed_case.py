@@ -23,6 +23,13 @@ class FeedTestCase(TuiTestCase):
         sent = [self.server.send(event) for event in events]
         await self.received(pilot, sent)
 
+    async def push_forecast(self, pilot: Any, queue_id: str, forecast: dict[str, Any] | None) -> None:
+        """Publish the entry's forecast, wait until the app has it, and render what it shows (a forecast forces no render: at
+        verbose low the status refreshes once a minute whatever arrives)."""
+        await self.received(pilot, [self.server.send_forecast(queue_id, forecast)])
+        pilot.app.main.running.tick(force=True)
+        await pilot.pause()
+
     async def received(self, pilot: Any, sent: list[monitor_pb2.Event]) -> None:
         """Wait until the feed has received the last of ``sent`` that its open call asked for (none, at verbose low, for run output)."""
         app = pilot.app

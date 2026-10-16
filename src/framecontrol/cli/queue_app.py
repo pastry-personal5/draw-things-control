@@ -4,6 +4,7 @@ shared with ``fc history``; the gRPC client ``add --wait`` uses is ``cli/queue_w
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -12,6 +13,7 @@ import typer
 from framecontrol.cli.api_client import AllowRemoteServerOption, QueueIdArgument, ServerUrlOption, TokenFileOption, api_client, api_request, checked_queue_id
 from framecontrol.cli.context import errors_exit, services_of
 from framecontrol.core.client_config import DEFAULT_SERVER_URL, job_argument
+from framecontrol.services.forecast_view import forecast_text
 from framecontrol.services.queue_hold import HoldState, hold_outcome_text, hold_text, release_outcome_text
 from framecontrol.services.queue_park_text import park_outcome_text, queue_state_text, unpark_outcome_text
 
@@ -98,6 +100,10 @@ def queue_show(
     if entry.get("execution_id"):
         typer.echo(f"  execution: {entry['execution_id']}")
     typer.echo(f"  runs: {_runs_text(entry)}" + (f", run {entry['current_run']} in progress" if entry.get("current_run") is not None else ""))
+    forecast = entry.get("forecast")
+    if forecast:
+        typer.echo(f"  forecast: {forecast_text(forecast, time.time())}")
+        typer.echo(f"  based on: {_basis_text(forecast['basis'])}")
     if entry.get("cooldown_until") is not None:
         typer.echo(f"  cooldown until: {entry['cooldown_until']}")
     if entry.get("park_requested"):
@@ -108,6 +114,19 @@ def queue_show(
     hold = HoldState.from_body(entry)
     if hold.held:
         typer.echo(f"  {hold_text(hold)}")
+
+
+def _basis_text(basis: dict[str, Any]) -> str:
+    """What a forecast rests on, in a clause: the history it was made from, and what a reader should know about it."""
+    if not basis["runs"]:
+        text = "no history for this run, so its own pace alone"
+    else:
+        text = f"{basis['runs']} runs from {basis['executions']} executions ({basis['tier']}, {basis['fidelity']})"
+    if basis["build_changed"]:
+        text += "; the executable has changed since"
+    if basis["unseen"]:
+        text += f"; stages it had not seen: {', '.join(basis['unseen'])}"
+    return text
 
 
 @queue_app.command("cancel")

@@ -133,6 +133,14 @@ class TimingRepository:
         rows = self._database.connection().execute("SELECT * FROM run_stages WHERE execution_id = ? AND run = ? ORDER BY start_offset, end_offset, id", (execution_id, run)).fetchall()
         return [StageRow.from_row(row) for row in rows]
 
+    def stages_by_run(self, execution_id: int) -> dict[int, list[StageRow]]:
+        """Every run's spans of one execution, each run's in the order they start, in one read."""
+        rows = self._database.connection().execute("SELECT * FROM run_stages WHERE execution_id = ? ORDER BY run, start_offset, end_offset, id", (execution_id,)).fetchall()
+        by_run: dict[int, list[StageRow]] = defaultdict(list)
+        for row in rows:
+            by_run[row["run"]].append(StageRow.from_row(row))
+        return dict(by_run)
+
     def timing_of(self, execution_id: int, run: int) -> RunTimingRow | None:
         row = self._database.connection().execute("SELECT * FROM run_timing WHERE execution_id = ? AND run = ?", (execution_id, run)).fetchone()
         return RunTimingRow.from_row(row) if row is not None else None

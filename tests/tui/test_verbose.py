@@ -16,7 +16,7 @@ from framecontrol.tui.panes.cli_output import LOW_MARKER, MEDIUM_MARKER
 from framecontrol.tui.panes.status import WorkStatus
 from framecontrol.tui.preferences import DEFAULT_VERBOSE_LEVEL, LOW_STATUS_REFRESH_SECONDS, MEDIUM_OUTPUT_WINDOW_SECONDS, load_verbose_level, save_verbose_level
 from framecontrol.tui.widgets import SteadyText
-from tests.tui.fake_server import cooldown_started, job_started, run_finished, run_output, run_started
+from tests.tui.fake_server import cooldown_started, forecast_dict, job_started, run_finished, run_output, run_started
 from tests.tui.feed_case import FeedTestCase
 
 EARLIER = "(earlier output not shown)"
@@ -200,7 +200,6 @@ class MediumTests(VerboseTestCase):
             written = app.live.output_count  # type: ignore[union-attr]
         self.assertEqual(first, ["at the edge", MEDIUM_MARKER])
         self.assertEqual(second, ["at the edge", MEDIUM_MARKER, "second run", MEDIUM_MARKER])
-        # The run line's own progress is fed by the same events and is not gated.
         self.assertEqual(written, 6)
 
     async def test_medium_typed_mid_run_opens_a_fresh_window_and_high_shows_only_what_comes_after(self) -> None:
@@ -247,18 +246,18 @@ class LowTests(VerboseTestCase):
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.running_job(pilot, clock)
-            await self.push(pilot, run_output("hidden"), run_output("Sampling... 4 / 8 [ ] 50  %", progress=(4, 8), percent=50))
+            await self.push(pilot, run_output("hidden"), run_output("Sampling... 4 / 8 [ ] 50  %"))
             clock.now = 5000
             await self.push(pilot, run_output("still hidden"))
-            assert app.live is not None
-            # A stale reading, as an earlier level might have left; low shows none of it.
-            app.live.progress, app.live.percent = (3, 8), 37
-            app.main.running.tick(force=True)  # type: ignore[union-attr]
-            run_line = self.text(app, "run-summary")
+            # The forecast is not run output, so low receives it: the stage and the bars keep going.
+            await self.push_forecast(pilot, "Q0001", forecast_dict(stage="denoise", done=4, total=8))
+            run_line, status = self.text(app, "run-summary"), self.text(app, "work-status").split("\n")
             pane = self.pane(app)
         self.assertEqual(pane, [LOW_MARKER])
         self.assertIn("Run 1/2", run_line)
-        self.assertNotIn("progress", run_line)
+        self.assertIn("stage denoise 4/8", run_line)
+        self.assertIn("ends ~", status[1])
+        self.assertTrue(status[3].startswith("denoise 4/8  "), status)
         self.assertEqual(self.said.count(LOW_NOTICE), 1)
         self.assertEqual([path for path in self.server.http_paths if path.startswith("GET /v1/queue/Q")], [])
         self.assertEqual(self.requests(), [False])
@@ -302,36 +301,36 @@ class LowTests(VerboseTestCase):
         self.assertGreater(after_run_started, after_run_finished)
         self.assertGreater(after_cooldown_started, after_run_started)
 
-    async def test_a_switch_into_low_mid_run_drops_the_step_reading_at_once(self) -> None:
+    async def test_a_switch_into_low_mid_run_keeps_the_stage_and_the_bars(self) -> None:
         clock = Clock()
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.running_job(pilot, clock)
-            await self.push(pilot, run_output("Sampling... 4 / 8 [ ] 50  %", progress=(4, 8), percent=50))
+            await self.push_forecast(pilot, "Q0001", forecast_dict(stage="denoise", done=4, total=8))
             before = (self.text(app, "run-summary"), self.text(app, "work-status"))
-            # The screen's clock stands still: only a render the switch itself forces can change what is shown.
             await self.command(pilot, "/verbose low")
             await self.wait_for(pilot, lambda: len(self.server.requests) == 2, "the reconnect")
             await pilot.pause()
             after = (self.text(app, "run-summary"), self.text(app, "work-status"))
-        self.assertIn("progress 4/8, 50%", before[0])
-        self.assertIn("step 4/8", before[1])
-        self.assertNotIn("progress", after[0])
-        self.assertNotIn("step 4/8", after[1])
-        self.assertNotIn("50%", after[1])
+        self.assertIn("stage denoise 4/8", before[0])
+        self.assertIn("denoise 4/8", before[1])
+        # Nothing the forecast gave is lost on the way into low: it does not come as run output.
+        self.assertIn("stage denoise 4/8", after[0])
+        self.assertIn("denoise 4/8", after[1])
+        self.assertIn("ends ~", after[1])
 
-    async def test_an_attach_at_low_shows_no_step_reading(self) -> None:
+    async def test_an_attach_at_low_shows_the_stage_the_server_published(self) -> None:
         self.preset("low")
         self.server.running = [{"queue_id": "Q0003", "job_path": "/jobs/walk.yaml", "total_runs": 2, "submitted_at": "t"}]
-        self.server.details["Q0003"] = {"queue_id": "Q0003", "execution_id": None, "current_run": 1, "current_run_elapsed_seconds": 12.0, "current_step": 3, "current_step_total": 8}
+        self.server.details["Q0003"] = {"queue_id": "Q0003", "execution_id": None, "current_run": 1, "current_run_elapsed_seconds": 12.0, "forecast": forecast_dict(stage="denoise", done=3, total=8)}
         app = self.make_app()
         async with app.run_test(size=(160, 60)) as pilot:
             await self.connect(pilot)
             await self.wait_for(pilot, lambda: self.pane(app), "the markers")
             run_line, status = self.text(app, "run-summary"), self.text(app, "work-status")
         self.assertIn("Run 1/2", run_line)
-        self.assertNotIn("progress", run_line)
-        self.assertNotIn("step 3/8", status)
+        self.assertIn("stage denoise 3/8", run_line)
+        self.assertIn("denoise 3/8", status)
 
     async def test_a_stop_at_low_shows_at_once(self) -> None:
         self.preset("low")

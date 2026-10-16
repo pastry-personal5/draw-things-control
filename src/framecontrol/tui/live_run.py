@@ -3,7 +3,6 @@ app's own asyncio loop -- never a worker thread: the TUI has no job-running thre
 
 from __future__ import annotations
 
-import sqlite3
 import threading
 import time
 from collections import deque
@@ -13,9 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from framecontrol.core.arguments import command_settings
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus
-from framecontrol.state.store import Store
 
 MAX_OUTPUT_LINES = 2000
 
@@ -32,37 +29,13 @@ class RunState:
 
 
 @dataclass(frozen=True)
-class StepReading:
-    """One reading of the child's step counter, at a monotonic time."""
-
-    step: int
-    total: int
-    at: float
-
-
-@dataclass(frozen=True)
-class PastRun:
-    """A run that already succeeded, which a run estimates from until its own step counter gives a rate."""
-
-    # draw-things-cli's own time for the whole run, and its step count, when known.
-    seconds: float
-    steps: int | None = None
-
-
-@dataclass(frozen=True)
 class FinishedRun:
-    """A run of this job that has ended, timed on the TUI's clock for the estimates."""
+    """A run of this job that has ended."""
 
     number: int
     status: str
     # draw-things-cli's own time, as RunFinished reports it; what the cooldown follows.
     seconds: float | None
-    # RunStarted to RunFinished: loading, the decode, last-frame extraction, tagging, and measuring included.
-    full_seconds: float
-    # From the last step counter reading to RunFinished; None when the counter never showed.
-    tail_seconds: float | None
-    # The counter's total, when it showed.
-    steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -105,17 +78,16 @@ class LiveRun:
         self.output_window_start: float | None = None
         self.active_output: str | None = None
         self.command: tuple[str, ...] = ()
-        self.progress: tuple[int, int] | None = None
-        self.percent: int | None = None
         self.cooldown: CooldownStarted | None = None
         self.cooldown_ends_at: float | None = None  # Monotonic time the cooldown ends.
         self.cooled_after_run: int | None = None  # The run the last cooldown followed; the next starts without another wait.
         self.job_started_at: float | None = None  # Monotonic time JobStarted was applied.
-        self.stopped_at: float | None = None  # Monotonic time a stop was requested; the estimates freeze there.
-        self.first_step: StepReading | None = None  # The active run's first counter reading since it last started over.
-        self.last_step: StepReading | None = None
+        self.stopped_at: float | None = None  # Monotonic time a stop was requested; the bars freeze there.
+        self.stopped_wall: float | None = None  # The same moment on the wall clock, which the forecast is read by.
         self.finished_runs: list[FinishedRun] = []
-        self.past_run: PastRun | None = None  # The latest successful run of any job when this one started.
+        # The forecast the server last published for this job, as its snapshot carries it; none before the first and after
+        # the job. Its times are epoch seconds, read by the wall clock, as ``cooldown_until`` is.
+        self.forecast: dict[str, Any] | None = None
         self.output: deque[OutputLine] = deque(maxlen=MAX_OUTPUT_LINES)
         self.output_count = 0  # Every line ever added, so a view knows how many it has not written yet.
         # Set only once a cancel this pane issued (/stop, or the Queue list's own) is confirmed by the API
@@ -176,6 +148,7 @@ class LiveRun:
             self.ended = True
             self.active_run = self.run_started_at = None
             self.cooldown = self.cooldown_ends_at = None
+            self.forecast = None
 
     def _job_started(self, event: JobStarted) -> None:
         self.started = event
@@ -193,66 +166,40 @@ class LiveRun:
         self.run_started_at = self._clock()
         self.active_output = event.output
         self.command = event.command
-        self.progress = self.percent = None
-        self.first_step = self.last_step = None
 
     def _run_output(self, event: RunOutput) -> None:
-        # A progress line is shown in the pane like any other; a seeded one (empty text, built from the entry's own
-        # step counter) has nothing to show.
-        if event.text or (event.progress is None and event.percent is None):
-            self.output.append(OutputLine(event.stream, event.text))
-            self.output_count += 1
-        if event.progress is None and event.percent is None:
-            return
-        self.progress = event.progress or self.progress
-        self.percent = event.percent if event.percent is not None else self.percent
-        if event.progress is not None:
-            self._read_step(*event.progress)
+        self.output.append(OutputLine(event.stream, event.text))
+        self.output_count += 1
 
     def _run_finished(self, event: RunFinished) -> None:
         run = self._run(event.number)
         run.status, run.seconds, run.output = event.status, event.seconds, event.output
-        now = self._clock()
-        full = now - self.run_started_at if self.run_started_at is not None else event.seconds or 0.0
-        tail = now - self.last_step.at if self.last_step is not None else None
-        steps = self.last_step.total if self.last_step is not None else None
-        self.finished_runs.append(FinishedRun(event.number, event.status, event.seconds, max(0.0, full), tail, steps))
+        self.finished_runs.append(FinishedRun(event.number, event.status, event.seconds))
         self.active_run = self.run_started_at = None
 
-    def reference_run(self) -> PastRun | None:
-        """The run a run estimates from before its own rate: this job's last successful run, or else the store's latest."""
-        own = next((run for run in reversed(self.finished_runs) if run.status == RunStatus.SUCCEEDED and run.seconds), None)
-        if own is not None and own.seconds is not None:
-            return PastRun(own.seconds, own.steps)
-        return self.past_run
+    def apply_forecast(self, forecast: dict[str, Any] | None) -> None:
+        """The server published a forecast for this job (or cleared it): shown from now on, in place of the last."""
+        self._check_thread()
+        self.forecast = forecast
 
     def request_stop(self) -> None:
         self._check_thread()
         self.stop_requested = True
         if self.stopped_at is None:
             self.stopped_at = self._clock()
+            self.stopped_wall = self._wall_clock().timestamp()
 
-    def forget_progress(self) -> None:
-        """Drop the active run's step and percent readings: at verbose low they stop arriving, since
-        they come only as run output, and a reading frozen where it was is worse than none. The run then estimates
-        as one begun at low does."""
-        self._check_thread()
-        self.progress = self.percent = None
-        self.first_step = self.last_step = None
-
-    def _read_step(self, step: int, total: int) -> None:
-        """Keep the counter's first and latest readings; a counter that goes back or changes its total starts over."""
-        now = self._clock()
-        last = self.last_step
-        if self.first_step is None or last is None or step < last.step or total != last.total:
-            self.first_step = StepReading(step, total, now)
-        self.last_step = StepReading(step, total, now)
+    def shown_at(self) -> float:
+        """The time, in epoch seconds, that the forecast is read at: now, or when a stop was requested, so a stopping job's
+        bars stay where the stop found them."""
+        return self.stopped_wall if self.stopped_wall is not None else self._wall_clock().timestamp()
 
     def end(self, *, error: str | None = None) -> None:
         """The followed entry is over, with no JobFinished to explain it (a queue_entry_changed to a final state, or
         a reseed that found nothing running); ``error`` is the entry's own, when it has one."""
         self._check_thread()
         self.ended = True
+        self.forecast = None
         if error is not None:
             self.error = error
 
@@ -263,14 +210,3 @@ class LiveRun:
 
     def _check_thread(self) -> None:
         assert threading.get_ident() == self._thread, "LiveRun changed off the thread that created it"
-
-
-def latest_past_run(store: Store) -> PastRun | None:
-    """The latest successful run of any job, to estimate from; None when there is none or the store cannot say."""
-    try:
-        run = store.executions.latest_succeeded_run()
-    except (sqlite3.Error, ValueError):
-        return None
-    if run is None or not run.seconds:
-        return None
-    return PastRun(float(run.seconds), command_settings(run.command).steps)

@@ -238,3 +238,17 @@ class CompleteRunsTests(StoreCase):
         self.assertEqual((count, newest), (2, (2, 1)))
         self.store.prune()
         self.assertEqual(self.store.timing.completion_mark(), (1, (2, 1)))
+
+
+class StagesByRunTests(StoreCase):
+    def test_every_runs_stages_come_back_in_one_read_in_time_order(self) -> None:
+        execution = self.add("walk", started=iso(1), finished=iso(1), runs=2)
+        other = self.add("other", started=iso(1), finished=iso(1))
+        timing = self.store.timing
+        timing.add_stage(execution, 1, span("late", 30.0, 40.0))
+        timing.add_stage(execution, 1, span("early", 10.0, 20.0))
+        timing.add_stage(execution, 2, span("only", 0.0, 5.0))
+        timing.add_stage(other, 1, span("not this one"))
+        by_run = timing.stages_by_run(execution)
+        self.assertEqual({run: [row.stage for row in rows] for run, rows in by_run.items()}, {1: ["early", "late"], 2: ["only"]})
+        self.assertEqual(timing.stages_by_run(other + 100), {})

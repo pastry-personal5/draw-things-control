@@ -7,6 +7,7 @@ neither importing the other's: ``tests/test_architecture.py``)."""
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Protocol, cast
@@ -18,8 +19,15 @@ from loguru import logger
 from framecontrol.cli.generated import monitor_pb2, monitor_pb2_grpc
 from framecontrol.core.exit_codes import EXIT_CODES_BY_QUEUE_STATE, EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILABLE
 from framecontrol.core.network import grpc_target
+from framecontrol.services.forecast_view import forecast_text
 from framecontrol.services.queue_park_text import park_point
 from framecontrol.state.queue import FINISHED_STATES
+
+# A run's start gets a line with the stage and where the run and the job end; after that, at most one a minute.
+FORECAST_EVERY_SECONDS = 60.0
+# The clocks, apart so a test can move them.
+_monotonic = time.monotonic
+_wall_clock = time.time
 
 # Whether a state is final is state/queue.py's own FINISHED_STATES, not EXIT_CODES_BY_QUEUE_STATE (which exists to
 # map an already-known-final state to an exit code): a state added to one without the other must not leave this
@@ -136,6 +144,8 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
     total_runs: int | None = None
     parking = False
     told_held = False
+    announce = False
+    last_forecast_at: float | None = None
     try:
         async for snapshot in call:
             if snapshot.HasField("total_runs"):
@@ -145,6 +155,11 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
                     typer.echo(f"run {last_printed_run}/{total_runs} succeeded")
                 typer.echo(f"run {snapshot.current_run}/{total_runs} started")
                 last_printed_run = last_run = snapshot.current_run
+                announce = True
+            forecast = _forecast_of(snapshot)
+            if snapshot.state == "running" and forecast is not None and (announce or last_forecast_at is None or _monotonic() - last_forecast_at >= FORECAST_EVERY_SECONDS):
+                typer.echo("  " + forecast_text(forecast, _wall_clock()))
+                last_forecast_at, announce = _monotonic(), False
             if snapshot.state in _FINISHED_STATE_VALUES:
                 return snapshot.state, snapshot.error if snapshot.HasField("error") else None, last_run, total_runs
             # A park reservation made or withdrawn, from anywhere, and a hold its queued entry waits behind.
@@ -157,6 +172,24 @@ async def _watch(stub: MonitorStub, queue_id: str, metadata: tuple[tuple[str, st
         raise RuntimeError("WatchQueueEntry ended without a final state")
     finally:
         call.cancel()
+
+
+def _forecast_of(snapshot: monitor_pb2.QueueEntrySnapshot) -> dict[str, object] | None:
+    """The snapshot's forecast as the mapping ``forecast_text`` reads, or None when the server published none."""
+    if not snapshot.HasField("forecast"):
+        return None
+    message = snapshot.forecast
+
+    def span(name: str) -> dict[str, float] | None:
+        if not message.HasField(name):
+            return None
+        part = getattr(message, name)
+        return {field: getattr(part, field) for field in ("started_at", "end_at", "low", "high", "floor")}
+
+    def optional(name: str) -> object:
+        return getattr(message, name) if message.HasField(name) else None
+
+    return {"stage": optional("stage"), "stage_done": optional("stage_done"), "stage_total": optional("stage_total"), "run": span("run"), "job": span("job")}
 
 
 def _parking_text(queue_id: str, parking: bool, last_run: int | None, total_runs: int | None) -> str:

@@ -13,6 +13,7 @@ from framecontrol.state.ids import EXECUTION_LETTER, parse_typed_id
 from framecontrol.tui.preferences import LOW_STATUS_REFRESH_SECONDS
 from framecontrol.tui.text.arguments import run_arguments
 from framecontrol.tui.text.events import event_text, result_text
+from framecontrol.tui.text.status import stage_text
 
 if TYPE_CHECKING:
     from framecontrol.tui.screens import MainScreen
@@ -38,9 +39,6 @@ class RunningJobView:
                 started = event_text(live.started)
                 if started is not None:
                     self.screen.say(started)
-            if fc.verbose_level == "low":
-                # A seeded step reading (attaching mid-run) would never move again at low.
-                live.forget_progress()
             self.screen.generation_output.new_job(live, fc.verbose_level, seeded=seeded)
         self.tick(force=True)
         self._show_new_execution()
@@ -101,4 +99,7 @@ class RunningJobView:
         self._last_render = self.clock()
         self.screen.generation_output.tick(fc.live, fc.verbose_level)
         self.render_status()
+        live = fc.live
+        running = live is not None and live.active_run is not None and not live.ended
+        self.screen.execution_detail.show_live(live.execution_id if running and live is not None else None, stage_text(live.forecast) if running and live is not None else None)
         self.screen.refresh_status_line()

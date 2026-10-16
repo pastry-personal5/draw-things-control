@@ -86,6 +86,9 @@ class ExecutionDetailPane(VerticalScroll, Reads):
         self._pause: Timer | None = None
         # What shows when there is no execution: the history's message, or an error.
         self.message = Text("")
+        # The stage the forecast says the followed job is in, and the execution that job is: shown for that execution only.
+        self.live_execution: str | None = None
+        self.live_stage: str | None = None
 
     @property
     def execution_id(self) -> int | None:
@@ -131,8 +134,8 @@ class ExecutionDetailPane(VerticalScroll, Reads):
     @work(thread=True, exclusive=True, group="execution-detail")
     def read_execution(self, request: int, execution_id: int) -> None:
         execution = self.reader.execution(execution_id)
-        # Read here, off the UI thread: it looks for every output file, which a redraw must not.
-        detail = None if isinstance(execution, str) else execution_detail(execution)
+        # Read here, off the UI thread: it looks for every output file and reads the stages, which a redraw must not.
+        detail = None if isinstance(execution, str) else execution_detail(execution, self.reader.stages(execution_id))
         if not get_current_worker().is_cancelled:
             self.app.call_from_thread(self.show_execution, request, execution_id, execution, detail)
 
@@ -161,8 +164,16 @@ class ExecutionDetailPane(VerticalScroll, Reads):
         title = Text(f"Execution {self.execution.label}: {self.execution.job_name} ")
         title.append(self.execution.status, style=STATUS_STYLE.get(self.execution.status, ""))
         self.border_title = title
-        text, self.shown = execution_detail_text(self.detail, self.scrollable_content_region.width, self.selected)
+        running = self.live_stage if self.live_execution == self.execution.label else None
+        text, self.shown = execution_detail_text(self.detail, self.scrollable_content_region.width, self.selected, running)
         body.update(text)
+
+    def show_live(self, execution: str | None, stage: str | None) -> None:
+        """The followed job is ``execution`` (E0012) and is in ``stage``; both None when none is. Shown under the stage list of
+        that execution only, and redrawn only when it changes."""
+        if (execution, stage) != (self.live_execution, self.live_stage):
+            self.live_execution, self.live_stage = execution, stage
+            self.render_detail()
 
     def on_resize(self, event: events.Resize) -> None:
         self.render_detail()

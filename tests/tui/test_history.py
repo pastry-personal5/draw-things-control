@@ -424,6 +424,53 @@ class ExecutionDetailTests(HistoryCase):
         self.assertNotIn(" 17 ", "\n".join(second))
         load.assert_called_once()
 
+    def keep_stages(self, execution_id: int) -> None:
+        from framecontrol.jobs.timing.model import StageSpan
+
+        self.store().timing.replace_run(
+            execution_id,
+            1,
+            backend="draw-things-cli",
+            pipeline="i2v",
+            workload={},
+            environment={},
+            fidelity="live",
+            complete=True,
+            spans=[StageSpan("prepare", None, "framecontrol", 0.0, 2.0), StageSpan("sampling", "Sampling", "child", 2.0, 92.0, 30, 30, "steps", ((2.0, 0), (92.0, 30))), StageSpan("verify", None, "framecontrol", 92.0, 100.0)],
+        )
+
+    async def test_the_detail_lists_the_selected_runs_recorded_stages(self) -> None:
+        execution_id = self.add("walk", 0, runs=("succeeded",), outputs=("one.mov",), measured=(832, 448, 81))
+        self.keep_stages(execution_id)
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            await self.shown(pilot, execution_id)
+            lines = self.detail_text(app)
+        start = lines.index("Stages of run 1")
+        self.assertEqual([line.split() for line in lines[start + 1 : start + 4]], [["prepare", "2.0", "s", "2.0%"], ["sampling", "30/30", "steps", "90", "s", "90.0%"], ["verify", "8.0", "s", "8.0%"]])
+
+    async def test_a_run_in_progress_shows_the_stage_the_forecast_says_it_is_in_for_its_execution_only(self) -> None:
+        execution_id = self.add("walk", 0, runs=("succeeded",), outputs=("one.mov",), measured=(832, 448, 81))
+        other = self.add("other", 10, runs=("succeeded",), outputs=("two.mov",), measured=(832, 448, 81))
+        app = self.app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.settle(pilot)
+            await self.shown(pilot, other)
+            pane = self.detail_pane(app)
+            pane.show_live(f"E{execution_id:04d}", "denoise 12/30")
+            elsewhere = "\n".join(self.detail_text(app))
+            app.screen.query_one(ExecutionHistoryList).focus()
+            await pilot.press("down")
+            await self.shown(pilot, execution_id)
+            pane.show_live(f"E{execution_id:04d}", "denoise 12/30")
+            here = "\n".join(self.detail_text(app))
+            pane.show_live(None, None)
+            gone = "\n".join(self.detail_text(app))
+        self.assertNotIn("now:", elsewhere)
+        self.assertTrue(here.endswith("now: denoise 12/30"), here)
+        self.assertNotIn("now:", gone)
+
     async def test_old_runs_images_missing_files_and_long_names(self) -> None:
         old = self.add("old", 0, runs=("succeeded",), outputs=("gone [1].mov",))
         image = self.add("still", 10, mode="i2i", runs=("succeeded", "succeeded"), measured=(1024, 576, 0), outputs=("a" * 60 + ".png", "b.png"))
