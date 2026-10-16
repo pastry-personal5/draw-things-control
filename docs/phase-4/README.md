@@ -19,7 +19,7 @@ Improve the product experience, make chained generation support multiple backend
 - Unified per-run job definitions, scoped knob defaults, run-specific timing, and mixed backend chains in Milestone 09.
 - Measured per-stage timing for both backends and Framecontrol's own finishing, kept with each execution's history, in Milestone 10.
 - A stage-aware, measured completion-time forecast for the running job, computed once by the server and shown by every front end, in Milestone 11.
-- The forecast's heuristic knobs (tunables and per-backend, per-run-knob, per-size calibration) kept as external files under `data/timing-data-analysis/`, factory defaults where a file or value is missing, and automatic, replay-gated updates from the runs the host completes, in Milestone 12.
+- The forecast's heuristic knobs (tunables and per-backend, per-run-knob, per-size calibration) kept as external files under `data/timing-data-analysis/`, factory defaults where a value is missing, provisional early learning, and later updates validated on unseen executions, in Milestone 12.
 - Producing and consuming graph-based metadata in Milestone 20.
 
 ## Non-goals
@@ -43,7 +43,7 @@ Improve the product experience, make chained generation support multiple backend
 | 08 | [Rename to Framecontrol](milestone-08-framecontrol-rename.md) | done |
 | 09 | [Unified job definitions and per-run knobs](milestone-09-job-definition.md) | done |
 | 10 | [Stage timing measurement](milestone-10-stage-timing.md) | done |
-| 11 | [Job completion time estimation](milestone-11-time-estimation.md) | planned |
+| 11 | [Job completion time estimation](milestone-11-time-estimation.md) | in-progress |
 | 12 | [Timing knobs as external files](milestone-12-timing-knobs.md) | planned |
 | 20 | [Graph-based metadata](milestone-20-graph-metadata.md) | planned |
 
@@ -75,5 +75,5 @@ Decisions and notable changes are recorded in
 - Version-2 jobs resolve named profiles and scoped defaults into a frozen per-run plan; H3 duration and Draw Things temporal control can vary by run without duplicated H3 frame values.
 - Every run of both backends records a measured stage timeline that is kept and pruned with its execution, as defined in Milestone 10.
 - The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI's work status, `fc queue add --wait` and `fc queue show`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
-- The forecast's tunables and calibration live in files under `data/timing-data-analysis/`, factory defaults apply wherever a file or value is missing, the files update automatically behind a replay gate with backups, an owner's hand edit is kept, and the forecast depends on each run's backend, knobs, width, and height, as defined in Milestone 12.
+- The forecast's tunables and calibration live in files under `data/timing-data-analysis/`, factory defaults apply where a value is missing, early calibration is labeled provisional, later changes pass a held-out replay gate with backups, an owner's hand edit is kept, and the forecast depends on each run's backend, knobs, width, and height, as defined in Milestone 12.
 - Graph-based metadata is produced, consumed, and documented as defined in Milestone 20.
