@@ -8,9 +8,10 @@ import typer
 from loguru import logger
 
 from framecontrol.cli.api_client import AllowRemoteServerOption, ServerUrlOption, TokenFileOption, api_client, api_request
-from framecontrol.cli.context import errors_exit
+from framecontrol.cli.context import errors_exit, services_of
 from framecontrol.core.client_config import DEFAULT_SERVER_URL
 from framecontrol.core.exit_codes import EXIT_INVALID_INPUT
+from framecontrol.services.timing_replay import ESTIMATOR_NAMES, replay_database
 from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 
 if TYPE_CHECKING:
@@ -48,6 +49,24 @@ def timing_show(
                 typer.echo("")
             for line in timing_lines(execution_id, number, body):
                 typer.echo(line)
+
+
+@timing_app.command("replay")
+def timing_replay(
+    ctx: typer.Context,
+    backend: Annotated[str | None, typer.Option("--backend", help="Only the runs of this backend (h3 or draw-things-cli); default: both.")] = None,
+    estimator: Annotated[str, typer.Option("--estimator", help=f"What to replay the runs through: {', '.join(ESTIMATOR_NAMES)}.")] = "forecast",
+) -> None:
+    """Replay the retained runs through an estimator as if they were running, leaving out the execution each is scored
+    on, and print how close its remaining time was at 5 to 90% of each run and 10 to 90% of each job, how often its
+    range held the truth, and how soon it gave a number. It only reads the state database, with no server needed."""
+    if estimator not in ESTIMATOR_NAMES:
+        logger.error("--estimator must be one of {}", ", ".join(ESTIMATOR_NAMES))
+        raise typer.Exit(code=EXIT_INVALID_INPUT)
+    with errors_exit():
+        lines = replay_database(services_of(ctx).paths.database, estimator, backend=backend)
+    for line in lines:
+        typer.echo(line)
 
 
 def _run_numbers(client: "httpx.Client", execution_id: str) -> list[int]:

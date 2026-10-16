@@ -4,11 +4,14 @@ one. Nothing here ever raises into a worker or a front end: a store that cannot 
 from __future__ import annotations
 
 import threading
+from collections import defaultdict
 
 from loguru import logger
 
-from framecontrol.jobs.timing.features import HistoryRun, HistoryStage
+from framecontrol.core.cooldown import CooldownPolicy, parse_cooldown
+from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun, HistoryStage
 from framecontrol.jobs.timing.fit import FittedModel
+from framecontrol.state.execution_rows import ExecutionRow
 from framecontrol.state.store import Store
 from framecontrol.state.timing import CompleteTiming
 
@@ -42,3 +45,37 @@ class TimingHistory:
 def _history_run(row: CompleteTiming) -> HistoryRun:
     stages = tuple(HistoryStage(stage.stage, stage.source, stage.start, stage.end, stage.done, stage.total, stage.unit, stage.marks, stage.uncertain) for stage in row.stages)
     return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, row.workload, row.environment, stages, row.output_frames)
+
+
+def load_executions(store: Store) -> tuple[list[HistoryExecution], int]:
+    """The store's complete runs grouped by execution, oldest first, each with the cooldown policy it ran under and the
+    seconds it recorded waiting after each run, and the number of rows that could not be read. Nothing here raises: a store
+    that cannot be read has no executions."""
+    try:
+        rows, skipped = store.timing.complete_runs()
+        by_number: dict[int, list[CompleteTiming]] = defaultdict(list)
+        for row in rows:
+            by_number[row.execution].append(row)
+        executions = []
+        for number, runs in sorted(by_number.items()):
+            stored = store.executions.by_number(number)
+            recorded = {run.number: run.cooldown_after_seconds for run in stored.runs} if stored is not None else {}
+            waits = tuple(recorded.get(run) or 0.0 for run in range(1, max(row.run for row in runs) + 1))
+            executions.append(HistoryExecution(number, _policy_of(stored), tuple(_history_run(row) for row in runs), waits))
+        return executions, skipped
+    except Exception:
+        logger.exception("The timing history could not be read as executions")
+        return [], 0
+
+
+def _policy_of(execution: ExecutionRow | None) -> CooldownPolicy:
+    """The cooldown an execution ran under: its resolved mapping, else the seconds an older row kept (a manual wait), else none."""
+    if execution is None:
+        return CooldownPolicy("off")
+    mapping = execution.settings.cooldown
+    if isinstance(mapping, dict):
+        try:
+            return parse_cooldown(mapping, "cooldown")
+        except ValueError:
+            pass
+    return CooldownPolicy("manual", seconds=float(execution.cooldown_seconds)) if execution.cooldown_seconds else CooldownPolicy("off")

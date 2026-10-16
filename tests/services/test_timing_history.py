@@ -92,3 +92,51 @@ class TimingHistoryTests(StoreCase):
         with mock.patch.object(type(self.store.timing), "complete_runs", side_effect=sqlite3.OperationalError("database is locked")):
             plan = self.plan(history)
         self.assertEqual((plan.tier, plan.runs), ("live_only", 0))
+
+
+class LoadExecutionsTests(StoreCase):
+    """The history as executions, which is what a replay needs: each one's policy, and the waits it recorded."""
+
+    def keep(self, name: str, days_ago: float, *, runs: int = 2, cooldown: dict | None = None, waits: tuple[float | None, ...] = ()) -> int:
+        from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
+
+        executions = self.store.executions
+        execution = executions.start(NewExecution(job_name=name, job_file=f"{name}.yaml", mode="i2v", started_at=iso(days_ago), settings=ExecutionSettings(output_directory="/out", cooldown=cooldown)))
+        for number in range(1, runs + 1):
+            executions.start_run(execution, number, NewRun(pair="p", positive="t", started_at=iso(days_ago)))
+            executions.finish_run(execution, number, status="succeeded", exit_code=0, seconds=100.0, output="a.mov", last_frame=None)
+            if number <= len(waits) and waits[number - 1] is not None:
+                executions.set_run_cooldown(execution, number, waits[number - 1] or 0.0)
+            self.store.timing.replace_run(execution, number, backend="draw-things-cli", pipeline="i2v", workload=WORKLOAD, environment=ENVIRONMENT, fidelity="live", complete=True, spans=spans())
+        executions.finish(execution, status="succeeded", exit_code=0, signal=None, finished_at=iso(days_ago))
+        return execution
+
+    def test_each_execution_comes_with_its_runs_its_policy_and_the_waits_it_recorded(self) -> None:
+        from framecontrol.core.cooldown import CooldownPolicy
+        from framecontrol.services.timing_history import load_executions
+
+        self.keep("auto", 3, cooldown={"mode": "auto", "ratio": 0.5, "minimum_seconds": 0.0, "maximum_seconds": 900.0}, waits=(55.0, None))
+        self.keep("manual", 2, runs=3, cooldown={"mode": "manual", "seconds": 120.0}, waits=(120.0, 120.0))
+        executions, skipped = load_executions(self.store)
+        self.assertEqual(skipped, 0)
+        self.assertEqual([(item.number, [run.run for run in item.runs]) for item in executions], [(1, [1, 2]), (2, [1, 2, 3])])
+        self.assertEqual([item.cooldown for item in executions], [CooldownPolicy("auto", ratio=0.5, minimum_seconds=0.0, maximum_seconds=900.0), CooldownPolicy("manual", seconds=120.0)])
+        self.assertEqual([item.waits for item in executions], [(55.0, 0.0), (120.0, 120.0, 0.0)])
+        self.assertEqual(executions[0].runs[0].backend, "draw-things-cli")
+
+    def test_an_execution_that_recorded_no_policy_is_off_and_an_old_one_with_seconds_is_manual(self) -> None:
+        from framecontrol.core.cooldown import CooldownPolicy
+        from framecontrol.services.timing_history import load_executions
+
+        self.keep("plain", 3)
+        executions, _ = load_executions(self.store)
+        self.assertEqual(executions[0].cooldown, CooldownPolicy("off"))
+
+    def test_an_execution_with_no_complete_run_is_left_out_and_a_database_that_cannot_be_read_gives_none(self) -> None:
+        from framecontrol.services.timing_history import load_executions
+
+        self.keep("walk", 3)
+        self.store.timing._database.connection().execute("UPDATE run_timing SET complete = 0")
+        self.assertEqual(load_executions(self.store), ([], 0))
+        with mock.patch.object(type(self.store.timing), "complete_runs", side_effect=sqlite3.OperationalError("locked")):
+            self.assertEqual(load_executions(self.store), ([], 0))

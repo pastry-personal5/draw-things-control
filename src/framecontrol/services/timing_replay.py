@@ -18,6 +18,7 @@ import statistics
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, RunFinished, RunOutput, RunStarted
@@ -28,6 +29,8 @@ from framecontrol.jobs.timing.parsers import STEP_STAGES
 from framecontrol.jobs.timing.replay_stream import replay_job
 from framecontrol.services.forecast_publisher import ForecastPublisher
 from framecontrol.services.forecast_view import progress, seconds_left
+from framecontrol.services.timing_history import load_executions
+from framecontrol.state.store import Store, StoreMode
 
 CHECKPOINTS_RUN = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90)
 CHECKPOINTS_JOB = (0.10, 0.25, 0.50, 0.75, 0.90)
@@ -436,3 +439,61 @@ class ConstantPaceEstimator:
 
 
 BUILTIN_ESTIMATORS: Mapping[str, EstimatorFactory] = {"constant-pace": ConstantPaceEstimator, "last-signature": LastSignatureEstimator, "forecast": ForecastEstimator}
+
+
+ESTIMATOR_NAMES = tuple(BUILTIN_ESTIMATORS)
+
+
+def _percent(value: float | None) -> str:
+    return f"{value * 100:.1f}%" if value is not None else "-"
+
+
+def _intervals(observations: Sequence[Observation], keys: Sequence[str]) -> dict[tuple[object, ...], tuple[float, float]]:
+    """The 90% bootstrap interval of the median error of each group of at least ``MIN_JUDGED_RUNS`` estimates."""
+    groups: dict[tuple[object, ...], list[float]] = defaultdict(list)
+    for item in observations:
+        if item.estimate is not None and item.truth > 0:
+            groups[tuple(getattr(item, key) for key in keys)].append(abs(item.estimate - item.truth) / item.truth)
+    return {group: bootstrap_interval(errors) for group, errors in groups.items() if len(errors) >= MIN_JUDGED_RUNS}
+
+
+def report_lines(report: ReplayReport, estimator: str, executions: int, runs: int) -> list[str]:
+    """The metrics a replay measured, as the command prints them: for each backend and pipeline, the run and the job at each
+    checkpoint, with the interval of the median where there are enough runs to judge, and the first number and the share."""
+    lines = [f"Replay with {estimator}: {executions} execution{'s' if executions != 1 else ''}, {runs} run{'s' if runs != 1 else ''}, each scored with its own execution left out"]
+    keys = ("level", "backend", "pipeline", "checkpoint")
+    intervals = _intervals(report.observations, keys)
+    for level in ("run", "job"):
+        groups = sorted({(cell.backend, cell.pipeline) for cell in cells_of([item for item in report.observations if item.level == level], ("backend", "pipeline"))}, key=lambda group: (str(group[0]), str(group[1])))
+        for backend, pipeline in groups:
+            lines += ["", f"{level} {backend} {pipeline}", f"  {'checkpoint':>10}  {'runs':>5}  {'median':>8}  {'90% interval':>16}  {'p90':>8}  {'bias':>8}  {'coverage':>8}"]
+            for cell in cells_of([item for item in report.observations if item.level == level and item.backend == backend and item.pipeline == pipeline], keys):
+                interval = intervals.get((level, backend, pipeline, cell.checkpoint))
+                span = f"{_percent(interval[0])} to {_percent(interval[1])}" if interval is not None else ""
+                judged = "" if interval is not None else f"  not judged (fewer than {MIN_JUDGED_RUNS} runs)"
+                coverage = f"{cell.coverage:.2f}" if cell.coverage is not None else "-"
+                lines.append(f"  {f'{cell.checkpoint * 100:.0f}%' if cell.checkpoint is not None else '':>10}  {cell.runs:>5}  {_percent(cell.median_ape):>8}  {span:>16}  {_percent(cell.p90_ape):>8}  {_percent(cell.bias):>8}  {coverage:>8}{judged}")
+    firsts = sorted(trace.first_number for trace in report.traces if trace.first_number is not None)
+    middle = f", median {firsts[len(firsts) // 2]:.1f} s" if firsts else ""
+    lines += ["", f"time to the first number: {len(firsts)}/{len(report.traces)} runs{middle}", f"share moved back: {sum(trace.run_moves_back for trace in report.traces)} times in runs, {sum(report.job_moves_back.values())} in jobs"]
+    return lines
+
+
+def replay_database(database: Path, estimator: str, *, backend: str | None = None) -> list[str]:
+    """Replay the runs of the state database at ``database`` through ``estimator``, leaving out the execution each is scored
+    on, and return the lines to print. The store is only read (opened as the history browses it), and needs no server."""
+    if not database.exists():
+        return ["No timing history to replay: there is no state database yet"]
+    store = Store.open(database, mode=StoreMode.BROWSE)
+    try:
+        executions, skipped = load_executions(store)
+    finally:
+        store.close()
+    scored = [execution for execution in executions if backend is None or any(run.backend == backend for run in execution.runs)]
+    if not scored:
+        return [f"No complete {backend} runs to replay" if backend is not None else "No timing history to replay: no run has complete timing yet"]
+    report = replay_leave_one_out(executions, BUILTIN_ESTIMATORS[estimator], backend=backend)
+    lines = report_lines(report, estimator, len(scored), sum(len(execution.runs) for execution in scored))
+    if skipped:
+        lines.append(f"{skipped} timing row{'s' if skipped != 1 else ''} could not be read and {'were' if skipped != 1 else 'was'} left out")
+    return lines
