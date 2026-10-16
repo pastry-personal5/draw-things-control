@@ -38,6 +38,8 @@ DEFAULT_STEP_NOISE = 0.10
 # The spread of a run's own within-stage slope about the backend's, when too few runs say, and the least it is taken to be.
 DEFAULT_SLOPE_SD, MIN_SLOPE_SD = 0.06, 0.02
 MIN_SLOPE_RUNS = 6
+# The least spread, in the log, the first gap's ratio to the later steps is taken to have from one run to the next.
+MIN_FIRST_SD = 0.02
 # The spread of a stage duration in the log, when no history says, and the least it is taken to be.
 DEFAULT_STAGE_SIGMA, MIN_STAGE_SIGMA = 0.15, 0.03
 # Seconds of spread for a stage the history has not seen, when the backend has no stage history at all.
@@ -144,8 +146,12 @@ class Plan:
     step_noise: float
     stage_factor: float
     other_sd: float
-    # How far a run's own slope strays from the backend's, which the steps still to come are uncertain by.
+    # How far a run's own slope strays from the backend's, which the steps still to come are uncertain by, and how far its first
+    # gap strays from the ratio (in the log), which is how little that gap says of the rate.
     slope_sd: float
+    first_sd: float
+    # What a run's pauses add, as a share of the steps still to come: the allowance for the ones not yet seen.
+    pause_share: float
     # Time between the named stages: the mean and spread of a run's ``unaccounted`` seconds.
     overhead_mean: float
     overhead_sd: float
@@ -174,6 +180,8 @@ class _Row:
     unaccounted: float
     iterative_key: str | None
     stage_ratio: float | None
+    # What the stage's pauses added, as a share of the stage at its normal pace.
+    pause_ratio: float | None
 
     @property
     def execution(self) -> int:
@@ -188,10 +196,11 @@ def _read_row(run: HistoryRun) -> _Row:
     series = step_series(iterative) if iterative is not None else None
     key = next((name for name, stage in keyed.items() if stage is iterative), None)
     y = math.log(series.mean_seconds) if series is not None and series.mean_seconds > 0 else None
-    ratio = None
+    ratio = pause = None
     if series is not None and iterative is not None and iterative.total and series.mean_seconds > 0:
         ratio = min(2.0, iterative.duration / (iterative.total * series.mean_seconds))
-    return _Row(run, run.signature, feature_values(run.workload, run.output_frames), series, y, keyed, sum(stage.duration for stage in stages if stage.stage == "unaccounted"), key, ratio)
+        pause = min(2.0, series.pause_seconds / (iterative.total * series.mean_seconds))
+    return _Row(run, run.signature, feature_values(run.workload, run.output_frames), series, y, keyed, sum(stage.duration for stage in stages if stage.stage == "unaccounted"), key, ratio, pause)
 
 
 @dataclass(frozen=True)
@@ -277,8 +286,10 @@ class _BackendStats:
     slope: float = 0.0
     slope_sd: float = DEFAULT_SLOPE_SD
     first_ratio: float | None = None
+    first_sd: float = 0.0
     step_noise: float = DEFAULT_STEP_NOISE
     stage_factor: float = 1.0
+    pause_share: float = 0.0
     tau: float = DEFAULT_TAU
     rho: float = DEFAULT_RHO
     other_sd: float = DEFAULT_OTHER_SD
@@ -341,12 +352,16 @@ def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
     ratios = [item.first_ratio for item in series if item.first_ratio is not None]
     if len(ratios) >= MIN_FIRST_GAP_RUNS:
         stats.first_ratio = statistics.median(ratios)
+        stats.first_sd = max(MIN_FIRST_SD, _stdev([math.log(ratio) for ratio in ratios]))
     slopes = [item.slope for item in series if item.slope is not None]
     if len(slopes) >= MIN_SLOPE_RUNS:
         stats.slope_sd = max(MIN_SLOPE_SD, _stdev(slopes))
     factors = [row.stage_ratio for row in live if row.stage_ratio is not None]
     if factors:
         stats.stage_factor = sum(factors) / len(factors)
+    pauses = [row.pause_ratio for row in live if row.pause_ratio is not None]
+    if pauses:
+        stats.pause_share = sum(pauses) / len(pauses)
     if live:
         stats.tau, stats.rho = _spreads(live)
         stats.slope = _slope(live)
@@ -466,6 +481,8 @@ class FittedModel:
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
             slope_sd=stats.slope_sd,
+            first_sd=stats.first_sd,
+            pause_share=stats.pause_share,
             overhead_mean=overhead[0],
             overhead_sd=overhead[1],
         )
@@ -495,6 +512,8 @@ class FittedModel:
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
             slope_sd=stats.slope_sd,
+            first_sd=stats.first_sd,
+            pause_share=stats.pause_share,
             overhead_mean=overhead[0],
             overhead_sd=overhead[1],
         )
@@ -521,6 +540,8 @@ class FittedModel:
             stage_factor=stats.stage_factor,
             other_sd=stats.other_sd,
             slope_sd=stats.slope_sd,
+            first_sd=stats.first_sd,
+            pause_share=stats.pause_share,
             overhead_mean=0.0,
             overhead_sd=0.0,
         )

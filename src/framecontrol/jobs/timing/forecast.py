@@ -369,7 +369,8 @@ class Forecaster:
             return
         if plan.log_step is not None:
             observed = math.log(seconds) - (plan.log_step + shape)
-            noise = plan.step_noise**2 / count
+            # The first gap is noisier than a step by as much as its ratio differs from one run to the next.
+            noise = plan.step_noise**2 / count + (plan.first_sd**2 if first else 0.0)
             precision = 1.0 / run.u_var + 1.0 / noise
             run.u_mean = (run.u_mean / run.u_var + observed / noise) / precision
             run.u_var = 1.0 / precision
@@ -576,7 +577,8 @@ class Forecaster:
         for index in range(done + 1, n):
             position = (index + 0.5) / n
             step = level * _shape(plan.slope, position)
-            mean += step
+            # The pauses runs make add to the steps still to come, as many as they have added to the ones before them.
+            mean += step * (1.0 + plan.pause_share)
             var += (step * plan.step_noise) ** 2
             lean += step * (position - centre)
         var += (plan.slope_sd * lean) ** 2

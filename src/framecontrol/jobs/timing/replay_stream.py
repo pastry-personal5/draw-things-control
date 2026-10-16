@@ -85,7 +85,7 @@ def replay_job(execution: HistoryExecution, *, first_run: int = 1, origin: float
         ends[run.run] = end
         cursor = end
         if index < len(runs) - 1:
-            wait = execution.cooldown.wait_after(run.child_seconds).seconds
+            wait = execution.wait_after(run)
             if wait > 0:
                 until = datetime.fromtimestamp(cursor + wait).astimezone().strftime("%H:%M:%S")
                 events.append((cursor, CooldownStarted(at=_stamp(cursor), after_run=run.run, seconds=wait, until=until, mode=execution.cooldown.mode, ratio=execution.cooldown.ratio if execution.cooldown.mode == "auto" else None, run_seconds=run.child_seconds)))

@@ -103,6 +103,14 @@ class HistoryExecution:
     number: int
     cooldown: CooldownPolicy
     runs: tuple[HistoryRun, ...]
+    # The seconds waited after each run, where the execution recorded them; none for one that follows its policy.
+    waits: tuple[float, ...] | None = None
+
+    def wait_after(self, run: HistoryRun) -> float:
+        """The wait that followed ``run``: the recorded one, else what the policy gives for its child's time."""
+        if self.waits is not None:
+            return self.waits[run.run - 1] if 0 < run.run <= len(self.waits) else 0.0
+        return self.cooldown.wait_after(run.child_seconds).seconds
 
 
 def signature(backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Signature:
@@ -182,6 +190,8 @@ class StepSeries:
     noise: float
     pauses: int
     steps: int
+    # Seconds the pauses took beyond the steps they replaced.
+    pause_seconds: float = 0.0
 
 
 def step_series(stage: HistoryStage) -> StepSeries | None:
@@ -193,6 +203,7 @@ def step_series(stage: HistoryStage) -> StepSeries | None:
     median = statistics.median(time for time, _, _ in later) if later else None
     ordinary = [gap for gap in later if median is None or gap[0] <= PAUSE_FACTOR * median]
     pauses = len(later) - len(ordinary)
+    pause_seconds = sum((time - median) * count for time, count, _ in later if median is not None and time > PAUSE_FACTOR * median)
     pool = ordinary or gaps
     units = sum(count for _, count, _ in pool)
     mean = sum(time * count for time, count, _ in pool) / units
@@ -212,7 +223,7 @@ def step_series(stage: HistoryStage) -> StepSeries | None:
         noise = float(np.std(logs, ddof=1))
     else:
         noise = 0.0
-    return StepSeries(mean, first_ratio, slope, noise, pauses, sum(count for _, count, _ in gaps))
+    return StepSeries(mean, first_ratio, slope, noise, pauses, sum(count for _, count, _ in gaps), pause_seconds)
 
 
 def _gaps(stage: HistoryStage) -> list[tuple[float, int, float]]:

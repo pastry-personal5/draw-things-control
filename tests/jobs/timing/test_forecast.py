@@ -126,6 +126,17 @@ class RunForecastTests(unittest.TestCase):
         # Four steps are done and six remain: the 900 s step did not slow the rate.
         self.assertAlmostEqual(forecast.run.end_at - now, 6 * 50.0 + 11.0 + 2.0, delta=0.04 * 313.0)
 
+    def test_the_steps_still_to_come_carry_the_pause_the_history_shows_runs_make(self) -> None:
+        # Every run in the history paused for 500 s beyond a step, one step in ten: the history says to expect it.
+        gaps = [50.0] * 4 + [550.0] + [50.0] * 5
+        history = [dt_run(execution, 1, gaps=gaps) for execution in range(1, 5)]
+        playback = Playback(history, single_run(gaps=[50.0] * 10))
+        forecast = playback.at(SAMPLING_START + 5 * 50.0)
+        assert forecast is not None and forecast.run is not None
+        now = ORIGIN + SAMPLING_START + 250.0
+        # Five steps remain, and a share of a pause with them.
+        self.assertGreater(forecast.run.end_at - now, 5 * 50.0 + 13.0 + 100.0)
+
     def test_a_first_gap_with_no_known_ratio_does_not_move_the_rate(self) -> None:
         # Rows rebuilt from a log have an estimated first mark, so no ratio of the first gap to the rest can be known.
         history = [replace(run, stages=tuple(replace(stage, uncertain=True) if stage.unit == "steps" else stage for stage in run.stages)) for run in HISTORY]

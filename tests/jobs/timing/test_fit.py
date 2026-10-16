@@ -10,7 +10,7 @@ from dataclasses import replace
 import numpy as np
 
 from framecontrol.jobs.timing.features import HistoryRun
-from framecontrol.jobs.timing.fit import PENALTIES, FittedModel, FixedStage, IterativeStage, Plan, student_t_90, student_t_975
+from framecontrol.jobs.timing.fit import MIN_FIRST_SD, PENALTIES, FittedModel, FixedStage, IterativeStage, Plan, student_t_90, student_t_975
 from tests.timing.builders import BASE_PIXELS, DT, H3, dt_run, dt_workload, h3_run, h3_workload, log_run
 from tests.timing.synthetic import synthetic_history
 
@@ -290,3 +290,34 @@ class SpeedTests(unittest.TestCase):
             errors.append(abs(math.exp(plan.log_step) * sampling.total / sampling.duration - 1))
         self.assertGreater(len(errors), 20)
         self.assertLess(float(np.median(errors)), 0.12)
+
+
+class FirstGapSpreadTests(unittest.TestCase):
+    ENVIRONMENT = {"model": "h3-model", "executable_bytes": 200, "executable_mtime": 2.0}
+
+    def plan(self, ratios: list[float]) -> Plan:
+        history = [h3_run(index + 1, 1, gaps=[60.0 * ratio] + [60.0] * 29) for index, ratio in enumerate(ratios)]
+        return plan_of(history, backend=H3, pipeline="r2av", workload=h3_workload(), environment=self.ENVIRONMENT)
+
+    def test_the_first_gap_has_the_spread_its_ratio_shows_from_run_to_run(self) -> None:
+        plan = self.plan([0.60, 0.74, 0.88, 0.60, 0.74, 0.88])
+        expected = float(np.std(np.log([0.60, 0.74, 0.88, 0.60, 0.74, 0.88]), ddof=1))
+        self.assertAlmostEqual(plan.first_sd, expected, places=6)
+        self.assertGreater(plan.first_sd, 0.1)
+
+    def test_a_ratio_that_never_varies_has_the_least_spread(self) -> None:
+        self.assertEqual(self.plan([0.74] * 6).first_sd, MIN_FIRST_SD)
+
+    def test_with_no_first_ratio_known_there_is_no_spread_to_speak_of(self) -> None:
+        self.assertEqual(self.plan([0.74, 0.74]).first_sd, 0.0)
+
+
+class PauseShareTests(unittest.TestCase):
+    def test_the_share_of_a_stage_that_pauses_added_is_the_mean_over_the_runs(self) -> None:
+        history = [dt_run(index + 1, 1, gaps=[50.0] * 10 + ([550.0] if index % 2 == 0 else [50.0]) + [50.0] * 9) for index in range(4)]
+        plan = plan_of(history, workload=dt_workload(steps=20))
+        # Half the runs paused for 500 s beyond a step in a stage of 20 steps of 50 s.
+        self.assertAlmostEqual(plan.pause_share, 0.5 * 500.0 / (20 * 50.0), places=6)
+
+    def test_a_backend_whose_runs_never_paused_has_none(self) -> None:
+        self.assertEqual(plan_of([dt_run(index + 1, 1) for index in range(4)]).pause_share, 0.0)

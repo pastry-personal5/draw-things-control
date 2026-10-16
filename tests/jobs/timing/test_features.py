@@ -80,6 +80,14 @@ class StepSeriesTests(unittest.TestCase):
         self.assertAlmostEqual(series.mean_seconds, 50.0)
         self.assertEqual(series.pauses, 1)
 
+    def test_the_seconds_a_pause_added_are_what_it_took_beyond_a_step(self) -> None:
+        series = step_series(iterative([50.0] * 10 + [900.0] + [50.0] * 9))
+        assert series is not None
+        self.assertAlmostEqual(series.pause_seconds, 850.0)
+        steady = step_series(iterative([50.0] * 20))
+        assert steady is not None
+        self.assertEqual(steady.pause_seconds, 0.0)
+
     def test_the_first_gap_is_set_aside_and_compared_with_the_rest(self) -> None:
         series = step_series(iterative([37.0] + [50.0] * 19))
         assert series is not None

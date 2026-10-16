@@ -85,6 +85,14 @@ class ChainStreamTests(unittest.TestCase):
         self.assertFalse([event for _, event in job.events if isinstance(event, CooldownStarted)])
         self.assertAlmostEqual(job.starts[2], job.ends[1], places=6)
 
+    def test_recorded_waits_replace_the_policys_when_the_execution_has_them(self) -> None:
+        recorded = HistoryExecution(7, CooldownPolicy("auto", ratio=0.5), tuple(self.runs), waits=(40.0, 0.0))
+        job = replay_job(recorded, origin=0.0)
+        self.assertAlmostEqual(job.starts[2], job.ends[1] + 40.0, places=6)
+        self.assertAlmostEqual(job.starts[3], job.ends[2], places=6)
+        started = [event for _, event in job.events if isinstance(event, CooldownStarted)]
+        self.assertEqual([(event.after_run, event.seconds) for event in started], [(1, 40.0)])
+
     def test_a_resumed_job_replays_only_the_runs_it_will_execute(self) -> None:
         job = replay_job(execution(CooldownPolicy("off"), *self.runs), first_run=2, origin=0.0)
         self.assertEqual(sorted(job.starts), [2, 3])

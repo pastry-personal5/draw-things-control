@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus
+from framecontrol.services.timing_replay import Interval, JobContext, Reading
 
 # The patterns of core/process/output.py as they were: a "[1/3]" file counter is not a step counter.
 PROGRESS_PATTERN = re.compile(r"(?<![\d\[])(\d+)\s*/\s*(\d+)(?!\d)")
@@ -248,3 +249,22 @@ def _positive(seconds: float) -> float | None:
 
 def _average(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+class FrozenReplayEstimator:
+    """The frozen estimator behind the replay's interface: it learns from the history only what the old code did, the latest
+    run of any job from before this one (draw-things-cli's time, and its steps), and it gives no range."""
+
+    def __init__(self, context: JobContext) -> None:
+        earlier = [run for run in context.training if run.execution < context.execution.number and run.child_seconds > 0] or [run for run in context.training if run.child_seconds > 0]
+        newest = max(earlier, key=lambda run: run.order, default=None)
+        steps = newest.workload.get("steps") if newest is not None else None
+        past = PastRun(newest.child_seconds, steps if isinstance(steps, int) else None) if newest is not None else None
+        self._estimator = FrozenEstimator(past_run=past)
+
+    def observe(self, event: JobEvent, now: float) -> None:
+        self._estimator.observe(event, now)
+
+    def reading(self, now: float) -> Reading:
+        run, job = self._estimator.run_estimate(now), self._estimator.job_estimate(now)
+        return Reading(Interval(run.remaining) if run.remaining is not None else None, Interval(job.remaining) if job.remaining is not None else None, run.fraction, job.fraction)
