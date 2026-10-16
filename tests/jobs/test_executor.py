@@ -88,7 +88,7 @@ class TalkingRunner(FakeRunner):
 
     def run(self) -> FakeResult:
         for stream, text in self.lines:
-            self.on_message(ProcessMessage(stream=stream, text=text, elapsed_seconds=0.5, progress=(3, 8) if "3/8" in text else None))
+            self.on_message(ProcessMessage(stream=stream, text=text, elapsed_seconds=0.5))
         return super().run()
 
 
@@ -806,7 +806,7 @@ class JobExecutorTests(JobTestCase):
         self.service.knobs.runner_factory = factory
         _outcome, events = self.observed(self.job(run_count=2, prompt_pairs=[{"name": "only", "positive": "text"}]))
         output = [event for event in events if isinstance(event, RunOutput)]
-        self.assertEqual([(event.number, event.stream, event.text, event.progress) for event in output], [(run, stream.value, text, (3, 8) if "3/8" in text else None) for run in (1, 2) for stream, text in lines])
+        self.assertEqual([(event.number, event.stream, event.text) for event in output], [(run, stream.value, text) for run in (1, 2) for stream, text in lines])
         # Output arrives between its run's start and finish.
         kinds = [type(event) for event in events]
         self.assertEqual(kinds[:6], [JobStarted, RunStarted, RunOutput, RunOutput, RunOutput, RunFinished])

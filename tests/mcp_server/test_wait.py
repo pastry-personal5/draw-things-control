@@ -129,18 +129,6 @@ class LiveWaitTests(McpCase):
         self.assertTrue({"last_run_seconds", "resumable", "resume_from_run", "resume_refused_reason"} <= set(body))
         self.assertLess(elapsed, 5)
 
-    async def test_it_returns_at_a_runs_end_not_at_a_step(self) -> None:
-        queue_id = await self.running_entry()
-
-        def end_run() -> None:
-            self.worker._current_run = self.worker._current_step = None
-
-        self.script({3: lambda: setattr(self.worker, "_current_step", (4, 30)), 6: lambda: setattr(self.worker, "_current_step", (5, 30)), 10: end_run})
-        async with self.client() as client:
-            body, _elapsed = await self.wait(client, queue_id, 60)
-        self.assertEqual((body["changed"], body["current_run"]), (True, None))
-        self.assertGreaterEqual(self.worker.reads, 10)
-
     async def test_a_forecast_never_ends_a_wait_and_the_final_read_carries_it(self) -> None:
         queue_id = await self.running_entry()
         now = time.time()
@@ -157,12 +145,13 @@ class LiveWaitTests(McpCase):
         self.assertEqual((body["forecast"]["stage"], body["forecast"]["stage_done"]), ("denoise", 6))
         self.assertIn("seconds_left", body["forecast"]["run"])
 
-    async def test_the_next_runs_start_and_its_steps_do_not_end_it(self) -> None:
+    async def test_the_next_runs_start_and_its_forecasts_do_not_end_it(self) -> None:
         queue_id = await self.running_entry(current_run=None)
-        self.script({3: lambda: setattr(self.worker, "_current_run", (3, 0.0)), 6: lambda: setattr(self.worker, "_current_step", (1, 30))})
+        now = time.time()
+        self.script({3: lambda: setattr(self.worker, "_current_run", (3, 0.0)), 6: lambda: setattr(self.worker, "_forecast", sample_forecast(now, done=1))})
         async with self.client() as client:
             body, elapsed = await self.wait(client, queue_id, 1)
-        self.assertEqual((body["changed"], body["current_run"], body["current_step"]), (False, 3, 1))
+        self.assertEqual((body["changed"], body["current_run"], body["forecast"]["stage_done"]), (False, 3, 1))
         self.assertGreaterEqual(elapsed, 1)
         self.assertGreater(self.worker.reads, 6)
 

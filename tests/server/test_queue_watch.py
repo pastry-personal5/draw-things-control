@@ -22,7 +22,7 @@ from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
 from tests.timing.builders import sample_forecast
 
-SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "current_step", "current_step_total", "total_runs", "park_requested", "queue_held", "forecast")
+SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "total_runs", "park_requested", "queue_held", "forecast")
 
 
 class ScriptedWorker(FakeWorker):
@@ -92,16 +92,16 @@ class WatchTestCase(QueueRoutesTestCase):
         return entry["queue_id"]
 
     def script(self, context: ServerContext) -> None:
-        """Snapshot 1 is the baseline; 2 changes the elapsed seconds alone; 3 a step; 4 ends the run, and the server
-        stops after it."""
+        """Snapshot 1 is the baseline; 2 changes the elapsed seconds alone; 3 republishes the forecast; 4 ends the run, and
+        the server stops after it."""
 
         def on_read(count: int) -> None:
             if count == 2:
                 self.worker._current_run = (2, 9.0)
             elif count == 3:
-                self.worker._current_step = (3, 30)
+                self.worker._forecast = sample_forecast(1_000_000.0, done=3)
             elif count == 4:
-                self.worker._current_run = self.worker._current_step = None
+                self.worker._current_run = None
                 context.stopping.set()
 
         self.worker.reads, self.worker.on_read = 0, on_read
@@ -120,9 +120,9 @@ class InProcessWatchTests(WatchTestCase):
         first, step, ended = (data for _event, data in messages)
         self.assertEqual(tuple(first), SNAPSHOT_FIELDS)
         self.assertEqual((first["queue_id"], first["state"], first["current_run"], first["current_run_elapsed_seconds"], first["total_runs"]), (queue_id, "running", 2, 5.0, 3))
-        self.assertEqual((first["park_requested"], first["queue_held"], first["current_step"]), (False, False, None))
-        self.assertEqual((step["current_run"], step["current_run_elapsed_seconds"], step["current_step"], step["current_step_total"]), (2, 9.0, 3, 30))
-        self.assertEqual((ended["current_run"], ended["current_step"]), (None, None))
+        self.assertEqual((first["park_requested"], first["queue_held"], first["forecast"]), (False, False, None))
+        self.assertEqual((step["current_run"], step["current_run_elapsed_seconds"], step["forecast"]["stage_done"]), (2, 9.0, 3))
+        self.assertEqual((ended["current_run"], ended["forecast"]["stage_done"]), (None, 3))
 
     def test_a_republished_forecast_is_a_new_snapshot_and_time_passing_is_not(self) -> None:
         queue_id = self.running_entry()
@@ -175,7 +175,7 @@ class InProcessWatchTests(WatchTestCase):
         queue_id = self.running_entry()
         self.script(self.context)
         over_sse = [data for _event, data in sse_messages(self.request("get", f"/v1/queue/{queue_id}/watch").text)]
-        self.worker.reads, self.worker._current_run = 0, (2, 5.0)
+        self.worker.reads, self.worker._current_run, self.worker._forecast = 0, (2, 5.0), None
         self.context.stopping.clear()
         self.assertEqual(asyncio.run(self.grpc_snapshots(queue_id, len(over_sse))), over_sse)
 

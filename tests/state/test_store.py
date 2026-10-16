@@ -177,18 +177,6 @@ class ExecutionTests(StoreCase):
         run = self.stored(execution_id).runs[0]
         self.assertEqual((run.output_width, run.output_height, run.output_frames), (832, 448, 81))
 
-    def test_the_latest_successful_run_of_any_job_is_found(self) -> None:
-        executions = self.store.executions
-        self.assertIsNone(executions.latest_succeeded_run())
-        self.add("older", started=iso(2), finished=iso(2))
-        newer = executions.start(NewExecution(job_name="newer", job_file="newer.yaml", mode="i2v", started_at=iso(1)))
-        executions.start_run(newer, 1, NewRun(pair="p", positive="text", started_at=iso(1), command=["draw-things-cli", "--steps", "8"]))
-        executions.finish_run(newer, 1, status="failed", exit_code=1, seconds=3.0, output=None, last_frame=None)
-        run = executions.latest_succeeded_run()
-        assert run is not None
-        # A failed run is never the one to estimate from.
-        self.assertEqual((run.seconds, run.command), (1.0, ("draw-things-cli", "--prompt", "text")))
-
     def test_an_execution_round_trips_with_its_runs_and_settings(self) -> None:
         execution = self.stored(self.add("walk", started=iso(1), finished=iso(1), runs=2))
         self.assertEqual((execution.status, execution.settings, execution.job_file), ("succeeded", ExecutionSettings(output_directory="/out"), "walk.yaml"))

@@ -22,7 +22,7 @@ def run_started(number: int, total: int) -> RunStarted:
 
 def reading(number: int, stage: str, phase: str, done: int | None = None, total: int | None = None) -> RunOutput:
     """What the executor emits for a stage reading: the stage and counter, and no text of its own."""
-    return RunOutput(at=AT, number=number, stream="stdout", text="", progress=None, percent=None, phase=phase, offset=0.0, stage=stage, done=done, total=total)
+    return RunOutput(at=AT, number=number, stream="stdout", text="", phase=phase, offset=0.0, stage=stage, done=done, total=total)
 
 
 def run_finished(number: int, seconds: float) -> RunFinished:

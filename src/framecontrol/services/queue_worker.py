@@ -270,10 +270,6 @@ class QueueWorker:
         """The claimed entry's current run number and its elapsed seconds (``GET /queue/{id}``, ``WatchQueueEntry``)."""
         return self._status.current_run()
 
-    def current_step(self) -> tuple[int, int] | None:
-        """The active run's latest (step, total) progress-bar reading (``GET /queue/{id}``, ``WatchQueueEntry``)."""
-        return self._status.current_step()
-
     def latest_forecast(self, entry_id: int) -> Forecast | None:
         """The forecast last published for entry ``entry_id`` while it is the one running; None for any other entry, and
         once it has been released, cancelled, or has finished (``GET /queue/{id}``, ``WatchQueueEntry``)."""

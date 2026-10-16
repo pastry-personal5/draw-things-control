@@ -42,7 +42,6 @@ class ProcessRunnerTests(unittest.TestCase):
 
         self.assertTrue(result.succeeded)
         messages_by_stream = {message.stream: message for message in result.messages}
-        self.assertEqual(messages_by_stream[OutputStream.STDOUT].progress, (2, 4))
         self.assertEqual(messages_by_stream[OutputStream.STDERR].text, "warning")
         self.assertIn("sampling 2/4", stdout.getvalue())
         self.assertIn("warning", stderr.getvalue())

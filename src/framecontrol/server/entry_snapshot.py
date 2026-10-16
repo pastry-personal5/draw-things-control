@@ -34,8 +34,6 @@ def entry_snapshot(context: ServerContext, entry_id: int) -> dict[str, Any] | No
         ELAPSED_FIELD: progress[ELAPSED_FIELD],
         "cooldown_until": progress["cooldown_until"],
         "error": entry.error,
-        "current_step": progress["current_step"],
-        "current_step_total": progress["current_step_total"],
         "total_runs": entry.total_runs,
         "park_requested": park_requested,
         "queue_held": worker.hold_state().held,
@@ -50,27 +48,23 @@ def published_forecast(context: ServerContext, entry_id: int) -> dict[str, Any] 
 
 
 def run_progress(context: ServerContext, entry_id: int) -> dict[str, Any]:
-    """The worker's progress on entry ``entry_id`` while it is the one running (its current run, the run's elapsed
-    seconds, and its step), and when the between-jobs wait ends: what ``GET /v1/queue/{id}`` and a snapshot both
-    carry."""
+    """The worker's progress on entry ``entry_id`` while it is the one running (its current run and the run's elapsed
+    seconds), and when the between-jobs wait ends: what ``GET /v1/queue/{id}`` and a snapshot both carry."""
     worker = context.worker
-    current_run = current_step = None
+    current_run = None
     if worker.current_entry_id() == entry_id:
         current_run = worker.current_run()
-        current_step = worker.current_step()
     return {
         "current_run": current_run[0] if current_run is not None else None,
         ELAPSED_FIELD: current_run[1] if current_run is not None else None,
-        "current_step": current_step[0] if current_step is not None else None,
-        "current_step_total": current_step[1] if current_step is not None else None,
         "cooldown_until": worker.cooldown_until(),
     }
 
 
 def snapshot_changed(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     """Whether ``current`` is sent after ``previous``, the last one sent: the first always, then whenever a field the
-    contract names changes (state, execution ID, run, step, ``cooldown_until``, error, the park reservation, the
-    hold, the run count), the elapsed seconds aside."""
+    contract names changes (state, execution ID, run, ``cooldown_until``, error, the park reservation, the
+    hold, the run count, the forecast), the elapsed seconds aside."""
     if previous is None:
         return True
     return {**previous, ELAPSED_FIELD: None} != {**current, ELAPSED_FIELD: None}

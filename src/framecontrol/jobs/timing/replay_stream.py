@@ -55,7 +55,7 @@ def run_events(run: HistoryRun, number: int, total: int, origin: float) -> tuple
         events.append((began, StageStarted(at=_stamp(began), number=number, stage=stage.stage, phase=None, source=stage.source, start=stage.start)))
         for offset, done, units in _readings(stage):
             time = origin + offset
-            events.append((time, RunOutput(at=_stamp(time), number=number, stream="stdout", text="", progress=None, percent=None, phase=stage.stage, offset=offset, stage=stage.stage, done=done, total=units)))
+            events.append((time, RunOutput(at=_stamp(time), number=number, stream="stdout", text="", phase=stage.stage, offset=offset, stage=stage.stage, done=done, total=units)))
         events.append((ended, StageFinished(at=_stamp(ended), number=number, stage=stage.stage, phase=None, source=stage.source, start=stage.start, end=stage.end, done=stage.done, total=stage.total, unit=stage.unit, marks=stage.marks)))
     events.append((end, TimingFinished(at=_stamp(end), number=number, complete=True, load_end=None)))
     events.append((end, RunFinished(at=_stamp(end), number=number, status=RunStatus.SUCCEEDED, exit_code=0, seconds=run.child_seconds, output=None, last_frame=None)))

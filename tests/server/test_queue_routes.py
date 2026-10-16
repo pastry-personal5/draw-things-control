@@ -47,7 +47,6 @@ class FakeWorker:
         self.cancelled: list[int] = []
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
-        self._current_step: tuple[int, int] | None = None
         self._forecast: Forecast | None = None
         # A reservation per entry, the stop asked for one (refusing a park), whether its park has taken
         # effect (refusing an unpark), and the real hold, over the real store.
@@ -71,9 +70,6 @@ class FakeWorker:
 
     def current_run(self) -> tuple[int, float] | None:
         return self._current_run
-
-    def current_step(self) -> tuple[int, int] | None:
-        return self._current_step
 
     def latest_forecast(self, entry_id: int) -> Forecast | None:
         return self._forecast if entry_id == self._current_id else None
@@ -468,16 +464,15 @@ class ResumeTests(QueueRoutesTestCase):
         self.assertFalse(detail["resumable"])
         self.assertIn("queued", detail["resume_refused_reason"])
 
-    def test_the_entry_the_worker_is_currently_running_reports_its_run_and_step(self) -> None:
+    def test_the_entry_the_worker_is_currently_running_reports_its_run(self) -> None:
         entry = self.submit(run_count=1)
         claimed = self.store.queue.claim_oldest(datetime.now())
         assert claimed is not None
         self.worker._current_id = claimed.id
         self.worker._current_run = (1, 12.5)
-        self.worker._current_step = (7, 20)
         detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
         self.assertEqual((detail["current_run"], detail["current_run_elapsed_seconds"]), (1, 12.5))
-        self.assertEqual((detail["current_step"], detail["current_step_total"]), (7, 20))
+        self.assertNotIn("current_step", detail)
 
     def running(self) -> str:
         entry = self.submit(run_count=1)
@@ -513,14 +508,12 @@ class ResumeTests(QueueRoutesTestCase):
         self.worker._current_id = 999999
         self.assertIsNone(self.request("get", f"/v1/queue/{queue_id}").json()["forecast"])
 
-    def test_a_different_entrys_current_run_and_step_are_not_reported(self) -> None:
+    def test_a_different_entrys_current_run_is_not_reported(self) -> None:
         entry = self.submit(run_count=1)
         self.worker._current_id = 999999
         self.worker._current_run = (1, 12.5)
-        self.worker._current_step = (7, 20)
         detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
         self.assertEqual((detail["current_run"], detail["current_run_elapsed_seconds"]), (None, None))
-        self.assertEqual((detail["current_step"], detail["current_step_total"]), (None, None))
 
     def test_resuming_a_job_that_would_now_exceed_a_limit_is_refused_and_stores_nothing(self) -> None:
         original = self.seed_resumable_entry()

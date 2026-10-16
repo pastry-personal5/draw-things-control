@@ -188,7 +188,7 @@ class MediumTests(VerboseTestCase):
             clock.now = 1000 + MEDIUM_OUTPUT_WINDOW_SECONDS
             await self.push(pilot, run_output("at the edge"))
             clock.now = 1000 + MEDIUM_OUTPUT_WINDOW_SECONDS + 1
-            await self.push(pilot, run_output("late"), run_output("later", progress=(2, 8), percent=25))
+            await self.push(pilot, run_output("late"), run_output("later"))
             await self.push(pilot, run_output("later still"))
             first = self.pane(app)
             clock.now = 2000

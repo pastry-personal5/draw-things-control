@@ -161,11 +161,6 @@ class ExecutionRepository:
         row_id = self.row_of(execution_number)
         return self.get(row_id, running_as_interrupted=running_as_interrupted) if row_id is not None else None
 
-    def latest_succeeded_run(self) -> RunRow | None:
-        """The most recently started run that succeeded with a known time, of any job; None when there is none."""
-        row = self._database.connection().execute("SELECT * FROM runs WHERE status = 'succeeded' AND seconds IS NOT NULL ORDER BY started_epoch DESC, id DESC LIMIT 1").fetchone()
-        return RunRow.from_row(row) if row is not None else None
-
     def has_manifest(self, manifest_path: str) -> bool:
         return self._database.connection().execute("SELECT 1 FROM executions WHERE manifest_path = ?", (manifest_path,)).fetchone() is not None
 

@@ -702,7 +702,7 @@ class JobExecutor:
 
         def on_message(message: ProcessMessage) -> None:
             reading = self._read_stage(message)
-            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, progress=message.progress, percent=message.percent, phase=reading.phase if reading is not None else None, offset=self._timing.run_offset(message.elapsed_seconds) if self._timing is not None else message.elapsed_seconds, stage=reading.stage if reading is not None else None, done=reading.done if reading is not None else None, total=reading.total if reading is not None else None))
+            self._emit(RunOutput(at=self._timestamp(), number=number, stream=message.stream.value, text=message.text, phase=reading.phase if reading is not None else None, offset=self._timing.run_offset(message.elapsed_seconds) if self._timing is not None else message.elapsed_seconds, stage=reading.stage if reading is not None else None, done=reading.done if reading is not None else None, total=reading.total if reading is not None else None))
 
         return on_message
 

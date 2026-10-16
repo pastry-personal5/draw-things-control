@@ -114,10 +114,6 @@ class RunOutput:
     number: int
     stream: str
     text: str
-    # (current, total) when the line reports progress.
-    progress: tuple[int, int] | None
-    # 0-100 when the line shows a percentage, such as the progress bar's.
-    percent: int | None
     # The backend's phase text when the line is a stage reading (``denoise``, ``Sampling``); None for any other line.
     phase: str | None
     # Seconds after RunStarted that the line was written (stamped as its last byte arrived), on the same clock as a stage's

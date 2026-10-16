@@ -41,8 +41,8 @@ def run_started(number: int = 1, total: int = 2) -> RunStarted:
     return RunStarted(at=AT, number=number, total=total, pair="walk", positive="walk", negative=None, input=None, resized_input=None, output=f"walk-{number}.mp4", last_frame=None, command=("draw-things-cli", "generate"))
 
 
-def run_output(text: str, *, number: int = 1, stream: str = "stdout", progress: tuple[int, int] | None = None, percent: int | None = None) -> RunOutput:
-    return RunOutput(at=AT, number=number, stream=stream, text=text, progress=progress, percent=percent, phase=None, offset=0.0)
+def run_output(text: str, *, number: int = 1, stream: str = "stdout") -> RunOutput:
+    return RunOutput(at=AT, number=number, stream=stream, text=text, phase=None, offset=0.0)
 
 
 def forecast_dict(*, stage: str | None = "denoise", done: int | None = 12, total: int | None = 30, run: bool = True, job: bool = True, now: float | None = None) -> dict[str, Any]:

@@ -38,7 +38,6 @@ class FakeWorker:
     def __init__(self) -> None:
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
-        self._current_step: tuple[int, int] | None = None
         self._forecast: Forecast | None = None
         self._cooldown_until: float | None = None
         self.parking: set[int] = set()
@@ -59,9 +58,6 @@ class FakeWorker:
 
     def current_run(self) -> tuple[int, float] | None:
         return self._current_run
-
-    def current_step(self) -> tuple[int, int] | None:
-        return self._current_step
 
     def latest_forecast(self, entry_id: int) -> Forecast | None:
         return self._forecast if entry_id == self._current_id else None
@@ -254,19 +250,17 @@ class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase
             await self.read(call, timeout=0.15)
         call.cancel()
 
-    async def test_the_current_run_and_step_are_reported_while_the_entry_is_the_one_running(self) -> None:
+    async def test_the_current_run_is_reported_while_the_entry_is_the_one_running(self) -> None:
         entry = self.submit(run_count=1)
         claimed = self.store.queue.claim_oldest(datetime.now())
         assert claimed is not None
         call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
         first = await self.read(call)
-        self.assertFalse(first.HasField("current_step"))
+        self.assertFalse(first.HasField("current_run"))
         self.worker._current_id = claimed.id
         self.worker._current_run = (1, 12.5)
-        self.worker._current_step = (7, 20)
         second = await self.read(call)
         self.assertEqual((second.current_run, second.current_run_elapsed_seconds), (1, 12.5))
-        self.assertEqual((second.current_step, second.current_step_total), (7, 20))
         call.cancel()
 
     async def test_the_forecast_arrives_as_a_nested_message_and_each_republish_sends_one(self) -> None:
