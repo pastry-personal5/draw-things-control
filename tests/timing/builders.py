@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 from framecontrol.jobs.timing.features import FRAMECONTROL, HistoryRun, HistoryStage
+from framecontrol.jobs.timing.forecast import Basis, Forecast, Span
 
 DT, H3 = "draw-things-cli", "h3"
 BASE_PIXELS = 832 * 448
@@ -71,3 +72,16 @@ def log_run(execution: int, run: int, *, step: float = 50.0, pixels: int = BASE_
     workload = {"width": side, "height": pixels // side, "pixels": pixels, "frames": frames, "steps": steps}
     base = dt_run(execution, run, step=step, workload={**workload, "mode": "i2v", "guidance_scale": 7.5})
     return HistoryRun(execution, run, "log", DT, "i2v", workload, {}, base.stages)
+
+
+def sample_forecast(now: float, *, done: int = 12, penalty: float | None = None, run: bool = True, job: bool = True) -> Forecast:
+    """A forecast made at ``now`` for an H3 run 600 s in, with 1400 s to go, in a job with 5000 s to go."""
+    return Forecast(
+        as_of=now,
+        stage="denoise",
+        stage_done=done,
+        stage_total=30,
+        run=Span(now - 600.0, now + 1400.0, now + 1200.0, now + 1700.0, 0.3) if run else None,
+        job=Span(now - 900.0, now + 5000.0, now + 4500.0, now + 5800.0, 0.15) if job else None,
+        basis=Basis("signature", "live", 8, 4, False, ("other",), penalty, 0),
+    )

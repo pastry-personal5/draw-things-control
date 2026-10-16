@@ -16,7 +16,8 @@ import anyio
 from framecontrol.mcp_server.api import ApiClient, ToolError
 
 FINISHED_STATES = frozenset({"succeeded", "failed", "cancelled", "interrupted", "parked"})
-# The snapshot fields an agent acts on: a change in one ends a wait. current_run is apart: only its end counts.
+# The snapshot fields an agent acts on: a change in one ends a wait. current_run is apart: only its end counts. The
+# forecast is not one: it is republished all through a run, and the read that ends the wait carries it.
 ACTED_ON_FIELDS = ("state", "execution_id", "error", "park_requested", "queue_held", "cooldown_until")
 SNAPSHOT_EVENT = "snapshot"
 

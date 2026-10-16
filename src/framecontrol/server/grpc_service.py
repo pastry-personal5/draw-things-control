@@ -78,8 +78,12 @@ class MonitorServicer(monitor_pb2_grpc.MonitorServicer):
 
 
 def _snapshot_to_proto(snapshot: dict[str, Any]) -> monitor_pb2.QueueEntrySnapshot:
-    """An unset field (None) is left unset, so a client reads it with ``HasField``."""
-    return monitor_pb2.QueueEntrySnapshot(**{name: value for name, value in snapshot.items() if value is not None})
+    """An unset field (None) is left unset, so a client reads it with ``HasField``; so is one inside the forecast."""
+    return monitor_pb2.QueueEntrySnapshot(**_without_none(snapshot))
+
+
+def _without_none(values: dict[str, Any]) -> dict[str, Any]:
+    return {name: _without_none(value) if isinstance(value, dict) else value for name, value in values.items() if value is not None}
 
 
 def _reset_event() -> monitor_pb2.Event:

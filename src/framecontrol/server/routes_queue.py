@@ -23,11 +23,12 @@ from framecontrol.server.audit import audited
 from framecontrol.server.caller import audit_caller
 from framecontrol.server.context import ServerContext
 from framecontrol.server.dependencies import Page, get_context, get_page, require_auth
-from framecontrol.server.entry_snapshot import entry_snapshot, run_progress, snapshot_changed
+from framecontrol.server.entry_snapshot import entry_snapshot, published_forecast, run_progress, snapshot_changed
 from framecontrol.server.job_reference import resolve_job_reference
 from framecontrol.server.pagination import next_cursor
 from framecontrol.server.serializers import queue_entry, queue_hold
 from framecontrol.services.api_rules import check_api_rules
+from framecontrol.services.forecast_view import annotate
 from framecontrol.services.queue_cancel import cancel_entry
 from framecontrol.services.queue_park import park_entry, unpark_entry
 from framecontrol.services.queue_resume import ResumePreview, preview_resume, resume_entry
@@ -141,6 +142,8 @@ def _entry_detail(context: ServerContext, entry: QueueRow) -> dict[str, object]:
         **_entry(context, entry),
         # The current run and step, and cooldown_until, as a watch's snapshot carries them.
         **run_progress(context, entry.id),
+        # With the progress and seconds left of each span as of this read, for a client with no clock it can trust.
+        "forecast": annotate(forecast, time.time()) if (forecast := published_forecast(context, entry.id)) is not None else None,
         "between_runs_after_run": context.worker.between_runs_after() if is_current else None,
         "last_run_seconds": _last_run_seconds(context, entry),
         **queue_hold(context.worker.hold_state()),

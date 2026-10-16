@@ -39,7 +39,14 @@ def entry_snapshot(context: ServerContext, entry_id: int) -> dict[str, Any] | No
         "total_runs": entry.total_runs,
         "park_requested": park_requested,
         "queue_held": worker.hold_state().held,
+        "forecast": published_forecast(context, entry.id),
     }
+
+
+def published_forecast(context: ServerContext, entry_id: int) -> dict[str, Any] | None:
+    """The forecast the worker last published for entry ``entry_id`` while it runs, as its snapshot carries it, or None."""
+    forecast = context.worker.latest_forecast(entry_id)
+    return forecast.as_dict() if forecast is not None else None
 
 
 def run_progress(context: ServerContext, entry_id: int) -> dict[str, Any]:

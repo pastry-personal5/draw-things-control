@@ -288,3 +288,11 @@ class ExecutorTimingTests(JobTestCase):
         recorder = self.observe(job)
         (started,) = [event for event in recorder.events if isinstance(event, TimingStarted)]
         self.assertEqual((started.backend, started.pipeline), ("draw-things-cli", "i2v"))
+
+    def test_the_description_of_a_run_before_it_starts_is_what_its_timing_records(self) -> None:
+        job = self.job(run_count=2)
+        recorder = self.observe(job)
+        for started in [event for event in recorder.events if isinstance(event, TimingStarted)]:
+            described = self.service.describe_run(job, started.number, executable="draw-things-cli")
+            environment = {key: value for key, value in started.environment.items() if key != "load_start"}
+            self.assertEqual((described.backend, described.pipeline, described.workload, described.environment), (started.backend, started.pipeline, started.workload, environment))

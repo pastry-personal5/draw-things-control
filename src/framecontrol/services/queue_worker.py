@@ -22,6 +22,8 @@ from framecontrol.jobs.backends import DEFAULT_BACKENDS
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunStatus
 from framecontrol.jobs.executor import JobExecutor, ResumePoint
+from framecontrol.jobs.timing.forecast import Forecast, Forecaster
+from framecontrol.services.forecast_publisher import ForecastPublisher, job_plan
 from framecontrol.services.generation_submit import GenerationSnapshot
 from framecontrol.services.history_delete import DeleteReport
 from framecontrol.services.job_runs import JobRunSession
@@ -30,6 +32,7 @@ from framecontrol.services.queue_events import EventSink, QueueEventPublisher
 from framecontrol.services.queue_hold import HoldState, QueueHold
 from framecontrol.services.queue_submit import parse_snapshot
 from framecontrol.services.queue_worker_status import WorkerStatus
+from framecontrol.services.timing_history import TimingHistory
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from framecontrol.state.queue import QueueRow, QueueState
@@ -103,6 +106,13 @@ class QueueWorker:
         self._wake_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._status = WorkerStatus(clock=clock)
+        # The forecast of the entry being run: its history, its publisher, and the latest one published. Its own lock,
+        # since a forecast is published while the state lock is held (a park) and while it is not (a job event).
+        self._history = TimingHistory(store)
+        self._publisher: ForecastPublisher | None = None
+        self._forecast: Forecast | None = None
+        self._forecast_entry: int | None = None
+        self._forecast_lock = threading.Lock()
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self.run_forever, name="queue-worker", daemon=True)
@@ -147,6 +157,7 @@ class QueueWorker:
                 self._stop_reason = STOP_CANCEL
             self._pending_cancel = True
         self._executor.cancel()
+        self._cancel_forecast()
         return True
 
     def current_entry_id(self) -> int | None:
@@ -171,6 +182,7 @@ class QueueWorker:
                 if self._job_started:
                     self._executor.park()
                 self._events.park_changed(label, True)
+                self._forecast_park(True)
         return True
 
     def unpark_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
@@ -192,6 +204,7 @@ class QueueWorker:
                 self._hold.release_if_by(label, caller)
             self._park_pending = False
             self._events.park_changed(label, False)
+            self._forecast_park(False)
         return True
 
     def parking_entry_id(self) -> int | None:
@@ -261,6 +274,12 @@ class QueueWorker:
         """The active run's latest (step, total) progress-bar reading (``GET /queue/{id}``, ``WatchQueueEntry``)."""
         return self._status.current_step()
 
+    def latest_forecast(self, entry_id: int) -> Forecast | None:
+        """The forecast last published for entry ``entry_id`` while it is the one running; None for any other entry, and
+        once it has been released, cancelled, or has finished (``GET /queue/{id}``, ``WatchQueueEntry``)."""
+        with self._forecast_lock:
+            return self._forecast if self._forecast_entry == entry_id else None
+
     def between_runs_after(self) -> int | None:
         """The succeeded run the claimed entry is between runs after, until its next run starts (``GET /queue/{id}``)."""
         return self._status.between_runs_after()
@@ -306,6 +325,7 @@ class QueueWorker:
         finally:
             with self._state_lock:
                 self._current = None
+            self._cancel_forecast()
             self._status.entry_released()
         if job is not None:
             self._wait_after(entry, job)
@@ -324,13 +344,14 @@ class QueueWorker:
         except Exception as error:
             self._fail_to_start(entry, error)
             return None
+        forecast = self._start_forecast(entry, job, resume)
         try:
             self._session.run(
                 job,
                 holder=SERVER_HOLDER_NAME,
                 executable=self._executable,
                 shutdown_grace=self._shutdown_grace,
-                observers=(self._start_guard, self._status.observe_run, self._events.job_event, self._make_finisher(entry, finished)),
+                observers=(self._start_guard, self._status.observe_run, forecast, self._events.job_event, self._make_finisher(entry, finished)),
                 lock=self._lock,
                 resume=resume,
                 on_reserved=self._linker(entry),
@@ -417,8 +438,42 @@ class QueueWorker:
                 pending = self._pending_cancel
                 if self._park_pending:
                     self._executor.park()
+                    self._forecast_park(True)
             if pending:
                 self._executor.cancel()
+
+    def _start_forecast(self, entry: QueueRow, job: JobDefinition, resume: ResumePoint | None) -> JobObserver:
+        """Build the entry's forecaster, after its job is parsed and before the executor starts, so the fit (up to 200 ms)
+        delays nothing already running and run 1 has a forecast at RunStarted. The observer that feeds it; one that does
+        nothing when the job cannot be described, since a forecast must never stop a job."""
+        try:
+            plan = job_plan(self._executor, job, first_run=resume.first_run if resume is not None else 1, executable=self._executable)
+            publisher = ForecastPublisher(Forecaster(self._history.model(), plan), lambda forecast: self._publish_forecast(entry, forecast), clock=lambda: self._clock().timestamp())
+        except Exception:
+            logger.exception("Queue entry {} has no forecast: its runs could not be described", entry.label)
+            return lambda event: None
+        with self._forecast_lock:
+            self._publisher = publisher
+        return publisher.observe
+
+    def _publish_forecast(self, entry: QueueRow, forecast: Forecast | None) -> None:
+        """Hold the forecast the publisher made, and tell the event stream."""
+        with self._forecast_lock:
+            self._forecast, self._forecast_entry = forecast, entry.id if forecast is not None else None
+        self._events.forecast_updated(entry.label, forecast.as_dict() if forecast is not None else None)
+
+    def _forecast_park(self, parking: bool) -> None:
+        with self._forecast_lock:
+            publisher = self._publisher
+        if publisher is not None:
+            publisher.park_changed(parking)
+
+    def _cancel_forecast(self) -> None:
+        """A cancel was accepted, the entry was released, or the job ended: no forecast stands."""
+        with self._forecast_lock:
+            publisher, self._publisher = self._publisher, None
+        if publisher is not None:
+            publisher.cancel()
 
     def _make_finisher(self, entry: QueueRow, finished: list[bool]) -> JobObserver:
         def observe(event: JobEvent) -> None:

@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 
 import grpc
@@ -17,6 +18,7 @@ import grpc.aio
 import httpx
 
 from framecontrol.jobs.executor import JobExecutor
+from framecontrol.jobs.timing.forecast import Forecast
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
 from framecontrol.server.generated import monitor_pb2, monitor_pb2_grpc
@@ -27,6 +29,7 @@ from framecontrol.services.queue_submit import submit_job
 from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.timing.builders import sample_forecast
 
 TOKEN = "a" * 64
 
@@ -36,6 +39,7 @@ class FakeWorker:
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
         self._current_step: tuple[int, int] | None = None
+        self._forecast: Forecast | None = None
         self._cooldown_until: float | None = None
         self.parking: set[int] = set()
         self.held = False
@@ -58,6 +62,9 @@ class FakeWorker:
 
     def current_step(self) -> tuple[int, int] | None:
         return self._current_step
+
+    def latest_forecast(self, entry_id: int) -> Forecast | None:
+        return self._forecast if entry_id == self._current_id else None
 
     def cooldown_until(self) -> float | None:
         return self._cooldown_until
@@ -260,6 +267,33 @@ class WatchQueueEntryTests(GrpcServiceTestCase, unittest.IsolatedAsyncioTestCase
         second = await self.read(call)
         self.assertEqual((second.current_run, second.current_run_elapsed_seconds), (1, 12.5))
         self.assertEqual((second.current_step, second.current_step_total), (7, 20))
+        call.cancel()
+
+    async def test_the_forecast_arrives_as_a_nested_message_and_each_republish_sends_one(self) -> None:
+        entry = self.submit(run_count=1)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker._current_id = claimed.id
+        call = self.stub.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=entry.label), metadata=self.auth())
+        first = await self.read(call)
+        self.assertFalse(first.HasField("forecast"))
+        self.worker._forecast = sample_forecast(1_000_000.0, penalty=2.0)
+        second = await self.read(call)
+        forecast = second.forecast
+        self.assertEqual((forecast.as_of, forecast.stage, forecast.stage_done, forecast.stage_total), (1_000_000.0, "denoise", 12, 30))
+        self.assertEqual((forecast.run.started_at, forecast.run.end_at, forecast.run.low, forecast.run.high, forecast.run.floor), (999_400.0, 1_001_400.0, 1_001_200.0, 1_001_700.0, 0.3))
+        self.assertEqual((forecast.job.end_at, forecast.job.floor), (1_005_000.0, 0.15))
+        self.assertEqual((forecast.basis.tier, forecast.basis.runs, forecast.basis.executions, list(forecast.basis.unseen), forecast.basis.penalty), ("signature", 8, 4, ["other"], 2.0))
+        # A forecast with no number for the run, no stage units, and no penalty leaves each of them unset.
+        self.worker._forecast = replace(sample_forecast(1_000_001.0, run=False), stage_done=None, stage_total=None)
+        third = await self.read(call)
+        self.assertFalse(third.forecast.HasField("run"))
+        self.assertFalse(third.forecast.HasField("stage_done"))
+        self.assertFalse(third.forecast.basis.HasField("penalty"))
+        self.assertTrue(third.forecast.HasField("job"))
+        # Cleared, the field is unset again.
+        self.worker._forecast = None
+        self.assertFalse((await self.read(call)).HasField("forecast"))
         call.cancel()
 
     async def test_elapsed_seconds_alone_changing_sends_no_message(self) -> None:

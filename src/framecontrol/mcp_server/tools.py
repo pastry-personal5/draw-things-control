@@ -169,7 +169,7 @@ READ_AND_RUN = (
     Tool("get_queue", "The queue: queued and running entries in full, then finished ones newest first, paged, with the worker's state and the hold.", _get(lambda _a: "/v1/queue", lambda arguments: {**_page(arguments), "state": arguments.get("state")}), READ, {"state": _string("Only entries in this state: queued, running, succeeded, failed, cancelled, interrupted, or parked"), "limit": LIMIT, "cursor": CURSOR}),
     Tool(
         "get_queue_entry",
-        "One queue entry: its state, run, step, cooldown, the hold, and whether and from which run it can be resumed. With wait_seconds, it answers at the next change you act on, usually a run's end, so one call with a long wait follows a run, and adds changed (false when the time was up, or the entry had finished). A client that ends a tool call after 60 seconds, as many do, needs 50 or less.",
+        "One queue entry: its state, run, forecast (the stage and its units, and when the run and the job are expected to end, with a range and what it rests on), cooldown, the hold, and whether and from which run it can be resumed. With wait_seconds, it answers at the next change you act on, usually a run's end, so one call with a long wait follows a run, and adds changed (false when the time was up, or the entry had finished). A client that ends a tool call after 60 seconds, as many do, needs 50 or less.",
         _get(_queue()),
         READ,
         {"queue_id": QUEUE_ID, "wait_seconds": {"type": "integer", "minimum": 1, "maximum": WAIT_SECONDS_MAX, "description": f"Wait up to this long, 1 to {WAIT_SECONDS_MAX} seconds, for the entry to change"}},

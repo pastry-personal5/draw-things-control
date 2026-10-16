@@ -22,6 +22,7 @@ from tests.mcp_server.mcp_case import McpCase
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN
 from tests.server.test_queue_watch import ScriptedWorker
+from tests.timing.builders import sample_forecast
 
 
 class FinishedStatesTests(unittest.TestCase):
@@ -139,6 +140,22 @@ class LiveWaitTests(McpCase):
             body, _elapsed = await self.wait(client, queue_id, 60)
         self.assertEqual((body["changed"], body["current_run"]), (True, None))
         self.assertGreaterEqual(self.worker.reads, 10)
+
+    async def test_a_forecast_never_ends_a_wait_and_the_final_read_carries_it(self) -> None:
+        queue_id = await self.running_entry()
+        now = time.time()
+
+        def end_run() -> None:
+            self.worker._current_run = None
+
+        # The forecast is republished at reads 3 and 6, as a run's steps go by; the run ends at read 10.
+        self.script({3: lambda: setattr(self.worker, "_forecast", sample_forecast(now, done=3)), 6: lambda: setattr(self.worker, "_forecast", sample_forecast(now + 30.0, done=6)), 10: end_run})
+        async with self.client() as client:
+            body, _elapsed = await self.wait(client, queue_id, 60)
+        self.assertEqual((body["changed"], body["current_run"]), (True, None))
+        self.assertGreaterEqual(self.worker.reads, 10)
+        self.assertEqual((body["forecast"]["stage"], body["forecast"]["stage_done"]), ("denoise", 6))
+        self.assertIn("seconds_left", body["forecast"]["run"])
 
     async def test_the_next_runs_start_and_its_steps_do_not_end_it(self) -> None:
         queue_id = await self.running_entry(current_run=None)

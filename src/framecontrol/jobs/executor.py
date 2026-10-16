@@ -36,7 +36,7 @@ from framecontrol.jobs.media.tools import find_ffmpeg
 from framecontrol.jobs.output_naming import RandomNumber, random_four_digits
 from framecontrol.jobs.planning import JobPlanner, JobPreview, PlannedRun
 from framecontrol.jobs.records import JobManifest, JobRecords, RunRecord
-from framecontrol.jobs.run_timing import BeforeStart, RunTiming
+from framecontrol.jobs.run_timing import BeforeStart, RunDescription, RunTiming
 from framecontrol.jobs.text import report_ignored_config, seconds_text
 from framecontrol.jobs.timing.environment import HostLoad
 from framecontrol.jobs.timing.environment import host_load as read_host_load
@@ -605,7 +605,7 @@ class JobExecutor:
         self._emit(run_started_event(record, run, chain.total))
         before_start = self._before_start.pop(run.number, [])
         # Under the backend's own id, whichever spelling the file used, so runs of one backend group together.
-        timing.begin(self._backends.get(chain.job.run_backend(run.number)).id, record.pipeline or chain.job.mode.value, *self._timing_facts(chain, record, run.number), before_start)
+        timing.begin(self._backends.get(chain.job.run_backend(run.number)).id, record.pipeline or chain.job.mode.value, *self._timing_facts(chain, run.number), before_start)
         return record
 
     def _stage_parser(self, job: JobDefinition, number: int) -> StageParser | None:
@@ -618,19 +618,29 @@ class JobExecutor:
             logger.exception("Run {}'s stage parser could not be made; its output is read for no stages", number)
             return None
 
-    def _timing_facts(self, chain: _Chain, record: RunRecord, number: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    def describe_run(self, job: JobDefinition, number: int, *, executable: str) -> RunDescription:
+        """What run ``number`` will be timed as: its backend, pipeline, workload, and environment, from the job's compiled plan
+        and the backend's own description, as ``TimingStarted`` will carry them. A forecast prices a run that has not started
+        by the signature of this, so ``_timing_facts`` takes the run's timing from here and the two cannot differ."""
+        backend = self._backends.get(job.run_backend(number))
+        effective = job.effective_run(number)
+        workload_of = getattr(backend, "timing_workload", None)
+        environment_of = getattr(backend, "timing_environment", None)
+        run_job = job.job_for_run(number)
+        workload = workload_of(run_job, number) if workload_of is not None else {}
+        knobs = {name: value for name, value in (effective.knobs if effective is not None else {}).items() if name != "seed"}
+        if knobs:
+            workload = {**workload, "knobs": knobs}
+        environment = environment_of(run_job, self._find_executable(executable)) if environment_of is not None else {}
+        pipeline = (effective.pipeline if effective is not None else None) or job.mode.value
+        # Under the backend's own id, whichever spelling the file used, so runs of one backend group together.
+        return RunDescription(backend.id, pipeline, workload, environment)
+
+    def _timing_facts(self, chain: _Chain, number: int) -> tuple[dict[str, Any], dict[str, Any]]:
         """What run ``number``'s timing is judged by: its workload and its environment, as its backend describes them."""
         try:
-            job = chain.job.job_for_run(number)
-            backend = self._backends.get(chain.job.run_backend(number))
-            workload_of = getattr(backend, "timing_workload", None)
-            environment_of = getattr(backend, "timing_environment", None)
-            workload = workload_of(job, number) if workload_of is not None else {}
-            knobs = {name: value for name, value in record.knobs.items() if name != "seed"}
-            if knobs:
-                workload = {**workload, "knobs": knobs}
-            environment = environment_of(job, self._find_executable(chain.options.executable)) if environment_of is not None else {}
-            return workload, environment
+            described = self.describe_run(chain.job, number, executable=chain.options.executable)
+            return described.workload, described.environment
         except Exception:
             # Timing never stops a run.
             logger.exception("Run {} could not be described for its timing; it is timed with no workload", number)

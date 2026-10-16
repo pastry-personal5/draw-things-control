@@ -20,8 +20,9 @@ from framecontrol.server.grpc_service import MonitorServicer
 from framecontrol.state.store import Store
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
 from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
+from tests.timing.builders import sample_forecast
 
-SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "current_step", "current_step_total", "total_runs", "park_requested", "queue_held")
+SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "current_step", "current_step_total", "total_runs", "park_requested", "queue_held", "forecast")
 
 
 class ScriptedWorker(FakeWorker):
@@ -38,6 +39,26 @@ class ScriptedWorker(FakeWorker):
         if self.on_read is not None:
             self.on_read(self.reads)
         return super().park_requested(entry_id)
+
+
+def message_dict(message: Any, names: tuple[str, ...] | None = None) -> dict[str, Any]:
+    """A protobuf message as the mapping a client of the SSE watch reads: a field it did not set is None, a nested message
+    is a mapping, a repeated field a list."""
+    result: dict[str, Any] = {}
+    for field in message.DESCRIPTOR.fields:
+        if names is not None and field.name not in names:
+            continue
+        value = getattr(message, field.name)
+        if field.is_repeated:
+            result[field.name] = list(value)
+            continue
+        try:
+            present = message.HasField(field.name)
+        except ValueError:
+            # A field with no presence of its own is always there, as its default when it was left out.
+            present = True
+        result[field.name] = (message_dict(value) if field.message_type is not None else value) if present else None
+    return dict(sorted(result.items(), key=lambda item: item[0])) if names is None else {name: result[name] for name in names}
 
 
 def sse_messages(text: str) -> list[tuple[str, Any]]:
@@ -103,6 +124,29 @@ class InProcessWatchTests(WatchTestCase):
         self.assertEqual((step["current_run"], step["current_run_elapsed_seconds"], step["current_step"], step["current_step_total"]), (2, 9.0, 3, 30))
         self.assertEqual((ended["current_run"], ended["current_step"]), (None, None))
 
+    def test_a_republished_forecast_is_a_new_snapshot_and_time_passing_is_not(self) -> None:
+        queue_id = self.running_entry()
+        now = time.time()
+
+        def republish(count: int) -> None:
+            if count == 2:
+                self.worker._current_run = (2, 9.0)
+            elif count == 3:
+                self.worker._forecast = sample_forecast(now, done=3)
+            elif count == 4:
+                self.worker._current_run = (2, 14.0)
+            elif count == 5:
+                self.worker._forecast = sample_forecast(now + 60.0, done=4)
+            elif count == 6:
+                self.context.stopping.set()
+
+        self.worker.reads, self.worker.on_read = 0, republish
+        messages = sse_messages(self.request("get", f"/v1/queue/{queue_id.lower()}/watch").text)
+        snapshots = [data for _event, data in messages]
+        # The baseline with no forecast, the first forecast, and the second: the elapsed seconds alone sent nothing.
+        self.assertEqual([item["forecast"] and item["forecast"]["stage_done"] for item in snapshots], [None, 3, 4])
+        self.assertEqual(snapshots[1]["forecast"]["run"]["floor"], 0.3)
+
     def test_the_stream_ends_when_the_entry_is_gone(self) -> None:
         queue_id = self.submit(run_count=1)["queue_id"]
         self.request("post", f"/v1/queue/{queue_id}/cancel")
@@ -135,12 +179,34 @@ class InProcessWatchTests(WatchTestCase):
         self.context.stopping.clear()
         self.assertEqual(asyncio.run(self.grpc_snapshots(queue_id, len(over_sse))), over_sse)
 
+    def test_a_forecast_comes_over_grpc_with_every_field_it_has_over_sse(self) -> None:
+        queue_id = self.running_entry()
+        now = time.time()
+        self.worker._forecast = sample_forecast(now, penalty=1.0)
+        self.worker.reads, self.worker.on_read = 0, lambda count: self.context.stopping.set() if count == 2 else None
+        over_sse = [data for _event, data in sse_messages(self.request("get", f"/v1/queue/{queue_id}/watch").text)]
+        self.worker.reads, self.worker._current_run = 0, (2, 5.0)
+        self.context.stopping.clear()
+        over_grpc = asyncio.run(self.grpc_snapshots(queue_id, 1))
+        self.assertEqual(over_grpc, over_sse[:1])
+        forecast = over_grpc[0]["forecast"]
+        self.assertEqual((forecast["stage"], forecast["stage_done"], forecast["run"]["floor"], forecast["basis"]["penalty"], forecast["basis"]["unseen"]), ("denoise", 12, 0.3, 1.0, ["other"]))
+
+    def test_a_forecast_with_no_run_or_penalty_leaves_them_unset_over_grpc(self) -> None:
+        queue_id = self.running_entry()
+        self.worker._forecast = sample_forecast(time.time(), run=False)
+        self.worker.reads, self.worker.on_read = 0, None
+        over_grpc = asyncio.run(self.grpc_snapshots(queue_id, 1))
+        forecast = over_grpc[0]["forecast"]
+        self.assertEqual((forecast["run"], forecast["basis"]["penalty"]), (None, None))
+        self.assertIsNotNone(forecast["job"])
+
     async def grpc_snapshots(self, queue_id: str, count: int) -> list[dict[str, Any]]:
         servicer = MonitorServicer(self.context, poll_interval=0.01)
         snapshots: list[dict[str, Any]] = []
         stream = servicer.WatchQueueEntry(monitor_pb2.WatchQueueEntryRequest(queue_id=queue_id), None)  # pyright: ignore[reportArgumentType]  (a known entry never reaches the context)
         async for message in stream:
-            snapshots.append({name: getattr(message, name) if name in ("queue_id", "kind", "state") or message.HasField(name) else None for name in SNAPSHOT_FIELDS})
+            snapshots.append(message_dict(message, SNAPSHOT_FIELDS))
             if len(snapshots) == count:
                 break
         return snapshots

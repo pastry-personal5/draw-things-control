@@ -5,6 +5,7 @@ mean the same thing in the TUI, in ``fc queue add --wait``, and in a client of t
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 # The range is shown when its half-width is over this share of the time left.
 RANGE_SHARE = 0.03
@@ -31,3 +32,14 @@ def show_range(span: Span, now: float) -> bool:
     """Whether the range is wide enough, against the time left, to be worth showing."""
     left = seconds_left(span, now)
     return left > 0 and (span["high"] - span["low"]) / 2 > RANGE_SHARE * left
+
+
+def annotate(forecast: Mapping[str, Any], now: float) -> dict[str, Any]:
+    """A published forecast with ``progress`` and ``seconds_left`` added to its run and job as of ``now``: what the HTTP read
+    carries for a client that cannot work them out on a clock of its own (MCP imports nothing from the package)."""
+    shown = dict(forecast)
+    for name in ("run", "job"):
+        span = forecast.get(name)
+        if span is not None:
+            shown[name] = {**span, "progress": progress(span, now), "seconds_left": seconds_left(span, now)}
+    return shown

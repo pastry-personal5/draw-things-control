@@ -43,6 +43,12 @@ class QueueEventPublisher:
         if self._sink is not None:
             self._sink("queue_park_changed", {"queue_id": queue_id, "park_requested": park_requested})
 
+    def forecast_updated(self, queue_id: str, forecast: dict[str, Any] | None) -> None:
+        """The running entry's forecast was republished, or cleared (None). A queue event and not a job event, so the
+        recorder and the job log never see it; it is not run output, so it passes the filter that leaves output out."""
+        if self._sink is not None:
+            self._sink("forecast_updated", {"queue_id": queue_id, "forecast": forecast})
+
     def held(self, since: str | None, by: str | None, caller: str | None = None) -> None:
         """The queue was held, or its hold changed hands; ``caller`` made it."""
         if self._sink is not None:

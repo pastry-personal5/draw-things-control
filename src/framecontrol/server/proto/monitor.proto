@@ -32,7 +32,7 @@ message Event {
   // One of jobs/events.py's EVENT_KINDS (job_started, run_started, run_output, stage_started,
   // stage_finished, timing_started, timing_finished, run_finished, cooldown_started, cooldown_ended, media_checked,
   // first_image_dropped, job_finished), the queue's own (queue_entry_changed, queue_wait_started, queue_wait_ended,
-  // queue_park_changed, queue_held, queue_released), or "reset" (data_json empty: the client's
+  // queue_park_changed, queue_held, queue_released, forecast_updated), or "reset" (data_json empty: the client's
   // last_event_id is unusable, and it should re-sync over HTTP).
   string kind = 2;
   // The event's own fields, exactly as event_to_dict (or the queue's own equivalent mapping) produces them, as
@@ -68,4 +68,44 @@ message QueueEntrySnapshot {
   optional bool queue_held = 12;
   // ``job`` or ``generate``, so a watcher never has to infer a one-off from an empty job path.
   string kind = 13;
+  // The running job's forecast as the server last published it, unset when there is none. A snapshot is sent when the
+  // forecast is republished and never because time passed: a client counts down from its ends on a clock of its own.
+  optional Forecast forecast = 14;
+}
+
+// When something began and is expected to end, in epoch seconds, with the 80% range and the share (0 to 1) the server
+// has already shown, which a client's bar never falls below.
+message ForecastSpan {
+  double started_at = 1;
+  double end_at = 2;
+  double low = 3;
+  double high = 4;
+  double floor = 5;
+}
+
+// What a forecast rests on: the history tier (signature, backend_fit, pipeline_fit, live_only), whether that history is
+// live or pooled with rows rebuilt from logs, how many runs and executions, whether the newest was timed on another
+// build, the stages the history had not seen, the ridge penalty, and the rows that could not be read.
+message ForecastBasis {
+  string tier = 1;
+  string fidelity = 2;
+  int32 runs = 3;
+  int32 executions = 4;
+  bool build_changed = 5;
+  repeated string unseen = 6;
+  optional double penalty = 7;
+  int32 skipped = 8;
+}
+
+message Forecast {
+  // The server's clock, in epoch seconds, when it was made.
+  double as_of = 1;
+  // The active stage and its units; unset in a cooldown or between runs, and the units unset for a stage that counts none.
+  optional string stage = 2;
+  optional int32 stage_done = 3;
+  optional int32 stage_total = 4;
+  // Unset when the server has no number to give for it.
+  optional ForecastSpan run = 5;
+  optional ForecastSpan job = 6;
+  ForecastBasis basis = 7;
 }

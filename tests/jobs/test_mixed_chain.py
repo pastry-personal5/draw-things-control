@@ -356,3 +356,29 @@ class MixedRecordingTests(MixedChainTestCase):
         # The Draw Things settings come from its own run's command, not an H3 run's.
         self.assertEqual(execution_settings(execution).model, "base.ckpt")
         self.assertEqual([run.frames for run in execution_detail(execution).runs], [39, 39, None, 39])
+
+
+class DescribeRunTests(MixedChainTestCase):
+    """A prediction is priced by the signature its run will have, so what a run is described as before it starts is exactly
+    what its timing records when it does."""
+
+    def test_the_description_of_each_run_of_a_mixed_chain_is_what_its_timing_records(self) -> None:
+        from framecontrol.jobs.events import JobEvent, TimingStarted
+
+        job = load_job(self.write_job(small_job()), self.global_config, self.params, backends=self.backends)
+        executor = self.executor()
+        events: list[JobEvent] = []
+        with self.h3_media():
+            run_job_with(executor, job, executable="draw-things-cli", shutdown_grace=1, write_records=True, observer=events.append)
+        recorded = [event for event in events if isinstance(event, TimingStarted)]
+        self.assertEqual([event.backend for event in recorded], ["h3", "h3", "draw-things-cli", "h3"])
+        for event in recorded:
+            described = executor.describe_run(job, event.number, executable="draw-things-cli")
+            environment = {key: value for key, value in event.environment.items() if key != "load_start"}
+            self.assertEqual((described.backend, described.pipeline, described.workload, described.environment), (event.backend, event.pipeline, event.workload, environment), f"run {event.number}")
+
+    def test_the_description_holds_the_knobs_the_run_resolved_without_its_seed(self) -> None:
+        job = load_job(self.write_job(small_job()), self.global_config, self.params, backends=self.backends)
+        described = self.executor().describe_run(job, 2, executable="draw-things-cli")
+        self.assertEqual(described.workload["knobs"]["seconds"], 4)
+        self.assertNotIn("seed", described.workload["knobs"])

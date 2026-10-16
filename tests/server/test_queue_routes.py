@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -16,6 +17,7 @@ from loguru import logger
 
 from framecontrol.core.global_config import ApiLimits
 from framecontrol.jobs.executor import JobExecutor
+from framecontrol.jobs.timing.forecast import Forecast
 from framecontrol.server import routes_queue
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
@@ -28,6 +30,7 @@ from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRu
 from framecontrol.state.queue import QueueRow, QueueState
 from framecontrol.state.store import Store, StoreMode
 from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
+from tests.timing.builders import sample_forecast
 
 TOKEN = "a" * 64
 
@@ -45,6 +48,7 @@ class FakeWorker:
         self._current_id: int | None = None
         self._current_run: tuple[int, float] | None = None
         self._current_step: tuple[int, int] | None = None
+        self._forecast: Forecast | None = None
         # A reservation per entry, the stop asked for one (refusing a park), whether its park has taken
         # effect (refusing an unpark), and the real hold, over the real store.
         self.parking: set[int] = set()
@@ -70,6 +74,9 @@ class FakeWorker:
 
     def current_step(self) -> tuple[int, int] | None:
         return self._current_step
+
+    def latest_forecast(self, entry_id: int) -> Forecast | None:
+        return self._forecast if entry_id == self._current_id else None
 
     def wake(self) -> None:
         self.woken += 1
@@ -471,6 +478,40 @@ class ResumeTests(QueueRoutesTestCase):
         detail = self.request("get", f"/v1/queue/{entry['queue_id']}").json()
         self.assertEqual((detail["current_run"], detail["current_run_elapsed_seconds"]), (1, 12.5))
         self.assertEqual((detail["current_step"], detail["current_step_total"]), (7, 20))
+
+    def running(self) -> str:
+        entry = self.submit(run_count=1)
+        claimed = self.store.queue.claim_oldest(datetime.now())
+        assert claimed is not None
+        self.worker._current_id = claimed.id
+        return entry["queue_id"]
+
+    def test_the_forecast_is_carried_with_the_progress_and_seconds_left_as_of_the_read(self) -> None:
+        queue_id = self.running()
+        self.worker._forecast = sample_forecast(time.time() - 1.0, penalty=1.0)
+        forecast = self.request("get", f"/v1/queue/{queue_id}").json()["forecast"]
+        self.assertEqual((forecast["stage"], forecast["stage_done"], forecast["stage_total"]), ("denoise", 12, 30))
+        self.assertEqual(forecast["basis"], {"tier": "signature", "fidelity": "live", "runs": 8, "executions": 4, "build_changed": False, "unseen": ["other"], "penalty": 1.0, "skipped": 0})
+        run, job = forecast["run"], forecast["job"]
+        # Made a second ago, 600 s into a run of 2000 s: the server shows what a client on another clock cannot work out.
+        self.assertAlmostEqual(run["seconds_left"], 1399.0, delta=3.0)
+        self.assertAlmostEqual(run["progress"], 0.3, delta=0.01)
+        self.assertAlmostEqual(job["seconds_left"], 4999.0, delta=3.0)
+        self.assertEqual((run["floor"], job["floor"]), (0.3, 0.15))
+        self.assertTrue({"started_at", "end_at", "low", "high"} <= set(run))
+
+    def test_an_entry_with_no_forecast_says_so_and_one_with_no_number_has_no_spans(self) -> None:
+        queue_id = self.running()
+        self.assertIsNone(self.request("get", f"/v1/queue/{queue_id}").json()["forecast"])
+        self.worker._forecast = sample_forecast(time.time(), run=False, job=False)
+        forecast = self.request("get", f"/v1/queue/{queue_id}").json()["forecast"]
+        self.assertEqual((forecast["run"], forecast["job"]), (None, None))
+
+    def test_another_entrys_forecast_is_not_carried(self) -> None:
+        queue_id = self.running()
+        self.worker._forecast = sample_forecast(time.time())
+        self.worker._current_id = 999999
+        self.assertIsNone(self.request("get", f"/v1/queue/{queue_id}").json()["forecast"])
 
     def test_a_different_entrys_current_run_and_step_are_not_reported(self) -> None:
         entry = self.submit(run_count=1)

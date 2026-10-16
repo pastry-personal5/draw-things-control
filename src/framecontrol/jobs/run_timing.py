@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from framecontrol.jobs.events import JobEvent, StageFinished, StageStarted, TimingFinished, TimingStarted
@@ -13,6 +14,16 @@ from framecontrol.jobs.timing.timeline import RunTimeline
 
 # (stage, started, ended) read from the clock the run's timeline uses, for work done before the run started.
 BeforeStart = tuple[str, float, float]
+
+
+@dataclass(frozen=True)
+class RunDescription:
+    """What a run is timed as: its backend and pipeline, the workload it is asked to do, and the environment it does it in."""
+
+    backend: str
+    pipeline: str | None
+    workload: dict[str, Any]
+    environment: dict[str, Any]
 
 
 class RunTiming:

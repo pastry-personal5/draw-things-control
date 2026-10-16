@@ -13,14 +13,17 @@ An exception in the model is logged once and ends this entry's forecasts; it nev
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace
 
 from loguru import logger
 
+from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobEvent, JobFinished, RunOutput, RunStarted, StageFinished, TimingFinished
-from framecontrol.jobs.timing.forecast import Forecast, Forecaster, Span
+from framecontrol.jobs.executor import JobExecutor
+from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun, Span
 from framecontrol.services.forecast_view import progress
 
 # Within a stage, a reading is published at most this often, apart from the stage's last.
@@ -29,7 +32,20 @@ MIN_INTERVAL_SECONDS = 2.0
 SAME_END_SECONDS = 1.0
 
 
+def job_plan(executor: JobExecutor, job: JobDefinition, *, first_run: int, executable: str) -> JobPlan:
+    """The runs an entry will execute, from ``first_run`` (a resumed entry only those it will run), each described as its
+    timing will record it, and the job's cooldown policy."""
+    runs = []
+    for number in range(first_run, job.run_count + 1):
+        described = executor.describe_run(job, number, executable=executable)
+        runs.append(PlannedRun(number, described.backend, described.pipeline, described.workload, described.environment))
+    return JobPlan(tuple(runs), job.cooldown)
+
+
 class ForecastPublisher:
+    """One entry's forecasts. The worker's thread feeds it events while a request thread may park or cancel the entry, so a
+    lock keeps its state to one at a time."""
+
     def __init__(self, forecaster: Forecaster, publish: Callable[[Forecast | None], None], clock: Callable[[], float] = time.time) -> None:
         self._forecaster = forecaster
         self._publish = publish
@@ -41,6 +57,7 @@ class ForecastPublisher:
         self._run_floor = 0.0
         self._job_floor = 0.0
         self._done = False
+        self._lock = threading.Lock()
 
     @property
     def latest(self) -> Forecast | None:
@@ -52,31 +69,34 @@ class ForecastPublisher:
         if self._done:
             return
         moment = self._clock() if now is None else now
-        try:
-            self._observe(event, moment)
-        except Exception:
-            logger.exception("The forecast failed; this entry runs without one")
-            self._finish()
+        with self._lock:
+            try:
+                self._observe(event, moment)
+            except Exception:
+                logger.exception("The forecast failed; this entry runs without one")
+                self._finish()
 
     def park_changed(self, parking: bool, now: float | None = None) -> None:
         """A park was reserved or withdrawn: the job's figures depend on it, so a forecast goes out at once."""
         if self._done:
             return
         moment = self._clock() if now is None else now
-        try:
-            self._parking = parking
-            self._forecaster.set_parking(parking)
-            forecast = self._forecaster.forecast(moment)
-            if forecast is not None:
-                self._send(forecast, moment)
-        except Exception:
-            logger.exception("The forecast failed; this entry runs without one")
-            self._finish()
+        with self._lock:
+            try:
+                self._parking = parking
+                self._forecaster.set_parking(parking)
+                forecast = self._forecaster.forecast(moment)
+                if forecast is not None:
+                    self._send(forecast, moment)
+            except Exception:
+                logger.exception("The forecast failed; this entry runs without one")
+                self._finish()
 
     def cancel(self) -> None:
         """A cancel was accepted: the forecast is cleared."""
-        self._forecaster.cancel()
-        self._finish()
+        with self._lock:
+            self._forecaster.cancel()
+            self._finish()
 
     def _observe(self, event: JobEvent, now: float) -> None:
         self._forecaster.observe(event, now)
