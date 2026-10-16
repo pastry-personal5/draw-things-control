@@ -108,6 +108,9 @@ class ForecastPublisher:
             self._last = replace(self._last, run=None) if self._last is not None else None
         if isinstance(event, StageFinished | TimingFinished):
             return
+        if isinstance(event, RunOutput) and event.done is None:
+            # A line that is no reading of a counter (most of what a child prints) changes nothing a forecast shows.
+            return
         forecast = self._forecaster.forecast(now)
         if forecast is None:
             return

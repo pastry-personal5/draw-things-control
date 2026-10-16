@@ -124,6 +124,19 @@ class PublishingRuleTests(unittest.TestCase):
         play(publisher, events[3:4])
         self.assertEqual([forecast.stage for forecast in sink.forecasts], [None, "prepare"])
 
+    def test_a_line_of_output_that_is_not_a_reading_costs_no_forecast(self) -> None:
+        from unittest import mock
+
+        publisher, sink, events = publisher_for(HISTORY, HistoryExecution(9, CooldownPolicy("off"), (dt_run(9, 1),)))
+        play(publisher, events, until=ORIGIN + 20.0)
+        before = len(sink.published)
+        chatter = RunOutput(at="", number=1, stream="stdout", text="Models directory: models", phase=None, offset=15.0)
+        with mock.patch.object(Forecaster, "forecast", autospec=True) as forecast:
+            for _ in range(50):
+                publisher.observe(chatter, ORIGIN + 20.0)
+        forecast.assert_not_called()
+        self.assertEqual(len(sink.published), before)
+
     def test_a_park_reserved_or_withdrawn_is_published(self) -> None:
         execution = HistoryExecution(9, CooldownPolicy("manual", seconds=50.0), (dt_run(9, 1), dt_run(9, 2)))
         publisher, sink, events = publisher_for(HISTORY, execution)
