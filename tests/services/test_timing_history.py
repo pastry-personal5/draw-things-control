@@ -46,7 +46,9 @@ class TimingHistoryTests(StoreCase):
         for days in (3, 2):
             self.keep(f"walk-{days}", days)
         self.keep("walk-1", 1, complete=False)
-        self.assertEqual(self.plan(TimingHistory(self.store)).tier, "live_only")
+        plan = self.plan(TimingHistory(self.store))
+        # Two complete runs are too few for a tier, and price it roughly from them alone.
+        self.assertEqual((plan.tier, plan.runs), ("nearest", 2))
 
     def test_a_row_rebuilt_from_a_log_never_forms_a_signature_with_a_live_one(self) -> None:
         for days in (3, 2, 1):

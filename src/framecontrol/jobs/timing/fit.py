@@ -4,7 +4,9 @@ A run is a sum of stages. Its iterative stage (steps) dominates, and its step ti
 ``log t = f(workload) + u + noise`` with one training row per complete run: the mean step time, the first gap and any
 pause left out. ``f`` is the signature's mean (tier 1) or a ridge-regularized least-squares fit (tiers 2 and 3) whose
 penalty is chosen from ``PENALTIES`` by leave-one-execution-out error; ``u`` is the run's own speed factor. The other
-stages are the same-signature median, or a log-linear fit on pixels and frames. ``FittedModel.plan`` returns what a
+stages are the same-signature median, or a log-linear fit on pixels and frames. Below those tiers a run is still priced, roughly and
+with a wide range, from the newest runs of the nearest kind its backend has (``nearest``), else from the backend's built-in
+reference run (``factory``), so a forecast has a number from a run's first moment. ``FittedModel.plan`` returns what a
 forecast needs to price one run, and the basis it rests on. Nothing here reads a file, a database, or the clock."""
 
 from __future__ import annotations
@@ -14,14 +16,16 @@ import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cache
 from typing import Any
 
 import numpy as np
 
-from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, stage_keys, step_series
+from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, size_values, stage_keys, step_series
+from framecontrol.jobs.timing.reference import reference_runs
 
-TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "live_only"
-LIVE, LOG, POOLED = "live", "log", "pooled"
+TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_NEAREST, TIER_FACTORY, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "nearest", "factory", "live_only"
+LIVE, LOG, POOLED, BUILTIN = "live", "log", "pooled", "builtin"
 
 # The thresholds are provisional, pinned by tests.
 MIN_SIGNATURE_RUNS, MIN_SIGNATURE_EXECUTIONS = 3, 2
@@ -47,6 +51,21 @@ DEFAULT_OTHER_SD = 20.0
 # The ridge penalties tried, by leave-one-execution-out error.
 PENALTIES = (0.01, 0.1, 1.0, 10.0, 100.0)
 MIN_VARIANCE = 1e-12
+
+# The heuristics below the fitted tiers (provisional, like the thresholds; Milestone 12's knob files are to replace them).
+# How the mean step time grows with the work, pixels times frames, as a power: H3's from Milestone 10's clips at one size (about
+# 21, 45, and 65 s a step at 5, 8, and 10 s, so about 1.6); Draw Things' a milder guess, as nothing measured varied its size.
+WORK_EXPONENT = {"h3": 1.6}
+DEFAULT_WORK_EXPONENT = 1.2
+# The newest runs of the nearest kind a run is priced from, and how unsure that is in the log: a spread for runs of another
+# signature, and more for each unit of log work the step time was scaled across.
+NEAREST_RUNS = 5
+NEAREST_SIGMA = 0.15
+SCALE_SIGMA = 0.3
+# The spread, in the log, of a run priced from a built-in reference run.
+FACTORY_SIGMA = 0.25
+# The degrees of freedom the range of a heuristic price is drawn with.
+HEURISTIC_DF = 3.0
 
 # Student-t quantiles for degrees of freedom 1 to 30: 0.90 (the 80% interval) and 0.975 (the 95% interval).
 T90 = (3.0777, 1.8856, 1.6377, 1.5332, 1.4759, 1.4398, 1.4149, 1.3968, 1.3830, 1.3722, 1.3634, 1.3562, 1.3502, 1.3450, 1.3406, 1.3368, 1.3334, 1.3304, 1.3277, 1.3253, 1.3232, 1.3212, 1.3195, 1.3178, 1.3163, 1.3150, 1.3137, 1.3125, 1.3114, 1.3104)
@@ -442,6 +461,13 @@ class FittedModel:
                 if fit is None or not fit.compatible(request):
                     continue
                 return self._fit_plan(backend, pipeline, key, workload, environment, tier, fidelity, rows, fit, request, stats)
+        sizes = size_values(workload, frames)
+        nearest = self._nearest_plan(backend, pipeline, key, workload, environment, sizes, stats)
+        if nearest is not None:
+            return nearest
+        factory = _reference_model(backend)
+        if factory is not None:
+            return factory._factory_plan(backend, pipeline, key, workload, sizes, self.skipped)
         return self._live_only_plan(stats)
 
     def _ridge(self, backend: str, pipeline: str | None, tier: str, pooled: bool, rows: list[_Row], indicator: bool) -> _Ridge | None:
@@ -518,6 +544,78 @@ class FittedModel:
             overhead_sd=overhead[1],
         )
 
+    def _nearest_plan(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], environment: Mapping[str, Any], sizes: Mapping[str, float], stats: _BackendStats) -> Plan | None:
+        """History too thin for a tier: the newest runs of the nearest kind (the signature, else the pipeline, else any of the
+        backend's), their step time scaled to this run's work, and a range as wide as that guess; None with no such run."""
+        rows = [row for row in self._rows[backend] if row.y is not None]
+        same = [row for row in rows if row.signature == key]
+        kin = same or [row for row in rows if row.run.pipeline == pipeline] or rows
+        if not kin:
+            return None
+        chosen = sorted(kin, key=lambda row: row.run.order)[-NEAREST_RUNS:]
+        log_step, scaled = _scaled_step(backend, chosen, sizes)
+        scope = [row for row in self._rows[backend] if row.run.pipeline == pipeline] or self._rows[backend]
+        stages, overhead = self._stages(backend, pipeline, key, workload, same, scope)
+        return Plan(
+            tier=TIER_NEAREST,
+            fidelity=LIVE if all(row.run.fidelity == LIVE for row in chosen) else POOLED,
+            runs=len(chosen),
+            executions=len({row.execution for row in chosen}),
+            build_changed=self._build_changed(chosen, environment),
+            skipped=self.skipped,
+            penalty=None,
+            stages=stages,
+            log_step=log_step,
+            log_step_var=stats.tau**2 / len(chosen) + (0.0 if same else NEAREST_SIGMA**2) + (SCALE_SIGMA * scaled) ** 2,
+            tau=stats.tau,
+            rho=stats.rho,
+            extra_var=0.0,
+            df=HEURISTIC_DF,
+            slope=stats.slope,
+            first_ratio=stats.first_ratio,
+            step_noise=stats.step_noise,
+            stage_factor=stats.stage_factor,
+            other_sd=stats.other_sd,
+            slope_sd=stats.slope_sd,
+            first_sd=stats.first_sd,
+            pause_share=stats.pause_share,
+            overhead_mean=overhead[0],
+            overhead_sd=overhead[1],
+        )
+
+    def _factory_plan(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], sizes: Mapping[str, float], skipped: int) -> Plan:
+        """A run of a backend the host has no history of, priced from the built-in reference runs this model holds: their stages,
+        and their step time scaled to the run's work, with the widest range and the spreads the history has not measured."""
+        rows = [row for row in self._rows[backend] if row.y is not None]
+        log_step, scaled = _scaled_step(backend, rows, sizes)
+        stages, overhead = self._stages(backend, pipeline, key, workload, [], self._rows[backend])
+        return Plan(
+            tier=TIER_FACTORY,
+            fidelity=BUILTIN,
+            runs=0,
+            executions=0,
+            build_changed=False,
+            skipped=skipped,
+            penalty=None,
+            stages=stages,
+            log_step=log_step,
+            log_step_var=FACTORY_SIGMA**2 + (SCALE_SIGMA * scaled) ** 2,
+            tau=DEFAULT_TAU,
+            rho=DEFAULT_RHO,
+            extra_var=0.0,
+            df=HEURISTIC_DF,
+            slope=0.0,
+            first_ratio=None,
+            step_noise=DEFAULT_STEP_NOISE,
+            stage_factor=1.0,
+            other_sd=DEFAULT_OTHER_SD,
+            slope_sd=DEFAULT_SLOPE_SD,
+            first_sd=0.0,
+            pause_share=0.0,
+            overhead_mean=overhead[0],
+            overhead_sd=overhead[1],
+        )
+
     def _live_only_plan(self, stats: _BackendStats) -> Plan:
         return Plan(
             tier=TIER_LIVE,
@@ -557,7 +655,9 @@ class FittedModel:
 
     def _stages(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], same: list[_Row], scope: list[_Row]) -> tuple[tuple[StagePlan, ...], tuple[float, float]]:
         runs = [run for run in self._runs[backend] if run.fidelity == LIVE] or self._runs[backend]
-        sequence = expected_run(runs, key, backend, pipeline)
+        # A pipeline the history has no run of goes through the stages of the backend's newest run, the ones it lacks named
+        # as unseen when they start, rather than through none.
+        sequence = expected_run(runs, key, backend, pipeline) or max(runs, key=lambda run: run.order, default=None)
         if sequence is None:
             return (), (0.0, 0.0)
         read = self._read[id(sequence)]
@@ -613,6 +713,33 @@ class FittedModel:
             sigma = float(math.sqrt(float(residual @ residual) / max(1, len(rows) - 3)))
             self._stage_cache[cache_key] = (float(coefficients[0]), float(coefficients[1]), float(coefficients[2]), sigma)
         return self._stage_cache[cache_key]
+
+
+def work_change(target: Mapping[str, float], source: Mapping[str, float]) -> float:
+    """How much more work, in the log, a run of ``target``'s size does than one of ``source``'s (each from ``size_values``):
+    the pixels and the frames, each where both sides know it."""
+    return sum(target[name] - source[name] for name in ("log_pixels", "log_frames") if name in target and name in source)
+
+
+def work_exponent(backend: str) -> float:
+    """How the mean step time of ``backend`` grows with the work, as a power."""
+    return WORK_EXPONENT.get(backend, DEFAULT_WORK_EXPONENT)
+
+
+def _scaled_step(backend: str, rows: Sequence[_Row], sizes: Mapping[str, float]) -> tuple[float, float]:
+    """The mean of ``rows``' log step time, each scaled to the work of a run of ``sizes``, and the most log work any was
+    scaled across."""
+    changes = [work_change(sizes, size_values(row.run.workload, row.run.output_frames)) for row in rows]
+    exponent = work_exponent(backend)
+    values = [row.y + exponent * change for row, change in zip(rows, changes, strict=True) if row.y is not None]
+    return sum(values) / len(values), max(abs(change) for change in changes)
+
+
+@cache
+def _reference_model(backend: str) -> FittedModel | None:
+    """The model of ``backend``'s built-in reference runs, made once; None for a backend that has none."""
+    runs = reference_runs(backend)
+    return FittedModel(runs) if runs else None
 
 
 __all__ = ["PENALTIES", "FittedModel", "FixedStage", "IterativeStage", "Plan", "StagePlan", "student_t_90", "student_t_975"]

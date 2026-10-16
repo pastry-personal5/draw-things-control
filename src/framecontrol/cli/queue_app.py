@@ -118,8 +118,12 @@ def queue_show(
 
 def _basis_text(basis: dict[str, Any]) -> str:
     """What a forecast rests on, in a clause: the history it was made from, and what a reader should know about it."""
-    if not basis["runs"]:
+    if basis["tier"] == "factory":
+        text = "no history of this backend yet, so a built-in run from measured ones (rough, until the steps correct it)"
+    elif not basis["runs"]:
         text = "no history for this run, so its own pace alone"
+    elif basis["tier"] == "nearest":
+        text = f"the {basis['runs']} nearest runs from {basis['executions']} executions, scaled to this one (rough, until the steps correct it)"
     else:
         text = f"{basis['runs']} runs from {basis['executions']} executions ({basis['tier']}, {basis['fidelity']})"
     if basis["build_changed"]:

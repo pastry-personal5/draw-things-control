@@ -273,6 +273,18 @@ def feature_values(workload: Mapping[str, Any], output_frames: int | None = None
     return values
 
 
+def size_values(workload: Mapping[str, Any], output_frames: int | None = None) -> dict[str, float]:
+    """The log of the pixels and of the frames a workload asks for, each only when it says (``feature_values`` takes an
+    unknown frame count as one frame, which a comparison of sizes must not)."""
+    values = {name: value for name, value in feature_values(workload, output_frames).items() if name == "log_pixels"}
+    frames = workload.get("frames")
+    if not _is_number(frames):
+        frames = output_frames
+    if _is_number(frames) and frames > 0:
+        values["log_frames"] = math.log(frames)
+    return values
+
+
 def _knob_value(name: str, value: Any) -> dict[str, float]:
     if isinstance(value, bool):
         return {name: float(value)}

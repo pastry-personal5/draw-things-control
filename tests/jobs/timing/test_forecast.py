@@ -12,7 +12,7 @@ from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun, Hist
 from framecontrol.jobs.timing.fit import FittedModel
 from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun
 from framecontrol.jobs.timing.replay_stream import ReplayJob, replay_job
-from tests.timing.builders import dt_run, h3_run
+from tests.timing.builders import dt_run, dt_workload, h3_run, h3_workload
 from tests.timing.synthetic import synthetic_history
 
 ORIGIN = 1000.0
@@ -310,11 +310,16 @@ class JobForecastTests(unittest.TestCase):
         assert forecast is not None and forecast.job is not None
         self.assertAlmostEqual(forecast.job.end_at - ORIGIN, 2 * RUN_SECONDS + 100.0, delta=0.015 * 1154.0)
 
-    def test_a_later_run_with_no_history_leaves_the_job_unpriced_until_a_run_of_its_kind_has_finished(self) -> None:
+    def test_a_later_run_with_no_history_is_priced_from_the_run_in_progress_and_then_from_the_finished_one(self) -> None:
         playback = Playback([], self.chain(CooldownPolicy("manual", seconds=100.0), count=3))
+        start = playback.at(0.0)
+        assert start is not None
+        self.assertIsNone(start.job)
         during = playback.at(SAMPLING_START + 2 * 50.0)
-        assert during is not None and during.run is not None
-        self.assertIsNone(during.job)
+        assert during is not None and during.run is not None and during.job is not None
+        # Once the run has a number, the runs after it are what it projects to take.
+        self.assertAlmostEqual(during.job.end_at, ORIGIN + 3 * RUN_SECONDS + 2 * 100.0, delta=0.05 * (3 * RUN_SECONDS + 200.0))
+        self.assertGreater(during.job.high - during.job.low, during.run.high - during.run.low)
         between = playback.at(RUN_SECONDS + 20.0)
         assert between is not None and between.job is not None
         self.assertAlmostEqual(between.job.end_at, ORIGIN + RUN_SECONDS + 100.0 + 2 * RUN_SECONDS + 100.0, delta=0.05 * 2 * RUN_SECONDS)
@@ -326,6 +331,67 @@ class JobForecastTests(unittest.TestCase):
         assert forecast is not None and forecast.job is not None
         h3_seconds = h3_run(9, 2).seconds
         self.assertAlmostEqual(forecast.job.end_at - ORIGIN, RUN_SECONDS + h3_seconds, delta=0.03 * (RUN_SECONDS + h3_seconds))
+
+
+class EarlyNumberTests(unittest.TestCase):
+    """A number as soon as one can be given: the job's at its start, and a run's at its start whatever history there is."""
+
+    def test_from_job_started_to_the_first_run_the_job_is_every_run_still_to_come(self) -> None:
+        execution = HistoryExecution(9, CooldownPolicy("manual", seconds=100.0), tuple(dt_run(9, number + 1) for number in range(3)))
+        playback = Playback(HISTORY, execution)
+        when, started = playback.job.events[0]
+        playback.forecaster.observe(started, when)
+        forecast = playback.forecaster.forecast(ORIGIN)
+        assert forecast is not None and forecast.job is not None
+        self.assertEqual((forecast.stage, forecast.run), (None, None))
+        self.assertAlmostEqual(forecast.job.end_at - ORIGIN, 3 * RUN_SECONDS + 2 * 100.0, delta=0.015 * 1781.0)
+        playback.forecaster.set_parking(True)
+        parked = playback.forecaster.forecast(ORIGIN)
+        assert parked is not None and parked.job is not None
+        self.assertAlmostEqual(parked.job.end_at - ORIGIN, RUN_SECONDS, delta=0.015 * RUN_SECONDS)
+
+    def test_an_h3_run_with_no_history_has_a_number_from_its_start_that_its_steps_then_correct(self) -> None:
+        execution = HistoryExecution(9, CooldownPolicy("off"), (h3_run(9, 1),))
+        truth = h3_run(9, 1).seconds
+        playback = Playback([], execution)
+        start = playback.at(0.0)
+        assert start is not None and start.run is not None
+        self.assertEqual(start.basis.tier, "factory")
+        self.assertTrue(start.run.low <= ORIGIN + truth <= start.run.high)
+        denoise = next(stage for stage in h3_run(9, 1).stages if stage.stage == "denoise").start
+        later = playback.at(denoise + 6 * 60.0 + 1.0)
+        assert later is not None and later.run is not None
+        self.assertAlmostEqual(later.run.end_at - ORIGIN, truth, delta=0.05 * truth)
+        self.assertLess(later.run.high - later.run.low, start.run.high - start.run.low)
+
+    def test_a_run_much_slower_than_its_rough_price_is_not_read_as_pausing_at_every_step(self) -> None:
+        # The built-in run puts a 121-frame step near 23 s; these take 90 s, which is no pause.
+        run = h3_run(9, 1, step=90.0, workload=h3_workload(frames=121))
+        playback = Playback([], HistoryExecution(9, CooldownPolicy("off"), (run,)))
+        denoise = next(stage for stage in run.stages if stage.stage == "denoise").start
+        forecast = playback.at(denoise + 8 * 90.0 + 1.0)
+        assert forecast is not None and forecast.run is not None
+        self.assertAlmostEqual(forecast.run.end_at - ORIGIN, run.seconds, delta=0.1 * run.seconds)
+
+    def test_a_later_run_of_another_size_with_no_history_is_this_jobs_run_scaled_to_its_work(self) -> None:
+        longer = dt_workload(frames=162)
+        execution = HistoryExecution(9, CooldownPolicy("off"), (dt_run(9, 1), dt_run(9, 2, workload=longer)))
+        playback = Playback([], execution)
+        during = playback.at(SAMPLING_START + 2 * 50.0)
+        assert during is not None and during.run is not None and during.job is not None
+        # Twice the frames is 2^1.2 times the run in progress, as it projects.
+        projected = during.run.end_at - ORIGIN
+        self.assertAlmostEqual(during.job.end_at - during.run.end_at, projected * 2.0**1.2, delta=0.02 * projected * 2.0**1.2)
+        finished = playback.at(RUN_SECONDS + 1.0)
+        assert finished is not None and finished.job is not None
+        # Once it has finished, its own time is the reference.
+        self.assertAlmostEqual(finished.job.end_at - (ORIGIN + RUN_SECONDS + 1.0), RUN_SECONDS * 2.0**1.2, delta=0.05 * RUN_SECONDS * 2.0**1.2)
+
+    def test_thin_history_of_the_runs_own_kind_prices_it_at_its_start(self) -> None:
+        forecast = Playback([dt_run(1, 1)], single_run()).at(0.0)
+        assert forecast is not None and forecast.run is not None
+        self.assertEqual(forecast.basis.tier, "nearest")
+        self.assertAlmostEqual(forecast.run.end_at - ORIGIN, RUN_SECONDS, delta=0.02 * RUN_SECONDS)
 
 
 class SpeedTests(unittest.TestCase):

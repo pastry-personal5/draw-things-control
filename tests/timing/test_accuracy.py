@@ -102,16 +102,13 @@ class AgainstTheFrozenEstimatorTests(unittest.TestCase):
 
 
 class ThinHistoryTests(unittest.TestCase):
-    def test_with_under_3_runs_of_the_signature_and_under_6_of_the_backend_the_forecast_waits_for_two_readings(self) -> None:
+    def test_with_under_3_runs_of_the_signature_and_under_6_of_the_backend_the_run_is_priced_at_its_start_from_them(self) -> None:
         executions = [HistoryExecution(number, CooldownPolicy("off"), (dt_run(number, 1), dt_run(number, 2))) for number in (1, 2)]
         report = replay_leave_one_out(executions, BUILTIN_ESTIMATORS["forecast"])
         self.assertTrue(report.traces)
-        for trace in report.traces:
-            # The step counter's first reading is at 14 s and its second one step, 50 s, later.
-            self.assertEqual(trace.first_number, 64.0)
-        # The old estimator priced the run at once, from the one unlike run before it, and is listed beside it, not compared.
-        old = replay_leave_one_out(executions, FrozenReplayEstimator)
-        self.assertTrue(all(trace.first_number == 0.0 for trace in old.traces))
+        self.assertTrue(all(trace.first_number == 0.0 for trace in report.traces))
+        self.assertLessEqual(by_checkpoint(report, "run")[0.05].median_ape, 0.05)
+        self.assertEqual(sum(trace.run_moves_back for trace in report.traces), 0)
 
     def test_the_signatures_with_too_little_history_are_priced_by_the_fits_and_are_still_close(self) -> None:
         history = synthetic_history()

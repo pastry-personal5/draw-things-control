@@ -76,6 +76,8 @@ canonical term.
 | **shortcut help** | The contextual shortcut reference opened with `?` from a focused list or detail. It closes with `?` or Escape and restores the prior focus. |
 | **modal** | A temporary interaction that blocks the main screen until it is completed or cancelled. The shortcut help overlay and delete confirmation are modals. |
 | **feedback** | Information that confirms an action, reports progress, warns of a consequence, or explains an error. State what changed, its outcome, and a useful next action when one exists. |
+| **forecast** | When the running run and job are expected to end, with an 80% range, as `fc serve` publishes it. The **Job bar** and **Run bar** of the work status show it as a share done and `ends ~16:42`; `estimating` means the server has no number yet. It is not the status line. |
+| **stage** | The part of a run its backend reports working on, written with spaces for underscores and the units it has done: `denoise 12/30`. Shown in the run summary and on the work status's fourth line. |
 
 ## Writing and shortcut rules
 
