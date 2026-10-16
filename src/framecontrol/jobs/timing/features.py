@@ -147,14 +147,18 @@ def stage_keys(run: HistoryRun) -> list[str]:
     return keys
 
 
-def expected_stages(history: Sequence[HistoryRun], run_signature: Signature, backend: str, pipeline: str | None) -> list[HistoryStage]:
-    """The stages a run is expected to go through: those of the newest run with its signature, else of the newest of its
-    backend and pipeline; none when the history holds neither."""
+def expected_run(history: Sequence[HistoryRun], run_signature: Signature, backend: str, pipeline: str | None) -> HistoryRun | None:
+    """The run whose stages a run is expected to go through: the newest with its signature, else the newest of its backend
+    and pipeline; none when the history holds neither."""
     same = [run for run in history if run.signature == run_signature]
     pool = same or [run for run in history if run.backend == backend and run.pipeline == pipeline]
-    if not pool:
-        return []
-    return list(max(pool, key=lambda run: run.order).counted_stages)
+    return max(pool, key=lambda run: run.order) if pool else None
+
+
+def expected_stages(history: Sequence[HistoryRun], run_signature: Signature, backend: str, pipeline: str | None) -> list[HistoryStage]:
+    """The stages of ``expected_run``, in order; none when the history holds no such run."""
+    run = expected_run(history, run_signature, backend, pipeline)
+    return list(run.counted_stages) if run is not None else []
 
 
 def iterative_stage(run: HistoryRun) -> HistoryStage | None:
