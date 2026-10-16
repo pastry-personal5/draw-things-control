@@ -1,0 +1,84 @@
+# Milestone 10: Stage timing measurement
+
+**Phase:** [Phase 4](README.md)
+**Status:** done
+**Depends on:** [Milestone 02](milestone-02-multiple-backends.md)'s backend boundary, [Milestone 03](milestone-03-h3-i2av.md)'s H3 runtime and finishing, and [Milestone 09](milestone-09-job-definition.md)'s per-run backend, pipeline, and knob records.
+
+## Goal
+
+Measure, for every run of both backends, how long each stage took, from the first child output to the end of Framecontrol's own finishing, and keep the measurements with the run's history, for as long as the execution is kept. [Milestone 11](milestone-11-time-estimation.md) fits its forecast on this data. This milestone changes no estimate and no progress display.
+
+## Evidence
+
+Measured on 2026-10-15 by reading the job logs that 22 executions (E0026 to E0047) recorded, read-only. The logs hold every child line with the child's elapsed seconds, and Framecontrol's own lines with wall-clock times. 44 runs have a child transcript: 8 Draw Things `i2v` (E0026 and E0027) and 36 H3 (`i2av`, `r2av`, and mixed chains); one of them, E0038 run 3, was interrupted. E0028 and E0029 failed within a second, and the logs of E0031 and E0032 no longer exist.
+
+Those logs go with their executions when `history_retention_days` (14 by default) prunes them: the Draw Things runs on 2026-10-19 and 2026-10-20, the H3 runs from about 2026-10-26. By owner decision no copy is kept, so the numbers below, and in [Milestone 11](milestone-11-time-estimation.md#evidence), are the record of what was measured, and the tests use synthetic transcripts written from the line formats described here.
+
+**H3 stages.** Each H3 line is `<phase> n/N`, and `n` is the number done. One 243-frame `r2av` run (E0047, 2310 s) went through these phases in order: `tokenizer`, `video VAE encoder`, `Qwen vision`, `text encoder`, `refine text`, `precompute AdaLN`, `load transformer core`, `denoise enqueue` with `denoise`, `audio VAE`, `video VAE load`, and `FFmpeg` (counted in frames). The table covers the 35 runs that finished denoising, with the one-update lag described below removed:
+
+| Stage group | Share of the run | Observed |
+|-------------|------------------|----------|
+| Setup, up to the last line of `load transformer core` | 1% to 3% | 17.5 to 26.6 s |
+| Denoise (30 steps), up to the last `denoise 30/30` | 87% to 94% | 18.9 to 74.8 s per step |
+| Audio VAE, video VAE load, and FFmpeg after the last step | 6% to 10% | 66 to 142 s |
+| Framecontrol finishing after the child exits | under 3% | 1 to 2 s without color correction (E0039 run 1, E0047), 38 to 46 s with it (E0039 run 2, E0040 run 2) |
+
+The output does not show where setup ends and the first step begins. Nothing prints between `load transformer core 50/50` and the first `denoise enqueue` reading, and the first gap between denoise readings is a median 0.74 times a later one, so either the first step is shorter or work between them prints nothing. Within a run, with that first gap set aside, the last third of the steps ran at 0.72 to 1.19 times the pace of the first third, and 24 of 35 runs stayed within 0.9 to 1.1. Between runs of the same settings the pace varies more: eight 243-frame 832×448 `r2av` runs (E0040 run 1, E0041 to E0047) took 63.5 to 74.3 s per step, and three runs of an 8 s `i2av` chain (E0033 run 3, E0034 runs 3 and 4) were 16% to 31% slower than their siblings at identical settings. The per-step time also grows faster than the clip length: 5 s clips took 19 to 24 s per step, 8 s clips 39 to 54 s, and 10 s clips 56 to 75 s.
+
+**Draw Things stages.** The CLI prints `Starting...`, `Processing...`, `Sampling... n / N`, `Finishing...`, and `Generated`, each with a bar and a percentage, then `Wrote:` and a `Generation timing:` block with its own total (model loading included) and the average and median sampling step. Its `n / N` is printed when step n starts, so `40 / 40` begins the last step and 39 are done. In the 8 runs, the first sampling reading came 9 to 17 s in, the last step took 50 to 57 s, `Finishing` (decode and write) took 11 s, and runs took 1962 to 2186 s. The step time was not steady: in 7 runs it rose from 42.7 to 45.3 s in the first quarter of the steps to 50.1 to 56.0 s in the last (11% to 24% slower), and in the eighth (E0027 run 5) it fell from 56.2 to 51.4 s. The bar's percentage is the CLI's own prediction from a built-in table, not a measurement. Framecontrol's finishing took about 3 s (tagging, three checks).
+
+**Hazards in what is read today.**
+
+- Every `n/N` in a line is one step counter, read by one shared pattern (`PROGRESS_PATTERN` in `core/process/output.py`), and the two backends mean different things by it. In H3 each phase prints its own counter, so `tokenizer 1/1` at 0.2 s or `text encoder 50/50` reads as "past the last step", and the TUI estimator then reports the run as finishing; the server's `current_step` shows the last phase's counter. Draw Things' `40 / 40` is read as the end, though the last step still has about a minute to run. [Milestone 11](milestone-11-time-estimation.md) confirms both by replay.
+- H3 starts each redraw with `\r` and ends none of them, so a reading becomes a line only when the next redraw begins: reading k is delivered when reading k+1 is written. The reader already treats `\r` as a line break (`Popen(text=True)` uses universal newlines), so the lag is not a newline setting; it is that no byte ends reading k. In E0047, `video VAE encoder 8/9` and `9/9` carry one timestamp, 0.21 s after `7/9`, which is the cadence of the readings before them, and `denoise enqueue 29/30`, `30/30`, and `denoise 30/30` all arrive at child +2174.2 s. A phase's last reading ends in a newline and is exact. Offline the lag is recoverable, since a reading was written when the previous one was delivered, apart from a phase's first reading. Live it is a whole update interval, which at denoise is a step of 19 to 75 s.
+- The runner stamps a line when its supervisor loop drains the queue (every 20 ms), not when the reader thread read it.
+- Neither the run table nor the events hold stage data. The TUI times each line when it arrives, so a client attached mid-run, or one that reseeds, loses the readings before it.
+
+## Scope
+
+In scope:
+
+- A stage model for both backends and for Framecontrol's own work before and after the child, with a stage name, the backend's raw phase text, a source (`child` or `framecontrol`), start and end offsets from the start of the run, and units done and total (steps, frames, or none).
+- Timing taken at the source on a monotonic clock: each read is stamped by the reader thread, and each H3 reading is stamped when its last byte arrives, not one update later.
+- A per-run record kept with the execution: stage spans, the per-unit marks of iterative stages, the workload (the features Milestone 11 fits on: pixels, frames, steps, pipeline, reference counts, and the knobs) frozen at measurement time, and the environment (executable size and modification time, model, host load).
+- New events, a read path through the HTTP API, `fc timing`, and MCP, and an import from the job logs that still exist.
+
+Out of scope:
+
+- Any change to an estimate, a bar, or the status line (Milestone 11), including `RunOutput.progress` and `percent`, which the current estimator reads until Milestone 11 removes them with it. No predicted queue timing.
+- Changing generation behavior, a backend's command line, or the text a pane shows for a child line, except that an H3 reading appears one update sooner.
+- Measuring a backend by anything other than its own output and Framecontrol's own steps, such as sampling the GPU.
+- Keeping timing data past the execution it belongs to (owner decision below).
+
+## Planned changes
+
+1. **Stage tracker.** A pure `jobs/timing/` package turns readings into spans. Each backend adapter supplies a parser from a child line to a reading (`phase`, done, total, unit), the meaning of its counter (Draw Things' printed `n` means `n - 1` steps done, and `Finishing` follows the last step; H3's means `n` done), and a table from raw phase to stage. A phase the table does not know is kept under its raw name as `other`, so a newer H3 build never drops data silently. A counter that restarts, such as Draw Things' second pass or an H3 phase that returns with a new total, opens a new span instead of rewinding one.
+2. **Source timestamps.** The runner reads each pipe as bytes (an incremental UTF-8 decoder, so a character split across reads is whole), and each reader thread stamps the monotonic time of every read as it queues it, instead of the supervisor stamping at drain. The runner splits on `\r` and `\n` itself and holds a trailing segment that has no terminator. A held segment becomes a reading when the backend's predicate (the pattern its parser uses) accepts it and no further byte arrives within an idle window (0.2 s to start, tuned in the test with a fake child). It is stamped with the time its last byte arrived, not the time the window expired, and the later terminated copy of it is dropped as a duplicate. The predicate comes from the backend adapter as a callable, so `core` stays free of backend knowledge. The text a pane shows is unchanged.
+3. **Framecontrol stages.** One injected timer wraps each step the executor and the backends' finishing already perform: input preparation and resizing, H3 reference staging, output verification, color conversion, drift measurement, correction, last-frame extraction, tagging, promotion of staged files. Stages share one run clock, and the time between named stages is recorded as `unaccounted` so no gap hides.
+4. **Events.** `StageStarted` and `StageFinished` carry the span. `RunOutput` gains `phase` and `offset` as ordinary fields, with no tolerance for an event that lacks them: a client and a server are expected to be the same version. A front end that meets a kind it does not know skips it, as the TUI feed already does.
+5. **Persistence.** Forward-only schema version 14 adds two tables, both `ON DELETE CASCADE` from `executions` and keyed by execution and run, like `media_checks`, so pruning by `history_retention_days` and deleting an execution through the API remove them with it:
+   - `run_stages`: one row per span (stage, raw phase, source, start and end offset, units done and total, and the marks as JSON). A row is written when its stage finishes, so a crash or a kill keeps every completed span. Marks are kept whole up to 1000 per stage and evenly thinned beyond that.
+   - `run_timing`: one row per run (backend, pipeline, workload, environment, a fidelity of `live` or `log`, and `complete`). It is written at run start with `complete` false and updated at run end, so a failed, stopped, parked, or crashed run stays marked incomplete and a later fit can exclude it.
+6. **Backfill.** `fc timing import` rebuilds spans and timing rows for the executions whose logs still exist, from the child lines and the `[app]` lines, marked fidelity `log`, opening the state as `fc import-history` does. It removes the lag by the shift above, so log rows are comparable to live ones, and it marks the uncertain first reading of each phase. It is idempotent, reports each skipped execution and why, and never writes to a log. Its Framecontrol stages are coarse (from `Subprocess finished` to the run's last check). Its rows are pruned with their execution like any other, so it seeds Milestone 11 with the recent history that exists when it is run and is not needed again once live runs have been recorded.
+7. **Read paths.** `GET /v1/executions/{id}/runs/{n}/stages`, `fc timing show E0047` as a table with each stage's start, duration, share, and units, and the stages in MCP's `get_execution_run`. The table is how a person checks a measurement against the log. `fc history`'s help changes to say it only deletes.
+8. **Documentation.** Architecture (new modules and the retention rule for timing rows), the HTTP guide, the user guide's history section, the phase changelog, and a new research note, `docs/research/time-estimation.md`, that records the evidence summary above and the host validation.
+
+## Acceptance criteria
+
+- **Synthetic fixtures.** A test helper writes child transcripts from a table of phases, counters, and times, in the line formats recorded in the evidence: an H3 `r2av` run, an H3 `i2av` run with a color-correction tail, and a Draw Things run with its `Generation timing:` block. The expected span list is known by construction. A fixture holds no prompt, path, or real run data. Every child line belongs to a span or is reported unclassified, the child spans together cover the child's elapsed time within 1 s, and the final span of a successful run ends within 1 s of the child's exit.
+- With a fake child that writes H3-style `\r` redraws at known times, each reading is stamped within 50 ms of the arrival of its last byte, including when a write splits a reading inside a number (`denoise 3/3` then `0`) or inside a multi-byte character, and a reading that is never terminated is delivered once the idle window passes.
+- The sum of `prepare`, child stages, Framecontrol finishing stages, and `unaccounted` equals the run's time from `RunStarted` to `RunFinished` within 100 ms, for both backends and for failed, stopped, and parked runs.
+- On the synthetic Draw Things transcript, the run's total agrees with its `Generation timing:` total within 1%, and its average and median step agree within 1% when taken by the CLI's definition: 40 durations, the first from the last `Processing` line to the first sampling reading and the rest the 39 gaps between consecutive readings, with the last step not counted.
+- A synthetic H3 log written in the delivered, lagged form from known write times backfills to spans within 0.5 s of the known ones, and the import reports its counts and each skipped log.
+- Migration 14 applies to a version 13 database without touching existing rows. The import is idempotent. Pruning and `DELETE /v1/executions` remove an execution's `run_stages` and `run_timing` rows. A run killed mid-stage leaves its finished spans and `complete` false.
+- New events round-trip through `event_to_dict` and `event_from_dict`, the gRPC backlog, and the MCP watch, and an unknown kind is skipped by the TUI, the CLI, and MCP.
+- The version-1 and version-2 characterization goldens are regenerated, and the diff shows only the new events and the new `RunOutput` fields. No test starts a real `draw-things-cli` or H3. `make check` passes.
+- Owner host validation, recorded in `docs/research/time-estimation.md`, like Milestone 06's: one real Draw Things run and one real H3 run on the new recorder, compared with the CLI's own timing and with the log, and `fc timing import` on the logs that still exist. This does not block completion.
+
+## Decisions for the owner
+
+- **Timing data follows history retention** (owner decision, 2026-10-16, superseding the 2026-10-15 decision to keep samples outside the cascade). The rows are removed with their execution when `history_retention_days` prunes it and when the execution is deleted through the API, so there is no separate sample table, no row cap, and no second rule to keep in step. The consequence for Milestone 11 is that it fits on the retained window, 14 days by default; a longer window needs a larger `history_retention_days`, which is the owner's setting.
+- **No copy of the evidence logs** (owner decision, 2026-10-16). The logs behind the numbers above expire with their executions. Rejected: extracting numbers-only transcripts into the repository, and raising the retention to outlast them. The tests are synthetic, and accuracy against real runs is measured once on the owner host.
+- **Bytes, not lines, from the child.** Showing an H3 reading when it is written needs partial reads in the runner, which both backends and every test through the fake runner share. Rejected: keeping line reads and shifting timestamps afterward. That recovers the write time offline, and the backfill does exactly that, but it cannot show a reading before it is delivered, and a denoise step lasts 19 to 75 s. Rejected: changing the newline mode, since `\r` already breaks a line and the lag remains.
+- **Host load as a covariate.** The run's start and end `os.getloadavg()` go in the environment record, to test in Milestone 11 whether load explains the spread of up to 31% between runs of the same settings. A thermal reading would need a privileged or external tool and is left out. The executable's size and modification time stand in for a fingerprint, since the point is to notice a changed build, not to authenticate it.
+- **No compatibility with older events.** Owner decision, 2026-10-16: backward compatibility may be broken. A mixed-version client and server, and an older event without the new fields, are not supported.

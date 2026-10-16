@@ -17,6 +17,8 @@ Improve the product experience, make chained generation support multiple backend
 - Faster, deterministic local and CI validation in Milestone 07.
 - Framecontrol product, app, package, interface, and state database naming in Milestone 08.
 - Unified per-run job definitions, scoped knob defaults, run-specific timing, and mixed backend chains in Milestone 09.
+- Measured per-stage timing for both backends and Framecontrol's own finishing, kept with each execution's history, in Milestone 10.
+- A stage-aware, measured completion-time forecast for the running job, computed once by the server and shown by every front end, in Milestone 11.
 - Producing and consuming graph-based metadata in Milestone 20.
 
 ## Non-goals
@@ -24,6 +26,7 @@ Improve the product experience, make chained generation support multiple backend
 - Changing generation behavior as part of Milestone 01's TUI work.
 - Adding a third generator as part of the backend refactor or H3 integration.
 - Adding H3 reference-image, video-reference, or last-frame modes in the initial `i2av` integration; Ref2VA support follows in Milestone 05.
+- Predicting the start and end of queued entries in Milestone 11; its forecast covers the running job.
 
 ## Milestones
 
@@ -38,6 +41,8 @@ Improve the product experience, make chained generation support multiple backend
 | 07 | [Check performance](milestone-07-check-performance.md) | done |
 | 08 | [Rename to Framecontrol](milestone-08-framecontrol-rename.md) | done |
 | 09 | [Unified job definitions and per-run knobs](milestone-09-job-definition.md) | done |
+| 10 | [Stage timing measurement](milestone-10-stage-timing.md) | done |
+| 11 | [Job completion time estimation](milestone-11-time-estimation.md) | planned |
 | 20 | [Graph-based metadata](milestone-20-graph-metadata.md) | planned |
 
 ## Depends on
@@ -47,6 +52,8 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 05 depends on Milestone 03's H3 runtime, staged MP4 finishing, and queue snapshot contract.
 - Milestone 06 depends on Milestone 03's H3 `i2av` output and handoff contract, and Milestone 05's mixed `i2av`/`r2av` pipeline; M06 applies color tags to both pipelines.
 - Milestone 09 depends on the backend contracts, H3 handoff behavior, reference-pipeline validation, and backend-specific color finishing from Milestones 02, 03, 05, and 06.
+- Milestone 10 depends on the backend boundary, H3 runtime and finishing, and per-run records from Milestones 02, 03, and 09.
+- Milestone 11 depends on Milestone 10's stage timeline and per-run timing rows.
 - Milestone 20 follows Milestones 05, 06, and 09 so its provenance graph can record frozen references, retained video copies, and each run's backend and pipeline.
 
 ## Changelog
@@ -63,4 +70,6 @@ Decisions and notable changes are recorded in
 - H3 generated videos carry truthful color tags when verified; otherwise a warning identifies the original output and any conflicting tags it retains. `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
 - Framecontrol is the product and app name, with `fc` as its installed command and existing state safely migrated.
 - Version-2 jobs resolve named profiles and scoped defaults into a frozen per-run plan; H3 duration and Draw Things temporal control can vary by run without duplicated H3 frame values.
+- Every run of both backends records a measured stage timeline that is kept and pruned with its execution, as defined in Milestone 10.
+- The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI, `fc queue wait`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
 - Graph-based metadata is produced, consumed, and documented as defined in Milestone 20.
