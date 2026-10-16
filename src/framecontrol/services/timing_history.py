@@ -44,7 +44,19 @@ class TimingHistory:
 
 def _history_run(row: CompleteTiming) -> HistoryRun:
     stages = tuple(HistoryStage(stage.stage, stage.source, stage.start, stage.end, stage.done, stage.total, stage.unit, stage.marks, stage.uncertain) for stage in row.stages)
-    return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, row.workload, row.environment, stages, row.output_frames)
+    workload = dict(row.workload)
+    if row.backend == "draw-things-cli" and row.fidelity == "live":
+        # Older timing rows used base-config values even when per-run CLI flags won. Reconcile only where independent
+        # recorded facts establish the actual work; leave the stored row intact.
+        knobs = workload.get("knobs")
+        if isinstance(knobs, dict) and knobs.get("frames") == row.output_frames and workload.get("frames") != row.output_frames:
+            workload["frames"] = row.output_frames
+        sampling = next((stage for stage in stages if stage.stage == "sampling" and stage.source == "child" and stage.done == stage.total and stage.total is not None and stage.total > 0), None)
+        if sampling is not None:
+            workload["steps"] = sampling.total
+    if row.backend in ("draw-things-cli", "h3") and any(stage.stage == "correct" and stage.source == "framecontrol" for stage in stages):
+        workload["color_corrects"] = True
+    return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, workload, row.environment, stages, row.output_frames)
 
 
 def load_executions(store: Store) -> tuple[list[HistoryExecution], int]:

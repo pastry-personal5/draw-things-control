@@ -6,7 +6,7 @@ import sqlite3
 from unittest import mock
 
 from framecontrol.jobs.timing.model import StageSpan
-from framecontrol.services.timing_history import TimingHistory
+from framecontrol.services.timing_history import TimingHistory, load_executions
 from tests.state.test_store import StoreCase, iso
 
 WORKLOAD = {"width": 832, "height": 448, "pixels": 372736, "frames": 81, "steps": 2, "mode": "i2v", "guidance_scale": 7.5}
@@ -60,6 +60,14 @@ class TimingHistoryTests(StoreCase):
         history = TimingHistory(self.store)
         plan = history.model().plan("draw-things-cli", "i2v", no_frames, ENVIRONMENT)
         self.assertEqual(plan.tier, "signature")
+
+    def test_old_draw_things_cli_override_workload_is_reconciled_from_recorded_facts(self) -> None:
+        stale = {**WORKLOAD, "frames": 17, "steps": 40, "knobs": {"frames": 33}}
+        self.keep("old-flags", 1, workload=stale, frames=33)
+        executions, skipped = load_executions(self.store)
+        self.assertEqual(skipped, 0)
+        self.assertEqual((executions[0].runs[0].workload["frames"], executions[0].runs[0].workload["steps"]), (33, 2))
+        self.assertEqual(stale["frames"], 17)
 
     def test_a_phase_the_model_has_never_seen_loads_like_any_other(self) -> None:
         for days in (3, 2, 1):

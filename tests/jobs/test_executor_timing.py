@@ -289,6 +289,21 @@ class ExecutorTimingTests(JobTestCase):
         (started,) = [event for event in recorder.events if isinstance(event, TimingStarted)]
         self.assertEqual((started.backend, started.pipeline), ("draw-things-cli", "i2v"))
 
+    def test_draw_things_timing_uses_effective_cli_overrides(self) -> None:
+        self.write_base_config({"model": "base.ckpt", "width": 832, "height": 448, "numFrames": 17, "steps": 40, "guidanceScale": 7, "strength": 0.5})
+        data = job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_override={"frame_count": 33, "steps": 25, "guidance_scale": 5, "strength": 1})
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        described = self.service.describe_run(job, 1, executable="draw-things-cli")
+        self.assertEqual({key: described.workload[key] for key in ("frames", "steps", "guidance_scale", "strength")}, {"frames": 33, "steps": 25, "guidance_scale": 5, "strength": 1})
+        recorder = self.observe(job)
+        (started,) = [event for event in recorder.events if isinstance(event, TimingStarted)]
+        self.assertEqual(started.workload, described.workload)
+
+    def test_draw_things_timing_describes_color_correction(self) -> None:
+        data = job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], color={"anchor": "blend", "strength": 1, "first_weight": 0.25, "regions": True})
+        job = load_job(self.write_job(data), self.global_config, self.params)
+        self.assertIs(self.service.describe_run(job, 1, executable="draw-things-cli").workload["color_corrects"], True)
+
     def test_the_description_of_a_run_before_it_starts_is_what_its_timing_records(self) -> None:
         job = self.job(run_count=2)
         recorder = self.observe(job)

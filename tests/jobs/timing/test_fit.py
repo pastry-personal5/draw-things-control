@@ -46,6 +46,49 @@ PIXELS = [163_840, 245_760, 372_736, 589_824]
 FRAMES = [41, 81, 121]
 
 
+class FactoryDrawThingsTests(unittest.TestCase):
+    WORKLOAD = {"width": 384, "height": 768, "pixels": 294912, "frames": 33, "steps": 25, "mode": "i2v", "guidance_scale": 5, "strength": 1, "shift": 3.99, "color_corrects": True}
+    ENVIRONMENT = {"model": "wan_v2.2_a14b_hne_i2v_i8x.ckpt", "executable_bytes": 160477120, "executable_mtime": 1790314797.2408893}
+
+    def test_e0053_factory_prices_only_its_measured_workload(self) -> None:
+        model = FittedModel([])
+        plan = model.plan(DT, "i2v", self.WORKLOAD, self.ENVIRONMENT)
+        self.assertEqual((plan.tier, plan.fidelity, plan.runs, plan.executions), ("factory", "factory", 0, 0))
+        self.assertAlmostEqual(math.exp(plan.log_step or 0.0), 13.6710, places=4)
+        self.assertEqual(iterative(plan).steps, 25)
+        self.assertAlmostEqual(fixed(plan, "correct").median, 6.847, places=3)
+        estimated = sum(stage.median for stage in plan.stages if isinstance(stage, FixedStage)) + 25 * math.exp(plan.log_step or 0.0) * plan.stage_factor
+        self.assertAlmostEqual(estimated, (353.620 + 369.037) / 2, delta=0.2)
+        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "frames": 17}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(DT, "i2v", {**self.WORKLOAD, "color_corrects": False}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {"model": "another.ckpt"}).tier, "live_only")
+        self.assertEqual(model.plan(DT, "i2v", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "live_only")
+
+
+class FactoryH3Tests(unittest.TestCase):
+    WORKLOAD = {"pipeline": "r2av", "width": 832, "height": 448, "pixels": 372736, "frames": 362, "steps": 30, "seconds": 362 / 24, "references": {"image": 3}, "reference_count": 3, "render_width": None, "render_height": None, "denoise_reuse": 1, "dit_layers": 50, "core_reuse": 1, "token_reduction": False, "ssd_streaming": False, "int8_row_fc2": False, "reference_rope": False, "reference_image_size": "match", "knobs": {"seconds": 15, "requested_frames": 360, "effective_frames": 362, "effective_seconds": 362 / 24, "reference_pair": "three-subjects"}}
+    ENVIRONMENT = {"model": "MiniMax-H3", "executable_bytes": 558688, "executable_mtime": 1791736910.7589593}
+
+    def test_e0051_and_e0054_factory_uses_effective_h3_workload(self) -> None:
+        model = FittedModel([])
+        plan = model.plan(H3, "r2av", self.WORKLOAD, self.ENVIRONMENT)
+        self.assertEqual((plan.tier, plan.fidelity, plan.runs, plan.executions), ("factory", "factory", 0, 0))
+        self.assertAlmostEqual(math.exp(plan.log_step or 0.0), 138.6683, places=4)
+        self.assertEqual(iterative(plan).steps, 30)
+        self.assertAlmostEqual(fixed(plan, "ffmpeg").median, 189.977, places=3)
+        self.assertAlmostEqual(plan.first_ratio or 0.0, 0.798, places=3)
+        estimated = sum(stage.median for stage in plan.stages if isinstance(stage, FixedStage)) + 30 * math.exp(plan.log_step or 0.0) * plan.stage_factor
+        self.assertAlmostEqual(estimated, (4421.824 + 4291.886) / 2, delta=0.2)
+        unrelated = FittedModel([h3_run(1, 1)]).plan(H3, "r2av", self.WORKLOAD, self.ENVIRONMENT)
+        self.assertEqual((unrelated.tier, unrelated.tau, unrelated.rho, unrelated.step_noise, unrelated.first_sd, unrelated.pause_share), (plan.tier, plan.tau, plan.rho, plan.step_noise, plan.first_sd, plan.pause_share))
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "frames": 360}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "knobs": {**self.WORKLOAD["knobs"], "seconds": 10}}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "dit_layers": 36}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "compatibility": {"bf16_attention_output": True}}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", {**self.WORKLOAD, "color_corrects": True}, self.ENVIRONMENT).tier, "live_only")
+        self.assertEqual(model.plan(H3, "r2av", self.WORKLOAD, {**self.ENVIRONMENT, "executable_bytes": 2}).tier, "live_only")
+
+
 class StudentTTests(unittest.TestCase):
     @staticmethod
     def integral(df: int, upper: float) -> float:

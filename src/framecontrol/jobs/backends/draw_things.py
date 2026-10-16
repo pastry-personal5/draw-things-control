@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from framecontrol.core.arguments import DrawThingsGenerateArguments, override_arguments, redact_command
+from framecontrol.core.arguments import OVERRIDE_TARGETS, DrawThingsGenerateArguments, override_arguments, redact_command
 from framecontrol.core.draw_things_config import build_config_json, find_config_file
 from framecontrol.core.generation import require_executable
 from framecontrol.core.numbers import is_int
@@ -177,9 +177,16 @@ class DrawThingsBackend:
     def timing_workload(self, job: JobDefinition, run_number: int) -> dict[str, Any]:
         """The features a run's time is fitted on: its pixels, frames, and steps, and the settings that change the work."""
         settings = cast(DrawThingsJobSettings, job.backend_data)
-        config = build_config_json(settings.base_config, settings.override.as_dict())
+        override = settings.override.as_dict()
+        config = build_config_json(settings.base_config, override)
+        # CLI flags win over --config-json, including per-run frames and steps.
+        for name, (_flag, config_key) in OVERRIDE_TARGETS.items():
+            if name in override:
+                config[config_key] = override[name]
         width, height = settings.size or (config.get("width"), config.get("height"))
         workload: dict[str, Any] = {"width": width, "height": height, "pixels": width * height if is_int(width) and is_int(height) else None, "frames": config.get("numFrames"), "steps": config.get("steps"), "mode": job.mode.value}
+        if job.color.corrects:
+            workload["color_corrects"] = True
         for name, key in (("guidance_scale", "guidanceScale"), ("strength", "strength"), ("shift", "shift")):
             if config.get(key) is not None:
                 workload[name] = config[key]

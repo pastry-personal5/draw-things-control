@@ -721,6 +721,10 @@ class H3Backend:
         selected = next((pair for pair in data.reference_pairs if pair.name == run.reference_pair), None)
         kinds = Counter(reference.kind for reference in selected.references) if selected is not None else Counter()
         workload: dict[str, Any] = {"pipeline": run.pipeline, "width": settings.width, "height": settings.height, "pixels": settings.width * settings.height, "frames": settings.effective_frames, "steps": settings.steps, "seconds": settings.effective_seconds, "references": dict(kinds), "reference_count": sum(kinds.values())}
+        if job.color.corrects:
+            workload["color_corrects"] = True
+        if any(value for _, value in settings.compatibility):
+            workload["compatibility"] = dict(settings.compatibility)
         for name in ("render_width", "render_height", "denoise_reuse", "dit_layers", "core_reuse", "token_reduction", "ssd_streaming", "int8_row_fc2", "reference_rope", "reference_image_size"):
             workload[name] = getattr(settings, name)
         return workload

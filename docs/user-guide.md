@@ -1151,8 +1151,10 @@ The Activity log says it could not be saved.
 - The ends and the bars come from one forecast that `fc serve` makes and publishes; the TUI holds no model of
   its own, so `fc queue show`, `fc queue add --wait`, the HTTP API, and MCP say the same thing. It prices a run
   from the history of runs with the same settings (or, with too few, from a fit over the backend's runs), never
-  from the other backend's, and corrects itself from the run's own steps as they arrive. A run with no history
-  says `estimating` until its steps have shown two readings. A bar never moves back. The range is the server's
+  from the other backend's, and corrects itself from the run's own steps as they arrive. For the exact Draw Things
+  `i2v` model, workload, and build measured in E0053, and the exact H3 `r2av` workload and build measured in E0051 and E0054,
+  factory points supply an early forecast when history is thin. Other runs with no qualifying history say
+  `estimating` until their steps have shown two readings. A bar never moves back. The range is the server's
   80% interval. Its times are the server's clock, as the cooldown's are, so the TUI and the server are expected
   to share one. It is published when a reading arrives, not on a timer, so a step that outlasts its prediction
   shows `finishing` until its next reading comes.

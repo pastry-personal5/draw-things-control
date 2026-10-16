@@ -3,7 +3,7 @@
 The measurements behind [Milestone 10](../phase-4/milestone-10-stage-timing.md) (how long each stage of a run
 took) and [Milestone 11](../phase-4/milestone-11-time-estimation.md) (the forecast fitted on them), and the owner-host
 checks of the recorder. The logs these numbers were read from expire with their executions (14 days by default) and, by
-owner decision, no copy is kept: this note and the two milestones are the record. Checked on 2026-10-16, the logs of E0028 to E0047 are already gone (deleted with their output folders, not by retention); only E0026 and E0027, until 2026-10-19 and 2026-10-20, and E0048 to E0050 still have one. The tests use synthetic transcripts
+owner decision, no copy is kept: this note and the two milestones are the record. Checked on 2026-10-16 before E0053 ran, the logs of E0028 to E0047 were already gone (deleted with their output folders, not by retention); E0026 and E0027, until 2026-10-19 and 2026-10-20, and E0048 to E0050 still had one. E0053's log and live timing rows were inspected later that day. The tests use synthetic transcripts
 written from the line formats below.
 
 ## Evidence
@@ -31,12 +31,68 @@ pace of the first third (24 of 35 runs within 0.9 to 1.1). Between runs of the s
 than their siblings. The per-step time grows faster than the clip length: 5 s clips took 19 to 24 s per step, 8 s clips
 39 to 54 s, and 10 s clips 56 to 75 s.
 
+**Live H3 override evidence (E0051 and E0054, 2026-10-16).** These are two successful, independent `r2av` executions
+of the same profile and three image references. Each run overrides its duration to 15 s, or 360 requested frames at
+24 fps; H3 aligns this to **362 effective frames**, which `--frames` passed to the child and both outputs contain. The
+resolved workload, rather than the profile's base timing or the unaligned 360, is the factory baseline: 832×448,
+30 denoise steps, `denoise_reuse=1`, `core_reuse=1`, `dit_layers=50`, three image references, and the recorded false
+rendering switches. The two runs used the same H3 executable build and no color correction.
+
+| Measurement | E0051 | E0054 |
+|-------------|------:|------:|
+| Setup before denoise | 28.86 s | 32.30 s |
+| Denoise, 30 steps | 4204.99 s | 4059.67 s |
+| Mean step excluding first gap, as the fit reads it | 141.28 s | 136.10 s |
+| First gap / later-step median | 0.764 | 0.832 |
+| Fitted log step-time slope across the stage | 0.082 | 0.255 |
+| FFmpeg for 362 frames | 184.16 s | 195.79 s |
+| Child total | 4419.97 s | 4289.76 s |
+| Framecontrol finishing | 1.85 s | 2.12 s |
+
+The live denoise marks and the child log both show `denoise enqueue 0/30` through `30/30`; `denoise 30/30` is the
+completion echo, not another 30 steps. The factory uses 138.6683 s per later step (the geometric mean of the two rates), a 0.798 first-gap ratio, a 0.99334
+stage factor, a 0.1685 within-stage slope, and a broad 0.25 log spread. It matches the exact resolved workload and
+executable build. Two executions support a local point and its observed run variation, not a scaling law for other
+frame counts, sizes, references, settings, or builds.
+
 **Draw Things stages.** The CLI prints `Starting...`, `Processing...`, `Sampling... n / N`, `Finishing...`, and `Generated`,
 each with a bar and a percentage, then `Wrote:` and a `Generation timing:` block. Its `n / N` is printed when step n starts,
 so `40 / 40` begins the last step and 39 are done. In the 8 runs the first sampling reading came 9 to 17 s in, the last step
 took 50 to 57 s, `Finishing` (decode and write) took 11 s, and runs took 1962 to 2186 s. The step time was not steady: in 7
 runs it rose from 42.7 to 45.3 s in the first quarter of the steps to 50.1 to 56.0 s in the last. The bar's percentage is
 the CLI's own prediction, not a measurement. Framecontrol's finishing took about 3 s.
+
+**New live Draw Things evidence (E0053, 2026-10-16).** This was a successful two-run `i2v` job on the same host, using
+`wan_v2.2_a14b_hne_i2v_i8x.ckpt` at 384×768, with 33 output frames and 25 sampling steps in each run. The two runs share
+one execution and settings, so they provide one calibration point with within-execution variation, not evidence of how
+time scales with size, frames, or steps. Times below come from the live stage rows; the CLI's own sampling averages were
+12.84 and 13.48 s, which exclude the final step as described below.
+
+| Measurement | Run 1 | Run 2 |
+|-------------|------:|------:|
+| Starting plus processing | 7.8 s | 8.2 s |
+| Sampling, 25 steps | 333.3 s | 348.7 s |
+| Mean sampled step, including the last | 13.33 s | 13.95 s |
+| Mean of first 6 steps → last 6 steps | 12.16 → 14.79 s (+21.6%) | 13.23 → 14.69 s (+11.0%) |
+| CLI finishing | 4.7 s | 4.6 s |
+| Child total | 345.8 s | 361.5 s |
+| Framecontrol finishing, including color correction | 7.8 s | 7.5 s |
+
+The auto cooldown after run 1 was 173 s (half the child time, rounded), making the whole job about 896 s. A provisional
+factory point for this *exact* model, size, frame count, and step count is 13.6710 s per later step (the geometric mean of the two rates after the first gap), with a 0.99758 whole-stage factor, about 8 s of child setup,
+4.64 s of child finishing, and 7.65 s of Framecontrol finishing with this color policy. The fitted step slopes are 0.240
+and 0.170 across the stage, so the factory uses 0.205 with a 0.25 log spread for its step rate and fixed stages. The two
+stage means differ by 4.6%; the range stays broad because these runs share one execution. The factory point applies only
+when backend, pipeline, model, executable build, width, height, frames, steps, guidance, strength, shift, and color correction agree; otherwise
+the existing history tiers or live-only fallback apply. The earlier eight-run Draw Things evidence has a very different
+step time and is not pooled into one unconditioned backend constant.
+
+The live `run_timing.workload` for both E0053 runs incorrectly recorded `frames: 17` and `steps: 40` from the base
+configuration. The per-run CLI flags supplied 33 frames and 25 steps; both the output check and sampling counter confirm
+them. The timing workload hook now applies CLI overrides before recording or describing a run. The fit and replay loader
+reconciles this old row when the run's `knobs.frames` agrees with its measured output frames, and takes steps from the
+complete sampling stage. The historical rows were not rewritten. This is a recorder error, not evidence that the child
+ignored its settings.
 
 ## Line formats
 

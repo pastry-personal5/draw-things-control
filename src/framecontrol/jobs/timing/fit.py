@@ -18,9 +18,10 @@ from typing import Any
 
 import numpy as np
 
+from framecontrol.jobs.timing.factory import DrawThingsFactoryPoint, H3FactoryPoint, factory_point
 from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, stage_keys, step_series
 
-TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "live_only"
+TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_FACTORY, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "factory", "live_only"
 LIVE, LOG, POOLED = "live", "log", "pooled"
 
 # The thresholds are provisional, pinned by tests.
@@ -442,7 +443,37 @@ class FittedModel:
                 if fit is None or not fit.compatible(request):
                     continue
                 return self._fit_plan(backend, pipeline, key, workload, environment, tier, fidelity, rows, fit, request, stats)
-        return self._live_only_plan(stats)
+        factory = factory_point(backend, pipeline, workload, environment)
+        return self._factory_plan(factory) if factory is not None else self._live_only_plan(stats)
+
+    def _factory_plan(self, factory: DrawThingsFactoryPoint | H3FactoryPoint) -> Plan:
+        stages: tuple[StagePlan, ...] = tuple(IterativeStage(stage.key, stage.name, stage.source, factory.steps) if stage.iterative else FixedStage(stage.key, stage.name, stage.source, stage.seconds, factory.spread) for stage in factory.stages)
+        return Plan(
+            tier=TIER_FACTORY,
+            fidelity="factory",
+            runs=0,
+            executions=0,
+            build_changed=False,
+            skipped=self.skipped,
+            penalty=None,
+            stages=stages,
+            log_step=math.log(factory.step_seconds),
+            log_step_var=factory.spread**2,
+            tau=factory.tau,
+            rho=factory.rho,
+            extra_var=0.0,
+            df=1.0,  # One or two independent executions cannot estimate a narrower predictive tail.
+            slope=factory.slope,
+            first_ratio=factory.first_ratio,
+            step_noise=factory.step_noise,
+            stage_factor=factory.stage_factor,
+            other_sd=factory.other_sd,
+            slope_sd=factory.slope_sd,
+            first_sd=factory.first_sd,
+            pause_share=factory.pause_share,
+            overhead_mean=0.0,
+            overhead_sd=0.0,
+        )
 
     def _ridge(self, backend: str, pipeline: str | None, tier: str, pooled: bool, rows: list[_Row], indicator: bool) -> _Ridge | None:
         cache_key = (backend, pipeline if tier == TIER_BACKEND else None, tier, pooled)
