@@ -1161,6 +1161,10 @@ The Activity log says it could not be saved.
   80% interval. Its times are the server's clock, as the cooldown's are, so the TUI and the server are expected
   to share one. It is published when a reading arrives, not on a timer, so a step that outlasts its prediction
   shows `finishing` until its next reading comes.
+- For H3, `denoise_reuse` and `core_reuse` change how many denoise steps are worked: only the first, the last, and every
+  Nth are evaluated, and the others finish at once with the one before. The forecast counts the evaluated steps, so a
+  run with reuse is priced by its own work (and a `denoise 12/30` counter moves in bursts), and runs with different
+  reuse settings are never treated as the same settings.
 - The job's end adds each run still to come and each wait, the job's `cooldown` setting applied to the run's
   predicted `draw-things-cli` time. The job bar is the share of the job's time that has passed, cooldowns included.
 - `uv run fc timing replay [--backend B] [--estimator forecast]` replays the retained runs as if they were running and

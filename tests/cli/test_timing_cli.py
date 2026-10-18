@@ -55,7 +55,7 @@ class TimingCliTests(JobTestCase):
         result = self.invoke("E0047", "--run", "1")
         self.assertEqual(result.exit_code, 0, result.output)
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], "E0047 run 1: h3 r2av, live, complete, 100.0 s")
+        self.assertEqual(lines[0], "E0047 run 1: h3-metal-cli r2av, live, complete, 100.0 s")
         header, *rows = lines[1:]
         self.assertEqual(header.split(), ["stage", "phase", "source", "start", "duration", "share", "units"])
         by_stage = {row.split()[0].rstrip("*"): row for row in rows if row.strip()}
@@ -83,7 +83,7 @@ class TimingCliTests(JobTestCase):
     def test_without_a_run_every_run_of_the_execution_is_shown_and_one_without_timing_says_so(self) -> None:
         result = self.invoke("E0047")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("E0047 run 1: h3 r2av", result.stdout)
+        self.assertIn("E0047 run 1: h3-metal-cli r2av", result.stdout)
         self.assertIn("E0047 run 2: no timing recorded", result.stdout)
         self.assertEqual(self.requests, ["/v1/executions/E0047?brief=1", "/v1/executions/E0047/runs/1/stages", "/v1/executions/E0047/runs/2/stages"])
 

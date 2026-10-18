@@ -43,7 +43,7 @@ Improve the product experience, make chained generation support multiple backend
 | 08 | [Rename to Framecontrol](milestone-08-framecontrol-rename.md) | done |
 | 09 | [Unified job definitions and per-run knobs](milestone-09-job-definition.md) | done |
 | 10 | [Stage timing measurement](milestone-10-stage-timing.md) | done |
-| 11 | [Job completion time estimation](milestone-11-time-estimation.md) | in-progress |
+| 11 | [Job completion time estimation](milestone-11-time-estimation.md) | done |
 | 12 | [Timing knobs as external files](milestone-12-timing-knobs.md) | planned |
 | 20 | [Graph-based metadata](milestone-20-graph-metadata.md) | planned |
 

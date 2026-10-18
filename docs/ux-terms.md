@@ -34,6 +34,8 @@ discoverable. See Apple’s [design principles](https://developer.apple.com/desi
 |---|---|---|---|
 | **work status** | `Status` | The multi-line, at-a-glance state of the current or most recently finished job; when idle, it can instead report a queue hold or a job running elsewhere. | Status pane, status line, widget |
 | **generation output** | `draw-things-cli` | The run summary and output produced while the generation runs. It is a display, not an interactive shell. | draw-things-cli pane, child output, console |
+| **forecast** | the Job and Run bars and the details line of the work status | The server's estimate of when the running job and run end, with a range, shown as `ends ~16:42 (16:31 to 16:58)`; `estimating` while there is none. | ETA, estimate |
+| **stage** | `denoise 12/30` in the details line and the run summary | The part of a run that is running, named by the backend's own phase with spaces for underscores, with its steps or frames done. | phase, step |
 | **run summary** | first line of generation output | A compact summary of the active run or cooldown. | run line, status |
 | **output log** | remainder of generation output | The received generation output, including errors and progress reports. | child output |
 | **activity log** | `Messages` | Timestamped command results and human-readable job events. | Messages pane, message log |

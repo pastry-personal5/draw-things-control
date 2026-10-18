@@ -69,6 +69,13 @@ class TimingHistoryTests(StoreCase):
         self.assertEqual((executions[0].runs[0].workload["frames"], executions[0].runs[0].workload["steps"]), (33, 2))
         self.assertEqual(stale["frames"], 17)
 
+    def test_a_row_recorded_under_a_backend_name_from_before_the_rename_joins_the_current_backend(self) -> None:
+        for old, current in (("h3", "h3-metal-cli"), ("draw-things", "draw-things-cli")):
+            execution = self.add(f"before-{old}", started=iso(1), finished=iso(1))
+            self.store.timing.replace_run(execution, 1, backend=old, pipeline="i2v", workload=WORKLOAD, environment=ENVIRONMENT, fidelity="live", complete=True, spans=spans())
+            executions, _ = load_executions(self.store)
+            self.assertEqual(executions[-1].runs[0].backend, current)
+
     def test_old_color_policy_flag_is_removed_when_the_pipeline_cannot_correct(self) -> None:
         for backend, pipeline in (("h3-metal-cli", "r2av"), ("draw-things-cli", "t2v")):
             execution = self.add(f"old-{backend}", started=iso(1), finished=iso(1))

@@ -43,10 +43,16 @@ class TimingHistory:
             return FittedModel([])
 
 
+# Timing rows recorded before the backends were renamed. The job and queue records do not accept the old names, but a
+# row's measured time is as good a sample of the same backend as any other.
+LEGACY_BACKENDS = {"draw-things": DRAW_THINGS_BACKEND, "h3": H3_BACKEND}
+
+
 def _history_run(row: CompleteTiming) -> HistoryRun:
+    backend = LEGACY_BACKENDS.get(row.backend, row.backend)
     stages = tuple(HistoryStage(stage.stage, stage.source, stage.start, stage.end, stage.done, stage.total, stage.unit, stage.marks, stage.uncertain) for stage in row.stages)
     workload = dict(row.workload)
-    if row.backend == DRAW_THINGS_BACKEND and row.fidelity == "live":
+    if backend == DRAW_THINGS_BACKEND and row.fidelity == "live":
         # Older timing rows used base-config values even when per-run CLI flags won. Reconcile only where independent
         # recorded facts establish the actual work; leave the stored row intact.
         knobs = workload.get("knobs")
@@ -56,12 +62,12 @@ def _history_run(row: CompleteTiming) -> HistoryRun:
         if sampling is not None:
             workload["steps"] = sampling.total
     corrected = any(stage.stage == "correct" and stage.source == "framecontrol" for stage in stages)
-    if row.backend in (DRAW_THINGS_BACKEND, H3_BACKEND) and corrected:
+    if backend in (DRAW_THINGS_BACKEND, H3_BACKEND) and corrected:
         workload["color_corrects"] = True
-    elif (row.backend == H3_BACKEND and row.pipeline == "r2av") or (row.backend == DRAW_THINGS_BACKEND and row.pipeline == "t2v" and row.run == 1):
+    elif (backend == H3_BACKEND and row.pipeline == "r2av") or (backend == DRAW_THINGS_BACKEND and row.pipeline == "t2v" and row.run == 1):
         # Older workload hooks marked the job's color policy, even for a run with no correction input.
         workload.pop("color_corrects", None)
-    return HistoryRun(row.execution, row.run, row.fidelity, row.backend, row.pipeline, workload, row.environment, stages, row.output_frames)
+    return HistoryRun(row.execution, row.run, row.fidelity, backend, row.pipeline, workload, row.environment, stages, row.output_frames)
 
 
 def load_executions(store: Store) -> tuple[list[HistoryExecution], int]:

@@ -250,8 +250,8 @@ class MixedExecutionTests(MixedChainTestCase):
         preview = planner.preview(job, executable="draw-things-cli", seed=9)
         self.assertTrue(plan_header(job, preview)[0].startswith("Job story (mixed, mixed): 4 runs, seed 42 (run)"))
         headings = [step.heading for step in plan_steps(job, preview)]
-        self.assertEqual(headings[0], "Run 1/4 (pair establish) (h3/r2av, profile h3-wide)")
-        self.assertEqual(headings[2], "Run 3/4 (pair paint) (draw-things/i2v, profile wan)")
+        self.assertEqual(headings[0], "Run 1/4 (pair establish) (h3-metal-cli/r2av, profile h3-wide)")
+        self.assertEqual(headings[2], "Run 3/4 (pair paint) (draw-things-cli/i2v, profile wan)")
 
 
 class HandoffAvailabilityTests(MixedChainTestCase):
@@ -348,8 +348,8 @@ class MixedRecordingTests(MixedChainTestCase):
         text = str(execution_text(execution))
         self.assertIn("mode: mixed\n", text)
         self.assertIn("backend: mixed\n", text)
-        self.assertIn("generator: h3/r2av, profile h3-wide\n", text)
-        self.assertIn("generator: draw-things/i2v, profile wan\n", text)
+        self.assertIn("generator: h3-metal-cli/r2av, profile h3-wide\n", text)
+        self.assertIn("generator: draw-things-cli/i2v, profile wan\n", text)
         self.assertIn("seconds 8 (run)", text)
         self.assertIn("frames 81 (defaults)", text)
         self.assertIn("image from: run 2 handoff\n", text)

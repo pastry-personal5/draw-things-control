@@ -112,7 +112,7 @@ class RunForecastTests(unittest.TestCase):
             with self.subTest(knob=knob):
                 interval = 2 if knob == "denoise_reuse" else 4
                 gaps = [20.0 if index in (0, 29) or index % interval == 0 else 0.02 for index in range(30)]
-                workload = h3_workload(**{knob: interval})
+                workload = {**h3_workload(), knob: interval}
                 history = [h3_run(execution, 1, gaps=gaps, workload=workload) for execution in range(1, 5)]
                 live = HistoryExecution(9, CooldownPolicy("off"), (h3_run(9, 1, gaps=gaps, workload=workload),))
                 playback = Playback(history, live)

@@ -101,6 +101,27 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/queue/Q0001 | jq
 ```
 
+A running entry carries `forecast`, null when there is none:
+
+```json
+{"as_of": 1792292914.0, "stage": "denoise", "stage_done": 12, "stage_total": 30,
+ "run": {"started_at": 1792292890.3, "end_at": 1792294300.0, "low": 1792294100.0, "high": 1792294600.0, "floor": 0.31, "progress": 0.34, "seconds_left": 1386.0},
+ "job": {"started_at": 1792292890.3, "end_at": 1792294300.0, "low": 1792294100.0, "high": 1792294600.0, "floor": 0.31, "progress": 0.34, "seconds_left": 1386.0},
+ "basis": {"tier": "signature", "fidelity": "live", "runs": 4, "executions": 3, "build_changed": false, "unseen": [], "penalty": null, "skipped": 0}}
+```
+
+`end_at`, `low` and `high` are epoch seconds: the estimated end and the 80%
+range. `stage_done` and `stage_total` count the active stage's own units (steps
+or frames), not the whole run. `progress` (0 to 1, by time) and `seconds_left`
+are worked out on the server when you read it, for a client without a
+synchronized clock; the SSE watch sends the forecast when it is republished, not
+as time passes. `basis.tier` says what it rests on: `signature` (the same
+settings), `backend_fit` or `pipeline_fit` (a fit over like runs), `factory` (a
+measured starting point), `heuristic` (a broad guess, with a wide range) or
+`live_only` (only this run's own steps). `current_step` and
+`current_step_total` no longer exist. The MCP `get_queue_entry` returns the
+same object, and a forecast never ends its wait.
+
 ## Watch an entry over SSE
 
 ```bash
