@@ -5,6 +5,7 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-18
 
+- **Owner decision** [M13]: In the Jobs list, `Enter` and a click write the job's details and dry-run plan to the Activity log instead of opening the text viewer; the Queue list is unchanged. This supersedes the previous entry for the Jobs list.
 - **Owner decision** [M13]: New Milestone 13, TUI experience, from a review of the TUI: a safer delete confirmation, a bell, toast and macOS notification when a job ends, keyboard scrolling of the logs, an idle work status and a server indicator, `F1`, a text viewer for job and queue details, Tab cycling and a saved command history, a guarded `a`, theme colours, and a faster launch. Not chosen, and left out: the right column on a short terminal, the status line's hint priority, and an off switch for the notifications.
 - **Owner decision** [M13]: The delete confirmation focuses Cancel and `Enter` presses the focused button; only `y` or a click deletes. This supersedes `ux-terms.md`'s earlier rule that `Enter` confirms inside the delete confirmation.
 - **Owner decision** [M13]: In the Jobs list and the Queue list `Enter` opens the details in a text viewer and the new `l` writes them to the Activity log. This supersedes Enter writing them there.

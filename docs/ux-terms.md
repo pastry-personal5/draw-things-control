@@ -58,7 +58,7 @@ canonical term.
 |---|---|---|
 | **delete confirmation** | deletion question with buttons | A modal confirmation before irreversible execution-history deletion. It blocks the main screen until a choice is made. |
 | **shortcut help overlay** | centered shortcut reference | A modal, centered reference that lists the keyboard shortcuts available in the focused list or detail, or in the command field (`F1`). |
-| **text viewer** | bordered, scrollable details | A modal that shows one job's or queue entry's details at length (`Enter` in the Jobs list or Queue list). It changes nothing and closes with Escape, Enter or `q`. |
+| **text viewer** | bordered, scrollable details | A modal that shows one queue entry's details at length (`Enter` in the Queue list). It changes nothing and closes with Escape, Enter or `q`. |
 | **toast** | short message in a corner | A passing message: the end of a job, or an error or warning from a key pressed in a list. It is not a modal and takes no input. |
 | **Delete** | `Delete` button | Deletes the execution currently named in the confirmation. |
 | **Skip** | `Skip` button | Keeps the current execution and continues a multi-execution deletion. |
@@ -73,7 +73,7 @@ canonical term.
 | **focused component** | The component that receives the next keystroke. Use this term when documenting a shortcut’s scope. |
 | **selection** | The item currently chosen within a list or detail. A selection identifies the target of a list action; it does not by itself perform that action. |
 | **selected row** | The selected item in a table-based list. |
-| **open** | Show information about the selected item, or reveal its result when that is the item’s primary action. In the Jobs list and the Queue list, the details open in the text viewer, and `l` writes them to the Activity log instead. In the Execution detail, a run’s file opens with the global config’s `file_opener` when it is set, else it is revealed in Finder. Use instead of the ambiguous “describe” in UX prose. |
+| **open** | Show information about the selected item, or reveal its result when that is the item’s primary action. In the Jobs list, the details are written to the Activity log (`Enter`, a click or `l`). In the Queue list, they open in the text viewer, and `l` writes them to the Activity log instead. In the Execution detail, a run’s file opens with the global config’s `file_opener` when it is set, else it is revealed in Finder. Use instead of the ambiguous “describe” in UX prose. |
 | **command** | A slash command entered in the command field, such as `/queue hold`. It is not a keyboard shortcut. |
 | **keyboard shortcut** | A key or key combination that performs a named action. State both its action and scope, for example, “`c` cancels the selected entry in the Queue list.” |
 | **global shortcut** | A shortcut the TUI handles before a focused component’s shortcut. Reserve it for a small number of app-wide, predictable actions. |

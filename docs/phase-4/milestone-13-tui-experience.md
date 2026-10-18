@@ -31,7 +31,7 @@ A review of the TUI found the points below that made it slower to learn, riskier
 - **Work status.** Idle, it reads `idle`, `N queued, next: walk (Q0007)` and `last: Q0006 walk succeeded, 7/7 runs`; after a job, the queue summary takes the line the hold would use when there is none. The Queue list's subtitle counts `1 running, 3 queued, 5 finished`, and the Execution History list's counts `3 marked`.
 - **Server connection.** The status line says `server connected` or `server offline (read-only)`.
 - **`F1`** shows the shortcut help of the focused list or detail, or of the command field, and closes it.
-- **Enter and `l` (owner decision: assign a key).** In the Jobs list and the Queue list, `Enter` opens the details in a scrollable text viewer, and `l` writes them to the Activity log as `Enter` used to. `/describe` is unchanged.
+- **Enter and `l` (owner decision: assign a key).** In the Queue list, `Enter` opens the details in a scrollable text viewer, and `l` writes them to the Activity log as `Enter` used to. In the Jobs list, `Enter` and a click write them to the Activity log (a later owner decision; see the changelog), and `l` does the same. `/describe` is unchanged.
 - **Tab.** With several completions, Tab adds what they share, then steps through them (the status line lists them); with none it moves the focus on.
 - **Command history.** Kept in `config/tui-command-history.txt` (per machine, ignored by git, the newest 200), and recalled with Up and Down in the next session.
 - **`a` (owner decision: as recommended).** It refuses an invalid job and says why, and asks for a second `a` within 5 seconds for a job that is already waiting or running.

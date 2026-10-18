@@ -39,7 +39,7 @@ JOBS_LIST_LINES = 11
 JOBS_LIST_SHORTCUTS = (
     ("Up/Down", "Move the selected job"),
     ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Open the selected job in a viewer"),
+    ("Enter", "Write the selected job's details to the Activity log"),
     ("l", "Write the selected job's details to the Activity log"),
     ("a", "Submit the selected job"),
     ("s / r", "Change the sort column / reverse the order"),
@@ -55,7 +55,7 @@ class JobsList(SidewaysTable):
     a valid job reads changes. Every 5 seconds instead while that cannot be watched or an invalid job is listed, since an
     invalid job's inputs are not known.
 
-    Enter opens the selected job in the text viewer, ``l`` writes it to the Activity log, and ``a`` submits it, through the screen's callbacks; ``s`` sorts by the next
+    Enter (or a click) and ``l`` write the selected job to the Activity log, and ``a`` submits it, through the screen's callbacks; ``s`` sorts by the next
     column and ``r`` reverses the order, and the sort is kept in the state store across sessions.
     """
 
@@ -69,11 +69,10 @@ class JobsList(SidewaysTable):
         Binding("escape", "leave", "Command line", show=False),
     ]
 
-    def __init__(self, catalog: JobCatalog, sort_preference: SortPreference, *, describe: Callable[[Path], None], log: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, catalog: JobCatalog, sort_preference: SortPreference, *, log: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
         super().__init__(cursor_type="row", zebra_stripes=True, **options)
         self.catalog = catalog
         self.sort_preference = sort_preference
-        self.describe_job = describe
         self.log_job = log
         self.run_job = run
         self.announce_listing = announce
@@ -256,11 +255,11 @@ class JobsList(SidewaysTable):
         self.leave()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        # Enter describes the job; the screen's handler is for the history.
+        # Enter or a click writes the job's details to the Activity log; the screen's handler is for the history.
         event.stop()
         row = self.selected
         if row is not None:
-            self.describe_job(row.path)
+            self.log_job(row.path)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         # The history's detail follows its own cursor, not this one.

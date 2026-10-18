@@ -1225,9 +1225,8 @@ why.
   first and the others ascending. Ties go by ID, and invalid files come
   after valid ones by mode and runs. The sort is kept across sessions; the
   default is `changed`, newest first. The widget's subtitle names it.
-- Enter opens the selected job in a scrollable viewer (Escape, Enter or `q`
-  closes it); `l` writes the same details to the Activity log, as `/describe job`
-  does. `a` submits the job, as `/apply` does. It refuses an invalid job and says
+- Enter or a click on a job writes its details and dry-run plan to the Activity
+  log, as `/describe job` does; `l` does the same. `a` submits the job, as `/apply` does. It refuses an invalid job and says
   why, and for a job that is already waiting or running it asks for a second `a`
   within 5 seconds, so a key pressed twice does not queue it twice. While the first
   listing is read, the subtitle says `Reading job files...`.
@@ -1282,7 +1281,7 @@ they succeed, unless you are in the history or the detail at that moment.
 
 | Key | Action |
 |-----|--------|
-| Enter | Run the command; open the selected job or queue entry in a viewer; open or reveal the selected execution |
+| Enter | Run the command; write the selected job to the Activity log; open the selected queue entry in a viewer; open or reveal the selected execution |
 | Tab | Complete a command, job ID or file name, execution ID, or filter or sort word (with several choices, add what they share, then press Tab again to step through them; the status line lists them); with nothing to complete, move to Jobs list, Queue list, Execution History list, then Execution detail |
 | Up/Down | Recall earlier commands, kept across sessions; in a focused list or detail, move |
 | PageUp/PageDown | In the command field, scroll the Activity log; with Shift, the generation output. In a focused list or detail, move further (with Home/End) |

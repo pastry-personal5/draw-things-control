@@ -14,7 +14,6 @@ from unittest import mock
 import yaml
 from rich.text import Text
 from textual.app import App
-from textual.widgets import Static
 
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.core.run_lock import RunLockError
@@ -141,20 +140,16 @@ class JobDefinitionTests(TuiTestCase):
             kept = [row[1] for row in self.rows(pilot.app)]
         self.assertEqual(kept, ["c", "b", "a"])
 
-    async def test_enter_opens_the_job_in_the_viewer_l_writes_it_to_the_log_and_a_submits_it_to_the_queue(self) -> None:
+    async def test_enter_and_l_write_the_job_to_the_log_and_a_submits_it_to_the_queue(self) -> None:
         self.write_data_job("walk.yaml")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
             table = pilot.app.screen.query_one(JobsList)
             table.focus()
             await pilot.press("enter")
-            await self.wait_for(pilot, lambda: isinstance(pilot.app.screen, TextOverlay), "the viewer")
-            viewer = pilot.app.screen
-            shown = str(viewer.query_one("#text-overlay-body", Static).render())
-            title = str(viewer.query_one("#text-overlay-title", Static).render())
+            await self.wait_for(pilot, lambda: any("Job file:" in line for line in self.said), "the log")
             logged_by_enter = "\n".join(self.said)
-            await pilot.press("escape")
-            await pilot.pause()
+            in_viewer = isinstance(pilot.app.screen, TextOverlay)
             back = pilot.app.focused
             await pilot.press("l")
             await self.settle(pilot)
@@ -166,9 +161,9 @@ class JobDefinitionTests(TuiTestCase):
             running = cast(FramecontrolApp, pilot.app).job_running
             await pilot.press("escape")
             focused = pilot.app.focused
-        self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", shown)
-        self.assertEqual(title, "Job walk.yaml")
-        self.assertNotIn("Job file:", logged_by_enter)
+        self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", logged_by_enter)
+        self.assertIn("Dry-run plan", logged_by_enter)
+        self.assertFalse(in_viewer)
         self.assertIs(back, table)
         self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", described)
         self.assertFalse(running)

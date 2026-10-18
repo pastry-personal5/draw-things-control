@@ -79,8 +79,8 @@ FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
 # Characters a shell would split or interpret, escaped with a backslash in a completed job file name.
 SHELL_SPECIAL = re.compile(r"([^\w@%+=:,./-])")
 KEYS = (
-    ("Enter", "Run the command; open the selected job or queue entry in a viewer; open or reveal the selected execution"),
-    ("l", "Write the selected job's or queue entry's details to the Activity log (Jobs list, Queue list)"),
+    ("Enter", "Run the command; write the selected job to the Activity log; open the selected queue entry in a viewer; open or reveal the selected execution"),
+    ("l", "Write the selected job's or queue entry's details to the Activity log (Jobs list, Queue list); on a job, as Enter does"),
     ("Tab", "Complete the command field (again to step through several choices), or move to Jobs list, Queue list, Execution History list, then Execution detail"),
     ("Up/Down", "Recall earlier commands, kept across sessions (command field), move (the widgets)"),
     ("a", "Submit the selected job (Jobs list)"),
