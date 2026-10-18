@@ -6,9 +6,9 @@
     width: 2fr;
 }
 
-/* The passive work displays use black; the two selectable lists and execution detail do not. */
+/* The passive work displays use the theme's background; the selectable lists and execution detail sit on its surface. */
 #work-status, #generation-output, #run-summary, #output-log, #activity-log, #status-line {
-    background: black;
+    background: $background;
 }
 
 /* 7 lines with its border: the phase, two bars, the details, and the last run (screens.STATUS_LINES). A line too long
@@ -116,8 +116,8 @@ Rule.command-rule {
 }
 
 #command-field > .input--cursor {
-    background: white;
-    color: black;
+    background: $foreground;
+    color: $background;
     text-style: none;
 }
 
@@ -146,6 +146,34 @@ ShortcutHelpOverlay {
 }
 
 #shortcut-help-dismiss {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+/* The text viewer: most of the screen, so a long dry-run plan reads without the Activity log's few lines. */
+TextOverlay {
+    align: center middle;
+}
+
+#text-overlay {
+    width: 90%;
+    height: 90%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#text-overlay-title {
+    margin-bottom: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#text-overlay-scroll {
+    height: 1fr;
+}
+
+#text-overlay-dismiss {
     margin-top: 1;
     color: $text-muted;
 }

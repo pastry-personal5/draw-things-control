@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,7 @@ from framecontrol.core.numbers import is_int, is_number
 from framecontrol.core.paths import EXAMPLE_GLOBAL_CONFIG_RELATIVE, GLOBAL_CONFIG_RELATIVE
 from framecontrol.core.yaml_files import read_yaml_file
 
-GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown", "history_retention_days", "api_limits"}
+GLOBAL_CONFIG_KEYS = {"version", "input_directory", "output_directory", "write_job_records", "cooldown", "history_retention_days", "api_limits", "file_opener"}
 DEFAULT_HISTORY_RETENTION_DAYS = 14
 MAX_HISTORY_RETENTION_DAYS = 3650
 REQUIRED_GLOBAL_CONFIG_KEYS = ("input_directory", "output_directory", "version")
@@ -57,6 +59,8 @@ class GlobalConfig:
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
     # The HTTP API's limits; unused outside the server.
     api_limits: ApiLimits = DEFAULT_API_LIMITS
+    # The executable the TUI's Execution detail opens a run's file with, called with the file's full path; None reveals the file in Finder.
+    file_opener: Path | None = None
 
 
 def load_global_config(path: Path, *, is_default: bool = False) -> GlobalConfig:
@@ -92,7 +96,26 @@ def load_global_config(path: Path, *, is_default: bool = False) -> GlobalConfig:
     if not is_int(retention) or not 0 <= retention <= MAX_HISTORY_RETENTION_DAYS:
         raise ValueError(f"{path}: 'history_retention_days' must be a whole number of days from 0 to {MAX_HISTORY_RETENTION_DAYS}")
     api_limits = _api_limits(path, data.get("api_limits", {}))
-    return GlobalConfig(input_directory=input_directory, output_directory=output_directory, write_job_records=write_job_records, cooldown=cooldown, history_retention_days=retention, api_limits=api_limits)
+    file_opener = _file_opener(path, data["file_opener"]) if "file_opener" in data else None
+    return GlobalConfig(input_directory=input_directory, output_directory=output_directory, write_job_records=write_job_records, cooldown=cooldown, history_retention_days=retention, api_limits=api_limits, file_opener=file_opener)
+
+
+def _file_opener(path: Path, value: Any) -> Path:
+    """The executable named by ``file_opener``: a path (``~`` expanded, absolute) or a bare name found on PATH."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path}: 'file_opener' must be the path of an executable")
+    if "/" in value or value.startswith("~"):
+        opener = Path(value).expanduser()
+        if not opener.is_absolute():
+            raise ValueError(f"{path}: 'file_opener' must be an absolute path or a name on PATH: {value}")
+    else:
+        found = shutil.which(value)
+        if found is None:
+            raise ValueError(f"{path}: 'file_opener' was not found on PATH: {value}")
+        opener = Path(found)
+    if not opener.is_file() or not os.access(opener, os.X_OK):
+        raise ValueError(f"{path}: 'file_opener' is not an executable file: {opener}")
+    return opener
 
 
 def _api_limits(path: Path, data: Any) -> ApiLimits:

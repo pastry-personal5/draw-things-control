@@ -52,6 +52,14 @@ cooldown:
 # files, manifests, or logs. 0 keeps history forever; 0 to 3650. Default: 14.
 history_retention_days: 14
 
+# Optional. An executable the TUI's Execution detail opens a run's file with
+# when you click its file name or press Enter. It is called with one argument,
+# the file's full path, and runs detached. A path (absolute, or starting with
+# ~) or a name found on PATH; it must exist and be executable. If you need
+# flags, point this at a small wrapper script. Default: not set, and the file
+# is revealed in Finder. `/reveal` always reveals in Finder.
+# file_opener: /Applications/IINA.app/Contents/MacOS/iina-cli
+
 # Optional. Bounded work the HTTP API (`fc serve`) enforces from its first
 # submission, whoever calls (an agent, fc queue, or --allow-write): every
 # key is optional and falls back to its own default below.

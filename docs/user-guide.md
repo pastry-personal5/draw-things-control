@@ -55,6 +55,7 @@ Then edit it. Paths must be absolute (a leading `~` is fine).
 | `write_job_records` | no | `true` also saves a manifest and a log per run (default `false`) |
 | `cooldown` | no | The wait between a job's runs: a mapping with `mode` `auto`, `manual`, or `off`; see [Cooldown](#cooldown) (default `auto`) |
 | `history_retention_days` | no | Days of execution history to keep, 0 to 3650; 0 keeps it forever (default 14) |
+| `file_opener` | no | An executable the TUI's [Execution detail](#execution-detail) opens a run's file with, instead of revealing it in Finder: a path (absolute or starting with `~`) or a name on `PATH`. It must exist and be executable, and is called with one argument, the file's full path (default: not set) |
 
 Use `--global-config PATH` with `serve` or `validate-job` to read a
 different file.
@@ -980,6 +981,9 @@ The screen, top to bottom:
 - **Jobs list** (top of the right third, 8 rows): the job files in the
   data directory (see [Jobs list](#jobs-list)).
 - **Queue list** (below it, 5 rows): active, waiting, and recent queue entries.
+  `c` cancels the selected entry. The cursor stays on its row when the entry
+  moves down among the finished ones, so it now rests on the next entry and
+  `c` can be pressed again down the list.
 - **Execution History list** (below it, 5 rows): every execution recorded in
   the state store, newest first: its execution ID (`E0012`), job name,
   status, start time, and runs succeeded of total. On a narrow terminal it
@@ -987,10 +991,10 @@ The screen, top to bottom:
   Jobs list's does.
 - **Execution detail** (the rest of the right third): the execution under the
   history cursor (see [Execution detail](#execution-detail)).
-- **The command field**, between two lines, showing `> ` and a white block
-  cursor, then the **status line**: the running or last job, the data
-  directory, a reminder of `/help` and Ctrl-C, and, when a list or detail
-  has focus, `Press ? for shortcut help`.
+- **The command field**, between two lines, showing `> ` and a block
+  cursor, then the **status line**: the running or last job, whether `fc serve` is
+  reachable, the data directory, a reminder of `/help` and Ctrl-C, and, when a list or detail
+  has focus, `Press ? or F1 for shortcut help` (and `F1: shortcut help` otherwise).
 
 On a terminal shorter than 32 lines, the generation output shrinks (down
 to 7 lines) to leave the Activity log at least 6. The smallest usable size is 80x34,
@@ -1012,7 +1016,7 @@ so the Execution detail keeps about 9 lines under the other two.
 | `/get prompts <Execution ID> [RUN]` | An execution's positive and negative prompts: each prompt pair once with the runs that used it, or one run's |
 | `/get positive <Execution ID> [RUN]` | Its positive prompts only |
 | `/get negative <Execution ID> [RUN]` | Its negative prompts only |
-| `/get param <Execution ID> [RUN]` (or `/get parameters`) | A run's `draw-things-cli` arguments without the prompts, as a table (default: its first run) |
+| `/get param <Execution ID> [RUN]` (or `/get parameters`) | A run's `draw-things-cli` or `h3-metal-cli` arguments without the prompts, as a table (default: its first run) |
 | `/describe execution <Execution ID>` | The detail of one execution |
 | `/describe J0001` or `/describe E0012` | The same, with the noun left out: a job <Execution ID> or an execution <Execution ID> says which |
 | `/filter status STATUS` | Show only `succeeded`, `failed`, `interrupted`, `parked`, or `running` executions |
@@ -1093,7 +1097,12 @@ terminal does.
   loaded. `/get` reads the stored execution, never the current job file.
 - `/get param` shows the arguments the run's saved command passed, with
   credentials already redacted: first the flags (a flag that stands alone
-  reads `yes`), then each `--config-json` key. The note column marks a
+  reads `yes`), then each `--config-json` key. An `h3-metal-cli` command has
+  no `--config-json`; its flags show their values (`--reuse 2`), and
+  `--reuse`, `--layers` and `--core-reuse` that the command leaves out are
+  listed with H3's default and the note `default; not passed`, so the plan
+  and the Execution detail always show them. The job's `h3-metal-cli` and
+  `draw-things-cli` runs are each read by their own flags. The note column marks a
   value the job's configuration overrides set (`job override`), a width
   and height that `desired_input_width` or `desired_input_height` set
   (`desired input size`, which replaces any width or height override; both
@@ -1113,8 +1122,22 @@ terminal does.
   and the arguments are the `/get param` table, not the command line. It lists every run, failed ones too. A file that no longer
   exists is marked `(missing)`. Executions brought in by `import-history`
   are marked `imported`.
-- `/reveal` runs `open -R` on the output (macOS). If the file is missing,
-  or `open` fails, Messages says so.
+- `/reveal` runs `open -R` on the output (macOS), whether or not `file_opener`
+  is set. If the file is missing, or `open` fails, Messages says so.
+
+### Notices, the idle display, and the command history
+
+- When a job ends the TUI rings the terminal bell, shows a toast (red for failed or lost, yellow for parked, plain for
+  succeeded), and posts a macOS notification such as `Framecontrol: job succeeded` / `walk: 7/7 runs completed`. The
+  notification needs macOS and is skipped elsewhere; the bell and the toast stay.
+- An error or warning from a key pressed in a list (for example `a` on an invalid job) is also shown as a toast, since the
+  Activity log is not where you are looking. A command typed in the command field answers in the Activity log only.
+- With no job followed, the work status reads `idle`, `2 queued, next: walk (Q0007)` and `last: Q0006 walk succeeded, 7/7 runs`.
+  The Queue list's subtitle counts its entries (`1 running, 3 queued, 5 finished`) and the Execution History list's counts the
+  rows marked for deletion (`3 marked`).
+- The status line ends its job state with `server connected` or `server offline (read-only)`, which says whether the lists are live.
+- The commands you type are kept in `config/tui-command-history.txt` (a per-machine file, ignored by git, the newest 200) and
+  recalled with Up and Down in the next session. If it cannot be written the Activity log says so once.
 
 ### Verbose levels
 
@@ -1202,8 +1225,12 @@ why.
   first and the others ascending. Ties go by ID, and invalid files come
   after valid ones by mode and runs. The sort is kept across sessions; the
   default is `changed`, newest first. The widget's subtitle names it.
-- Enter opens the selected job in the Activity log; `a` asks to run it, with
-  the same confirmation as `/apply`.
+- Enter opens the selected job in a scrollable viewer (Escape, Enter or `q`
+  closes it); `l` writes the same details to the Activity log, as `/describe job`
+  does. `a` submits the job, as `/apply` does. It refuses an invalid job and says
+  why, and for a job that is already waiting or running it asks for a second `a`
+  within 5 seconds, so a key pressed twice does not queue it twice. While the first
+  listing is read, the subtitle says `Reading job files...`.
 - The directory is watched, so a file added, changed, renamed, or deleted
   shows within a moment, without `/get jobs` and without polling. While a
   directory cannot be watched, or an invalid job is listed, it is checked
@@ -1233,7 +1260,11 @@ after the cursor stops:
   (`draw-things-cli`'s own time, without the cooldown), with its output's
   file name under it. Failed, interrupted, and running runs are left out;
   `/describe execution` lists them. An execution with none says
-  `No run finished successfully`.
+  `No run finished successfully`;
+- under the runs, the selected run's stages, and at the bottom `Arguments of
+  run N`: that run's saved arguments (flags, then `--config-json` keys), for
+  either backend, without the prompts. An H3 knob the command did not pass
+  shows its default marked `(default)`; a run with no saved command shows `-`.
 
 The size and frames are the measured ones (see
 [Where outputs go](#where-outputs-go)), never the size or frame count the
@@ -1242,19 +1273,23 @@ nothing was measured, as for executions recorded before measuring began.
 Long names are cut in the middle with `…`; `/describe execution` shows them whole.
 
 Click a file name, or select its run and press Enter, to show it in Finder
-(`open -R`). A file that no longer exists is marked `(missing)`. When this
+(`open -R`). If the global config sets `file_opener`, that executable opens the
+file instead, called with the file's full path and left running; this is the
+only place it applies, and `/reveal` still reveals. If it cannot start, Messages
+says why. A file that no longer exists is marked `(missing)`. When this
 TUI starts a job, the history cursor moves to it, so its runs appear as
 they succeed, unless you are in the history or the detail at that moment.
 
 | Key | Action |
 |-----|--------|
-| Enter | Run the command; open the selected job or queue entry; open or reveal the selected execution |
-| Tab | Complete a command, job ID or file name, execution ID, or filter or sort word; with nothing to complete, move to Jobs list, Queue list, Execution History list, then Execution detail |
-| Up/Down | Recall commands typed in this session; in a focused list or detail, move |
-| PageUp/PageDown, Home/End | In a focused list or detail, move further |
-| `a` | In Jobs list, ask to run the selected job |
+| Enter | Run the command; open the selected job or queue entry in a viewer; open or reveal the selected execution |
+| Tab | Complete a command, job ID or file name, execution ID, or filter or sort word (with several choices, add what they share, then press Tab again to step through them; the status line lists them); with nothing to complete, move to Jobs list, Queue list, Execution History list, then Execution detail |
+| Up/Down | Recall earlier commands, kept across sessions; in a focused list or detail, move |
+| PageUp/PageDown | In the command field, scroll the Activity log; with Shift, the generation output. In a focused list or detail, move further (with Home/End) |
+| `a` | In Jobs list, submit the selected job |
+| `l` | In Jobs list or Queue list, write the selected job's or entry's details to the Activity log |
 | `s` / `r` | In Jobs list, sort by the next column / reverse the order |
-| `?` | In a focused list or detail, show shortcut help; `?` or Escape closes it |
+| `?` / F1 | In a focused list or detail, show shortcut help; `?`, F1 or Escape closes it. F1 also works in the command field, where it lists the command field's keys |
 | Escape | Clear the command field; in a focused list or detail, return to the command field |
 | Ctrl-C | Clear the command field; on an empty field, press twice within 2 seconds to quit |
 
@@ -1272,7 +1307,9 @@ they succeed, unless you are in the history or the detail at that moment.
   writes to `state/framecontrol.db` only to give job IDs to the files in
   `data/jobs/`, to keep the Jobs list's sort, and to upgrade an
   existing database to the current schema, which any `fc` command does the
-  first time it opens an older one.
+  first time it opens an older one. The TUI's own files in `config/` are the
+  verbose level (`tui-preferences.yaml`) and the typed commands
+  (`tui-command-history.txt`).
 - An invalid global configuration is reported before the TUI starts, and the
   command exits with 2. If the TUI itself fails, it prints the error and the
   command exits with 1.
@@ -1431,7 +1468,8 @@ Q0007 can no longer be resumed.
   [Delete]  [Skip]  [Delete all]  [Cancel]
 ```
 
-`y` or Enter deletes it, `s` skips it, `a` deletes it and every remaining
+`y` deletes it (Enter does not: Cancel has the focus, so a double tap or a held Enter only
+cancels), `s` skips it, `a` deletes it and every remaining
 one without asking again, and `n` or Escape stops (what was already deleted
 stays deleted). One execution offers only Delete and Cancel. Executions the
 server would refuse are left out first, and the Activity log names each one. With the

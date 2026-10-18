@@ -9,6 +9,7 @@ DATABASE_FILE_NAME = "framecontrol.db"
 LOCK_FILE_NAME = "run.lock"
 SERVER_TOKEN_FILE_NAME = "server-token"
 TUI_PREFERENCES_FILE_NAME = "tui-preferences.yaml"
+TUI_COMMAND_HISTORY_FILE_NAME = "tui-command-history.txt"
 # As a person names them in messages: relative to the project root.
 GLOBAL_CONFIG_RELATIVE = Path("config/global-config.yaml")
 EXAMPLE_GLOBAL_CONFIG_RELATIVE = Path("config/global-config.example.yaml")
@@ -72,6 +73,11 @@ class ProjectPaths:
         """The terminal UI's own per-machine preferences (gitignored): the verbose level today. Not
         ``global_config``, which is shared with ``fc serve``, hand-edited, and strictly validated."""
         return self.root / "config" / TUI_PREFERENCES_FILE_NAME
+
+    @property
+    def tui_command_history(self) -> Path:
+        """The commands typed on the terminal UI's command field, one per line, oldest first (gitignored, per machine)."""
+        return self.root / "config" / TUI_COMMAND_HISTORY_FILE_NAME
 
 
 def linked_component(path: Path, root: Path) -> Path | None:

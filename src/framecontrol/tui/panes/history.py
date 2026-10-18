@@ -37,7 +37,7 @@ EXECUTION_HISTORY_SHORTCUTS = (
     ("Tab / Shift-Tab", "Move focus"),
     ("Escape", "Focus the command field"),
     ("Ctrl-C", "Press twice to quit"),
-    ("?", "Show shortcut help"),
+    ("? / F1", "Show shortcut help"),
 )
 
 
@@ -84,6 +84,8 @@ class ExecutionHistoryList(SidewaysTable):
         self.delete = delete
         # The executions marked for deletion, by number: kept across re-reads, cleared by a filter change or a deletion.
         self.marks: set[int] = set()
+        # What the last page read said (a filter that matches nothing, an error), shown beside the marks in the subtitle.
+        self.page_message = ""
         # An execution's public number (E0012) to move the cursor to once a read shows it: this TUI's new job.
         self.select_when_shown: int | None = None
         # Not ``filter``, ``rows``, or ``loading``: DataTable and Widget already use those names.
@@ -128,6 +130,12 @@ class ExecutionHistoryList(SidewaysTable):
         self.marks.symmetric_difference_update({number})
         # update_width: the ID column is only as wide as its IDs, so the mark would crop the last digit.
         self.update_cell(str(row_id), self.column_keys[0], history_cells(self.executions[row_id], marked=number in self.marks)[0], update_width=True)
+        self.show_subtitle()
+
+    def show_subtitle(self) -> None:
+        """``3 marked``, then the page's own message. Text, not str: the message can be the store's error, and a str is parsed as markup."""
+        marked = f"{len(self.marks)} marked" if self.marks else ""
+        self.border_subtitle = Text(", ".join(part for part in (marked, self.page_message) if part))
 
     def action_delete(self) -> None:
         """``d``: delete the marked rows, or the selected row when none is marked, asking first."""
@@ -158,6 +166,7 @@ class ExecutionHistoryList(SidewaysTable):
         self.history_filter = history_filter
         # The marked rows may no longer show.
         self.marks = set()
+        self.show_subtitle()
         # The old filter's rows go at once, so a page read for the new filter is never appended to them.
         self.clear()
         self.executions = {}
@@ -195,7 +204,8 @@ class ExecutionHistoryList(SidewaysTable):
             self.marks &= {row.execution_number for row in self.executions.values()}
         # Text, not str: a str title is parsed as markup, and the filter and error texts are the user's or the store's.
         self.border_title = Text(f"Execution History list: {history_filter.text()}" if history_filter.text() else "Execution History list")
-        self.border_subtitle = Text(page.message or "")
+        self.page_message = page.message or ""
+        self.show_subtitle()
         if page.offset == 0 and selected is not None and selected in self.executions:
             self.move_cursor(row=self.get_row_index(str(selected)))
         wanted, self.select_when_shown = self.select_when_shown, None
@@ -226,6 +236,7 @@ class ExecutionHistoryList(SidewaysTable):
             del self.executions[row_id]
             self.remove_row(str(row_id))
         marked, self.marks = self.marks, set()
+        self.show_subtitle()
         for row_id, row in self.executions.items():
             if row.execution_number in marked:
                 self.update_cell(str(row_id), self.column_keys[0], history_cells(row)[0])

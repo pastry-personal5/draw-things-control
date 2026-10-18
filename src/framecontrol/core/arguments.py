@@ -241,8 +241,9 @@ def command_settings(command: Sequence[str]) -> CommandSettings:
     )
 
 
-def command_arguments(command: Sequence[str]) -> list[tuple[str, str | None]]:
+def command_arguments(command: Sequence[str], value_flags: frozenset[str] = VALUE_FLAGS) -> list[tuple[str, str | None]]:
     """Each flag of a saved ``draw-things-cli generate`` command, in order, with its value, or None for a flag that stands alone.
+    ``value_flags`` are the flags that take a value: draw-things-cli's unless the caller names another backend's.
 
     The executable and the subcommand are skipped. A flag's value is taken as it is, so a prompt that reads like a flag is
     never parsed as one; a value flag at the very end has no value (None). Words that are not flags are skipped.
@@ -251,7 +252,7 @@ def command_arguments(command: Sequence[str]) -> list[tuple[str, str | None]]:
     index = 1
     while index < len(command):
         token = str(command[index])
-        if token in VALUE_FLAGS:
+        if token in value_flags:
             arguments.append((token, str(command[index + 1]) if index + 1 < len(command) else None))
             index += 2
         else:

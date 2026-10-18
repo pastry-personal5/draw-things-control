@@ -125,3 +125,19 @@ class OverrideTableTests(unittest.TestCase):
         command = ("draw-things-cli", "generate", "--cfg", "4", "--steps", "9", "--config-json", '{"guidanceScale": 7, "steps": 30, "shift": 3.99}')
         settings = command_settings(command)
         self.assertEqual((settings.cfg, settings.steps, settings.shift), (4.0, 9, 3.99))
+
+
+class H3CommandArgumentTests(unittest.TestCase):
+    def test_value_flags_keep_their_values_and_every_flag_the_command_writes_is_classified(self) -> None:
+        from framecontrol.jobs.backends.h3 import H3_VALUE_FLAGS, H3Arguments, H3Settings, is_h3_command
+
+        settings = H3Settings(768, 1344, 96, 4, 30, 42, 90, 576, 1008, 2, 45, 3, True, True, True, True, "max", (("bf16_mlp", True),), frozenset({"denoise_reuse"}))
+        command = H3Arguments(Path("/h3"), Path("/model"), "p", "r2av", (("image", Path("/a.png"), None), ("video_audio", Path("/v.mp4"), Path("/a.wav"))), None, Path("/o.mp4"), settings, "ffmpeg", "ffprobe").command
+        self.assertTrue(is_h3_command(command))
+        self.assertFalse(is_h3_command(("draw-things-cli", "generate", "--prompt", "p")))
+        given = dict(command_arguments(command, H3_VALUE_FLAGS))
+        self.assertEqual((given["--reuse"], given["--core-reuse"], given["--layers"], given["--render-width"], given["--ref-image-size"]), ("2", "3", "45", "576", "max"))
+        self.assertIsNone(given["--token-reduction"])
+        # A flag takes a value exactly when the command writes one: a switch is never listed as a value flag, and a value flag never stands alone.
+        flags = [token for token in command if token.startswith("-") and token != "-1"]
+        self.assertEqual({flag for flag in flags if given.get(flag) is None}, {flag for flag in flags if flag not in H3_VALUE_FLAGS})

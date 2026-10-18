@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.text import Text
 from textual import events, work
@@ -21,7 +22,12 @@ from framecontrol.tui.panes.base import SidewaysTable
 from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.jobs import job_definition_cells, job_display_names, sort_job_rows
 
+if TYPE_CHECKING:
+    from framecontrol.tui.app import FramecontrolApp
+
 JOBS_POLL_SECONDS = 5
+# How long after the warning for a job already queued a second ``a`` queues it again.
+REPEAT_SECONDS = 5
 
 
 # How long the job list waits after a file event for more, since one save can report several.
@@ -33,13 +39,14 @@ JOBS_LIST_LINES = 11
 JOBS_LIST_SHORTCUTS = (
     ("Up/Down", "Move the selected job"),
     ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Open the selected job"),
+    ("Enter", "Open the selected job in a viewer"),
+    ("l", "Write the selected job's details to the Activity log"),
     ("a", "Submit the selected job"),
     ("s / r", "Change the sort column / reverse the order"),
     ("Tab / Shift-Tab", "Move focus"),
     ("Escape", "Focus the command field"),
     ("Ctrl-C", "Press twice to quit"),
-    ("?", "Show shortcut help"),
+    ("? / F1", "Show shortcut help"),
 )
 
 
@@ -48,7 +55,7 @@ class JobsList(SidewaysTable):
     a valid job reads changes. Every 5 seconds instead while that cannot be watched or an invalid job is listed, since an
     invalid job's inputs are not known.
 
-    Enter describes the selected job and ``a`` asks to run it, through the screen's callbacks; ``s`` sorts by the next
+    Enter opens the selected job in the text viewer, ``l`` writes it to the Activity log, and ``a`` submits it, through the screen's callbacks; ``s`` sorts by the next
     column and ``r`` reverses the order, and the sort is kept in the state store across sessions.
     """
 
@@ -57,15 +64,17 @@ class JobsList(SidewaysTable):
         Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("s", "next_sort", "Sort by the next column", show=False),
         Binding("r", "reverse_sort", "Reverse the order", show=False),
+        Binding("l", "log_selected", "Write the details to the Activity log", show=False),
         Binding("a", "run_selected", "Run the job", show=False),
         Binding("escape", "leave", "Command line", show=False),
     ]
 
-    def __init__(self, catalog: JobCatalog, sort_preference: SortPreference, *, describe: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, catalog: JobCatalog, sort_preference: SortPreference, *, describe: Callable[[Path], None], log: Callable[[Path], None], run: Callable[[Path], None], announce: Callable[[JobListing], None], leave: Callable[[], None], **options: Any) -> None:
         super().__init__(cursor_type="row", zebra_stripes=True, **options)
         self.catalog = catalog
         self.sort_preference = sort_preference
         self.describe_job = describe
+        self.log_job = log
         self.run_job = run
         self.announce_listing = announce
         self.leave = leave
@@ -73,6 +82,8 @@ class JobsList(SidewaysTable):
         self.job_rows: list[JobRow] = []
         self.sort_key, self.descending = "changed", True
         self.note: str | None = None
+        # The job ``a`` warned is already queued, and when that warning stops counting.
+        self.repeat_of: tuple[Path, float] | None = None
         # The last listing's message, so a later check does not write it again.
         self.announced: str | None = None
         # Counts reads; only the newest one's result is shown.
@@ -103,6 +114,8 @@ class JobsList(SidewaysTable):
     def on_mount(self) -> None:
         self.border_title = "Jobs list"
         self.add_columns("ID", "Name", "Changed", "Mode", "Runs")
+        # Until the first listing: the job files are validated on a worker, which takes a moment with many of them.
+        self.border_subtitle = Text("Reading job files...")
         # Until the first listing says what can be watched.
         self.check_timer = self.set_interval(JOBS_POLL_SECONDS, self.load)
         self.read_sort()
@@ -215,10 +228,29 @@ class JobsList(SidewaysTable):
     def action_reverse_sort(self) -> None:
         self.set_sort(self.sort_key, not self.descending)
 
-    def action_run_selected(self) -> None:
+    def action_log_selected(self) -> None:
         row = self.selected
         if row is not None:
-            self.run_job(row.path)
+            self.log_job(row.path)
+
+    def action_run_selected(self) -> None:
+        """``a``: submit the selected job. An invalid job is refused with its reason. A job already waiting or running asks for a
+        second ``a`` within ``REPEAT_SECONDS``, so a key pressed twice does not queue it twice."""
+        row = self.selected
+        if row is None:
+            return
+        app = cast("FramecontrolApp", self.app)
+        if row.job is None:
+            app.say(f"{row.path.name} is invalid and was not submitted: {row.error}", "red")
+            return
+        queued = app.queued_entry_for(row.path)
+        now = time.monotonic()
+        if queued is not None and (self.repeat_of is None or self.repeat_of[0] != row.path or now > self.repeat_of[1]):
+            self.repeat_of = (row.path, now + REPEAT_SECONDS)
+            app.say(f"{row.path.name} is already queued as {queued}; press a again to queue it once more", "yellow")
+            return
+        self.repeat_of = None
+        self.run_job(row.path)
 
     def action_leave(self) -> None:
         self.leave()

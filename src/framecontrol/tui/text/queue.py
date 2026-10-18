@@ -26,7 +26,7 @@ def queue_row_to_dict(row: QueueRow) -> dict[str, Any]:
     return {"queue_id": row.label, "kind": row.kind, "backend": row.backend, "job_path": row.job_path if row.kind == "job" else None, "generation": generation, "state": row.state, "total_runs": row.total_runs, "succeeded": row.succeeded, "park_requested": False}
 
 
-def _name(row: dict[str, Any]) -> str:
+def entry_name(row: dict[str, Any]) -> str:
     generation = row.get("generation")
     return f"generate: {generation['output']}" if isinstance(generation, dict) else Path(str(row["job_path"])).stem
 
@@ -40,7 +40,7 @@ def queue_cells(row: dict[str, Any]) -> tuple[Text, ...]:
     succeeded = row["succeeded"]
     runs = f"run {succeeded + 1}/{total}" if row["state"] == "running" else f"{succeeded}/{total}"
     state = queue_state_text(row)
-    return (Text(row["queue_id"]), Text(_name(row)), Text(state, style=STATUS_STYLE.get(state, "")), Text(runs))
+    return (Text(row["queue_id"]), Text(entry_name(row)), Text(state, style=STATUS_STYLE.get(state, "")), Text(runs))
 
 
 def queue_listing_text(entries: list[dict[str, Any]], hold: HoldState | None = None) -> Text:
@@ -76,7 +76,7 @@ def queue_entry_detail_text(entry: dict[str, Any]) -> Text:
     if entry["state"] == "running" and entry.get("current_run") is not None:
         runs = f"run {entry['current_run']}/{total}" if total is not None else f"run {entry['current_run']}"
     for label, value in (
-        ("Job", _name(entry)),
+        ("Job", entry_name(entry)),
         ("Backend", entry.get("backend")),
         ("Submitted", entry.get("submitted_at")),
         ("Started", entry.get("started_at")),

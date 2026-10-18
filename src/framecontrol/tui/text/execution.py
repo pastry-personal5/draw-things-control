@@ -16,7 +16,7 @@ from framecontrol.jobs.text import MEDIA_CHECK_LABELS, knobs_text, media_check_r
 from framecontrol.state.executions import ExecutionRow, MediaCheckRow, RunRow
 from framecontrol.state.ids import execution_id_text
 from framecontrol.state.timing import StageRow
-from framecontrol.tui.text.arguments import PreviousRun, argument_rows, arguments_text, execution_notes
+from framecontrol.tui.text.arguments import DEFAULT_NOTE, PreviousRun, Row, argument_rows, arguments_text, execution_notes
 from framecontrol.tui.text.common import STATUS_STYLE, VIDEO_MODES
 from framecontrol.tui.text.prompts import prompt_block
 from framecontrol.tui.text.status import whole_duration
@@ -214,6 +214,8 @@ class DetailRun:
     seconds: float | None
     output: str | None
     exists: bool
+    # The run's argument rows (flags, then --config-json keys; ``argument_rows``), read once; empty when it has no saved command.
+    arguments: tuple[Row, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -247,6 +249,14 @@ def _detail_stages(rows: Sequence[StageRow]) -> tuple[DetailStage, ...]:
     return tuple(DetailStage(row.stage.replace("_", " "), f"{row.done}/{row.total}" + (f" {row.unit}" if row.unit else "") if row.total is not None else "", row.duration, row.duration / total if total > 0 else 0.0) for row in counted)
 
 
+def _argument_lines(run: RunRow) -> tuple[Row, ...]:
+    """A run's arguments as the detail lists them, without its prompts: the flags and then the --config-json keys."""
+    if not run.command:
+        return ()
+    flags, config = argument_rows(run.command, {})
+    return (*flags, *config)
+
+
 def execution_detail(execution: ExecutionRow, stages: Mapping[int, Sequence[StageRow]] | None = None) -> ExecutionDetail:
     """Read the execution for the detail widget; it looks for every output file, so it runs off the UI thread. ``stages`` are
     its runs' recorded stages, by run number."""
@@ -255,7 +265,7 @@ def execution_detail(execution: ExecutionRow, stages: Mapping[int, Sequence[Stag
     listed = []
     for run in runs:
         path = execution.run_file(run.output)
-        listed.append(DetailRun(int(run.number), run.output_frames if video else None, run_steps(run), run.seconds, run.output or None, path is not None and path.exists()))
+        listed.append(DetailRun(int(run.number), run.output_frames if video else None, run_steps(run), run.seconds, run.output or None, path is not None and path.exists(), _argument_lines(run)))
     resumes = execution_id_text(execution.resumes) if execution.resumes is not None else None
     shown = {number: _detail_stages(rows) for number, rows in (stages or {}).items() if rows}
     return ExecutionDetail(int(execution.id), execution_settings(execution), size_text(runs), tuple(listed), resumes, shown)
@@ -310,6 +320,13 @@ def execution_detail_text(detail: ExecutionDetail, width: int, selected: int | N
             text.append("\n" + _stage_line(stage, width))
     if running is not None:
         text.append(("\n\n" if not stages else "\n") + cut_middle(f"now: {running}", width), style="dim")
+    chosen = next((run for run in detail.runs if run.number == selected), None)
+    if chosen is not None:
+        text.append(f"\n\nArguments of run {chosen.number}", style="bold")
+        if not chosen.arguments:
+            text.append("\n-", style="dim")
+        for name, value, note in chosen.arguments:
+            text.append("\n" + cut_middle(f"{name} {value}" + (" (default)" if note == DEFAULT_NOTE else ""), width))
     return text, shown
 
 

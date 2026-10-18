@@ -1,4 +1,4 @@
-# Milestone 12: Timing knobs as external files
+# Milestone 16: Timing knobs as external files
 
 **Phase:** [Phase 4](README.md)
 **Status:** planned

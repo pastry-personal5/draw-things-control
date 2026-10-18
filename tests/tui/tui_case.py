@@ -51,6 +51,8 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         logger.remove()
         # Every message as plain text, in order, across apps.
         self.said: list[str] = []
+        # The desktop notifications the apps posted: never a real osascript.
+        self.notifications: list[tuple[str, str]] = []
         original = ActivityLog.say
 
         def say(log: ActivityLog, text: Text | str, style: str = "", *, block: bool = False) -> None:
@@ -72,7 +74,7 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> FramecontrolApp:
         """The app, talking only to ``self.server``; ``service`` is the executor the Job Definition widget's dry-run plan builds."""
-        return FramecontrolApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, server_url=SERVER_URL, token_file=self.paths.server_token, toolkit=FakeToolkit(service), http_transport=self.server.transport(), grpc_stub_factory=self.server.stub_factory)
+        return FramecontrolApp(settings=settings or self.global_config, paths=self.paths, data_directory=data or self.data, server_url=SERVER_URL, token_file=self.paths.server_token, toolkit=FakeToolkit(service), http_transport=self.server.transport(), grpc_stub_factory=self.server.stub_factory, desktop_notifier=lambda title, message: self.notifications.append((title, message)))
 
     async def wait_for(self, pilot: Any, condition: Callable[[], object], what: str, timeout: float = 10) -> None:
         deadline = time.monotonic() + timeout
@@ -139,4 +141,6 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
             store.close()
 
     def snapshot(self) -> dict[Path, tuple[int, int]]:
-        return {path: (path.stat().st_mtime_ns, path.stat().st_size) for path in self.root.rglob("*")}
+        """Every file below the root with its modified time and size, except the TUI's own command history, which typing a command keeps
+        (a directory is left out too: its time and size change when that file appears, and a new or changed file is found by itself)."""
+        return {path: (path.stat().st_mtime_ns, path.stat().st_size) for path in self.root.rglob("*") if path != self.paths.tui_command_history and not path.is_dir()}

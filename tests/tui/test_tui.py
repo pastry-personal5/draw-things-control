@@ -112,11 +112,12 @@ class TuiTests(TuiTestCase):
             self.assertEqual(app.theme, "textual-dark")
             self.assertFalse(field.cursor_blink)
             self.assertEqual(field.placeholder, "")
-            # Every widget but the command line, the history, and the execution detail is on black.
+            # Every widget but the command line, the history, and the execution detail is on the theme's background, not a fixed colour.
+            background = Color.parse(app.get_css_variables()["background"])
             for name in ("work-status", "generation-output", "run-summary", "output-log", "activity-log", "status-line"):
-                self.assertEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
+                self.assertEqual(app.screen.query_one(f"#{name}").styles.background, background, name)
             for name in ("command-field", "execution-history-list", "execution-detail"):
-                self.assertNotEqual(app.screen.query_one(f"#{name}").styles.background, Color(0, 0, 0), name)
+                self.assertNotEqual(app.screen.query_one(f"#{name}").styles.background, background, name)
             await pilot.press("ctrl+p")
             await pilot.pause()
             self.assertIsInstance(app.screen, MainScreen)
@@ -139,15 +140,15 @@ class TuiTests(TuiTestCase):
         async with app.run_test() as pilot:
             await self.settle(pilot)
             field = app.screen.query_one(CommandField)
-            self.assertNotIn("Press ? for shortcut help", self.text(app, "status-line"))
+            self.assertNotIn("Press ? or F1 for shortcut help", self.text(app, "status-line"))
             for component in (app.screen.query_one(JobsList), app.screen.query_one(QueueList), app.screen.query_one(ExecutionHistoryList), app.screen.query_one(ExecutionDetailPane)):
                 with self.subTest(component=type(component).__name__):
                     component.focus()
                     await pilot.pause()
-                    self.assertIn("Press ? for shortcut help", self.text(app, "status-line"))
+                    self.assertIn("Press ? or F1 for shortcut help", self.text(app, "status-line"))
             field.focus()
             await pilot.pause()
-            self.assertNotIn("Press ? for shortcut help", self.text(app, "status-line"))
+            self.assertNotIn("Press ? or F1 for shortcut help", self.text(app, "status-line"))
 
     async def test_question_mark_opens_and_closes_contextual_shortcut_help(self) -> None:
         app = self.app()

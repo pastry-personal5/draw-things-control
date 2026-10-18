@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Self
 
@@ -11,9 +12,21 @@ from textual.binding import Binding
 from textual.visual import VisualType
 from textual.widgets import Input, RichLog, Static
 
-from framecontrol.tui.shortcut_help import refresh_status_line
+from framecontrol.tui.commands import CommandSuggester
+from framecontrol.tui.shortcut_help import ShortcutRows, refresh_status_line
 
 MAX_MESSAGE_LINES = 5000
+COMMAND_FIELD_SHORTCUTS: ShortcutRows = (
+    ("Enter", "Run the command"),
+    ("Tab", "Complete; again to step through the choices"),
+    ("Up/Down", "Recall earlier commands, kept across sessions"),
+    ("PageUp/PageDown", "Scroll the Activity log"),
+    ("Shift-PageUp/PageDown", "Scroll the generation output"),
+    ("Tab (nothing to complete)", "Move focus to the Jobs list"),
+    ("Escape", "Clear the command field"),
+    ("Ctrl-C", "Clear it, or press twice to quit"),
+    ("F1", "Show shortcut help"),
+)
 
 
 class SteadyText(Static):
@@ -42,22 +55,31 @@ class SteadyText(Static):
 
 
 class CommandField(Input):
-    """The command field: a steady cursor, Tab completion, Escape to clear, and Up/Down to recall this session's commands."""
+    """The command field: a steady cursor, Tab completion, Escape to clear, Up/Down to recall commands, and PageUp/PageDown
+    to scroll the logs (the logs take no focus, so this is how the keyboard reaches them)."""
 
     BINDINGS = [
         Binding("tab", "complete", "Complete", show=False),
         Binding("up", "recall(-1)", "Earlier command", show=False),
         Binding("down", "recall(1)", "Later command", show=False),
         Binding("escape", "clear_line", "Clear", show=False),
+        Binding("pageup", "scroll_log('#activity-log', -1)", "Activity log up", show=False),
+        Binding("pagedown", "scroll_log('#activity-log', 1)", "Activity log down", show=False),
+        Binding("shift+pageup", "scroll_log('#output-log', -1)", "Output log up", show=False),
+        Binding("shift+pagedown", "scroll_log('#output-log', 1)", "Output log down", show=False),
     ]
 
-    def __init__(self, **options: Any) -> None:
+    def __init__(self, *, history: list[str] | None = None, **options: Any) -> None:
         super().__init__(**options)
         self.cursor_blink = False
-        # Commands entered in this session, oldest first; kept in memory only.
-        self.recalled: list[str] = []
+        # Commands entered, oldest first: those of earlier sessions (``history``), then this session's.
+        self.recalled: list[str] = list(history or [])
         # The position in ``recalled`` shown now; its length means the line being typed.
-        self.recall_index = 0
+        self.recall_index = len(self.recalled)
+        # While Tab cycles through several completions: the choices, the one shown, and the text it put in the field.
+        self.cycle: list[str] = []
+        self.cycle_index = 0
+        self.cycle_shown = ""
 
     def on_focus(self, event: events.Focus) -> None:
         refresh_status_line(self)
@@ -76,16 +98,58 @@ class CommandField(Input):
         self.value = self.recalled[index] if index < len(self.recalled) else ""
         self.cursor_position = len(self.value)
 
+    def action_scroll_log(self, selector: str, direction: int) -> None:
+        log = self.screen.query_one(selector, RichLog)
+        if direction < 0:
+            log.scroll_page_up(animate=False)
+        else:
+            log.scroll_page_down(animate=False)
+
     def action_clear_line(self) -> None:
         self.value = ""
         self.recall_index = len(self.recalled)
 
     def action_complete(self) -> None:
-        # Input keeps its suggestion private; accepting it is what the right arrow does at the end of the line.
-        if self._suggestion and self.cursor_at_end:
-            self.action_cursor_right()
-        else:
+        """Tab: finish the line when it has one completion; with several, add what they share, then step through them (Tab again);
+        with none, move the focus on."""
+        if self.cycle and self.value == self.cycle_shown:
+            self.cycle_index = (self.cycle_index + 1) % len(self.cycle)
+            self.show_completion()
+            return
+        suggester = self.suggester
+        found = suggester.candidates(self.value) if self.value and self.cursor_at_end and isinstance(suggester, CommandSuggester) else []
+        if not found:
             self.screen.focus_next()
+        elif len(found) == 1:
+            self.put(found[0])
+        elif len(os.path.commonprefix(found)) > len(self.value):
+            self.put(os.path.commonprefix(found))
+        else:
+            self.cycle, self.cycle_index = found, 0
+            self.show_completion()
+
+    def put(self, text: str) -> None:
+        self.cycle = []
+        self.value = text
+        self.cursor_position = len(text)
+        self.report_completions()
+
+    def show_completion(self) -> None:
+        self.cycle_shown = self.cycle[self.cycle_index]
+        self.value = self.cycle_shown
+        self.cursor_position = len(self.value)
+        self.report_completions()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if self.cycle and event.value != self.cycle_shown:
+            self.cycle = []
+            self.report_completions()
+
+    def report_completions(self) -> None:
+        """Tell the status line which completions Tab is stepping through, and which is in the field (none: it shows its usual text)."""
+        callback = getattr(self.screen, "show_completions", None)
+        if callable(callback):
+            callback(self.cycle, self.cycle_index)
 
 
 class ActivityLog(RichLog):

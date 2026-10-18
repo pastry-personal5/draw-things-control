@@ -1,13 +1,16 @@
-"""Desktop actions for the history: reveal a run's output in Finder, and copy text to the clipboard."""
+"""Desktop actions: reveal a run's output in Finder, open it with the configured executable, copy text to the clipboard, and post a notification."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
+import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from framecontrol.core.process.spawn import popen
 from framecontrol.core.process.spawn import run as run_process
 from framecontrol.state.executions import ExecutionRow
 
@@ -77,3 +80,48 @@ def reveal_run(execution: ExecutionRow | str, run_number: int | None) -> tuple[s
         return target, "red"
     error = reveal_in_finder(target)
     return (error, "red") if error else (f"Revealed {target}", "")
+
+
+def open_with(opener: Path, path: Path) -> str | None:
+    """Start ``opener`` with the file's full path as its one argument and leave it running; None when it started, else why not.
+    The path is an argument, never shell text."""
+    try:
+        popen([str(opener), str(path.resolve())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"Cannot open {path} with {opener}: {error}"
+    return None
+
+
+def open_run(execution: ExecutionRow | str, run_number: int | None, opener: Path | None) -> tuple[str, str]:
+    """Open the run's output with ``opener`` (a click or Enter in the Execution detail), or reveal it in Finder when there is
+    no opener: the message to say, and its style. Runs off the UI thread."""
+    if opener is None:
+        return reveal_run(execution, run_number)
+    target = execution if isinstance(execution, str) else reveal_target(execution, run_number)
+    if isinstance(target, str):
+        return target, "red"
+    error = open_with(opener, target)
+    return (error, "red") if error else (f"Opened {target} with {opener.name}", "")
+
+
+# Title and message arrive as osascript arguments (``argv``), never inside the script text, so no quote in a job's name can break out of it.
+NOTIFICATION_SCRIPT = ("on run argv", "display notification (item 1 of argv) with title (item 2 of argv)", "end run")
+
+
+def post_notification(title: str, message: str) -> str | None:
+    """Post a macOS notification with osascript; None when it did, else why not (also off macOS). Blocks for the call."""
+    if sys.platform != "darwin":
+        return "desktop notifications need macOS"
+    command = ["osascript", *(argument for line in NOTIFICATION_SCRIPT for argument in ("-e", line)), message, title]
+    try:
+        result = run_process(command, check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"Cannot post a notification: {error}"
+    if result.returncode != 0:
+        return f"Cannot post a notification: osascript exited with {result.returncode}"
+    return None
+
+
+def notify_desktop(title: str, message: str) -> None:
+    """Post a notification without waiting for it, so the TUI never stalls on osascript. A failure is dropped: the bell and the toast already said it."""
+    threading.Thread(target=post_notification, args=(title, message), daemon=True).start()

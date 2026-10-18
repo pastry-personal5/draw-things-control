@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from rich.text import Text
 
@@ -13,10 +15,12 @@ from framecontrol.jobs.events import RunStatus
 from framecontrol.jobs.text import duration_text
 from framecontrol.services.forecast_view import end_text, progress, seconds_left, show_range, stage_text, whole_duration
 from framecontrol.services.queue_hold import HoldState
-from framecontrol.services.queue_park_text import park_point
+from framecontrol.services.queue_park_text import park_point, queue_state_text
+from framecontrol.state.queue import FINISHED_STATES
 from framecontrol.tui.live_run import FinishedRun, LiveRun
 from framecontrol.tui.preferences import VerboseLevel
 from framecontrol.tui.text.common import STATUS_STYLE
+from framecontrol.tui.text.queue import entry_name
 
 PHASE_TEXT = {"starting": "starting", "running": "running", "cooling_down": "cooling down", "stopping": "stopping", "parking": "parking", "finished": "finished", "not_started": "did not start", "ended": "ended (lost track)"}
 # The phases the work status and the run summary show in yellow: something is about to change.
@@ -118,7 +122,30 @@ def held_text(hold: HoldState, now: datetime) -> Text:
     return text
 
 
-def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None, hold: HoldState | None = None, now: datetime | None = None) -> list[Text]:
+def queue_summary(entries: Sequence[dict[str, Any]]) -> Text:
+    """``2 queued, next: walk (Q0007)``, or ``nothing queued``; a running entry is the work status's own business, so it is left out."""
+    queued = [entry for entry in entries if entry["state"] == "queued"]
+    if not queued:
+        return Text("nothing queued", style="dim")
+    text = Text(f"{len(queued)} queued", style="bold")
+    text.append(f", next: {entry_name(queued[0])} ({queued[0]['queue_id']})")
+    return text
+
+
+def last_finished(entries: Sequence[dict[str, Any]]) -> Text:
+    """``last: Q0006 walk succeeded, 7/7 runs``; empty when the queue shows no finished entry."""
+    entry = next((entry for entry in entries if entry["state"] in {str(state) for state in FINISHED_STATES}), None)
+    if entry is None:
+        return Text()
+    state = queue_state_text(entry)
+    total = entry["total_runs"] if entry["total_runs"] is not None else "?"
+    text = Text(f"last: {entry['queue_id']} {entry_name(entry)} ")
+    text.append(state, style=STATUS_STYLE.get(state, ""))
+    text.append(f", {entry['succeeded']}/{total} runs")
+    return text
+
+
+def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, message: str | None = None, hold: HoldState | None = None, now: datetime | None = None, queue: Sequence[dict[str, Any]] | None = None) -> list[Text]:
     """The work status's five lines: the phase, the job bar, the run (or wait) bar, the details, and the last run.
 
     ``message`` is the busy message the run lock's holder would give (an ordinary ``generate`` holder, or the
@@ -127,6 +154,9 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
 
     ``hold`` is the queue's. While no job runs it is shown: as the first line with nothing run this
     session, and otherwise as the third, which those layouts leave empty. ``now`` is the local time it is read at.
+
+    ``queue`` is the Queue list's entries (None until it has been read). With nothing run this session, the idle work status says
+    so, and what is queued and what finished last; after a job it says what is queued where the hold would go.
     """
     lines = [Text() for _ in range(5)]
     held = held_text(hold, now or datetime.now()) if hold is not None else Text()
@@ -135,7 +165,10 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
         lines[2] = held
         return lines
     if live is None:
-        lines[0] = held
+        lines[0] = held if held else Text("idle", style="bold dim")
+        if queue is not None:
+            lines[1] = queue_summary(queue)
+            lines[3] = last_finished(queue)
         return lines
     lines[0] = _phase_line(live)
     last = last_succeeded(live)
@@ -143,7 +176,7 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
         lines[4] = Text(f"last run took {whole_duration(last.seconds)}")
     if live.ended or live.finished is not None:
         lines = _finished_lines(live, lines)
-        lines[2] = held
+        lines[2] = held if held or queue is None else queue_summary(queue)
         return lines
     if live.started is None:
         return lines
@@ -235,10 +268,29 @@ def _details_line(live: LiveRun, now: float) -> Text:
     return Text("  ".join(parts))
 
 
-def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False, *, shortcut_help: bool = False) -> Text:
-    """The status line: job state, data directory, and help; or, after one Ctrl-C, how to quit."""
+COMPLETIONS_SHOWN = 5
+
+
+def completions_text(choices: Sequence[str], index: int) -> Text:
+    """The completions Tab is stepping through, a page of ``COMPLETIONS_SHOWN`` at a time, with the one in the field highlighted."""
+    start = index // COMPLETIONS_SHOWN * COMPLETIONS_SHOWN
+    text = Text(f" Tab {index + 1}/{len(choices)}: ", style="dim")
+    for position, choice in enumerate(choices[start : start + COMPLETIONS_SHOWN], start):
+        text.append(choice, style="bold reverse" if position == index else "")
+        text.append("  ")
+    if start + COMPLETIONS_SHOWN < len(choices):
+        text.append("...", style="dim")
+    text.rstrip()
+    return text
+
+
+def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False, *, shortcut_help: bool = False, server: bool | None = None, completions: tuple[Sequence[str], int] = ((), 0)) -> Text:
+    """The status line: job state, server connection, data directory, and help; or, after one Ctrl-C, how to quit, or, while Tab
+    steps through completions, those. ``server`` is whether the feed to ``fc serve`` is up (None: not shown)."""
     if quit_armed:
         return Text(" Press Ctrl-C again to quit", style="bold yellow")
+    if completions[0]:
+        return completions_text(*completions)
     text = Text(" ")
     if live is None:
         text.append("idle", style="dim")
@@ -249,9 +301,11 @@ def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, 
             text.append(f" run {live.active_run}/{len(live.runs)}")
         elif not running and live.finished is not None:
             text.append(f" ({live.finished.status})", style=STATUS_STYLE.get(live.finished.status, ""))
+    if server is not None:
+        text.append("  |  ", style="dim")
+        text.append("server connected", style="green") if server else text.append("server offline (read-only)", style="yellow")
     text.append("  |  ", style="dim")
     text.append(str(data_directory))
-    if shortcut_help:
-        text.append("  |  Press ? for shortcut help", style="dim")
+    text.append("  |  Press ? or F1 for shortcut help" if shortcut_help else "  |  F1: shortcut help", style="dim")
     text.append("  |  /help: commands, Ctrl-C twice: quit", style="dim")
     return text

@@ -1,4 +1,4 @@
-"""An execution's draw-things-cli arguments as tables, as /get param shows them."""
+"""An execution's draw-things-cli or h3-metal-cli arguments as tables, as /get param shows them."""
 
 from __future__ import annotations
 
@@ -8,15 +8,16 @@ from typing import Any
 
 from rich.text import Text
 
-from framecontrol.core.arguments import FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, command_arguments, config_json
+from framecontrol.core.arguments import FLAG_CONFIG_KEYS, OVERRIDE_ARGUMENTS, VALUE_FLAGS, command_arguments, config_json
 from framecontrol.core.numbers import setting_number
+from framecontrol.jobs.backends.h3 import H3_DEFAULT_ARGUMENTS, H3_VALUE_FLAGS, is_h3_command
 from framecontrol.jobs.events import JobEvent, RunStarted
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.tui.live_run import LiveRun
 from framecontrol.tui.text.prompts import find_run
 
 # The prompt flags, which /get param leaves out; /get prompts shows them.
-PROMPT_FLAGS = ("--prompt", "--negative-prompt", "--prompt-file", "--negative-prompt-file")
+PROMPT_FLAGS = ("--prompt", "--negative-prompt", "--prompt-file", "--negative-prompt-file", "-p")
 
 
 def parameters_text(execution: ExecutionRow, run_number: int | None) -> Text:
@@ -36,6 +37,10 @@ def parameters_text(execution: ExecutionRow, run_number: int | None) -> Text:
     text.append_text(arguments_table(command, execution_notes(execution)))
     text.rstrip()
     return text
+
+
+# The note on a row for a setting the command does not pass.
+DEFAULT_NOTE = "default; not passed"
 
 
 # A row of an argument table: its name, its value, and its note.
@@ -77,8 +82,9 @@ def execution_notes(execution: ExecutionRow) -> dict[str, str]:
 def argument_rows(command: Sequence[str], notes: dict[str, str]) -> tuple[list[Row], list[Row]]:
     """A command's draw-things-cli arguments without its prompts, as the flag rows and the --config-json rows, with
     ``notes`` (``override_notes``) and every value a flag replaced marked."""
-    config = config_json(command)
-    flags = [(flag, value) for flag, value in command_arguments(command) if flag not in PROMPT_FLAGS and flag != "--config-json"]
+    h3 = is_h3_command(command)
+    config = {} if h3 else config_json(command)
+    flags = [(flag, value) for flag, value in command_arguments(command, H3_VALUE_FLAGS if h3 else VALUE_FLAGS) if flag not in PROMPT_FLAGS and flag != "--config-json"]
     given = dict(flags)
     flag_rows = []
     for flag, value in flags:
@@ -87,6 +93,9 @@ def argument_rows(command: Sequence[str], notes: dict[str, str]) -> tuple[list[R
         if key in config and value is not None and not _same_value(value, config[key]):
             marks.append(f"replaces --config-json {_config_value(config[key])}")
         flag_rows.append((flag, "yes" if value is None else value, "; ".join(marks)))
+    if h3:
+        # A command leaves a knob out while it is at its default; the plan says what H3 will use.
+        flag_rows.extend((flag, default, DEFAULT_NOTE) for flag, default in H3_DEFAULT_ARGUMENTS if flag not in given)
     config_rows = []
     replaced_by = {key: flag for flag, key in FLAG_CONFIG_KEYS.items() if flag in given}
     for key, value in config.items():

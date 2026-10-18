@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import signal
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.text import Text
 from textual import work
 from textual.app import App
 from textual.binding import Binding
+from textual.notifications import SeverityLevel
 
 from framecontrol.core.client_config import job_argument
 from framecontrol.core.exit_codes import exit_code_for_signal
@@ -20,14 +22,18 @@ from framecontrol.services.queue_park_text import park_outcome_text, unpark_outc
 from framecontrol.services.store_provider import StoreProvider
 from framecontrol.services.toolkit import Toolkit
 from framecontrol.tui.deletion import DeleteFlow, DeleteSelection
+from framecontrol.tui.desktop import notify_desktop
 from framecontrol.tui.feed import QueueFeed
 from framecontrol.tui.live_run import LiveRun
 from framecontrol.tui.panes.cli_output import LOW_MARKER
-from framecontrol.tui.preferences import VerboseLevel, load_verbose_level, save_verbose_level, wants_output
+from framecontrol.tui.preferences import VerboseLevel, load_command_history, load_verbose_level, save_command_history, save_verbose_level, wants_output
 from framecontrol.tui.queue_client import ApiError, cancel, hold, list_queue, park, release, resume, show, submit, unpark
 from framecontrol.tui.screens import MainScreen
+from framecontrol.tui.shortcut_help import ShortcutHelpOverlay, show_shortcut_help
 from framecontrol.tui.signals import QuitPress, SignalGuard
 from framecontrol.tui.text.queue import queue_entry_detail_text, queue_listing_text
+from framecontrol.tui.text_overlay import TextOverlay
+from framecontrol.tui.widgets import COMMAND_FIELD_SHORTCUTS
 
 if TYPE_CHECKING:
     import httpx
@@ -55,9 +61,11 @@ class FramecontrolApp(App[None]):
     BINDINGS = [
         # Before any widget can take the key: Textual's own ctrl+c only explains how to quit, and Input's copies.
         Binding("ctrl+c", "interrupt", "Quit", show=False, priority=True),
+        # Before a list's own keys, and from the command field, where a bare ? is typed text.
+        Binding("f1", "shortcut_help", "Shortcut help", show=False, priority=True),
     ]
 
-    def __init__(self, *, settings: GlobalConfig, paths: ProjectPaths, data_directory: Path, server_url: str, token_file: Path, allow_remote_server: bool = False, toolkit: Toolkit | None = None, http_transport: "httpx.AsyncBaseTransport | None" = None, grpc_stub_factory: "GrpcStubFactory | None" = None) -> None:
+    def __init__(self, *, settings: GlobalConfig, paths: ProjectPaths, data_directory: Path, server_url: str, token_file: Path, allow_remote_server: bool = False, toolkit: Toolkit | None = None, http_transport: "httpx.AsyncBaseTransport | None" = None, grpc_stub_factory: "GrpcStubFactory | None" = None, desktop_notifier: Callable[[str, str], None] = notify_desktop) -> None:
         super().__init__()
         self.settings = settings
         self.paths = paths
@@ -70,6 +78,8 @@ class FramecontrolApp(App[None]):
         self.toolkit = toolkit or Toolkit()
         self.http_transport = http_transport
         self.grpc_stub_factory = grpc_stub_factory
+        # Posts a notification outside the terminal (macOS) when a job ends; a test passes its own.
+        self.desktop_notifier = desktop_notifier
         self.store_provider = StoreProvider(paths, settings.history_retention_days)
         # The entry this session follows, or the last one it saw before it ended.
         self.live: LiveRun | None = None
@@ -84,6 +94,9 @@ class FramecontrolApp(App[None]):
         self.queue_hold = HoldState()
         # How much of draw-things-cli's output the TUI streams and shows; read once, changed by /verbose.
         self.verbose_level: VerboseLevel = load_verbose_level(paths.tui_preferences)
+        # The commands of earlier sessions, for the command field's Up/Down recall.
+        self.command_history = load_command_history(paths.tui_command_history)
+        self._history_warned = False
         # Low at startup is told once, as the feed first connects (a later reconnect says nothing).
         self._low_notice_due = self.verbose_level == "low"
         self._feed = QueueFeed(self)
@@ -116,6 +129,7 @@ class FramecontrolApp(App[None]):
         only while running a job, so a feed that is up already says everything that line otherwise would)."""
         if self.main is not None:
             self.main.execution_history.check_lock()
+            self.main.refresh_status_line()
         if self.feed_connected and self._low_notice_due and self.main is not None:
             self._low_notice_due = False
             self.say(LOW_NOTICE)
@@ -156,6 +170,16 @@ class FramecontrolApp(App[None]):
         except OSError as error:
             self.say(f"The verbose level could not be saved ({error}); it applies to this session only.", "yellow")
 
+    @work(thread=True, exclusive=True, group="command-history")
+    def keep_command_history(self, commands: list[str]) -> None:
+        """Keep the commands typed, for the next session; a failure is told once and never stops a command."""
+        try:
+            save_command_history(self.paths.tui_command_history, commands)
+        except OSError as error:
+            if not self._history_warned:
+                self._history_warned = True
+                self.call_from_thread(self.say, f"The command history could not be saved ({error}); it lasts for this session only.", "yellow")
+
     def handle_signal(self, received: signal.Signals) -> None:
         """SIGHUP, SIGINT, or SIGTERM: exit at once, with the code the CLI would give the same signal. Nothing here
         needs stopping first -- fc serve is the only thing that ever runs a job now, and quitting the TUI does not
@@ -167,9 +191,28 @@ class FramecontrolApp(App[None]):
         return next((screen for screen in self.screen_stack if isinstance(screen, MainScreen) and screen.is_mounted), None)
 
     def say(self, text: Text | str, style: str = "") -> None:
-        """Write a notice to the messages."""
-        if self.main is not None:
-            self.main.say(text, style)
+        """Write a notice to the messages. An error or warning from a key pressed in a list also shows as a toast, since the person is looking at
+        the list, not at the Activity log beside it."""
+        main = self.main
+        if main is None:
+            return
+        main.say(text, style)
+        if style in ("red", "yellow") and main.focused not in (None, main.command_field):
+            self.notify(str(text), severity="error" if style == "red" else "warning", markup=False)
+
+    def queued_entry_for(self, path: Path) -> str | None:
+        """The queue ID of a waiting or running entry for this job file, as the Queue list shows it; None when there is none."""
+        main = self.main
+        if main is None:
+            return None
+        return next((queue_id for queue_id, entry in main.queue_list.rows_by_id.items() if entry["state"] in ("queued", "running") and entry.get("job_path") and Path(str(entry["job_path"])).name == path.name), None)
+
+    def announce_finished(self, title: str, message: str, severity: str) -> None:
+        """A job ended: ring the terminal bell, show a toast, and post a desktop notification, since a chain runs for hours
+        and the person is rarely watching the terminal when it ends."""
+        self.bell()
+        self.notify(message, title=title, severity=cast(SeverityLevel, severity), timeout=10, markup=False)
+        self.desktop_notifier(title, message)
 
     @property
     def quit_armed(self) -> bool:
@@ -190,6 +233,17 @@ class FramecontrolApp(App[None]):
         self.quit_press.arm()
         self.show_status()
         self.set_timer(QUIT_PRESS_SECONDS, self.show_status)
+
+    def action_shortcut_help(self) -> None:
+        """F1: the shortcuts of the focused list or detail, or of the command field; closes the overlay when one is open."""
+        main = self.main
+        if isinstance(self.screen, ShortcutHelpOverlay):
+            self.screen.dismiss()
+        elif main is not None and self.screen is main:
+            if main.shortcut_help_available():
+                cast("Any", main.focused).action_show_shortcut_help()
+            else:
+                show_shortcut_help(main, "Command field", COMMAND_FIELD_SHORTCUTS)
 
     def show_status(self) -> None:
         if self.main is not None:
@@ -354,12 +408,21 @@ class FramecontrolApp(App[None]):
             self._deleting = False
 
     @work(exclusive=True, group="queue-detail")
-    async def describe_queue_entry(self, queue_id: str) -> None:
-        """/describe Q0007, and Enter on its row (QueueList): over the API, not the store fallback (its own
+    async def describe_queue_entry(self, queue_id: str, viewer: bool = False) -> None:
+        """/describe Q0007 and ``l`` on its row (QueueList) write it to the Activity log, and Enter on its row opens it in the text
+        viewer (``viewer``): over the API, not the store fallback (its own
         resumability needs a live read: whether some other entry already resumes it can change between polls)."""
         try:
             entry = await show(self.server_url, self.token_file, self.http_transport, queue_id)
         except ApiError as error:
             self.say(error.text, "red")
             return
-        self.say(queue_entry_detail_text(entry))
+        if viewer:
+            self.show_in_viewer(f"Queue entry {queue_id}", queue_entry_detail_text(entry))
+        else:
+            self.say(queue_entry_detail_text(entry))
+
+    def show_in_viewer(self, title: str, body: Text) -> None:
+        """Open the text viewer, unless a dialog or another viewer is already in front."""
+        if self.main is not None and self.screen is self.main:
+            self.push_screen(TextOverlay(title, body))

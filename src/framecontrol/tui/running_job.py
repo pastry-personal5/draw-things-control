@@ -12,7 +12,7 @@ from framecontrol.jobs.events import JobEvent, RunFinished
 from framecontrol.state.ids import EXECUTION_LETTER, parse_typed_id
 from framecontrol.tui.preferences import LOW_STATUS_REFRESH_SECONDS
 from framecontrol.tui.text.arguments import run_arguments
-from framecontrol.tui.text.events import event_text, result_text
+from framecontrol.tui.text.events import event_text, finished_notice, result_text
 from framecontrol.tui.text.status import stage_text
 
 if TYPE_CHECKING:
@@ -76,6 +76,7 @@ class RunningJobView:
         live = self.screen.fc.live
         if live is not None:
             self.screen.say(result_text(live), block=True)
+            self.screen.fc.announce_finished(*finished_notice(live))
         self.render_live()
         self.screen.execution_history.load()
 
@@ -86,7 +87,8 @@ class RunningJobView:
 
     def render_status(self) -> None:
         screen = self.screen
-        screen.work_status.show(screen.fc.live, screen.execution_history.other_process_running, message=screen.execution_history.other_process_message, hold=screen.fc.queue_hold)
+        queue = screen.queue_list
+        screen.work_status.show(screen.fc.live, screen.execution_history.other_process_running, message=screen.execution_history.other_process_message, hold=screen.fc.queue_hold, queue=list(queue.rows_by_id.values()) if queue.shown else None)
 
     def tick(self, *, force: bool = False) -> None:
         """Update the elapsed time, the cooldown countdown, the work status, and the status line. The one caller

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import subprocess
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, cast
 from unittest import mock
@@ -419,9 +420,12 @@ class ExecutionDetailTests(HistoryCase):
         self.assertEqual(title, f"Execution E{newer:04d}: wave interrupted")
         self.assertEqual(first, ["model wan_v2.2_a14b_hne_i2v_q8p.ckpt", "refiner wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "size -  CFG 5  shift 3.99", "No run finished successfully"])
         # Run 2 failed, so only runs 1 and 3 are listed; the size and frames are measured, never the 1000x600 and 17 asked for.
-        self.assertEqual([line.rstrip() for line in second], ["model wan_v2.2_a14b_hne_i2v_q8p.ckpt", "refiner wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "832x448  CFG 5  shift 3.99", "#  Frames Steps Time", "1  81     40    7 min 12 s", "   one.mov", "3  81     40    7 min 12 s", "   three.mov"])
-        self.assertNotIn("1000", "\n".join(second))
-        self.assertNotIn(" 17 ", "\n".join(second))
+        arguments_at = second.index("Arguments of run 1")
+        self.assertEqual([line.rstrip() for line in second[: arguments_at - 1]], ["model wan_v2.2_a14b_hne_i2v_q8p.ckpt", "refiner wan_v2.2_a14b_lne_i2v_q8p.ckpt from 10%", "832x448  CFG 5  shift 3.99", "#  Frames Steps Time", "1  81     40    7 min 12 s", "   one.mov", "3  81     40    7 min 12 s", "   three.mov"])
+        # The arguments below the runs are what the run was given, so the asked-for size appears there and nowhere above.
+        self.assertIn("--width 1000", second[arguments_at:])
+        self.assertNotIn("1000", "\n".join(second[:arguments_at]))
+        self.assertNotIn(" 17 ", "\n".join(second[:arguments_at]))
         load.assert_called_once()
 
     def keep_stages(self, execution_id: int) -> None:
@@ -468,7 +472,7 @@ class ExecutionDetailTests(HistoryCase):
             pane.show_live(None, None)
             gone = "\n".join(self.detail_text(app))
         self.assertNotIn("now:", elsewhere)
-        self.assertTrue(here.endswith("now: denoise 12/30"), here)
+        self.assertIn("now: denoise 12/30\n\nArguments of run 1", here)
         self.assertNotIn("now:", gone)
 
     async def test_old_runs_images_missing_files_and_long_names(self) -> None:
@@ -538,6 +542,27 @@ class ExecutionDetailTests(HistoryCase):
         self.assertEqual(messages, [f"Revealed {self.outputs / 'one.mov'}", f"{self.outputs / 'two.mov'} is missing"])
         # Only /describe execution writes the full detail to Messages; Enter did not.
         self.assertFalse(any(line.startswith("Execution ") for line in self.said))
+
+    async def test_with_a_file_opener_enter_opens_the_file_with_its_full_path_and_reveal_still_reveals(self) -> None:
+        execution_id = self.add("walk", 0, runs=("succeeded",), outputs=("one.mov",), measured=(832, 448, 81))
+        (self.outputs / "one.mov").write_bytes(b"video")
+        opener = self.root / "player"
+        app = self.make_app(settings=replace(self.global_config, file_opener=opener))
+        self.server.health_ok = False
+        reveal, popen = mock.Mock(return_value=None), mock.Mock()
+        with mock.patch("framecontrol.tui.desktop.reveal_in_finder", reveal), mock.patch("framecontrol.tui.desktop.popen", popen):
+            async with app.run_test(size=(140, 40)) as pilot:
+                await self.settle(pilot)
+                await self.shown(pilot, execution_id)
+                app.screen.query_one(ExecutionHistoryList).focus()
+                await pilot.press("enter", "enter")
+                await self.settle(pilot)
+                opened = popen.call_args_list[:]
+                reveal_calls_before = reveal.call_count
+                await self.command(pilot, f"/reveal E{execution_id:04d}")
+        self.assertEqual([call.args[0] for call in opened], [[str(opener), str((self.outputs / "one.mov").resolve())]])
+        self.assertEqual((reveal_calls_before, reveal.call_count), (0, 1))
+        self.assertIn(f"Opened {(self.outputs / 'one.mov')} with player", self.said)
 
     async def test_tab_reaches_the_detail_after_the_history(self) -> None:
         self.add("walk", 0)

@@ -117,7 +117,7 @@ class DeleteTests(HistoryCase):
             first = await self.dialog(pilot)
             await self.answer(pilot, "s")
             second = await self.dialog(pilot)
-            await self.answer(pilot, "enter")
+            await self.answer(pilot, "y")
             third = await self.dialog(pilot)
             await self.answer(pilot, "n")
             await self.finished(pilot)
@@ -129,6 +129,37 @@ class DeleteTests(HistoryCase):
         self.assertIn("3 of 3", third)
         self.assertEqual(ids, ["E0004", "E0002", "E0001"])
         self.assertIn("Deleted 1 execution", self.said)
+
+    async def test_marking_counts_in_the_history_subtitle(self) -> None:
+        for minutes in (0, 10):
+            self.add("walk", minutes)
+        app = self.app()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self.settle(pilot)
+            pane = await self.focus_history(pilot)
+            none = str(pane.border_subtitle)
+            await pilot.press("space")
+            one = str(pane.border_subtitle)
+            pane.move_cursor(row=1)
+            await pilot.press("space")
+            two = str(pane.border_subtitle)
+            await pilot.press("space")
+            back_to_one = str(pane.border_subtitle)
+            await self.command(pilot, "/filter name walk")
+            cleared = str(pane.border_subtitle)
+        self.assertEqual((none, one, two, back_to_one, cleared), ("", "1 marked", "2 marked", "1 marked", ""))
+
+    async def test_enter_in_the_dialog_cancels_because_cancel_has_the_focus(self) -> None:
+        self.add("walk", 0)
+        app = self.app()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self.settle(pilot)
+            await self.command(pilot, "/delete execution E1", settle=False)
+            await self.dialog(pilot)
+            await self.answer(pilot, "enter")
+            await self.finished(pilot)
+            ids = self.ids(app)
+        self.assertEqual(ids, ["E0001"])
 
     async def test_delete_all_deletes_the_rest_without_asking_and_marks_clear(self) -> None:
         for minutes in (0, 10, 20):

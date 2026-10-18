@@ -92,3 +92,13 @@ def _parked_text(live: LiveRun) -> Text:
     name = live.queue_id or "The job"
     resume = f" ('/queue resume {live.queue_id}' continues at run {last + 1})" if live.queue_id is not None else ""
     return Text(f"\n{name} parked after run {last}/{len(live.runs)}{resume}", style="blue")
+
+
+def finished_notice(live: LiveRun) -> tuple[str, str, str]:
+    """The bell, toast, and desktop notification for a job that has ended: title, message, and the toast's severity."""
+    name = live.job_name or "Job"
+    if live.finished is None:
+        return "Framecontrol: job ended", f"{name}: {live.error or 'ended without a result (lost track of this run)'}", "error"
+    finished = live.finished
+    severity = {JobStatus.SUCCEEDED: "information", JobStatus.PARKED: "warning"}.get(finished.status, "error")
+    return f"Framecontrol: job {finished.status}", f"{name}: {finished.completed_runs}/{finished.total_runs} runs completed", severity

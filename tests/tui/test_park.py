@@ -200,6 +200,31 @@ class HoldTests(FeedTestCase):
             await self.wait_for(pilot, lambda: self.server.parked_ids == ["Q0007"], "the park")
         self.assertEqual(state, "parking")
 
+    async def test_cancelling_leaves_the_cursor_on_its_row_instead_of_following_the_entry_to_the_finished_ones(self) -> None:
+        def entry(queue_id: str, state: str) -> dict:
+            return {**RUNNING, "queue_id": queue_id, "state": state}
+
+        self.server.health_ok = False
+        app = self.make_app()
+        async with app.run_test(size=(160, 60)) as pilot:
+            await self.settle(pilot)
+            pane = app.screen.query_one(QueueList)
+            pane.show_entries([entry("Q0001", "running"), entry("Q0002", "queued"), entry("Q0003", "queued"), entry("Q0004", "succeeded")])
+            pane.move_cursor(row=1)
+            pane.focus()
+            # What the queue reads again after the cancel: the entry has moved down among the finished rows.
+            self.server.entries = [entry("Q0001", "running"), entry("Q0003", "queued"), entry("Q0002", "cancelled"), entry("Q0004", "succeeded")]
+            await pilot.press("c")
+            await self.wait_for(pilot, lambda: self.server.cancelled_ids == ["Q0002"], "the cancel")
+            await self.wait_for(pilot, lambda: pane._selected_id() != "Q0002" and pane.rows_by_id.get("Q0002", {}).get("state") == "cancelled", "the refreshed queue")
+            # The cursor stays on row 1, which is now Q0003.
+            kept = (pane.cursor_row, pane._selected_id())
+            # A later update follows the entry by its ID again.
+            pane.show_entries([entry("Q0003", "queued"), entry("Q0001", "running"), entry("Q0002", "cancelled"), entry("Q0004", "succeeded")])
+            followed = pane._selected_id()
+        self.assertEqual(kept, (1, "Q0003"))
+        self.assertEqual(followed, "Q0003")
+
     async def test_the_saved_hold_shows_from_the_store_while_the_server_is_down(self) -> None:
         self.server.health_ok = False
         store = Store.open(self.paths.database, mode=StoreMode.WRITE)

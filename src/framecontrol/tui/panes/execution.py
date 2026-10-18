@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
@@ -15,7 +16,7 @@ from textual.widgets import Static
 from textual.worker import get_current_worker
 
 from framecontrol.state.executions import ExecutionRow
-from framecontrol.tui.desktop import reveal_run
+from framecontrol.tui.desktop import open_run
 from framecontrol.tui.panes.base import Reads
 from framecontrol.tui.reader import PaneHistory
 from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
@@ -38,7 +39,7 @@ EXECUTION_DETAIL_SHORTCUTS = (
     ("Tab / Shift-Tab", "Move focus"),
     ("Escape", "Focus the command field"),
     ("Ctrl-C", "Press twice to quit"),
-    ("?", "Show shortcut help"),
+    ("? / F1", "Show shortcut help"),
 )
 
 
@@ -53,9 +54,9 @@ class ExecutionDetailBody(Static):
 
 
 class ExecutionDetailPane(VerticalScroll, Reads):
-    """The execution under the history cursor: its settings and its successful runs, each with a link that reveals its output.
+    """The execution under the history cursor: its settings and its successful runs, each with a link that opens its output (with ``file_opener``) or reveals it.
 
-    Up and Down select a run, and Enter or a click on its file name reveals it in Finder. Reads go through the history's
+    Up and Down select a run, and Enter or a click on its file name opens it with ``file_opener``, or reveals it in Finder without one. Reads go through the history's
     reader on a worker thread, and only the newest read is shown, as in the history.
     """
 
@@ -71,8 +72,10 @@ class ExecutionDetailPane(VerticalScroll, Reads):
         Binding("escape", "leave", "Command line", show=False),
     ]
 
-    def __init__(self, reader: PaneHistory, *, say: Callable[[Text | str, str], None], leave: Callable[[], None], **options: Any) -> None:
+    def __init__(self, reader: PaneHistory, *, say: Callable[[Text | str, str], None], leave: Callable[[], None], file_opener: Path | None = None, **options: Any) -> None:
         super().__init__(**options)
+        # The global config's ``file_opener``: what a click or Enter opens a run's file with; None reveals it in Finder.
+        self.file_opener = file_opener
         self.reader = reader
         self.say = say
         self.leave = leave
@@ -104,7 +107,7 @@ class ExecutionDetailPane(VerticalScroll, Reads):
         refresh_status_line(self)
 
     def action_show_shortcut_help(self) -> None:
-        show_shortcut_help(self, "Execution detail", EXECUTION_DETAIL_SHORTCUTS)
+        show_shortcut_help(self, "Execution detail", tuple(("Enter", "Open the selected run's file") if keys == "Enter" and self.file_opener is not None else (keys, what) for keys, what in EXECUTION_DETAIL_SHORTCUTS))
 
     def follow(self, execution_id: int | None, *, pause: bool = True) -> None:
         """Show ``execution_id``, after DETAIL_PAUSE_SECONDS unless ``pause`` is false; None shows the message instead."""
@@ -225,5 +228,5 @@ class ExecutionDetailPane(VerticalScroll, Reads):
 
     @work(thread=True, group="execution-reveal")
     def reveal(self, execution_id: int, run_number: int) -> None:
-        """Reveal the run's output in Finder, as /reveal does; the file is looked up again, so one removed since is reported."""
-        self.app.call_from_thread(self.say, *reveal_run(self.reader.execution(execution_id), run_number))
+        """Open the run's output with ``file_opener``, or reveal it in Finder as /reveal does without one; the file is looked up again, so one removed since is reported."""
+        self.app.call_from_thread(self.say, *open_run(self.reader.execution(execution_id), run_number, self.file_opener))

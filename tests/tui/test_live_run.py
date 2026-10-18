@@ -63,6 +63,8 @@ class LiveRunTests(FeedTestCase):
         self.assertIsNone(cleared)
         self.assertIn("Job started: walk (i2v, 2 runs, seed 1 (job), model base.ckpt)", self.said)
         self.assertIn("Job succeeded: 2/2 runs completed", self.log())
+        # The end of a chain is announced outside the terminal too: once, with the job and its result.
+        self.assertEqual(self.notifications, [("Framecontrol: job succeeded", "walk: 2/2 runs completed")])
 
     async def test_forecast_published_before_job_started_is_shown_immediately(self) -> None:
         app = self.make_app()

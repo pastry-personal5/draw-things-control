@@ -135,6 +135,18 @@ class H3Settings:
         return self.effective_frames / H3_FPS
 
 
+# The flags ``H3Command.command`` writes with a value after them (its first word, the executable, is not a flag); the
+# rest stand alone. A ``--ref-*`` flag may carry a second word, its audio file.
+H3_VALUE_FLAGS = frozenset({"-d", "-p", "-o", "--first-frame", "--ref-image", "--ref-video", "--ref-silent-video", "--ref-audio", "--ref-video-audio", "--ref-image-size", "--width", "--height", "--frames", "--steps", "--seed", "--render-width", "--render-height", "--reuse", "--layers", "--core-reuse"})
+# The flags a command leaves out while a setting is at its default, with that default, in the order the command writes them.
+H3_DEFAULT_ARGUMENTS = (("--reuse", str(H3Settings.denoise_reuse)), ("--layers", str(H3Settings.dit_layers)), ("--core-reuse", str(H3Settings.core_reuse)))
+
+
+def is_h3_command(command: Sequence[str]) -> bool:
+    """Whether ``command`` is an H3 command (``H3Command.command`` starts ``executable -d``), not a draw-things-cli one."""
+    return len(command) > 1 and command[1] == "-d"
+
+
 @dataclass(frozen=True)
 class H3Arguments:
     executable: Path
@@ -255,11 +267,13 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[str, Any]:
-    """Decode a declared reference and validate the streams H3 will consume."""
+def _inspect_reference(kind: str, path: Path, audio_path: Path | None, *, decode: bool = True) -> dict[str, Any]:
+    """Decode a declared reference and validate the streams H3 will consume. ``decode=False`` (a caller that only reads the
+    job's fields, such as the Jobs list) keeps every header and stream check but skips decoding the pixels and samples."""
     if kind == "image":
         size, orientation = read_image_info(path)
-        decode_image(path)
+        if decode:
+            decode_image(path)
         return {"video": None, "audio": None, "image_size": list(size), "orientation": orientation}
     ffprobe, ffmpeg = shutil.which("ffprobe"), shutil.which("ffmpeg")
     if ffprobe is None or ffmpeg is None:
@@ -278,7 +292,9 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
             raise ValueError("has an invalid duration")
         return items, duration
 
-    def decode(source: Path, selector: str) -> None:
+    def decode_stream(source: Path, selector: str) -> None:
+        if not decode:
+            return
         result = run_process((ffmpeg, "-v", "error", "-i", str(source), "-map", selector, "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
         if result.returncode != 0:
             raise ValueError(f"cannot decode media: {result.stderr.strip() or 'ffmpeg failed'}")
@@ -294,10 +310,10 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
             raise ValueError("video references require an embedded audio stream")
         if kind in ("video_audio", "silent_video") and not video_streams:
             raise ValueError("must contain a video stream")
-        decode(path, "0:v:0")
+        decode_stream(path, "0:v:0")
         embedded_audio = None
         if kind == "video" and audio_streams:
-            decode(path, "0:a:0")
+            decode_stream(path, "0:a:0")
             embedded_audio = float(audio_streams[0].get("duration") or video_duration)
             if not 2 <= embedded_audio <= 15:
                 raise ValueError("embedded audio duration must be from 2 to 15 seconds")
@@ -305,14 +321,14 @@ def _inspect_reference(kind: str, path: Path, audio_path: Path | None) -> dict[s
         separate_audio = None
         if kind == "video_audio":
             assert audio_path is not None
-            separate_audio = _inspect_audio(audio_path, ffprobe, ffmpeg)
+            separate_audio = _inspect_audio(audio_path, ffprobe, ffmpeg, decode=decode)
             separate_audio = min(separate_audio, video_duration, 362 / H3_FPS)
         return {"video": video_duration, "audio": embedded_audio if kind == "video" else separate_audio}
-    audio_duration = _inspect_audio(path, ffprobe, ffmpeg)
+    audio_duration = _inspect_audio(path, ffprobe, ffmpeg, decode=decode)
     return {"video": None, "audio": audio_duration}
 
 
-def _inspect_audio(path: Path, ffprobe: str, ffmpeg: str) -> float:
+def _inspect_audio(path: Path, ffprobe: str, ffmpeg: str, *, decode: bool = True) -> float:
     result = run_process((ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)), capture_output=True, text=True, errors="replace", timeout=20, check=False)
     if result.returncode != 0:
         raise ValueError(f"cannot inspect audio: {result.stderr.strip() or 'ffprobe failed'}")
@@ -322,6 +338,8 @@ def _inspect_audio(path: Path, ffprobe: str, ffmpeg: str) -> float:
     duration = float(audio[0].get("duration") or payload.get("format", {}).get("duration") or 0.0) if len(audio) == 1 else 0.0
     if len(audio) != 1 or not math.isfinite(duration) or not 2 <= duration <= 15:
         raise ValueError("must contain exactly one audio stream with a duration from 2 to 15 seconds")
+    if not decode:
+        return duration
     decoded = run_process((ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "null", "-"), capture_output=True, text=True, errors="replace", timeout=40, check=False)
     if decoded.returncode != 0:
         raise ValueError(f"cannot decode audio: {decoded.stderr.strip() or 'ffmpeg failed'}")
@@ -552,7 +570,7 @@ class H3Backend:
                         parser.fail(f"{entry_field}.audio", "has no saved reference snapshot")
                 else:
                     try:
-                        duration = _inspect_reference(kind, paths["path"], audio_path)
+                        duration = _inspect_reference(kind, paths["path"], audio_path, decode=parser.decode_input)
                     except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
                         media_field = "audio" if kind == "video_audio" and audio_path is not None and "audio" in str(error).lower() else "path"
                         parser.fail(f"{entry_field}.{media_field}", str(error))

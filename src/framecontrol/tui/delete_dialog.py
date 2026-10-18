@@ -17,11 +17,10 @@ from textual.widgets import Button, Static
 class DeleteDialog(ModalScreen[str]):
     """Asks before an execution is deleted, the TUI's one action that cannot be undone. Dismissed with
     the choice: ``delete``, ``skip``, ``all`` (delete this one and every remaining one without asking again), or
-    ``cancel``. One execution offers only Delete and Cancel."""
+    ``cancel``. One execution offers only Delete and Cancel. Cancel has the focus, so Enter, which opens a row everywhere
+    else, never deletes by a double tap or a held key: only ``y`` or a click on Delete does."""
 
     BINDINGS = [
-        # Before a focused button's own Enter, which would press whichever button has the focus.
-        Binding("enter", "choose('delete')", "Delete", show=False, priority=True),
         Binding("y", "choose('delete')", "Delete", show=False),
         Binding("s", "choose('skip')", "Skip", show=False),
         Binding("a", "choose('all')", "Delete all", show=False),
@@ -56,6 +55,9 @@ class DeleteDialog(ModalScreen[str]):
                     yield Button("Skip", id="skip")
                     yield Button("Delete all", id="all", variant="warning")
                 yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()

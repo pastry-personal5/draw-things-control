@@ -1,5 +1,7 @@
 """Tests for loading the global configuration."""
 
+import os
+import stat
 import tempfile
 import unittest
 from dataclasses import replace
@@ -192,3 +194,46 @@ class GlobalConfigTests(unittest.TestCase):
                 self.write(self.base() + text)
                 with self.assertRaisesRegex(ValueError, field):
                     load_global_config(self.path)
+
+    def test_file_opener_is_optional_and_names_an_executable(self) -> None:
+        self.write(self.base())
+        self.assertIsNone(load_global_config(self.path).file_opener)
+        opener = self.root / "opener"
+        opener.write_text("#!/bin/sh\n", encoding="utf-8")
+        opener.chmod(opener.stat().st_mode | stat.S_IXUSR)
+        self.write(self.base() + f"file_opener: {opener}\n")
+        self.assertEqual(load_global_config(self.path).file_opener, opener)
+        self.write(self.base() + "file_opener: sh\n")
+        found = load_global_config(self.path).file_opener
+        assert found is not None
+        self.assertTrue(found.is_absolute() and os.access(found, os.X_OK))
+
+    def test_file_opener_expands_home(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.home()) as home:
+            opener = Path(home) / "opener"
+            opener.write_text("#!/bin/sh\n", encoding="utf-8")
+            opener.chmod(0o755)
+            self.write(self.base() + f"file_opener: ~/{opener.relative_to(Path.home())}\n")
+            self.assertEqual(load_global_config(self.path).file_opener, opener)
+
+    def test_a_bad_file_opener_names_the_key(self) -> None:
+        plain = self.root / "plain"
+        plain.write_text("x", encoding="utf-8")
+        plain.chmod(0o644)
+        cases = {"not text": "file_opener: 5\n", "empty": "file_opener: ''\n", "relative path": "file_opener: bin/player\n", "missing": f"file_opener: {self.root / 'nope'}\n", "not executable": f"file_opener: {plain}\n", "not on PATH": "file_opener: no-such-player-xyz\n"}
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.write(self.base() + text)
+                with self.assertRaisesRegex(ValueError, "file_opener"):
+                    load_global_config(self.path)
+
+    def test_the_example_documents_file_opener_as_a_commented_entry_that_loads_once_enabled(self) -> None:
+        example = (Path(__file__).resolve().parents[2] / "config" / "global-config.example.yaml").read_text(encoding="utf-8")
+        line = next((line for line in example.splitlines() if line.startswith("# file_opener:")), None)
+        assert line is not None
+        opener = self.root / "iina-cli"
+        opener.write_text("#!/bin/sh\n", encoding="utf-8")
+        opener.chmod(0o755)
+        self.write(self.base() + f"file_opener: {opener}\n")
+        self.assertEqual(load_global_config(self.path).file_opener, opener)
+        self.assertIn("file_opener", {"file_opener"} & set(__import__("framecontrol.core.global_config", fromlist=["x"]).GLOBAL_CONFIG_KEYS))

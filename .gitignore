@@ -57,6 +57,7 @@ config/server-token
 
 # The terminal UI's own preferences (its verbose level), written by `/verbose`
 config/tui-preferences.yaml
+config/tui-command-history.txt
 
 # gRPC stubs generated from server/proto/monitor.proto by `make proto` (a make check dependency); the .proto file
 # stays the single source of truth, with no generated code to drift from it. One copy per front end with a gRPC

@@ -163,7 +163,7 @@ class WorkStatusTests(StatusTextCase):
         self.assertIn("ends ~14:16 (in 9 min 15 s)", lines[1])
 
     def test_the_lines_when_a_job_is_over_or_never_started(self) -> None:
-        self.assertEqual([str(line) for line in work_status_lines(None, False, 42)], [""] * 5)
+        self.assertEqual([str(line) for line in work_status_lines(None, False, 42)], ["idle", "", "", "", ""])
         self.assertEqual(str(work_status_lines(None, True, 42)[0]), "A job is running in another process")
         live = self.live()
         self.start(live, 1)

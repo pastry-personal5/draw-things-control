@@ -14,6 +14,7 @@ from unittest import mock
 import yaml
 from rich.text import Text
 from textual.app import App
+from textual.widgets import Static
 
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.core.run_lock import RunLockError
@@ -27,6 +28,7 @@ from framecontrol.tui.job_sort import SortPreference
 from framecontrol.tui.job_watch import JobWatcher
 from framecontrol.tui.panes.job_definitions import JobsList
 from framecontrol.tui.text.jobs import changed_text, job_display_names, sort_job_rows
+from framecontrol.tui.text_overlay import TextOverlay
 from framecontrol.tui.widgets import ActivityLog
 from tests.fixtures import job_data, to_version_2
 from tests.tui.test_tui import make_service
@@ -139,13 +141,22 @@ class JobDefinitionTests(TuiTestCase):
             kept = [row[1] for row in self.rows(pilot.app)]
         self.assertEqual(kept, ["c", "b", "a"])
 
-    async def test_enter_describes_the_job_and_a_submits_it_to_the_queue(self) -> None:
+    async def test_enter_opens_the_job_in_the_viewer_l_writes_it_to_the_log_and_a_submits_it_to_the_queue(self) -> None:
         self.write_data_job("walk.yaml")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
             table = pilot.app.screen.query_one(JobsList)
             table.focus()
             await pilot.press("enter")
+            await self.wait_for(pilot, lambda: isinstance(pilot.app.screen, TextOverlay), "the viewer")
+            viewer = pilot.app.screen
+            shown = str(viewer.query_one("#text-overlay-body", Static).render())
+            title = str(viewer.query_one("#text-overlay-title", Static).render())
+            logged_by_enter = "\n".join(self.said)
+            await pilot.press("escape")
+            await pilot.pause()
+            back = pilot.app.focused
+            await pilot.press("l")
             await self.settle(pilot)
             described = "\n".join(self.said)
             await pilot.press("a")
@@ -155,9 +166,42 @@ class JobDefinitionTests(TuiTestCase):
             running = cast(FramecontrolApp, pilot.app).job_running
             await pilot.press("escape")
             focused = pilot.app.focused
+        self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", shown)
+        self.assertEqual(title, "Job walk.yaml")
+        self.assertNotIn("Job file:", logged_by_enter)
+        self.assertIs(back, table)
         self.assertIn(f"Job ID: J0001\nJob file: {self.data / 'walk.yaml'}", described)
         self.assertFalse(running)
         self.assertIsNot(focused, table)
+
+    async def test_a_refuses_an_invalid_job_with_its_reason_and_asks_twice_for_a_job_already_queued(self) -> None:
+        self.write_data_job("walk.yaml")
+        (self.data / "broken.yaml").write_text("version: 2\nnot: [valid", encoding="utf-8")
+        async with self.app().run_test(size=(160, 50)) as pilot:
+            await self.settle(pilot)
+            table = pilot.app.screen.query_one(JobsList)
+            table.focus()
+            table.move_cursor(row=table.get_row_index("broken.yaml"))
+            await pilot.press("a")
+            await pilot.pause()
+            refused = [line for line in self.said if "broken.yaml is invalid and was not submitted" in line]
+            submitted_after_invalid = list(self.server.submitted)
+            table.move_cursor(row=table.get_row_index("walk.yaml"))
+            await pilot.press("a")
+            await self.wait_for(pilot, lambda: len(self.server.submitted) == 1, "the first submission")
+            self.server.entries = [{"queue_id": "Q0001", "kind": "job", "backend": "draw-things-cli", "job_path": "/jobs/walk.yaml", "generation": None, "state": "queued", "total_runs": 5, "succeeded": 0, "park_requested": False}]
+            cast(FramecontrolApp, pilot.app).refresh_queue()
+            await self.wait_for(pilot, lambda: cast(FramecontrolApp, pilot.app).queued_entry_for(self.data / "walk.yaml") is not None, "the queue to show it")
+            await pilot.press("a")
+            await pilot.pause()
+            warned = [line for line in self.said if "walk.yaml is already queued as" in line]
+            after_warning = len(self.server.submitted)
+            await pilot.press("a")
+            await self.wait_for(pilot, lambda: len(self.server.submitted) == 2, "the second submission")
+        self.assertEqual(len(refused), 1, self.said)
+        self.assertEqual(submitted_after_invalid, [])
+        self.assertEqual(len(warned), 1, self.said)
+        self.assertEqual(after_warning, 1)
 
     async def test_a_new_or_changed_file_shows_at_the_next_check_and_only_it_is_read_again(self) -> None:
         walk = self.write_data_job("walk.yaml", prompt_pairs=ONE_PAIR)

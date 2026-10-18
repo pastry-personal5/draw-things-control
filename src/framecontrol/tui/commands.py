@@ -79,16 +79,18 @@ FOLLOWING_WORDS: dict[tuple[str, ...], tuple[str, ...]] = {
 # Characters a shell would split or interpret, escaped with a backslash in a completed job file name.
 SHELL_SPECIAL = re.compile(r"([^\w@%+=:,./-])")
 KEYS = (
-    ("Enter", "Run the command; open the selected job or queue entry; open or reveal the selected execution"),
-    ("Tab", "Complete the command field, or move to Jobs list, Queue list, Execution History list, then Execution detail"),
-    ("Up/Down", "Recall this session's commands (command field), move (the widgets)"),
-    ("a", "Ask to submit the selected job (Jobs list)"),
+    ("Enter", "Run the command; open the selected job or queue entry in a viewer; open or reveal the selected execution"),
+    ("l", "Write the selected job's or queue entry's details to the Activity log (Jobs list, Queue list)"),
+    ("Tab", "Complete the command field (again to step through several choices), or move to Jobs list, Queue list, Execution History list, then Execution detail"),
+    ("Up/Down", "Recall earlier commands, kept across sessions (command field), move (the widgets)"),
+    ("a", "Submit the selected job (Jobs list)"),
     ("c", "Cancel the selected entry (Queue)"),
     ("p / u", "Park the selected entry / withdraw its park reservation (Queue)"),
     ("s / r", "Sort by the next column / reverse the order (Jobs list)"),
     ("Space", "Mark or unmark the selected row for deletion (Execution History list)"),
     ("d", "Delete the marked rows, or the selected row when none is marked, asking first (Execution History list)"),
-    ("?", "Show shortcut help for the focused list or detail"),
+    ("? / F1", "Show shortcut help for the focused list or detail; F1 also works in the command field"),
+    ("PageUp/PageDown", "Scroll the Activity log (command field); with Shift, the generation output"),
     ("Escape", "Clear the command field, or go back to it (the widgets)"),
     ("Ctrl-C", "Clear the command field, or press twice to quit"),
 )
@@ -222,6 +224,10 @@ class CommandSuggester(Suggester):
         self.execution_ids = execution_ids
         self.queue_ids = queue_ids
 
+    def candidates(self, value: str) -> list[str]:
+        """Every whole command field ``value`` could be completed to, in help's order."""
+        return completions(value, self.job_names(), self.job_ids(), self.execution_ids(), self.queue_ids())
+
     async def get_suggestion(self, value: str) -> str | None:
-        found = completions(value, self.job_names(), self.job_ids(), self.execution_ids(), self.queue_ids())
+        found = self.candidates(value)
         return found[0] if found else None

@@ -14,6 +14,7 @@ from textual.worker import get_current_worker
 
 from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_reader import QueueReader
+from framecontrol.state.queue import FINISHED_STATES
 from framecontrol.tui.panes.base import SidewaysTable
 from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.queue import queue_cells, queue_row_to_dict
@@ -21,22 +22,35 @@ from framecontrol.tui.text.queue import queue_cells, queue_row_to_dict
 if TYPE_CHECKING:
     from framecontrol.tui.app import FramecontrolApp
 
+# The state names of an entry that is over, as the API writes them.
+FINISHED_STATE_NAMES = frozenset(str(state) for state in FINISHED_STATES)
 # How often the fallback reader checks the store while the feed is down; the feed itself pushes every change while
 # it is up, so polling then does nothing (owner decision, mirrors ExecutionHistoryList's HISTORY_POLL_SECONDS).
 QUEUE_POLL_SECONDS = 5
 # The pane's height with its border and header: 5 rows show (owner decision), a horizontal scrollbar adds a line.
 QUEUE_LINES = 8
 MAX_FINISHED_ROWS = 5
+
+
+def counts_text(entries: list[dict[str, Any]]) -> str:
+    """``1 running, 3 queued, 5 finished``: the Queue list's subtitle, leaving out a state with no entry."""
+    counts = {"running": 0, "queued": 0, "finished": 0}
+    for entry in entries:
+        counts["finished" if entry["state"] in FINISHED_STATE_NAMES else "running" if entry["state"] == "running" else "queued"] += 1
+    return ", ".join(f"{count} {name}" for name, count in counts.items() if count)
+
+
 QUEUE_LIST_SHORTCUTS = (
     ("Up/Down", "Move the selected entry"),
     ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Open the selected entry"),
+    ("Enter", "Open the selected entry in a viewer"),
+    ("l", "Write the selected entry's details to the Activity log"),
     ("c", "Cancel the selected entry"),
     ("p / u", "Park / unpark the selected entry"),
     ("Tab / Shift-Tab", "Move focus"),
     ("Escape", "Focus the command field"),
     ("Ctrl-C", "Press twice to quit"),
-    ("?", "Show shortcut help"),
+    ("? / F1", "Show shortcut help"),
 )
 
 
@@ -47,6 +61,7 @@ class QueueList(SidewaysTable):
     BINDINGS = [
         Binding("question_mark", "show_shortcut_help", "Shortcut help", show=False),
         Binding("escape", "leave", "Command line", show=False),
+        Binding("l", "log_selected", "Write the details to the Activity log", show=False),
         Binding("c", "cancel_selected", "Cancel", show=False),
         Binding("p", "park_selected", "Park", show=False),
         Binding("u", "unpark_selected", "Unpark", show=False),
@@ -59,6 +74,11 @@ class QueueList(SidewaysTable):
         self.leave = leave
         # The rows shown, by queue ID, in the API's own dict shape (queue_row_to_dict adapts a store QueueRow to it).
         self.rows_by_id: dict[str, dict[str, Any]] = {}
+        # The entry ``c`` cancelled and the row it was on: when it leaves the active rows for the finished ones, the
+        # cursor stays on that row (the next entry) instead of following it, so ``c`` can be pressed down the list.
+        self.cancelled: tuple[str, int] | None = None
+        # Whether the rows were read at least once: before that, an empty list says nothing about the queue.
+        self.shown = False
 
     def on_mount(self) -> None:
         self.show_hold(cast("FramecontrolApp", self.app).queue_hold)
@@ -75,10 +95,17 @@ class QueueList(SidewaysTable):
     def action_show_shortcut_help(self) -> None:
         show_shortcut_help(self, "Queue list", QUEUE_LIST_SHORTCUTS)
 
+    def action_log_selected(self) -> None:
+        """``l``: the same as /describe on the selected row's ID, written to the Activity log."""
+        queue_id = self._selected_id()
+        if queue_id is not None:
+            cast("FramecontrolApp", self.app).describe_queue_entry(queue_id)
+
     def action_cancel_selected(self) -> None:
         """``c``: the same as /queue cancel on the selected row's ID, no confirmation, as that command has none."""
         queue_id = self._selected_id()
         if queue_id is not None:
+            self.cancelled = (queue_id, self.cursor_row)
             cast("FramecontrolApp", self.app).cancel_entry(queue_id)
 
     def action_park_selected(self) -> None:
@@ -102,9 +129,9 @@ class QueueList(SidewaysTable):
         self.border_title = "Queue list (held)" if hold.held else "Queue list"
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Enter on a row: the same as /describe on its ID."""
+        """Enter on a row: its details in the text viewer."""
         if event.row_key.value is not None:
-            cast("FramecontrolApp", self.app).describe_queue_entry(str(event.row_key.value))
+            cast("FramecontrolApp", self.app).describe_queue_entry(str(event.row_key.value), viewer=True)
 
     def show_entries(self, entries: list[dict[str, Any]]) -> None:
         """Shown directly by the gRPC feed worker (the same asyncio loop as this widget, so no thread hop is
@@ -141,10 +168,24 @@ class QueueList(SidewaysTable):
                 app.set_queue_hold(hold)
 
     def _show(self, entries: list[dict[str, Any]]) -> None:
+        self._fill(entries)
+        self.border_subtitle = counts_text(entries)
+        # The idle work status reads these rows: shown at once, not at the next tick (once a minute at verbose low).
+        cast("FramecontrolApp", self.app).show_status()
+
+    def _fill(self, entries: list[dict[str, Any]]) -> None:
         selected = str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value) if self.row_count else None
         self.clear()
+        self.shown = True
         self.rows_by_id = {entry["queue_id"]: entry for entry in entries}
         for entry in entries:
             self.add_row(*queue_cells(entry), key=entry["queue_id"])
+        cancelled, self.cancelled = self.cancelled, None
+        if cancelled is not None and cancelled[0] == selected and selected in self.rows_by_id:
+            if self.rows_by_id[selected]["state"] in FINISHED_STATE_NAMES:
+                self.move_cursor(row=min(cancelled[1], self.row_count - 1))
+                return
+            # Not over yet (a running entry is still stopping): keep waiting, following the entry meanwhile.
+            self.cancelled = cancelled
         if selected is not None and selected in self.rows_by_id:
             self.move_cursor(row=self.get_row_index(selected))

@@ -62,6 +62,8 @@ class MainScreen(Screen[None]):
         self.reader: PaneHistory | None = None
         self.commands = CommandController(self)
         self.running = RunningJobView(self)
+        # The completions Tab is stepping through in the command field, and the one in it.
+        self.completions: tuple[list[str], int] = ([], 0)
 
     @property
     def fc(self) -> FramecontrolApp:
@@ -109,14 +111,14 @@ class MainScreen(Screen[None]):
             with Vertical(id="right"):
                 # First in the management column, so Tab follows the visible hierarchy after the command field.
                 self.catalog = JobCatalog(self.fc.data_directory, self.fc.settings, self.fc.paths, store)
-                yield JobsList(self.catalog, SortPreference(store), describe=self.describe_job, run=self.fc.start_flow, announce=self.announce_jobs, leave=self.focus_command_field, id="jobs-list")
+                yield JobsList(self.catalog, SortPreference(store), describe=self.open_job, log=self.describe_job, run=self.fc.start_flow, announce=self.announce_jobs, leave=self.focus_command_field, id="jobs-list")
                 yield QueueList(queue_reader, feed_connected=lambda: self.fc.feed_connected, leave=self.focus_command_field, id="queue-list")
                 yield ExecutionHistoryList(self.reader, busy=lambda: self.fc.feed_connected, leave=self.focus_command_field, delete=self.fc.ask_to_delete, id="execution-history-list")
-                yield ExecutionDetailPane(self.reader, say=self.say, leave=self.focus_command_field, id="execution-detail")
+                yield ExecutionDetailPane(self.reader, say=self.say, leave=self.focus_command_field, file_opener=self.fc.settings.file_opener, id="execution-detail")
         yield Rule(line_style="solid", classes="command-rule")
         with Horizontal(id="command-line"):
             yield Static("> ", id="command-prompt")
-            yield CommandField(id="command-field", compact=True, suggester=CommandSuggester(lambda: self.jobs_list.job_names, lambda: self.jobs_list.job_ids, self.execution_ids, self.queue_ids))
+            yield CommandField(id="command-field", history=self.fc.command_history, compact=True, suggester=CommandSuggester(lambda: self.jobs_list.job_names, lambda: self.jobs_list.job_ids, self.execution_ids, self.queue_ids))
         yield Rule(line_style="solid", classes="command-rule")
         yield SteadyText(id="status-line")
 
@@ -167,7 +169,11 @@ class MainScreen(Screen[None]):
         if not self.is_mounted:
             return
         fc = self.fc
-        self.query_one("#status-line", SteadyText).show_text(status_line_text(fc.data_directory, fc.live, fc.job_running, fc.quit_armed, shortcut_help=self.shortcut_help_available()))
+        self.query_one("#status-line", SteadyText).show_text(status_line_text(fc.data_directory, fc.live, fc.job_running, fc.quit_armed, shortcut_help=self.shortcut_help_available(), server=fc.feed_connected, completions=self.completions))
+
+    def show_completions(self, choices: list[str], index: int) -> None:
+        self.completions = (choices, index)
+        self.refresh_status_line()
 
     # Commands
 
@@ -177,11 +183,17 @@ class MainScreen(Screen[None]):
         if not line:
             return
         self.command_field.remember(line)
+        self.fc.keep_command_history(list(self.command_field.recalled))
         self.say(Text(f"> {line}", style="bold"), block=True)
         self.commands.submit(line)
 
     def describe_job(self, path: Path) -> None:
-        self.load_details(path, self.fc.settings, self.fc.toolkit)
+        """/describe job and ``l``: the details in the Activity log."""
+        self.load_details(path, self.fc.settings, self.fc.toolkit, False)
+
+    def open_job(self, path: Path) -> None:
+        """Enter on the Jobs list: the details in the text viewer."""
+        self.load_details(path, self.fc.settings, self.fc.toolkit, True)
 
     # Workers: jobs, the detail, and reveal
 
@@ -193,20 +205,24 @@ class MainScreen(Screen[None]):
             self.say(listing.id_error, "yellow")
 
     @work(thread=True, group="details")
-    def load_details(self, path: Path, settings: GlobalConfig, toolkit: Toolkit) -> None:
+    def load_details(self, path: Path, settings: GlobalConfig, toolkit: Toolkit, viewer: bool) -> None:
         details = read_details(path, settings, self.fc.paths)
         if details.job is not None:
             details = add_plan(details, toolkit, CHILD_EXECUTABLE_NAME)
-        self.app.call_from_thread(self.show_details, path, details)
+        self.app.call_from_thread(self.show_details, path, details, viewer)
 
-    def show_details(self, path: Path, details: JobDetails) -> None:
+    def show_details(self, path: Path, details: JobDetails, viewer: bool = False) -> None:
         if not self.is_attached:
             return
         if details.job is None:
-            self.say(Text(f"Invalid job: {path}\n{details.error}", style="red"))
-            return
-        row = next((row for row in self.jobs_list.job_rows if row.path == path), None)
-        self.say(details_text(details.job, details, row.job_id if row is not None else None))
+            text = Text(f"Invalid job: {path}\n{details.error}", style="red")
+        else:
+            row = next((row for row in self.jobs_list.job_rows if row.path == path), None)
+            text = details_text(details.job, details, row.job_id if row is not None else None)
+        if viewer:
+            self.fc.show_in_viewer(f"Job {path.name}", text)
+        else:
+            self.say(text)
 
     # The history and the detail
 
