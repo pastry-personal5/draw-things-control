@@ -76,6 +76,7 @@ different file.
 | `timing show EXECUTION` | Show what each stage of a run took, through `fc serve` |
 | `timing import` | Rebuild stage timing from the job logs that still exist |
 | `timing replay` | Replay the retained runs through an estimator and print how close its remaining time was |
+| `timing knobs ...` | Show, check, update, roll back, reset and export the forecast's knob files (`show`, `check`, `update`, `rollback`, `reset`, `export-defaults`) |
 | `mcp` | Give AI agents typed tools over `fc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
@@ -1178,7 +1179,8 @@ The Activity log says it could not be saved.
   Job bar when the job starts and on the Run bar when the run starts. For the exact Draw Things
   `i2v` model, workload, and build measured in E0053, and the exact H3 `r2av` workload and build measured in E0051 and E0054,
   factory points supply an early forecast when history is thin. Other runs use a broad heuristic from sparse history of
-  the same model or from a measured point for their backend, scaled by pixels, effective frames, and steps. Its range
+  the same model or from the backend's calibration (the measured point, or what the host has learned, in
+  [timing knobs](#timing-knobs)), scaled by pixels, effective frames, and steps. Its range
   is deliberately wide until the run's own stage readings narrow it. `estimating` remains when even those workload
   dimensions are unavailable. A bar never moves back. The range is the server's
   80% interval. Its times are the server's clock, as the cooldown's are, so the TUI and the server are expected
@@ -1426,6 +1428,77 @@ reports each execution it skips and why, never writes to a log, and is safe to
 repeat: an execution that already has timing is left alone. The API gives the
 same table as JSON (`GET /v1/executions/E0012/runs/3/stages`), and MCP's
 `get_execution_run` includes it as `timing`.
+
+### Timing knobs
+
+The forecast's numbers that are not read from your history live in files you can
+read and edit, under `data/timing-data-analysis/` (git-ignored personal data).
+`fc serve` creates them from the factory values the first time it learns from a
+run, so a missing file simply means the factory numbers apply.
+
+| File | What it holds |
+|------|---------------|
+| `tuning.yaml` | The forecast's decisions, shared by both backends: `tunables` (how many times the median step counts as a pause, how fast old evidence fades, how much an unseen run knob widens the range, and so on) and `floors` (tier thresholds, the 2 s publishing interval, the ring and backup sizes) |
+| `draw-things-cli.yaml`, `h3-metal-cli.yaml` | What this host measured, with a section per pipeline: the step time at a measured workload and how it scales with pixels and frames, the learned terms (aspect, render size, references, each run knob, and an offset for each exact `WxH` size), the other stages' durations, and the spreads |
+
+`tuning.example.yaml`, `draw-things-cli.example.yaml` and `h3-metal-cli.example.yaml`
+beside them are the factory values, checked in; `uv run fc timing knobs export-defaults`
+rewrites them.
+
+**What is learned, and when.** After each completed run, once the queue is idle or
+cooling down (never while a run is generating), the server adds the run's numbers
+to a small ring (`.machine/ring.jsonl`, at most 300 runs per backend and
+pipeline: durations, sizes, step counts and fixed labels, never a prompt, a path,
+a log line or a model's filename) and counts it. At **1, 2, 4, 8, 16 and 32**
+completed runs of a pipeline it writes a *provisional* calibration: one run adjusts
+only the local step-time point; a size, frame, aspect or run-knob effect opens
+only when at least three independent executions vary it, and many runs of one job
+count as one execution. Each change is clamped and the range stays wide. After
+the 32nd run of a pipeline the file stops changing (later runs still enter the
+ring) until a later milestone adds a held-out check. Pruning the history does not
+remove what the files learned, and a signature the files remember is still priced
+from them.
+
+**Pinning a number.** Edit the number in the file and save. Framecontrol sees that
+the file no longer matches what it last wrote, keeps your value, and fits the
+other terms around it; `uv run fc timing knobs show --source pinned` lists them.
+Deleting a key returns it to automatic. A change to `notes:` or a comment pins
+nothing (comments are not kept when Framecontrol rewrites a file; `notes:` is),
+and `updated_at`, `evidence` and `source` are read-only: an edit to them is
+ignored with a warning. A value outside its bounds, or of the wrong type, is
+ignored and the factory value for that key is used, with the other keys kept.
+
+```bash
+uv run fc timing knobs show                    # every effective value and where it came from
+uv run fc timing knobs show h3-metal-cli.yaml --source provisional
+uv run fc timing knobs check                   # problems, pins, and deferred updates; exits 1 if a file cannot be used
+uv run fc timing knobs update                  # learn from the retained runs now (no server needed)
+uv run fc timing knobs rollback                # put the files back as they were before the latest update
+uv run fc timing knobs rollback 3              # ... before the update three back (a rollback is an update too, so one more undoes it)
+uv run fc timing knobs reset h3-metal-cli      # move that file aside; the factory applies and learning starts over
+uv run fc timing knobs export-defaults
+```
+
+A rollback keeps the count of completed runs, so learning resumes at the next of 1, 2, 4, 8, 16 and 32 and does not
+write again the calibration you just undid; `reset` starts a backend's learning over from the runs in the ring. If you
+save an edit while Framecontrol is writing a file, it keeps your edit, logs that it did, and reads it as a pin at its next
+update.
+
+**Broken files.** A file that is not valid YAML, or is from a newer version of
+Framecontrol, is not used and not overwritten: the forecast uses its newest valid
+backup (else the factory), automatic updates to that file are off, and
+`fc timing knobs check` says so. Repair it, or `rollback`, or `reset` it. Every
+automatic write keeps a timestamped backup (the newest 20 of each file) in
+`.machine/backups/`, and `.machine/updates.log` says what was written or why a
+candidate was rejected. `fc timing knobs update` takes the same lock as the server,
+so it can run beside it.
+
+**In the forecast.** A forecast built from learned numbers says so: the basis has
+`knobs: provisional` (or `pinned` when a value you set touches it, or `factory`)
+and when the calibration was written; `fc queue show` and `fc queue add --wait`
+print `from provisional calibration` or `with pinned timing knobs`, and the TUI's
+run summary says the same. A run knob value never seen before widens the range
+and is named under `unseen` in the basis.
 
 ### Delete executions
 

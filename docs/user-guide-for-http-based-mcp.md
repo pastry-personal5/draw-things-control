@@ -107,7 +107,7 @@ A running entry carries `forecast`, null when there is none:
 {"as_of": 1792292914.0, "stage": "denoise", "stage_done": 12, "stage_total": 30,
  "run": {"started_at": 1792292890.3, "end_at": 1792294300.0, "low": 1792294100.0, "high": 1792294600.0, "floor": 0.31, "progress": 0.34, "seconds_left": 1386.0},
  "job": {"started_at": 1792292890.3, "end_at": 1792294300.0, "low": 1792294100.0, "high": 1792294600.0, "floor": 0.31, "progress": 0.34, "seconds_left": 1386.0},
- "basis": {"tier": "signature", "fidelity": "live", "runs": 4, "executions": 3, "build_changed": false, "unseen": [], "penalty": null, "skipped": 0}}
+ "basis": {"tier": "signature", "fidelity": "live", "runs": 4, "executions": 3, "build_changed": false, "unseen": [], "penalty": null, "skipped": 0, "knobs": "factory", "knobs_updated_at": null}}
 ```
 
 `end_at`, `low` and `high` are epoch seconds: the estimated end and the 80%
@@ -118,7 +118,11 @@ synchronized clock; the SSE watch sends the forecast when it is republished, not
 as time passes. `basis.tier` says what it rests on: `signature` (the same
 settings), `backend_fit` or `pipeline_fit` (a fit over like runs), `factory` (a
 measured starting point), `heuristic` (a broad guess, with a wide range) or
-`live_only` (only this run's own steps). `current_step` and
+`live_only` (only this run's own steps). `basis.knobs` says where the numbers that
+are not the history's came from: `factory`, `provisional` (a calibration learned
+on this host, written at `knobs_updated_at`) or `pinned` (a value the owner set in
+`data/timing-data-analysis/`); a snapshot from an older server has neither field.
+A run knob value never seen before is named in `basis.unseen`. `current_step` and
 `current_step_total` no longer exist. The MCP `get_queue_entry` returns the
 same object, and a forecast never ends its wait.
 

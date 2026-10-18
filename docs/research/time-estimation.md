@@ -226,3 +226,98 @@ What this shows:
 - Coverage of the 80% range is 0.65 at 75% and 0.77 at 90%, under the 0.70 floor at 75%; this was not investigated.
 - Last-signature is still slightly closer from 5% to 25% (4% to 5%), and much worse after.
 - These are real-host numbers on a small window, not a gate; the run targets change only through a changelog entry.
+
+## Timing knobs: factory values and the learning curve
+
+The numbers behind [Milestone 14](../phase-4/milestone-14-timing-knobs.md): where each factory value comes from, and how
+the provisional calibration behaves on synthetic data. The factory is `jobs/timing/factory.py`; the checked-in
+`data/timing-data-analysis/*.example.yaml` files are its export, and a test keeps them equal.
+
+### Where each factory number comes from
+
+Measured (one execution each, so the spreads stay broad):
+
+| Number | Value | Source |
+|--------|-------|--------|
+| Draw Things step time | 13.6710 s | The geometric mean of E0053's two rates after their first gap (13.428 and 13.919 s): `wan_v2.2_a14b_hne_i2v_i8x.ckpt`, 384×768, 33 frames, 25 steps, `i2v`, color correction on, executable 160477120 bytes |
+| Draw Things stage factor, slope | 0.99758, 0.205 | The same runs (fitted within-stage slopes 0.240 and 0.170) |
+| Draw Things stages | starting 3.14 s, processing 4.87 s, finishing 4.64 s, verify, tag, last frame, correct 6.847 s | E0053; the stages after the child are Framecontrol's, with color correction |
+| H3 step time | 138.6683 s | E0051 and E0054's step-series estimator (141.283 and 136.102 s observed): `r2av`, 832×448, 15 requested seconds that H3 made 362 effective frames, 30 steps, three image references, executable 558688 bytes |
+| H3 first-gap ratio, slope, stage factor | 0.798, 0.1685, 0.99334 | The same two runs |
+| H3 stages | tokenize 0.203 s, three video encodes, three vision passes, text encode 9.653 s, load core 7.632 s, audio decode, video load, FFmpeg 189.977 s, verify, convert, drift, promote | The same two runs |
+
+Assumed, and never presented as measured:
+
+| Number | Value | Why |
+|--------|-------|-----|
+| Pixel exponent (step and the FFmpeg, finishing and correct stages) | 1.0 | A broad prior. The evidence varies pixels too little to fit it; the first independent executions that vary size move it |
+| Frame exponent, H3 | 1.6 | The 5, 8, 10 and 15 second `r2av`/`i2av` evidence grows faster than the clip length (about 21, 45 and 65 s per step at 832×448, which is an exponent near 1.6 over 2×) |
+| Frame exponent, Draw Things | 1.0; 0.5 for `i2i` | One measured clip length. A single output frame must not make a still-image job 33 times cheaper than E0053's video |
+| Heuristic log spread | 0.75 (1.0 for a pipeline the factory only borrows), stage spread 0.60 | Judgement: a transferred measured point is useful at once but far less certain than an exact match |
+| `tau` 0.10, `rho` 0.5, `pause_factor` 3.0, the tier counts, the penalty grid | Milestone 11's provisional constants | Unchanged by the move into `Tunables` |
+| `size_offset_shrinkage` 3, `prior_weight_cap` 12, `half_life_runs` 60, `unseen_knob_inflation` 1.5, `factory_spread` 0.25 | Judgement | The search of [Milestone 15](../phase-4/milestone-15-timing-gate-and-search.md) is what tests them |
+
+How a provisional calibration moves them: the factory counts as one more execution when the step time's shift is fitted, so one
+run that took twice the predicted time moves the log by half of ln 2; a slope term (pixels, frames, aspect, render size,
+references, one run knob) opens only when at least three independent executions vary it, as a ridge toward the factory value
+whose strength is `prior_weight_cap` pseudo-runs; each exact size then gets its residual shrunk by `n / (n + k)`. Every move is
+clamped (the shift to ±1.5, an exponent to ±0.75 of the factory's, other terms to ±2, a size offset to ±1), so a run a million
+times slower than predicted moves the shift to 1.5 and nothing else.
+
+### Learning curve on synthetic data
+
+`uv run python -m tests.timing.knob_curve --executions 300` generates the seeded history with its truth 30% away from the factory
+(second mode of `tests/timing/synthetic.py`: Draw Things slower, H3 faster, pixel and frame exponents off, two sizes off the
+curve, a stronger guidance effect), replays it in time order through the real update schedule from no files, and forecasts each
+execution from what had been learned before it, with no run history behind the forecast (the case once pruning has taken the
+rows). Three variants are compared: the factory knobs with no files, the calibration with size offsets and knob effects switched
+off, and the full calibration. 124 Draw Things and 176 H3 executions; the intervals are 90% bootstrap intervals of the median over
+runs, and runs of one execution are not independent samples, so the execution count is printed beside the run count.
+
+`h3-metal-cli`, median error of the time left at the start of a run (0%), and at every checkpoint (0, 5, 10, 25, 50, 75 and 90%):
+
+| Completed runs of the pipeline | Factory, start | Full, start | Full, executions | Factory, all | Full, all |
+|-------------------------------|----------------|-------------|------------------|--------------|-----------|
+| 0 | 9.5% | 62.0% | 2 | 10.9% | 8.4% |
+| 1 | - | 29.6% | 1 | - | 8.2% |
+| 2 | - | 1.7% | 2 | - | 5.3% |
+| 4 | - | 8.1% | 2 | - | 3.8% |
+| 8 | - | 3.5% | 6 | - | 4.4% |
+| 16 | - | 4.1% | 11 | - | 3.1% |
+| 32 | - | 2.4% | 1 | - | 3.6% |
+| after 32 | - | 4.1% | 154 | - | 3.4% |
+
+(the factory column is one row because it never learns: 9.5% at the start and 10.9% across checkpoints over all 176 executions.
+The 0 and 1 rows are not comparable with it: they hold only the few runs forecast before a pipeline's first or second completed
+run, the same runs the factory variant forecasts the same way, and they were poor (62.0% over three runs of two executions,
+29.6% for one) because the first run of a pipeline is priced from the factory alone and a pipeline the factory only borrows (`i2av`
+lends from `r2av`) has a wide range and no measured point of its own.)
+From the 2nd completed run the start-of-run error is at or under the factory's 9.5% in every row, and from the 16th it is about 4%.
+By how often the exact size had run, H3's start-of-run error is 8.1% for a size never seen, 3.9% after one run and 4.1% from five,
+against 13.6%, 9.4% and 9.4% for the factory. The 80% range's coverage after the 32nd run is 0.84 to 0.85 at the start of a
+run and 0.81 across checkpoints. Draw Things, with fewer and longer executions, shows the same shape with fewer runs per
+bucket: start-of-run error 4.6% after the 32nd run against the factory's 7.3%, and size offsets help most for sizes the
+power law misses (4.8% against 7.3% at the start for sizes seen five times or more). Size offsets and knob effects add
+little over the shift and exponents in this synthetic history (the `no-offsets` column is within about 1 point of `full`
+everywhere), which is what a history whose only off-curve sizes are two of nine would show; they are kept because the real
+host's sizes and settings are not known to follow the curve. No accuracy threshold gates CI or completion; `make check` runs the
+same code on 40 executions to prove it runs, not that it is accurate.
+
+### Cost
+
+Measured on the development machine (Apple silicon, Python 3.12, LibYAML parser), against the targets of 20 ms, 3 s of CPU and
+5 ms:
+
+| What | Target | Measured |
+|------|--------|----------|
+| Loading the knob files (three YAML files, about 15 KB) | 20 ms | median 3.2 ms, worst of 30 reads 11.6 ms; 15 ms median without LibYAML |
+| A 300-run calibration fit | 3 s of CPU | 0.02 s |
+| A whole update, ring and files, for one new run | 3 s of CPU | 0.08 to 0.10 s (a 600-run backfill: 0.08 s) |
+| The forecast's cost per job event (`ForecastPublisher.observe`, 20 replayed synthetic executions, 13,859 events) | 5 ms | median 0.02 ms, 99th percentile 0.07 ms, worst 0.16 ms |
+| The worker telling the updater a run completed | 5 ms | under 5 ms for a thousand calls, asserted by a test; one `Event.set` |
+
+### Owner host validation
+
+Pending, like [Milestone 11's](#host-validation) first pass: the learning curve on the real runs the host completes after the
+knobs go live (the first number's error with the factory, and at provisional counts 1, 2, 4, 8, 16 and 32), and one real H3
+job and one real Draw Things job forecast from the files compared with the actual end. It does not block the milestone.
