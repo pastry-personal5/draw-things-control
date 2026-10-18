@@ -24,12 +24,13 @@ from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.events import JobEvent, JobFinished, RunOutput, RunStarted, StageFinished, TimingFinished
 from framecontrol.jobs.executor import JobExecutor
 from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun, Span
+from framecontrol.jobs.timing.knobs import Tunables
 from framecontrol.services.forecast_view import progress
 
-# Within a stage, a reading is published at most this often, apart from the stage's last.
-MIN_INTERVAL_SECONDS = 2.0
-# Ends this close are the same end.
-SAME_END_SECONDS = 1.0
+# Within a stage, a reading is published at most this often, apart from the stage's last; ends this close are the same
+# end. These are the factory values of the ``publish_interval_seconds`` and ``same_end_seconds`` tunables, which decide.
+MIN_INTERVAL_SECONDS = Tunables().publish_interval_seconds
+SAME_END_SECONDS = Tunables().same_end_seconds
 
 
 def job_plan(executor: JobExecutor, job: JobDefinition, *, first_run: int, executable: str) -> JobPlan:
@@ -46,8 +47,9 @@ class ForecastPublisher:
     """One entry's forecasts. The worker's thread feeds it events while a request thread may park or cancel the entry, so a
     lock keeps its state to one at a time."""
 
-    def __init__(self, forecaster: Forecaster, publish: Callable[[Forecast | None], None], clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, forecaster: Forecaster, publish: Callable[[Forecast | None], None], clock: Callable[[], float] = time.time, tunables: Tunables | None = None) -> None:
         self._forecaster = forecaster
+        self._tunables = tunables or forecaster.tunables
         self._publish = publish
         self._clock = clock
         self._last: Forecast | None = None
@@ -118,7 +120,7 @@ class ForecastPublisher:
             if not self._advanced(forecast):
                 return
             last_reading = forecast.stage_total is not None and forecast.stage_done == forecast.stage_total
-            if not last_reading and self._last_reading_at is not None and now - self._last_reading_at < MIN_INTERVAL_SECONDS:
+            if not last_reading and self._last_reading_at is not None and now - self._last_reading_at < self._tunables.publish_interval_seconds:
                 return
             self._last_reading_at = now
         elif self._last_reading_at is not None and self._stage_changed(forecast):
@@ -140,11 +142,10 @@ class ForecastPublisher:
             return False
         return self._same_end(forecast.run, last.run) and self._same_end(forecast.job, last.job)
 
-    @staticmethod
-    def _same_end(new: Span | None, old: Span | None) -> bool:
+    def _same_end(self, new: Span | None, old: Span | None) -> bool:
         if new is None or old is None:
             return new is old
-        return abs(new.end_at - old.end_at) <= SAME_END_SECONDS
+        return abs(new.end_at - old.end_at) <= self._tunables.same_end_seconds
 
     def _send(self, forecast: Forecast, now: float) -> None:
         run = self._held(forecast.run, self._last.run if self._last else None, now, "_run_floor")

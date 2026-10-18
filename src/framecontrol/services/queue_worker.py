@@ -21,19 +21,21 @@ from framecontrol.core.run_lock import SERVER_HOLDER_NAME, RunLock
 from framecontrol.jobs.backend import BackendRegistry
 from framecontrol.jobs.backends import DEFAULT_BACKENDS
 from framecontrol.jobs.definition import JobDefinition
-from framecontrol.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunStatus
+from framecontrol.jobs.events import JobEvent, JobFinished, JobObserver, JobStarted, JobStatus, RunStatus, TimingFinished
 from framecontrol.jobs.executor import JobExecutor, ResumePoint
 from framecontrol.jobs.timing.forecast import Forecast, Forecaster
 from framecontrol.services.forecast_publisher import ForecastPublisher, job_plan
 from framecontrol.services.generation_submit import GenerationSnapshot
 from framecontrol.services.history_delete import DeleteReport
 from framecontrol.services.job_runs import JobRunSession
+from framecontrol.services.knob_updater import KnobUpdater
 from framecontrol.services.queue_claim_gate import QueueClaimGate
 from framecontrol.services.queue_events import EventSink, QueueEventPublisher
 from framecontrol.services.queue_hold import HoldState, QueueHold
 from framecontrol.services.queue_submit import parse_snapshot
 from framecontrol.services.queue_worker_status import WorkerStatus
 from framecontrol.services.timing_history import TimingHistory
+from framecontrol.services.timing_knobs import KnobReader, knob_files
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.ids import EXECUTION_LETTER, execution_id_text, parse_typed_id
 from framecontrol.state.queue import QueueRow, QueueState
@@ -73,7 +75,7 @@ WaitBetweenJobs = Callable[[float], None]
 class QueueWorker:
     """Runs queued jobs one after another off its own thread, while ``lock`` and ``store`` are held for the host's whole lifetime."""
 
-    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, store: Store, session: JobRunSession, executor: JobExecutor, lock: RunLock, paths: ProjectPaths, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, poll_interval: float = 0.02, wait_between_jobs: WaitBetweenJobs | None = None, on_event: EventSink | None = None, backends: BackendRegistry = DEFAULT_BACKENDS, knob_updater: KnobUpdater | None = None) -> None:
         self._store = store
         self._session = session
         self._executor = executor
@@ -109,7 +111,8 @@ class QueueWorker:
         self._status = WorkerStatus(clock=clock)
         # The forecast of the entry being run: its history, its publisher, and the latest one published. Its own lock,
         # since a forecast is published while the state lock is held (a park) and while it is not (a job event).
-        self._history = TimingHistory(store)
+        self._history = TimingHistory(store, KnobReader(knob_files(paths)))
+        self._knob_updater = knob_updater
         self._publisher: ForecastPublisher | None = None
         self._forecast: Forecast | None = None
         self._forecast_entry: int | None = None
@@ -118,6 +121,13 @@ class QueueWorker:
     def start(self) -> None:
         self._thread = threading.Thread(target=self.run_forever, name="queue-worker", daemon=True)
         self._thread.start()
+        if self._knob_updater is not None:
+            self._knob_updater.start()
+
+    def is_quiet(self) -> bool:
+        """Whether no run is generating: the queue is idle, held, or cooling down, or the claimed job is between two runs. The
+        timing knob updater runs only then, so learning never competes with the timing it measures."""
+        return self._status.state() != "running" or self._status.between_runs_after() is not None
 
     def stop(self) -> None:
         """Ask the loop to end: cancel the running job at once (or, if it is still between the claim and the executor's ``begin()``, keep the cancel pending for ``_start_guard`` to apply at ``JobStarted``), end any between-jobs wait, and wait for the thread."""
@@ -132,6 +142,8 @@ class QueueWorker:
         self._wake_event.set()
         if self._thread is not None:
             self._thread.join()
+        if self._knob_updater is not None:
+            self._knob_updater.stop()
 
     def wake(self) -> None:
         """Wake an idle worker, or end its between-jobs wait early: a submission, or a cancel of the queued entry it is waiting for. A no-op when the worker is not waiting."""
@@ -448,10 +460,24 @@ class QueueWorker:
             publisher = ForecastPublisher(Forecaster(self._history.model(), plan), lambda forecast: self._publish_forecast(entry, forecast), clock=lambda: self._clock().timestamp())
         except Exception:
             logger.exception("Queue entry {} has no forecast: its runs could not be described", entry.label)
-            return lambda event: None
+            return self._learning(lambda event: None)
         with self._forecast_lock:
             self._publisher = publisher
-        return publisher.observe
+        return self._learning(publisher.observe)
+
+    def _learning(self, observer: JobObserver) -> JobObserver:
+        """``observer``, also telling the knob updater when a run's timing is complete, so it can learn from it once the queue is quiet."""
+        updater = self._knob_updater
+        if updater is None:
+            return observer
+
+        def observe(event: JobEvent) -> None:
+            observer(event)
+            # A run's timing is stored by the recorder, which sees the same event; the job's end is a second chance for the last run.
+            if (isinstance(event, TimingFinished) and event.complete) or isinstance(event, JobFinished):
+                updater.notify()
+
+        return observe
 
     def _publish_forecast(self, entry: QueueRow, forecast: Forecast | None) -> None:
         """Hold the forecast the publisher made, and tell the event stream."""

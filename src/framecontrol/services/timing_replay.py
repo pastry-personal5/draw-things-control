@@ -211,14 +211,14 @@ class _SignatureIndex:
 # -------------------------------------------------------------------- replay
 
 
-def _score(execution: HistoryExecution, training: Sequence[HistoryRun], model: FittedModel, factory: EstimatorFactory, index: _SignatureIndex, report: ReplayReport, backend: str | None) -> None:
+def _score(execution: HistoryExecution, training: Sequence[HistoryRun], model: FittedModel, factory: EstimatorFactory, index: _SignatureIndex, report: ReplayReport, backend: str | None, run_checkpoints: Sequence[float] = CHECKPOINTS_RUN) -> None:
     job = replay_job(execution, origin=0.0)
     estimator = factory(JobContext(execution, 1, training, model))
     runs = {run.run: run for run in execution.runs}
     marks: list[tuple[float, str, int | None, float]] = []
     for number, start in job.starts.items():
         end = job.ends[number]
-        marks.extend((start + share * (end - start), "run", number, share) for share in CHECKPOINTS_RUN)
+        marks.extend((start + share * (end - start), "run", number, share) for share in run_checkpoints)
     marks.extend((job.started + share * (job.finished - job.started), "job", None, share) for share in CHECKPOINTS_JOB)
     marks.sort(key=lambda mark: mark[0])
     first_numbers: dict[int, float | None] = {number: None for number in runs if number in job.starts}
@@ -264,6 +264,12 @@ def _score(execution: HistoryExecution, training: Sequence[HistoryRun], model: F
         if number in job.starts and (backend is None or run.backend == backend):
             report.traces.append(Trace(run.backend, run.pipeline, execution.number, number, index.qualified(run), first_numbers.get(number), moves[number]))
     report.job_moves_back[execution.number] = job_moves
+
+
+def score_execution(execution: HistoryExecution, training: Sequence[HistoryRun], model: FittedModel, factory: EstimatorFactory, report: ReplayReport, backend: str | None = None, run_checkpoints: Sequence[float] = CHECKPOINTS_RUN) -> None:
+    """Score one execution against ``model``, adding its observations to ``report`` (for a replay that builds its own models,
+    such as the knob learning curve, where each execution is judged by what was learned before it)."""
+    _score(execution, training, model, factory, _SignatureIndex(training), report, backend, run_checkpoints)
 
 
 def replay_leave_one_out(executions: Sequence[HistoryExecution], factory: EstimatorFactory, *, backend: str | None = None) -> ReplayReport:

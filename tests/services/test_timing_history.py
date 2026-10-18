@@ -163,3 +163,62 @@ class LoadExecutionsTests(StoreCase):
         self.assertEqual(load_executions(self.store), ([], 0))
         with mock.patch.object(type(self.store.timing), "complete_runs", side_effect=sqlite3.OperationalError("locked")):
             self.assertEqual(load_executions(self.store), ([], 0))
+
+
+class TimingHistoryKnobsTests(StoreCase):
+    """The history also reads the knob files, and notices when one changes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import tempfile
+        from pathlib import Path
+
+        from framecontrol.services.timing_knob_files import KnobFiles
+        from framecontrol.services.timing_knobs import KnobReader
+
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.files = KnobFiles(Path(self.directory.name) / "timing")
+        self.history = TimingHistory(self.store, KnobReader(self.files))
+
+    def plan(self):
+        return self.history.model().plan("draw-things-cli", "i2v", WORKLOAD, ENVIRONMENT)
+
+    def test_with_no_files_the_numbers_are_the_factorys(self) -> None:
+        plan = self.plan()
+        self.assertEqual((plan.tier, plan.knobs, plan.knobs_updated_at), ("heuristic", "factory", None))
+
+    def test_a_hand_edit_reaches_the_next_forecast_without_a_restart(self) -> None:
+        import yaml
+
+        from framecontrol.services.knob_updater import KnobUpdateEngine
+
+        KnobUpdateEngine(self.files).update([])
+        first = self.history.model()
+        before = self.plan()
+        path = self.files.directory / "draw-things-cli.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["pipelines"]["i2v"]["step"]["seconds"] = 100.0
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        after = self.plan()
+        self.assertIsNot(self.history.model(), first)
+        self.assertEqual(after.knobs, "pinned")
+        self.assertGreater((after.log_step or 0.0) - (before.log_step or 0.0), 1.5)
+
+    def test_a_tunable_the_owner_edited_reaches_the_model(self) -> None:
+        import yaml
+
+        from framecontrol.services.knob_updater import KnobUpdateEngine
+
+        KnobUpdateEngine(self.files).update([])
+        path = self.files.directory / "tuning.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["tunables"]["pause_factor"] = 5.0
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        self.assertEqual(self.history.model().tunables.pause_factor, 5.0)
+        self.assertEqual(self.plan().knobs, "pinned")
+
+    def test_a_knob_file_that_cannot_be_read_is_the_factory_not_an_error(self) -> None:
+        self.files.directory.mkdir(parents=True)
+        (self.files.directory / "draw-things-cli.yaml").write_text("pipelines: [", encoding="utf-8")
+        self.assertEqual(self.plan().tier, "heuristic")

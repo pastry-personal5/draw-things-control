@@ -173,3 +173,88 @@ class JobPlanTests(QueueWorkerCase):
     def test_a_resumed_entry_forecasts_only_the_runs_it_will_execute(self) -> None:
         plan = job_plan(self.executor, self.job(5), first_run=3, executable="draw-things-cli")
         self.assertEqual([run.number for run in plan.runs], [3, 4, 5])
+
+
+class QueueLearningTests(QueueWorkerCase):
+    """The worker tells the knob updater when a run's timing is complete, and nothing else."""
+
+    def test_the_updater_is_told_after_each_complete_run_and_when_the_job_ends(self) -> None:
+        updater = mock.Mock()
+        worker = self.build_worker(knob_updater=updater)
+        label = self.submit(run_count=2)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertEqual(self.entry(label).state, "succeeded")
+        # Once for each of the two runs, and once more when the job ends, in case the last run's row was stored after its event.
+        self.assertEqual(updater.notify.call_count, 3)
+
+    def test_a_worker_with_no_updater_runs_as_before(self) -> None:
+        worker = self.build_worker()
+        label = self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertEqual(self.entry(label).state, "succeeded")
+
+    def test_the_updater_is_started_and_stopped_with_the_worker(self) -> None:
+        updater = mock.Mock()
+        worker = self.build_worker(knob_updater=updater)
+        worker.start()
+        worker.stop()
+        updater.start.assert_called_once_with()
+        updater.stop.assert_called_once_with()
+
+    def test_the_queue_is_quiet_when_idle_and_between_runs_but_not_while_generating(self) -> None:
+        worker = self.build_worker()
+        self.assertTrue(worker.is_quiet())
+        seen: list[bool] = []
+        label = self.submit(run_count=2)
+
+        def note(kind: str, data: dict[str, Any]) -> None:
+            if kind == "forecast_updated" and data["forecast"] is not None and data["forecast"]["stage"] == "prepare":
+                seen.append(worker.is_quiet())
+
+        worker = self.build_worker(on_event=note)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertEqual(self.entry(label).state, "succeeded")
+        self.assertTrue(seen)
+        self.assertFalse(any(seen))
+        self.assertTrue(worker.is_quiet())
+
+
+class QueueLearningEndToEndTests(QueueWorkerCase):
+    """A real updater thread reading the real store the worker writes, from another thread."""
+
+    def build(self):
+        from framecontrol.services.knob_updater import KnobUpdater
+        from framecontrol.services.timing_knob_files import KnobFiles
+
+        updater = KnobUpdater(self.paths, self.store, poll=0.01)
+        worker = self.build_worker(knob_updater=updater)
+        updater.set_quiet(worker.is_quiet)
+        updater.start()
+        self.addCleanup(updater.stop)
+        return worker, updater, KnobFiles(self.paths.timing_data)
+
+    def test_runs_that_completed_reach_the_ring_and_the_files_after_the_job(self) -> None:
+        worker, updater, files = self.build()
+        label = self.submit(run_count=2)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertEqual(self.entry(label).state, "succeeded")
+        self.assertTrue(updater.wait_idle(15))
+        counts, entries = files.read_ring()
+        self.assertEqual(len(entries), 2, updater.last_report)
+        self.assertEqual(sum(counts.values()), 2)
+        self.assertEqual(sorted(entry["r"] for entry in entries), [1, 2])
+        self.assertTrue((files.directory / "tuning.yaml").is_file())
+        self.assertTrue((files.directory / "draw-things-cli.yaml").is_file())
+
+    def test_the_last_run_of_a_session_is_not_left_for_the_next_one(self) -> None:
+        worker, updater, files = self.build()
+        self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertTrue(updater.wait_idle(15))
+        self.assertEqual(len(files.read_ring()[1]), 1)
+
+    def test_a_worker_with_no_updater_writes_nothing_under_the_project(self) -> None:
+        worker = self.build_worker()
+        self.submit(run_count=1)
+        self.assertTrue(worker.claim_and_run_one())
+        self.assertFalse(self.paths.timing_data.exists())

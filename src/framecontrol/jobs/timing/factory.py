@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
+from framecontrol.jobs.timing.knobs import BackendCalibration, Calibration, FactoryStage, PipelineCalibration, Spreads, StepModel, Tunables
 
-
-@dataclass(frozen=True)
-class FactoryStage:
-    key: str
-    name: str
-    source: str
-    seconds: float
-    iterative: bool = False
+# The stages whose seconds grow with the pixels and frames of the output.
+SCALED_STAGES = frozenset({"ffmpeg", "finishing", "correct"})
 
 
 @dataclass(frozen=True)
@@ -152,3 +147,31 @@ def heuristic_anchor(backend: str) -> DrawThingsFactoryPoint | H3FactoryPoint | 
     if backend == H3_BACKEND:
         return H3_R2AV_E0051_E0054
     return None
+
+
+# ------------------------------------------------------------------ the factory pair
+
+
+def factory_tunables() -> Tunables:
+    return Tunables()
+
+
+def _anchor_pipeline(point: DrawThingsFactoryPoint | H3FactoryPoint, frame_exponent: float) -> PipelineCalibration:
+    """The pipeline a measured point belongs to: its step time at the point's workload, the broad power-law prior over pixels
+    and frames (an assumption, not a measurement; the evidence supports only the H3 clip lengths it covers), and its stages."""
+    stages = tuple(replace(stage, pixel_exponent=1.0, frame_exponent=1.0) if stage.name in SCALED_STAGES else stage for stage in point.stages)
+    spreads = Spreads(tau=point.tau, rho=point.rho, slope=point.slope, slope_sd=point.slope_sd, first_ratio=point.first_ratio, first_sd=point.first_sd, step_noise=point.step_noise, stage_factor=point.stage_factor, other_sd=point.other_sd, pause_share=point.pause_share)
+    return PipelineCalibration(point.pipeline, StepModel(point.width * point.height, point.frames, point.step_seconds, 1.0, frame_exponent), spreads, stages)
+
+
+def _baseline(point: DrawThingsFactoryPoint | H3FactoryPoint) -> dict[str, Any]:
+    return {"pipeline": point.pipeline, "model": point.model, "width": point.width, "height": point.height, "frames": point.frames, "steps": point.steps, "executable_bytes": point.executable_bytes, "executable_mtime": point.executable_mtime}
+
+
+def factory_calibration() -> Calibration:
+    """Each supported backend's factory calibration. H3's frame exponent is 1.6 because the 5, 8, 10 and 15 second evidence
+    grows faster than linearly; a still-image job does not become 33 times cheaper than E0053's video because it has one output
+    frame, so Draw Things' ``i2i`` borrows 0.5. Neither exponent is a measurement."""
+    draw_things = BackendCalibration(DRAW_THINGS_BACKEND, DRAW_THINGS_I8X_E0053.pipeline, {DRAW_THINGS_I8X_E0053.pipeline: _anchor_pipeline(DRAW_THINGS_I8X_E0053, 1.0)}, (DRAW_THINGS_I8X_E0053,), _baseline(DRAW_THINGS_I8X_E0053), {"i2i": 0.5})
+    h3 = BackendCalibration(H3_BACKEND, H3_R2AV_E0051_E0054.pipeline, {H3_R2AV_E0051_E0054.pipeline: _anchor_pipeline(H3_R2AV_E0051_E0054, 1.6)}, (H3_R2AV_E0051_E0054,), _baseline(H3_R2AV_E0051_E0054), {})
+    return Calibration({DRAW_THINGS_BACKEND: draw_things, H3_BACKEND: h3})

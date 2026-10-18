@@ -98,6 +98,16 @@ def _end_phrase(span: Span, now: float) -> str:
     return end_text(left, datetime.fromtimestamp(read_at), bounds)
 
 
+KNOBS_NOTES = {"provisional": "from provisional calibration", "pinned": "with pinned timing knobs"}
+
+
+def knobs_note(forecast: Mapping[str, Any] | None) -> str | None:
+    """Where a forecast's non-history numbers came from, when that is not the factory: ``from provisional calibration`` or
+    ``with pinned timing knobs``; None for the factory and for a snapshot that predates the field."""
+    basis = forecast.get("basis") if forecast is not None else None
+    return KNOBS_NOTES.get(str(basis.get("knobs"))) if isinstance(basis, Mapping) else None
+
+
 def forecast_text(forecast: Mapping[str, Any], now: float) -> str:
     """A forecast in one line: the stage and its units, and where the run and the job end (``denoise 12/30; run ends ~16:42
     (in 23 min), job ends ~18:10 (in 1 h 51 min)``), or that there is no estimate yet."""
@@ -105,4 +115,4 @@ def forecast_text(forecast: Mapping[str, Any], now: float) -> str:
     stage = stage_text(forecast)
     if not ends:
         ends = ["no estimate yet"]
-    return "; ".join(part for part in (stage, ", ".join(ends)) if part)
+    return "; ".join(part for part in (stage, ", ".join(ends), knobs_note(forecast)) if part)

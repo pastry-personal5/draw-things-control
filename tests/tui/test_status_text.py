@@ -203,3 +203,20 @@ class RunSummaryTests(StatusTextCase):
         live.apply_forecast(forecast())
         live.apply_forecast(None)
         self.assertNotIn("stage", str(run_summary_text(live)))
+
+    def test_the_summary_says_when_the_estimate_rests_on_learned_or_pinned_knobs(self) -> None:
+        live = self.live()
+        self.start(live, 1)
+        self.at(90)
+        live.apply_forecast(forecast(stage="denoise", done=3, total=30))
+        self.assertNotIn("estimate", str(run_summary_text(live)))
+        for knobs, words in (("provisional", "estimate from provisional calibration"), ("pinned", "estimate with pinned timing knobs"), ("factory", None)):
+            published = forecast(stage="denoise", done=3, total=30)
+            published["basis"] = {**published["basis"], "knobs": knobs}
+            live.apply_forecast(published)
+            summary = str(run_summary_text(live))
+            with self.subTest(knobs):
+                if words is None:
+                    self.assertNotIn("estimate", summary)
+                else:
+                    self.assertIn(words, summary)

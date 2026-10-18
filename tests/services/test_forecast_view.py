@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 
-from framecontrol.services.forecast_view import RANGE_SHARE, end_text, forecast_text, progress, seconds_left, show_range, stage_text, whole_duration
+from framecontrol.services.forecast_view import RANGE_SHARE, end_text, forecast_text, knobs_note, progress, seconds_left, show_range, stage_text, whole_duration
 
 SPAN = {"started_at": 100.0, "end_at": 200.0, "low": 180.0, "high": 230.0, "floor": 0.0}
 
@@ -101,3 +101,38 @@ class EndOfTheCalendarTests(unittest.TestCase):
         now = datetime(2026, 10, 18, 12, 8, 34)
         text = end_text(6164.0, now, (0.0, 1.38e13))
         self.assertTrue(text.startswith("ends ~13:51 (12:08 to "))
+
+
+class KnobsNoteTests(unittest.TestCase):
+    """Where a forecast's non-history numbers came from, in words a person reads."""
+
+    BASIS = {"tier": "heuristic", "fidelity": "heuristic", "runs": 0, "executions": 0, "build_changed": False, "unseen": [], "penalty": None, "skipped": 0}
+
+    def forecast(self, **basis: object) -> dict:
+        return {"as_of": 100.0, "stage": "denoise", "stage_done": 12, "stage_total": 30, "run": dict(SPAN), "job": dict(SPAN), "basis": {**self.BASIS, **basis}}
+
+    def test_the_factory_and_an_older_snapshot_say_nothing(self) -> None:
+        self.assertIsNone(knobs_note(self.forecast(knobs="factory")))
+        self.assertIsNone(knobs_note(self.forecast()))
+        self.assertIsNone(knobs_note(None))
+        self.assertIsNone(knobs_note({"stage": None}))
+        self.assertNotIn("calibration", forecast_text(self.forecast(knobs="factory"), 150.0))
+
+    def test_a_learned_or_pinned_forecast_says_so(self) -> None:
+        self.assertEqual(knobs_note(self.forecast(knobs="provisional")), "from provisional calibration")
+        self.assertEqual(knobs_note(self.forecast(knobs="pinned")), "with pinned timing knobs")
+        self.assertTrue(forecast_text(self.forecast(knobs="provisional"), 150.0).endswith("; from provisional calibration"))
+        self.assertTrue(forecast_text(self.forecast(knobs="pinned"), 150.0).endswith("; with pinned timing knobs"))
+
+    def test_an_unknown_source_is_not_invented(self) -> None:
+        self.assertIsNone(knobs_note(self.forecast(knobs="validated-by-someone-else")))
+
+    def test_the_queue_commands_basis_line_names_the_source_and_the_estimate_kind(self) -> None:
+        from framecontrol.cli.queue_app import _basis_text  # noqa: SLF001
+
+        self.assertEqual(_basis_text({**self.BASIS, "knobs": "factory"}), "no history for this run, so its own pace alone (a heuristic estimate)")
+        learned = _basis_text({**self.BASIS, "runs": 8, "executions": 4, "tier": "heuristic", "fidelity": "heuristic", "knobs": "provisional", "knobs_updated_at": "2026-10-18T12:00:00+09:00"})
+        self.assertIn("8 runs from 4 executions", learned)
+        self.assertIn("timing knobs: provisional, written 2026-10-18T12:00:00+09:00", learned)
+        self.assertIn("timing knobs: pinned", _basis_text({**self.BASIS, "knobs": "pinned"}))
+        self.assertEqual(_basis_text({**self.BASIS, "runs": 4, "executions": 3, "tier": "signature", "fidelity": "live"}), "4 runs from 3 executions (signature, live)")

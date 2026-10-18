@@ -12,6 +12,7 @@ from framecontrol.core.paths import ProjectPaths
 from framecontrol.core.run_lock import SERVER_HOLDER_NAME, RunLock, is_draw_things_process
 from framecontrol.jobs.executor import JobExecutor
 from framecontrol.services.job_runs import JobRunSession
+from framecontrol.services.knob_updater import KnobUpdater
 from framecontrol.services.queue_events import EventSink
 from framecontrol.services.queue_recovery import recover_queue
 from framecontrol.services.queue_worker import QueueWorker
@@ -30,7 +31,8 @@ class QueueHost:
     entry's own update to ``interrupted``.
     """
 
-    def __init__(self, paths: ProjectPaths, executor: JobExecutor, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, child_check: Callable[[int, str], bool] = is_draw_things_process, on_event: EventSink | None = None) -> None:
+    def __init__(self, paths: ProjectPaths, executor: JobExecutor, global_config: GlobalConfig, *, executable: str, shutdown_grace: float, clock: Clock = datetime.now, child_check: Callable[[int, str], bool] = is_draw_things_process, on_event: EventSink | None = None, learn_timing: bool = False) -> None:
+        self._learn_timing = learn_timing
         self._paths = paths
         self._executor = executor
         self._global_config = global_config
@@ -68,7 +70,10 @@ class QueueHost:
         try:
             recover_queue(store, clock=self._clock)
             session = JobRunSession(self._paths, self._executor, self._global_config)
-            worker = QueueWorker(store, session, self._executor, lock, self._paths, self._global_config, executable=self._executable, shutdown_grace=self._shutdown_grace, clock=self._clock, on_event=self._on_event)
+            updater = KnobUpdater(self._paths, store) if self._learn_timing else None
+            worker = QueueWorker(store, session, self._executor, lock, self._paths, self._global_config, executable=self._executable, shutdown_grace=self._shutdown_grace, clock=self._clock, on_event=self._on_event, knob_updater=updater)
+            if updater is not None:
+                updater.set_quiet(worker.is_quiet)
             if start_worker:
                 worker.start()
         except BaseException:

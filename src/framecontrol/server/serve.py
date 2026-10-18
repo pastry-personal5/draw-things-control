@@ -127,7 +127,7 @@ def run(paths: ProjectPaths, global_config: GlobalConfig, toolkit: Toolkit, opti
     token = load_or_create_token(paths.server_token)
     backlog = EventBacklog()
     executor = toolkit.job_executor(handle_signals=False)
-    host = QueueHost(paths, executor, global_config, executable=options.executable, shutdown_grace=options.shutdown_grace, on_event=backlog.append)
+    host = QueueHost(paths, executor, global_config, executable=options.executable, shutdown_grace=options.shutdown_grace, on_event=backlog.append, learn_timing=True)
     host.start(start_worker=False)
     try:
         assert host.store is not None and host.worker is not None

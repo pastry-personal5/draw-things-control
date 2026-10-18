@@ -1,0 +1,218 @@
+# Framecontrol timing knobs. Edit a number to pin it; delete a key to return it to automatic. Comments are not kept when Framecontrol rewrites this file; `notes:` is.
+schema: 1
+backend: h3-metal-cli
+updated_at: null
+notes: ''
+anchor: r2av
+baseline:
+  pipeline: r2av
+  model: MiniMax-H3
+  width: 832
+  height: 448
+  frames: 362
+  steps: 30
+  executable_bytes: 558688
+  executable_mtime: 1791736910.7589593
+pipelines:
+  r2av:
+    source: factory
+    evidence:
+      runs: 0
+      executions: 0
+      checkpoint: 0
+    updated_at: null
+    step:
+      pixels: 372736
+      frames: 362
+      seconds: 138.6683
+      pixel_exponent: 1.0
+      frame_exponent: 1.6
+      shift: 0.0
+      aspect: 0.0
+      render_exponent: 0.0
+      reference_exponent: 0.0
+      knobs: {}
+      sizes: {}
+    spreads:
+      tau: 0.1
+      rho: 0.5
+      slope: 0.1685
+      slope_sd: 0.12
+      first_ratio: 0.798
+      first_sd: 0.15
+      step_noise: 0.055
+      stage_factor: 0.99334
+      other_sd: 20.0
+      pause_share: 0.0
+    spread: null
+    stages:
+      prepare:
+        name: prepare
+        source: framecontrol
+        seconds: 0.001
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      tokenize:
+        name: tokenize
+        source: child
+        seconds: 0.203
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      video_encode:
+        name: video_encode
+        source: child
+        seconds: 2.413
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      video_encode#2:
+        name: video_encode
+        source: child
+        seconds: 2.369
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      video_encode#3:
+        name: video_encode
+        source: child
+        seconds: 2.815
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      vision:
+        name: vision
+        source: child
+        seconds: 0.266
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      vision#2:
+        name: vision
+        source: child
+        seconds: 0.225
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      vision#3:
+        name: vision
+        source: child
+        seconds: 0.539
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      text_encode:
+        name: text_encode
+        source: child
+        seconds: 9.653
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      refine_text:
+        name: refine_text
+        source: child
+        seconds: 0.215
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      adaln:
+        name: adaln
+        source: child
+        seconds: 4.249
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      load_core:
+        name: load_core
+        source: child
+        seconds: 7.632
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      denoise:
+        name: denoise
+        source: child
+        seconds: 0.0
+        iterative: true
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      audio_decode:
+        name: audio_decode
+        source: child
+        seconds: 0.887
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      video_load:
+        name: video_load
+        source: child
+        seconds: 1.091
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      ffmpeg:
+        name: ffmpeg
+        source: child
+        seconds: 189.977
+        iterative: false
+        pixel_exponent: 1.0
+        frame_exponent: 1.0
+        sigma: null
+      verify:
+        name: verify
+        source: framecontrol
+        seconds: 0.468
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      verify#2:
+        name: verify
+        source: framecontrol
+        seconds: 0.074
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      convert:
+        name: convert
+        source: framecontrol
+        seconds: 1.266
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      drift:
+        name: drift
+        source: framecontrol
+        seconds: 0.179
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      promote:
+        name: promote
+        source: framecontrol
+        seconds: 0.001
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+    observed: {}
+    signatures: {}

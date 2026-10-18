@@ -12,6 +12,7 @@ from framecontrol.jobs.events import JobEvent, JobFinished, RunOutput, StageStar
 from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun
 from framecontrol.jobs.timing.fit import FittedModel
 from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun
+from framecontrol.jobs.timing.knobs import Tunables
 from framecontrol.jobs.timing.replay_stream import replay_job
 from framecontrol.services.forecast_publisher import MIN_INTERVAL_SECONDS, ForecastPublisher
 from framecontrol.services.forecast_view import progress
@@ -273,3 +274,30 @@ class SafetyTests(unittest.TestCase):
         for _, event in replay_job(execution, origin=ORIGIN).events[:3]:
             publisher.observe(event)
         self.assertEqual(sink.forecasts[-1].as_of, ORIGIN)
+
+
+class PublishingTunablesTests(unittest.TestCase):
+    """The interval and the same-end tolerance are the model's tunables, so an owner's edit changes the publishing."""
+
+    def count(self, tunables: Tunables) -> int:
+        base = h3_run(9, 1)
+        stages = []
+        for stage in base.stages:
+            if stage.stage == "ffmpeg":
+                frames = tuple((round(stage.start + 100.0 * index / 243, 6), index) for index in range(244))
+                stage = type(stage)(stage.stage, stage.source, stage.start, stage.end, 243, 243, "frames", frames)
+            stages.append(stage)
+        run = type(base)(base.execution, base.run, base.fidelity, base.backend, base.pipeline, base.workload, base.environment, tuple(stages))
+        execution = HistoryExecution(9, CooldownPolicy("off"), (run,))
+        sink = Sink()
+        model = FittedModel([h3_run(number, 1) for number in range(1, 5)], tunables=tunables)
+        publisher = ForecastPublisher(Forecaster(model, plan_of(execution)), sink, clock=lambda: 0.0)
+        play(publisher, list(replay_job(execution, origin=ORIGIN).events))
+        return Counter(forecast.stage for forecast in sink.forecasts)["ffmpeg"]
+
+    def test_a_longer_interval_publishes_fewer_readings(self) -> None:
+        self.assertLess(self.count(Tunables(publish_interval_seconds=10.0)), self.count(Tunables()))
+
+    def test_the_default_is_the_two_seconds_it_always_was(self) -> None:
+        self.assertEqual(MIN_INTERVAL_SECONDS, 2.0)
+        self.assertEqual(Tunables().publish_interval_seconds, 2.0)

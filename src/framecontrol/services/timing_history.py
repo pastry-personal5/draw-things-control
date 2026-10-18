@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from typing import Any
 
 from loguru import logger
 
@@ -12,30 +13,36 @@ from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.core.cooldown import CooldownPolicy, parse_cooldown
 from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun, HistoryStage
 from framecontrol.jobs.timing.fit import FittedModel
+from framecontrol.services.timing_knobs import KnobReader
 from framecontrol.state.execution_rows import ExecutionRow
 from framecontrol.state.store import Store
 from framecontrol.state.timing import CompleteTiming
 
 
 class TimingHistory:
-    """The model fitted on a store's timing rows, cached by the number of complete runs and the newest of them."""
+    """The model fitted on a store's timing rows and the timing knob files, cached by the number of complete runs, the newest of
+    them, and the knob files' state."""
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, knobs: KnobReader | None = None) -> None:
         self._store = store
+        self._knobs = knobs
         self._lock = threading.Lock()
-        self._mark: tuple[int, tuple[int, int] | None] | None = None
+        self._mark: tuple[int, tuple[int, int] | None, tuple[Any, ...]] | None = None
         self._model: FittedModel | None = None
 
     def model(self) -> FittedModel:
         """The fitted model for the store as it is now. A fit takes up to 200 ms, so it is made again only when a run has
-        completed since it was, or pruning has removed some."""
+        completed since it was, pruning has removed some, or a knob file changed."""
         try:
             with self._lock:
-                mark = self._store.timing.completion_mark()
+                loaded = self._knobs.current() if self._knobs is not None else None
+                completed = self._store.timing.completion_mark()
+                mark = (completed[0], completed[1], loaded.signature if loaded is not None else ())
                 if self._model is not None and mark == self._mark:
                     return self._model
                 rows, skipped = self._store.timing.complete_runs()
-                self._model = FittedModel([_history_run(row) for row in rows], skipped=skipped)
+                runs = [history_run(row) for row in rows]
+                self._model = FittedModel(runs, skipped=skipped, tunables=loaded.tunables, calibration=loaded.calibration) if loaded is not None else FittedModel(runs, skipped=skipped)
                 self._mark = mark
                 return self._model
         except Exception:
@@ -48,7 +55,8 @@ class TimingHistory:
 LEGACY_BACKENDS = {"draw-things": DRAW_THINGS_BACKEND, "h3": H3_BACKEND}
 
 
-def _history_run(row: CompleteTiming) -> HistoryRun:
+def history_run(row: CompleteTiming) -> HistoryRun:
+    """A stored complete run as the fit reads it, with the corrections the old rows need."""
     backend = LEGACY_BACKENDS.get(row.backend, row.backend)
     stages = tuple(HistoryStage(stage.stage, stage.source, stage.start, stage.end, stage.done, stage.total, stage.unit, stage.marks, stage.uncertain) for stage in row.stages)
     workload = dict(row.workload)
@@ -84,7 +92,7 @@ def load_executions(store: Store) -> tuple[list[HistoryExecution], int]:
             stored = store.executions.by_number(number)
             recorded = {run.number: run.cooldown_after_seconds for run in stored.runs} if stored is not None else {}
             waits = tuple(recorded.get(run) or 0.0 for run in range(1, max(row.run for row in runs) + 1))
-            executions.append(HistoryExecution(number, _policy_of(stored), tuple(_history_run(row) for row in runs), waits))
+            executions.append(HistoryExecution(number, _policy_of(stored), tuple(history_run(row) for row in runs), waits))
         return executions, skipped
     except Exception:
         logger.exception("The timing history could not be read as executions")

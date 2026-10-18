@@ -44,6 +44,11 @@ class ProjectPaths:
         return self.root / "data" / "params"
 
     @property
+    def timing_data(self) -> Path:
+        """The forecast's knob files (tunables and calibration) and the evidence they were learned from (gitignored personal data)."""
+        return self.root / "data" / "timing-data-analysis"
+
+    @property
     def h3_executable(self) -> Path:
         """The checked-in H3 executable; jobs never select an executable themselves."""
         return self.root / "contrib" / "backends" / "h3.c" / "h3"

@@ -9,7 +9,11 @@ The truth is log-linear in the workload with a per-run speed factor that has an 
 estimator assumes. It also holds what the estimator does not assume, so coverage is not tested against its own model: a
 heavy-tailed run factor, drift between executions, one Draw Things run in eight with a falling step time, H3's short first
 gap, an occasional long pause, signatures that appear once or twice, and a rebuilt executable that shifts H3 from some
-execution on. The parameters were fixed from the evidence before the estimator was measured on them."""
+execution on. The parameters were fixed from the evidence before the estimator was measured on them.
+
+The second mode (``away`` above zero; 0.3 for the knob evaluation) moves the truth that far from the factory knobs: Draw Things
+steps and stages slower and H3's faster, the pixel and frame exponents off the factory's, two sizes off the curve, and the
+guidance effect stronger, so the calibration has something to learn. With ``away=0`` the history is exactly the first mode's."""
 
 from __future__ import annotations
 
@@ -131,19 +135,34 @@ def catalog() -> tuple[Kind, ...]:
     )
 
 
-def _log_median_step(kind: Kind) -> float:
+# Sizes the second mode puts off the power law, as a share of ``away``: the offset a size-specific correction can learn.
+SIZE_OFFSETS = {(1024, 576): 0.5, (512, 320): -0.5}
+
+
+def _direction(backend: str) -> int:
+    """Which way the second mode moves a backend from the factory: Draw Things slower, H3 faster."""
+    return 1 if backend == DRAW_THINGS else -1
+
+
+def _log_median_step(kind: Kind, away: float = 0.0) -> float:
     """The truth for a signature: the log of a typical step's seconds."""
     pixels = math.log(kind.pixels / P0)
+    direction = _direction(kind.backend)
+    offset = SIZE_OFFSETS.get((kind.workload["width"], kind.workload["height"]), 0.0) * away
+    scale = direction * math.log1p(away) + offset
     if kind.backend == DRAW_THINGS:
-        return math.log(50.0) + 1.15 * pixels + 1.10 * math.log(kind.frames / DT_F0) + 0.30 * math.log(kind.workload["guidance_scale"] / 7.5)
+        return math.log(50.0) + scale + 1.15 * (1 + direction * away) * pixels + 1.10 * (1 - direction * away) * math.log(kind.frames / DT_F0) + 0.30 * (1 + away) * math.log(kind.workload["guidance_scale"] / 7.5)
     workload = kind.workload
-    return math.log(69.0) - 0.13 + 0.9 * pixels + 1.65 * math.log(kind.frames / H3_F0) + 0.12 * math.log1p(workload["reference_count"]) - 0.15 * (kind.pipeline == "i2av") + math.log(workload["dit_layers"] / 36) - 0.10 * workload["core_reuse"]
+    return math.log(69.0) - 0.13 + scale + 0.9 * (1 + direction * away) * pixels + 1.65 * (1 - direction * away) * math.log(kind.frames / H3_F0) + 0.12 * math.log1p(workload["reference_count"]) - 0.15 * (kind.pipeline == "i2av") + math.log(workload["dit_layers"] / 36) - 0.10 * workload["core_reuse"]
 
 
 class _Generator:
-    def __init__(self, seed: int, executions: int) -> None:
+    def __init__(self, seed: int, executions: int, away: float = 0.0) -> None:
         self.rng = np.random.default_rng(seed)
         self.executions = executions
+        self.away = away
+        # How far the second mode moves the run being drawn's stage durations from the factory's.
+        self.stage_scale = 1.0
         self.kinds = catalog()
         self.drift = {DRAW_THINGS: 0.0, H3: 0.0}
         rare = [kind for kind in self.kinds if kind.weight < RARE_BELOW]
@@ -154,7 +173,7 @@ class _Generator:
         return float(self.rng.normal(0.0, scale))
 
     def lognormal(self, median: float, spread: float) -> float:
-        return round(median * math.exp(self.normal(spread)), 6)
+        return round(median * self.stage_scale * math.exp(self.normal(spread)), 6)
 
     def build(self) -> SyntheticHistory:
         result = []
@@ -193,7 +212,8 @@ class _Generator:
         # A heavy-tailed run factor: Student-t with four degrees of freedom, scaled.
         factor = float(self.rng.standard_t(4)) * RUN_SCALE
         steps = kind.workload["steps"]
-        mean_step = math.exp(_log_median_step(kind) + shared + factor)
+        mean_step = math.exp(_log_median_step(kind, self.away) + shared + factor)
+        self.stage_scale = math.exp(_direction(kind.backend) * math.log1p(self.away))
         times = self.step_times(kind, mean_step, steps)
         scale_p, scale_f = kind.pixels / P0, kind.frames / (DT_F0 if kind.backend == DRAW_THINGS else H3_F0)
         stages: list[HistoryStage] = []
@@ -265,6 +285,6 @@ class _Generator:
         return phases
 
 
-def synthetic_history(seed: int = 20261016, *, executions: int = 600) -> SyntheticHistory:
-    """The history ``executions`` jobs left, in the order they ran."""
-    return _Generator(seed, executions).build()
+def synthetic_history(seed: int = 20261016, *, executions: int = 600, away: float = 0.0) -> SyntheticHistory:
+    """The history ``executions`` jobs left, in the order they ran; ``away`` is the second mode's distance from the factory knobs."""
+    return _Generator(seed, executions, away).build()

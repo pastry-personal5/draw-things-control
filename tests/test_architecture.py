@@ -29,7 +29,7 @@ ALLOWED = {
 # API and gRPC service, and `fc mcp` the MCP server.
 FRONT_END_EXCEPTIONS = {(f"{PACKAGE}.cli.app", f"{PACKAGE}.tui.app"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.server.serve"), (f"{PACKAGE}.cli.app", f"{PACKAGE}.mcp_server.app")}
 # A front end shows the forecast the server made; none builds one. The model and what feeds it are the server's alone.
-FORECAST_MODULES = {f"{PACKAGE}.jobs.timing.{name}" for name in ("features", "fit", "forecast")} | {f"{PACKAGE}.services.timing_history", f"{PACKAGE}.services.forecast_publisher"}
+FORECAST_MODULES = {f"{PACKAGE}.jobs.timing.{name}" for name in ("features", "fit", "forecast", "knobs", "factory", "calibrate", "knob_codec", "ring", "step_terms")} | {f"{PACKAGE}.services.{name}" for name in ("timing_history", "forecast_publisher", "knob_updater", "timing_knob_files")}
 FORECAST_FREE_LAYERS = {"cli", "tui", "mcp_server"}
 # The frameworks a front end owns; the layers below never import them.
 FRAMEWORKS = {"typer", "textual", "fastapi", "uvicorn", "starlette", "mcp", "mcp_types", "httpx", "rich", "grpc"}
@@ -180,7 +180,7 @@ class ForecastRuleTests(unittest.TestCase):
 
     def test_a_front_end_may_not_import_the_model_or_what_feeds_it(self) -> None:
         for front_end in ("tui.app", "cli.queue_app", "mcp_server.tools"):
-            for imported in ("jobs.timing.features", "jobs.timing.fit", "jobs.timing.forecast", "services.timing_history", "services.forecast_publisher"):
+            for imported in ("jobs.timing.features", "jobs.timing.fit", "jobs.timing.forecast", "jobs.timing.knobs", "jobs.timing.factory", "jobs.timing.calibrate", "services.timing_history", "services.forecast_publisher", "services.knob_updater"):
                 self.assertTrue(self.bad(front_end, f"from {PACKAGE}.{imported} import Anything"), f"{front_end} imports {imported}")
         self.assertTrue(self.bad("tui.app", f"from {PACKAGE}.jobs.timing import forecast"))
         self.assertTrue(self.bad("cli.queue_app", f"import {PACKAGE}.jobs.timing.fit"))
@@ -193,6 +193,13 @@ class ForecastRuleTests(unittest.TestCase):
     def test_a_front_end_may_read_the_arithmetic_and_the_replay(self) -> None:
         self.assertEqual(self.bad("tui.app", f"from {PACKAGE}.services.forecast_view import progress"), [])
         self.assertEqual(self.bad("cli.timing_app", f"from {PACKAGE}.services.timing_replay import replay"), [])
+
+    def test_the_timing_commands_may_call_the_public_knob_api_and_nothing_below_it(self) -> None:
+        self.assertEqual(self.bad("cli.timing_app", f"from {PACKAGE}.services import timing_knobs"), [])
+        self.assertEqual(self.bad("cli.timing_app", f"from {PACKAGE}.services.timing_knobs import show"), [])
+        for imported in ("jobs.timing.knobs", "jobs.timing.factory", "jobs.timing.calibrate", "services.knob_updater"):
+            self.assertTrue(self.bad("cli.timing_app", f"from {PACKAGE}.{imported} import Anything"), imported)
+        self.assertEqual(self.bad("services.queue_host", f"from {PACKAGE}.services.knob_updater import KnobUpdater"), [])
 
 
 class McpServerImportTests(unittest.TestCase):

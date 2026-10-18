@@ -22,11 +22,11 @@ from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, StageFinished, StageStarted, TimingStarted
 from framecontrol.jobs.timing.features import Signature, evaluated, evaluated_between, signature
 from framecontrol.jobs.timing.fit import FittedModel, FixedStage, IterativeStage, Plan, StagePlan, student_t_90
+from framecontrol.jobs.timing.knobs import Tunables
 from framecontrol.jobs.timing.model import SOURCE_CHILD
 from framecontrol.jobs.timing.parsers import STEP_STAGES
 
-# A step over this many times the median of the steps so far is a pause.
-PAUSE_FACTOR = 3.0
+# A step over ``Tunables.pause_factor`` times the median of the steps so far is a pause (the model's tunables decide).
 # Medians over fewer steps than this are not trusted: the predicted step stands in.
 MIN_MEDIAN_STEPS = 3
 # However wide a range comes out, a client is never given an end further than this past the estimate (a month).
@@ -71,9 +71,13 @@ class Basis:
     unseen: tuple[str, ...] = ()
     penalty: float | None = None
     skipped: int = 0
+    # Where the numbers that are not the history's came from (``factory``, ``provisional`` or ``pinned``), and when the
+    # calibration they come from was written.
+    knobs: str = "factory"
+    knobs_updated_at: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"tier": self.tier, "fidelity": self.fidelity, "runs": self.runs, "executions": self.executions, "build_changed": self.build_changed, "unseen": list(self.unseen), "penalty": self.penalty, "skipped": self.skipped}
+        return {"tier": self.tier, "fidelity": self.fidelity, "runs": self.runs, "executions": self.executions, "build_changed": self.build_changed, "unseen": list(self.unseen), "penalty": self.penalty, "skipped": self.skipped, "knobs": self.knobs, "knobs_updated_at": self.knobs_updated_at}
 
 
 @dataclass(frozen=True)
@@ -102,7 +106,7 @@ class Forecast:
             stage_total=data["stage_total"],
             run=Span(**data["run"]) if data["run"] else None,
             job=Span(**data["job"]) if data["job"] else None,
-            basis=Basis(basis["tier"], basis["fidelity"], basis["runs"], basis["executions"], basis["build_changed"], tuple(basis["unseen"]), basis["penalty"], basis["skipped"]),
+            basis=Basis(basis["tier"], basis["fidelity"], basis["runs"], basis["executions"], basis["build_changed"], tuple(basis["unseen"]), basis["penalty"], basis["skipped"], basis.get("knobs", "factory"), basis.get("knobs_updated_at")),
         )
 
 
@@ -272,6 +276,10 @@ class Forecaster:
 
     # ------------------------------------------------------------------ events
 
+    @property
+    def tunables(self) -> Tunables:
+        return self._model.tunables
+
     def set_parking(self, parking: bool) -> None:
         self._parking = parking
 
@@ -400,16 +408,15 @@ class Forecaster:
             run.gaps.append((seconds, count, position))
         run.used += 1
 
-    @staticmethod
-    def _is_pause(run: _Run, seconds: float, shape: float) -> bool:
+    def _is_pause(self, run: _Run, seconds: float, shape: float) -> bool:
         times = [gap[0] for gap in run.gaps]
         if len(times) >= MIN_MEDIAN_STEPS:
-            return seconds > PAUSE_FACTOR * statistics.median(times)
+            return seconds > self._model.tunables.pause_factor * statistics.median(times)
         if run.plan.log_step is None:
             return False
         # The prior's prediction, not the posterior's: a step is judged against what was expected before the data it
         # would update, or one wild early reading would make every normal step after it look like a pause.
-        return seconds > PAUSE_FACTOR * math.exp(run.plan.log_step + run.prior_mean + shape)
+        return seconds > self._model.tunables.pause_factor * math.exp(run.plan.log_step + run.prior_mean + shape)
 
     def _run_finished(self, event: RunFinished, now: float) -> None:
         run = self._run
@@ -499,7 +506,7 @@ class Forecaster:
 
     @staticmethod
     def _basis(plan: Plan, unseen: tuple[str, ...]) -> Basis:
-        return Basis(plan.tier, plan.fidelity, plan.runs, plan.executions, plan.build_changed, unseen, plan.penalty, plan.skipped)
+        return Basis(plan.tier, plan.fidelity, plan.runs, plan.executions, plan.build_changed, (*unseen, *(name for name in plan.unseen_knobs if name not in unseen)), plan.penalty, plan.skipped, plan.knobs, plan.knobs_updated_at)
 
     # ------------------------------------------------------------- estimating
 

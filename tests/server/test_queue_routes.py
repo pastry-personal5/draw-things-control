@@ -486,7 +486,7 @@ class ResumeTests(QueueRoutesTestCase):
         self.worker._forecast = sample_forecast(time.time() - 1.0, penalty=1.0)
         forecast = self.request("get", f"/v1/queue/{queue_id}").json()["forecast"]
         self.assertEqual((forecast["stage"], forecast["stage_done"], forecast["stage_total"]), ("denoise", 12, 30))
-        self.assertEqual(forecast["basis"], {"tier": "signature", "fidelity": "live", "runs": 8, "executions": 4, "build_changed": False, "unseen": ["other"], "penalty": 1.0, "skipped": 0})
+        self.assertEqual(forecast["basis"], {"tier": "signature", "fidelity": "live", "runs": 8, "executions": 4, "build_changed": False, "unseen": ["other"], "penalty": 1.0, "skipped": 0, "knobs": "factory", "knobs_updated_at": None})
         run, job = forecast["run"], forecast["job"]
         # Made a second ago, 600 s into a run of 2000 s: the server shows what a client on another clock cannot work out.
         self.assertAlmostEqual(run["seconds_left"], 1399.0, delta=3.0)

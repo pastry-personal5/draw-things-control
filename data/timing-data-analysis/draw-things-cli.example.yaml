@@ -1,0 +1,146 @@
+# Framecontrol timing knobs. Edit a number to pin it; delete a key to return it to automatic. Comments are not kept when Framecontrol rewrites this file; `notes:` is.
+schema: 1
+backend: draw-things-cli
+updated_at: null
+notes: ''
+anchor: i2v
+baseline:
+  pipeline: i2v
+  model: wan_v2.2_a14b_hne_i2v_i8x.ckpt
+  width: 384
+  height: 768
+  frames: 33
+  steps: 25
+  executable_bytes: 160477120
+  executable_mtime: 1790314797.2408893
+pipelines:
+  i2v:
+    source: factory
+    evidence:
+      runs: 0
+      executions: 0
+      checkpoint: 0
+    updated_at: null
+    step:
+      pixels: 294912
+      frames: 33
+      seconds: 13.671
+      pixel_exponent: 1.0
+      frame_exponent: 1.0
+      shift: 0.0
+      aspect: 0.0
+      render_exponent: 0.0
+      reference_exponent: 0.0
+      knobs: {}
+      sizes: {}
+    spreads:
+      tau: 0.1
+      rho: 0.5
+      slope: 0.205
+      slope_sd: 0.1
+      first_ratio: null
+      first_sd: 0.1
+      step_noise: 0.066
+      stage_factor: 0.99758
+      other_sd: 20.0
+      pause_share: 0.0
+    spread: null
+    stages:
+      prepare:
+        name: prepare
+        source: framecontrol
+        seconds: 0.001
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      starting:
+        name: starting
+        source: child
+        seconds: 3.14
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      processing:
+        name: processing
+        source: child
+        seconds: 4.87
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      sampling:
+        name: sampling
+        source: child
+        seconds: 0.0
+        iterative: true
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      finishing:
+        name: finishing
+        source: child
+        seconds: 4.64
+        iterative: false
+        pixel_exponent: 1.0
+        frame_exponent: 1.0
+        sigma: null
+      verify:
+        name: verify
+        source: framecontrol
+        seconds: 0.148
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      tag:
+        name: tag
+        source: framecontrol
+        seconds: 0.004
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      verify#2:
+        name: verify
+        source: framecontrol
+        seconds: 0.039
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      last_frame:
+        name: last_frame
+        source: framecontrol
+        seconds: 0.578
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      correct:
+        name: correct
+        source: framecontrol
+        seconds: 6.847
+        iterative: false
+        pixel_exponent: 1.0
+        frame_exponent: 1.0
+        sigma: null
+      verify#3:
+        name: verify
+        source: framecontrol
+        seconds: 0.005
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+      measure:
+        name: measure
+        source: framecontrol
+        seconds: 0.031
+        iterative: false
+        pixel_exponent: 0.0
+        frame_exponent: 0.0
+        sigma: null
+    observed: {}
+    signatures: {}

@@ -16,6 +16,7 @@ from typing import Any, TypeGuard
 import numpy as np
 
 from framecontrol.core.cooldown import CooldownPolicy
+from framecontrol.jobs.timing.knobs import Tunables
 
 # Run knobs that do not change the work a run does: the seed, the clip length (the effective ``frames`` carries it), the
 # timeout, and the name of the reference pair (its references are counted in the workload).
@@ -25,10 +26,10 @@ IGNORED_KNOBS = frozenset({"seed", "seconds", "timeout_seconds", "reference_pair
 # The reuse knobs are not features either: they change how many steps are evaluated (see ``evaluated``), which the step
 # weights carry, so a reuse value the history has not seen is still priced.
 _NOT_FEATURES = frozenset({"width", "height", "pixels", "frames", "steps", "seconds", "reference_count", "references", "render_width", "render_height", "knobs", "pipeline", "mode", "seed", "denoise_reuse", "core_reuse"})
-# A gap longer than this many times the median of the others is a pause.
-PAUSE_FACTOR = 3.0
-# A within-stage slope is fitted only from this many ordinary gaps.
-SLOPE_MIN_GAPS = 6
+# A gap longer than ``pause_factor`` times the median of the others is a pause, and a within-stage slope is fitted only from
+# ``slope_min_gaps`` ordinary gaps: both are tunables (``knobs.Tunables``), these are their factory values.
+PAUSE_FACTOR = Tunables().pause_factor
+SLOPE_MIN_GAPS = Tunables().slope_min_gaps
 # The most a stage name can repeat is counted by occurrence.
 FRAMECONTROL = "framecontrol"
 
@@ -223,7 +224,7 @@ class StepSeries:
     pause_seconds: float = 0.0
 
 
-def step_series(stage: HistoryStage, interval: int = 1) -> StepSeries | None:
+def step_series(stage: HistoryStage, interval: int = 1, pause_factor: float = PAUSE_FACTOR, slope_min_gaps: int = SLOPE_MIN_GAPS) -> StepSeries | None:
     """The per-step statistics of ``stage``'s marks, per evaluated step when ``interval`` is a reuse interval; None when it
     keeps none."""
     gaps = _gaps(stage, interval)
@@ -231,9 +232,9 @@ def step_series(stage: HistoryStage, interval: int = 1) -> StepSeries | None:
         return None
     later = gaps[1:]
     median = statistics.median(time for time, _, _ in later) if later else None
-    ordinary = [gap for gap in later if median is None or gap[0] <= PAUSE_FACTOR * median]
+    ordinary = [gap for gap in later if median is None or gap[0] <= pause_factor * median]
     pauses = len(later) - len(ordinary)
-    pause_seconds = sum((time - median) * count for time, count, _ in later if median is not None and time > PAUSE_FACTOR * median)
+    pause_seconds = sum((time - median) * count for time, count, _ in later if median is not None and time > pause_factor * median)
     pool = ordinary or gaps
     units = sum(count for _, count, _ in pool)
     mean = sum(time * count for time, count, _ in pool) / units
@@ -243,7 +244,7 @@ def step_series(stage: HistoryStage, interval: int = 1) -> StepSeries | None:
         first_ratio = first_time / statistics.median(time for time, _, _ in ordinary)
     slope = None
     logs = np.log([time for time, _, _ in pool])
-    if len(pool) >= SLOPE_MIN_GAPS:
+    if len(pool) >= slope_min_gaps:
         positions = np.array([position for _, _, position in pool])
         coefficients = np.polyfit(positions, logs, 1)
         slope = float(coefficients[0])

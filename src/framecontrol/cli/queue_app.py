@@ -122,6 +122,11 @@ def _basis_text(basis: dict[str, Any]) -> str:
         text = "no history for this run, so its own pace alone"
     else:
         text = f"{basis['runs']} runs from {basis['executions']} executions ({basis['tier']}, {basis['fidelity']})"
+    if not basis["runs"] and basis.get("tier") in ("factory", "heuristic"):
+        text += f" (a {basis['tier']} estimate)"
+    knobs = basis.get("knobs")
+    if knobs and knobs != "factory":
+        text += f"; timing knobs: {knobs}" + (f", written {basis['knobs_updated_at']}" if basis.get("knobs_updated_at") else "")
     if basis["build_changed"]:
         text += "; the executable has changed since"
     if basis["unseen"]:

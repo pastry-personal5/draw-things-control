@@ -1,0 +1,30 @@
+# Framecontrol timing knobs. Edit a number to pin it; delete a key to return it to automatic. Comments are not kept when Framecontrol rewrites this file; `notes:` is.
+schema: 1
+tunables:
+  pause_factor: 3.0
+  size_offset_shrinkage: 3.0
+  prior_weight_cap: 12.0
+  half_life_runs: 60.0
+  unseen_knob_inflation: 1.5
+  rho: 0.5
+  slope_level: 0.95
+  factory_spread: 0.25
+floors:
+  slope_min_gaps: 6
+  min_signature_runs: 3
+  min_signature_executions: 2
+  min_fit_runs: 6
+  min_fit_executions: 3
+  penalties:
+  - 0.01
+  - 0.1
+  - 1.0
+  - 10.0
+  - 100.0
+  tau: 0.1
+  heuristic_log_spread: 0.75
+  heuristic_stage_spread: 0.6
+  publish_interval_seconds: 2.0
+  same_end_seconds: 1.0
+  ring_size: 300
+  backup_count: 20

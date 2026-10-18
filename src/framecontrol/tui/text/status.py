@@ -13,7 +13,7 @@ from rich.text import Text
 from framecontrol.core.yaml_files import is_yaml_file
 from framecontrol.jobs.events import RunStatus
 from framecontrol.jobs.text import duration_text
-from framecontrol.services.forecast_view import end_text, progress, seconds_left, show_range, stage_text, whole_duration
+from framecontrol.services.forecast_view import end_text, knobs_note, progress, seconds_left, show_range, stage_text, whole_duration
 from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_park_text import park_point, queue_state_text
 from framecontrol.state.queue import FINISHED_STATES
@@ -69,6 +69,9 @@ def run_summary_text(live: LiveRun | None, level: VerboseLevel = "high") -> Text
         if stage is not None:
             text.append("  stage ", style="bold")
             text.append(stage)
+        note = knobs_note(live.forecast)
+        if note is not None:
+            text.append(f"  estimate {note}", style="dim")
         text.append(f"  {live.active_output}", style="dim")
         if live.stop_requested:
             text.append("  stopping", style="bold yellow")

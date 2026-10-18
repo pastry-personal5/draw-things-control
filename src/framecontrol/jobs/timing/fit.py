@@ -13,28 +13,29 @@ import math
 import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
-from framecontrol.jobs.timing.factory import H3_R2AV_E0051_E0054, DrawThingsFactoryPoint, H3FactoryPoint, factory_point, heuristic_anchor
+from framecontrol.jobs.timing.factory import factory_calibration
 from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, evaluated_count, expected_run, feature_values, iterative_stage, reuse_interval, signature, stage_keys, step_series
+from framecontrol.jobs.timing.knobs import KNOBS_FACTORY, KNOBS_PINNED, Calibration, PipelineCalibration, Tunables
+from framecontrol.jobs.timing.ring import fingerprint, sanitized_workload, signature_id
+from framecontrol.jobs.timing.step_terms import learned_terms, unseen_knobs
 
 TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_FACTORY, TIER_HEURISTIC, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "factory", "heuristic", "live_only"
 LIVE, LOG, POOLED = "live", "log", "pooled"
 
-# The thresholds are provisional, pinned by tests.
-MIN_SIGNATURE_RUNS, MIN_SIGNATURE_EXECUTIONS = 3, 2
-MIN_FIT_RUNS, MIN_FIT_EXECUTIONS = 6, 3
+# The tier thresholds, the penalty grid, the speed factor's default spread and the heuristic spreads are tunables
+# (``knobs.Tunables``); what follows is fixed.
 # Same-signature stage durations need this many samples before their median stands in for a fit.
 MIN_STAGE_SAMPLES = 3
 # Signatures with runs from two executions that must exist before the speed factor's spread is read from the data.
 MIN_SPREAD_SIGNATURES = 3
 # Executions whose within-stage slope must be seen before it is applied (and the first gap's runs before its ratio is).
 MIN_SLOPE_EXECUTIONS, MIN_FIRST_GAP_RUNS = 3, 3
-DEFAULT_TAU, DEFAULT_RHO = 0.10, 0.5
 MIN_TAU = 0.02
 DEFAULT_STEP_NOISE = 0.10
 # The spread of a run's own within-stage slope about the backend's, when too few runs say, and the least it is taken to be.
@@ -50,13 +51,13 @@ MIN_FIRST_SD = 0.02
 DEFAULT_STAGE_SIGMA, MIN_STAGE_SIGMA = 0.15, 0.03
 # Seconds of spread for a stage the history has not seen, when the backend has no stage history at all.
 DEFAULT_OTHER_SD = 20.0
-# A measured point transferred to another workload is useful immediately, but much less certain than an exact match.
-HEURISTIC_LOG_SPREAD, HEURISTIC_STAGE_SPREAD = 0.75, 0.60
+# A measured pipeline transferred to another is useful immediately, but much less certain than an exact match.
+FOREIGN_LOG_SPREAD = 1.0
 # The H3 color-finishing evidence is 38-46 seconds altogether; these rough shares let each actual stage start match
 # the plan, while keeping the same 42-second total. They are replaced by sparse stage measurements when available.
 H3_COPY_RAW_SECONDS, H3_CORRECT_SECONDS, H3_LAST_FRAME_SECONDS = 8.0, 33.0, 1.0
-# The ridge penalties tried, by leave-one-execution-out error.
-PENALTIES = (0.01, 0.1, 1.0, 10.0, 100.0)
+# The ridge penalties tried by default, by leave-one-execution-out error.
+PENALTIES = Tunables().penalties
 MIN_VARIANCE = 1e-12
 
 # Student-t quantiles for degrees of freedom 1 to 30: 0.90 (the 80% interval) and 0.975 (the 95% interval).
@@ -88,6 +89,11 @@ def _quantile(table: tuple[float, ...], normal: float, df: float) -> float:
 def student_t_90(df: float) -> float:
     """The quantile that bounds an 80% interval on both sides, for ``df`` residual degrees of freedom (normal above 30)."""
     return _quantile(T90, NORMAL_90, df)
+
+
+def slope_quantile(level: float, df: float) -> float:
+    """The two-sided Student-t quantile a within-stage slope must clear: 0.95 or 0.80 (the lookup tables hold only those)."""
+    return student_t_90(df) if level <= 0.80 else student_t_975(df)
 
 
 def student_t_975(df: float) -> float:
@@ -150,10 +156,10 @@ def _insert_after(stages: list[StagePlan], after: str, item: FixedStage) -> None
     stages.insert(index, item)
 
 
-def _h3_finishing_stages(stages: list[StagePlan], pixels: float, frames: int, spread: float, correcting: bool) -> None:
-    """Fill the i2av-only stages at their real positions when a sparse row or r2av anchor lacks them."""
-    anchor = H3_R2AV_E0051_E0054
-    scale = pixels / (anchor.width * anchor.height) * frames / anchor.frames
+def _h3_finishing_stages(stages: list[StagePlan], pixels: float, frames: int, spread: float, correcting: bool, reference: tuple[int, int]) -> None:
+    """Fill the i2av-only stages at their real positions when a sparse row or r2av anchor lacks them; ``reference`` is the
+    anchor's pixels and frames."""
+    scale = pixels / reference[0] * frames / reference[1]
     median_factor = math.exp(-(spread**2) / 2)
     if not any(stage.stage == "last_frame" for stage in stages):
         _insert_before(stages, "promote", FixedStage("last_frame", "last_frame", "framecontrol", H3_LAST_FRAME_SECONDS * scale * median_factor, spread))
@@ -204,6 +210,11 @@ class Plan:
     # Time between the named stages: the mean and spread of a run's ``unaccounted`` seconds.
     overhead_mean: float
     overhead_sd: float
+    # Where the figures came from (``knobs.KNOBS_*``), and when a learned calibration was written.
+    knobs: str = KNOBS_FACTORY
+    knobs_updated_at: str | None = None
+    # The run knobs this workload sets to a value never observed, by feature name; the range is already widened for them.
+    unseen_knobs: tuple[str, ...] = ()
 
     @property
     def prior_var(self) -> float:
@@ -237,13 +248,13 @@ class _Row:
         return self.run.execution
 
 
-def _read_row(run: HistoryRun) -> _Row:
+def _read_row(run: HistoryRun, tunables: Tunables) -> _Row:
     stages = run.counted_stages
     keys = stage_keys(run)
     keyed = {key: stage for key, stage in zip(keys, stages, strict=True) if stage.stage != "unaccounted"}
     iterative = iterative_stage(run)
     interval = reuse_interval(run.workload)
-    series = step_series(iterative, interval) if iterative is not None else None
+    series = step_series(iterative, interval, tunables.pause_factor, tunables.slope_min_gaps) if iterative is not None else None
     key = next((name for name, stage in keyed.items() if stage is iterative), None)
     y = math.log(series.mean_seconds) if series is not None and series.mean_seconds > 0 else None
     ratio = pause = None
@@ -292,7 +303,7 @@ class _Ridge:
         return float(design @ self.beta), float(self.cv_mse * (design @ self.inverse @ design))
 
 
-def _fit_ridge(rows: Sequence[_Row], features_of: Any = None) -> _Ridge | None:
+def _fit_ridge(rows: Sequence[_Row], features_of: Any = None, penalties: Sequence[float] = PENALTIES) -> _Ridge | None:
     """Fit ``rows`` (all with a mean step). ``features_of`` gives a row's features, by default its own."""
     feature_dicts = [features_of(row) if features_of is not None else row.features for row in rows]
     keys = set().union(*feature_dicts)
@@ -314,7 +325,7 @@ def _fit_ridge(rows: Sequence[_Row], features_of: Any = None) -> _Ridge | None:
     parts = [(design[indices], y[indices]) for indices in groups.values()]
     folds = [(part.T @ part, part.T @ target, part, target) for part, target in parts]
     best: tuple[float, float] | None = None
-    for penalty in PENALTIES:
+    for penalty in penalties:
         error = 0.0
         for fold_gram, fold_moment, part, target in folds:
             coefficients = np.linalg.solve(gram - fold_gram + penalty * penalty_matrix + 1e-9 * np.eye(len(gram)), moment - fold_moment)
@@ -341,13 +352,15 @@ class _BackendStats:
     step_noise: float = DEFAULT_STEP_NOISE
     stage_factor: float = 1.0
     pause_share: float = 0.0
-    tau: float = DEFAULT_TAU
-    rho: float = DEFAULT_RHO
+    tau: float = Tunables().tau
+    rho: float = Tunables().rho
     other_sd: float = DEFAULT_OTHER_SD
     stage_sigma: float = DEFAULT_STAGE_SIGMA
+    # The fields the history measured, as opposed to the ones still at their defaults.
+    measured: frozenset[str] = frozenset()
 
 
-def _spreads(rows: Sequence[_Row]) -> tuple[float, float]:
+def _spreads(rows: Sequence[_Row], tunables: Tunables) -> tuple[float, float]:
     """The speed factor's spread (``tau``) and the share of its variance that executions share (``rho``), from rows of the
     same signature grouped by execution; their defaults until three signatures have runs from two executions."""
     groups: dict[Signature, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -356,7 +369,7 @@ def _spreads(rows: Sequence[_Row]) -> tuple[float, float]:
         groups[row.signature][row.execution].append(row.y)
     usable = [by_execution for by_execution in groups.values() if len(by_execution) >= 2]
     if len(usable) < MIN_SPREAD_SIGNATURES:
-        return DEFAULT_TAU, DEFAULT_RHO
+        return tunables.tau, tunables.rho
     between = within = n0_weighted = 0.0
     df_between = df_within = 0
     for by_execution in usable:
@@ -371,17 +384,17 @@ def _spreads(rows: Sequence[_Row]) -> tuple[float, float]:
         n0_weighted += total - sum(len(values) ** 2 for values in by_execution.values()) / total
     mean_between = between / df_between
     if df_within == 0:
-        return max(MIN_TAU, math.sqrt(mean_between)), DEFAULT_RHO
+        return max(MIN_TAU, math.sqrt(mean_between)), tunables.rho
     mean_within = within / df_within
     n0 = n0_weighted / df_between
     run_var = mean_within
     execution_var = max(0.0, (mean_between - mean_within) / n0) if n0 > 0 else 0.0
     total_var = run_var + execution_var
-    rho = execution_var / total_var if total_var > MIN_VARIANCE else DEFAULT_RHO
+    rho = execution_var / total_var if total_var > MIN_VARIANCE else tunables.rho
     return max(MIN_TAU, math.sqrt(total_var)), min(0.95, max(0.05, rho))
 
 
-def _slope(rows: Sequence[_Row]) -> float:
+def _slope(rows: Sequence[_Row], level: float) -> float:
     """The backend's within-stage slope when its 95% interval over executions excludes zero; otherwise none."""
     by_execution: dict[int, list[float]] = defaultdict(list)
     for row in rows:
@@ -392,30 +405,40 @@ def _slope(rows: Sequence[_Row]) -> float:
         return 0.0
     average = sum(means) / len(means)
     error = _stdev(means) / math.sqrt(len(means))
-    return max(-MAX_SLOPE, min(MAX_SLOPE, average)) if abs(average) > student_t_975(len(means) - 1) * error else 0.0
+    return max(-MAX_SLOPE, min(MAX_SLOPE, average)) if abs(average) > slope_quantile(level, len(means) - 1) * error else 0.0
 
 
-def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
-    stats = _BackendStats()
+def _stats(live: Sequence[_Row], all_rows: Sequence[_Row], tunables: Tunables) -> _BackendStats:
+    stats = _BackendStats(tau=tunables.tau, rho=tunables.rho)
+    measured: set[str] = set()
     series = [row.series for row in live if row.series is not None]
     if series:
         stats.step_noise = min(MAX_STEP_NOISE, max(0.01, statistics.median(item.noise for item in series)))
+        measured.add("step_noise")
     ratios = [item.first_ratio for item in series if item.first_ratio is not None]
     if len(ratios) >= MIN_FIRST_GAP_RUNS:
         stats.first_ratio = statistics.median(ratios)
         stats.first_sd = max(MIN_FIRST_SD, _stdev([math.log(ratio) for ratio in ratios]))
+        measured.update(("first_ratio", "first_sd"))
     slopes = [item.slope for item in series if item.slope is not None]
     if len(slopes) >= MIN_SLOPE_RUNS:
         stats.slope_sd = min(MAX_SLOPE, max(MIN_SLOPE_SD, _stdev(slopes)))
+        measured.add("slope_sd")
     factors = [row.stage_ratio for row in live if row.stage_ratio is not None]
     if factors:
         stats.stage_factor = sum(factors) / len(factors)
+        measured.add("stage_factor")
     pauses = [row.pause_ratio for row in live if row.pause_ratio is not None]
     if pauses:
         stats.pause_share = sum(pauses) / len(pauses)
+        measured.add("pause_share")
     if live:
-        stats.tau, stats.rho = _spreads(live)
-        stats.slope = _slope(live)
+        stats.tau, stats.rho = _spreads(live, tunables)
+        if (stats.tau, stats.rho) != (tunables.tau, tunables.rho):
+            measured.update(("tau", "rho"))
+        stats.slope = _slope(live, tunables.slope_level)
+        if len({row.execution for row in live if row.series is not None and row.series.slope is not None}) >= MIN_SLOPE_EXECUTIONS:
+            measured.add("slope")
     durations: dict[tuple[str | None, str], list[float]] = defaultdict(list)
     for row in all_rows:
         for key, stage in row.keyed.items():
@@ -426,20 +449,24 @@ def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
         stats.other_sd = math.sqrt(sum(_variance(values) for values in groups) / len(groups))
         logs = [_stdev([math.log(max(value, 1e-3)) for value in values]) for values in groups]
         stats.stage_sigma = max(MIN_STAGE_SIGMA, statistics.median(logs))
+        measured.add("other_sd")
+    stats.measured = frozenset(measured)
     return stats
 
 
 class FittedModel:
     """The history, read once, and the plans it supports. ``skipped`` is the number of rows the caller could not read."""
 
-    def __init__(self, history: Sequence[HistoryRun], *, skipped: int = 0) -> None:
+    def __init__(self, history: Sequence[HistoryRun], *, skipped: int = 0, tunables: Tunables | None = None, calibration: Calibration | None = None) -> None:
         self.skipped = skipped
+        self.tunables = tunables or Tunables()
+        self.calibration = calibration or factory_calibration()
         self._rows: dict[str, list[_Row]] = defaultdict(list)
         self._runs: dict[str, list[HistoryRun]] = defaultdict(list)
         self._read: dict[int, _Row] = {}
         for run in history:
             try:
-                row = _read_row(run)
+                row = _read_row(run, self.tunables)
             except Exception:
                 # A row that cannot be read is left out and counted, never allowed to stop a forecast.
                 self.skipped += 1
@@ -466,26 +493,31 @@ class FittedModel:
 
     def _backend_stats(self, backend: str) -> _BackendStats:
         if backend not in self._stats_cache:
-            self._stats_cache[backend] = _stats(self._live(backend), self._rows[backend])
+            self._stats_cache[backend] = _stats(self._live(backend), self._rows[backend], self.tunables)
         return self._stats_cache[backend]
 
     def plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Plan:
         """Price a run of ``backend`` and ``pipeline`` with this ``workload`` (as ``TimingStarted`` will record it) on the
-        first tier whose history qualifies, and never from another backend's."""
+        first tier whose history qualifies, and never from another backend's. The plan's ``knobs`` names where the numbers
+        that are not the history's came from: the factory, a provisional calibration, or a value the owner pinned."""
+        plan = self._plan(backend, pipeline, workload, environment)
+        return replace(plan, knobs=KNOBS_PINNED) if plan.knobs == KNOBS_FACTORY and self.tunables != Tunables() else plan
+
+    def _plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Plan:
         key = signature(backend, pipeline, workload, environment)
         frames = None if isinstance(workload.get("frames"), int | float) else self._frames.get(key)
         features = feature_values(workload, frames)
         stats = self._backend_stats(backend)
         live = self._live(backend)
         same = [row for row in live if row.signature == key]
-        if len(same) >= MIN_SIGNATURE_RUNS and len({row.execution for row in same}) >= MIN_SIGNATURE_EXECUTIONS:
+        if len(same) >= self.tunables.min_signature_runs and len({row.execution for row in same}) >= self.tunables.min_signature_executions:
             return self._signature_plan(backend, pipeline, key, workload, environment, same, stats)
         for tier, scope in ((TIER_BACKEND, lambda row: row.run.pipeline == pipeline), (TIER_PIPELINE, lambda row: True)):
             for fidelity in (LIVE, POOLED):
                 rows = [row for row in (live if fidelity == LIVE else live + self._log(backend)) if scope(row)]
                 if fidelity == POOLED and len(rows) == len([row for row in live if scope(row)]):
                     continue
-                if len(rows) < MIN_FIT_RUNS or len({row.execution for row in rows}) < MIN_FIT_EXECUTIONS:
+                if len(rows) < self.tunables.min_fit_runs or len({row.execution for row in rows}) < self.tunables.min_fit_executions:
                     continue
                 indicator = tier == TIER_PIPELINE
                 fit = self._ridge(backend, pipeline, tier, fidelity == POOLED, rows, indicator)
@@ -493,7 +525,10 @@ class FittedModel:
                 if fit is None or not fit.compatible(request):
                     continue
                 return self._fit_plan(backend, pipeline, key, workload, environment, tier, fidelity, rows, fit, request, stats)
-        factory = factory_point(backend, pipeline, workload, environment)
+        remembered = self._summary_plan(backend, pipeline, workload, environment)
+        if remembered is not None:
+            return remembered
+        factory = self.calibration.point(backend, pipeline, workload, environment)
         if factory is not None:
             return self._factory_plan(factory)
         heuristic = self._sparse_plan(backend, pipeline, key, workload, environment, stats) or self._heuristic_plan(backend, pipeline, workload)
@@ -527,30 +562,33 @@ class FittedModel:
         else:
             sample = min(candidates, key=lambda row: (abs(math.log(pixels / row.run.workload["pixels"])) + abs(math.log(frames / row.run.workload["frames"])), -row.run.execution, -row.run.run))
             assert sample.y is not None
-            frame_exponent = 1.6 if backend == H3_BACKEND else 1.0
+            anchor_pipeline = self._anchor(backend)
+            frame_exponent = anchor_pipeline.step.frame_exponent if anchor_pipeline is not None else 1.0
             rate = math.exp(sample.y) * (pixels / sample.run.workload["pixels"]) * (frames / sample.run.workload["frames"]) ** frame_exponent
-            spread = HEURISTIC_LOG_SPREAD
+            spread = self.tunables.heuristic_log_spread
         if not math.isfinite(rate) or rate <= 0:
             return None
         build_changed = self._build_changed([sample], environment)
         if build_changed:
-            spread = HEURISTIC_LOG_SPREAD
+            spread = self.tunables.heuristic_log_spread
         stages: list[StagePlan] = []
         duration_scale = pixels / sample.run.workload["pixels"] * frames / sample.run.workload["frames"]
-        stage_spread = HEURISTIC_STAGE_SPREAD
+        stage_spread = self.tunables.heuristic_stage_spread
         for name, stage in sample.keyed.items():
             if name == sample.iterative_key:
                 stages.append(IterativeStage(name, stage.stage, stage.source, steps, reuse_interval(workload)))
             elif stage.stage not in ("correct", "copy_raw") or workload.get("color_corrects"):
                 duration = stage.duration * (duration_scale if stage.stage in ("ffmpeg", "finishing", "copy_raw", "correct") else 1.0)
                 stages.append(FixedStage(name, stage.stage, stage.source, max(duration, 0.001) * math.exp(-(stage_spread**2) / 2), stage_spread))
+        anchor = self._anchor(backend)
         if backend == H3_BACKEND and pipeline == "i2av":
-            _h3_finishing_stages(stages, float(pixels), frames, stage_spread, bool(workload.get("color_corrects")))
-        elif backend == DRAW_THINGS_BACKEND and workload.get("color_corrects") and not any(stage.stage == "correct" for stage in stages):
-            anchor = heuristic_anchor(backend)
             assert anchor is not None
-            scale = pixels / (anchor.width * anchor.height) * frames / anchor.frames
-            _insert_after(stages, "last_frame", FixedStage("correct", "correct", "framecontrol", 6.847 * scale * math.exp(-(stage_spread**2) / 2), stage_spread))
+            _h3_finishing_stages(stages, float(pixels), frames, stage_spread, bool(workload.get("color_corrects")), (anchor.step.pixels, anchor.step.frames))
+        elif backend == DRAW_THINGS_BACKEND and workload.get("color_corrects") and not any(stage.stage == "correct" for stage in stages):
+            assert anchor is not None
+            scale = pixels / anchor.step.pixels * frames / anchor.step.frames
+            correct = next(stage.seconds for stage in anchor.stages if stage.name == "correct")
+            _insert_after(stages, "last_frame", FixedStage("correct", "correct", "framecontrol", correct * scale * math.exp(-(stage_spread**2) / 2), stage_spread))
         if not any(isinstance(stage, IterativeStage) for stage in stages):
             return None
         prior_var = spread**2 + stats.tau**2
@@ -581,31 +619,87 @@ class FittedModel:
             overhead_sd=max(stats.other_sd, sample.unaccounted * 0.5),
         )
 
-    def _heuristic_plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any]) -> Plan | None:
-        """Scale a backend's measured rate by pixels and effective frames when history cannot fit this workload.
+    def _summary_plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Plan | None:
+        """Tier 1 from what the calibration file remembers of a signature whose rows pruning has taken: the same runs and
+        executions it asks of history, its median step, and its median stage times in the pipeline's order."""
+        calibrated = self.calibration.backend(backend)
+        steps, model = workload.get("steps"), environment.get("model")
+        if calibrated is None or pipeline is None or not calibrated.has(pipeline) or not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0 or model is None:
+            return None
+        own = calibrated.pipelines[pipeline]
+        summary = own.summaries.get(signature_id(signature(backend, pipeline, sanitized_workload(workload), {"model": fingerprint(model)})))
+        if summary is None or summary.step_seconds is None or summary.count < self.tunables.min_signature_runs or summary.executions < self.tunables.min_signature_executions:
+            return None
+        stages: list[StagePlan] = []
+        for stage in own.stages:
+            if stage.iterative:
+                stages.append(IterativeStage(stage.key, stage.name, stage.source, steps, reuse_interval(workload)))
+            elif stage.key in summary.stages:
+                stages.append(FixedStage(stage.key, stage.name, stage.source, max(summary.stages[stage.key], 0.001), stage.sigma if stage.sigma is not None else DEFAULT_STAGE_SIGMA))
+        if not any(isinstance(stage, IterativeStage) for stage in stages):
+            return None
+        spreads = own.spreads
+        tau, rho = (spreads.tau, spreads.rho) if own.learned else (self.tunables.tau, self.tunables.rho)
+        return Plan(
+            tier=TIER_SIGNATURE,
+            fidelity=LIVE,
+            runs=summary.count,
+            executions=summary.executions,
+            build_changed=False,
+            skipped=self.skipped,
+            penalty=None,
+            stages=tuple(stages),
+            log_step=math.log(summary.step_seconds),
+            log_step_var=tau**2 / summary.executions,
+            tau=tau,
+            rho=rho,
+            extra_var=0.0,
+            df=max(1.0, summary.count - 1.0),
+            slope=spreads.slope,
+            first_ratio=spreads.first_ratio,
+            step_noise=spreads.step_noise,
+            stage_factor=spreads.stage_factor,
+            other_sd=spreads.other_sd,
+            slope_sd=spreads.slope_sd,
+            first_sd=spreads.first_sd,
+            pause_share=spreads.pause_share,
+            overhead_mean=0.0,
+            overhead_sd=0.0,
+            knobs=self.calibration.source_of(backend, pipeline) if self.tunables == Tunables() else KNOBS_PINNED,
+            knobs_updated_at=own.updated_at,
+        )
 
-        These exponents are only a starting guess. A broad predictive range and the run's own steps carry the forecast
+    def _anchor(self, backend: str) -> PipelineCalibration | None:
+        """The pipeline whose figures a pipeline without a calibration of its own borrows."""
+        calibrated = self.calibration.backend(backend)
+        return calibrated.pipelines[calibrated.anchor] if calibrated is not None else None
+
+    def _heuristic_plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any]) -> Plan | None:
+        """Scale a backend's calibrated rate by pixels and effective frames when history cannot fit this workload.
+
+        The factory exponents are only a starting guess. A broad predictive range and the run's own steps carry the forecast
         until enough matching history supports a fit.
         """
-        anchor = heuristic_anchor(backend)
+        calibrated = self.calibration.backend(backend)
         dimensions, steps = _positive_pixels_frames(workload), workload.get("steps")
-        if anchor is None or pipeline is None or dimensions is None or not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0:
+        if calibrated is None or pipeline is None or dimensions is None or not isinstance(steps, int) or isinstance(steps, bool) or steps <= 0:
             return None
+        anchor = calibrated.pipelines[calibrated.anchor]
+        own = calibrated.pipeline(pipeline)
         pixels, frames = dimensions
-        pixel_ratio = pixels / (anchor.width * anchor.height)
-        frame_ratio = frames / anchor.frames
-        # The H3 evidence at 5, 8, 10 and 15 seconds grows faster than linearly with frames.
-        # A still-image job does not become 33 times cheaper than E0053's video merely because it has one output frame.
-        frame_exponent = 1.6 if backend == H3_BACKEND else 0.5 if pipeline == "i2i" else 1.0
-        rate = anchor.step_seconds * pixel_ratio * frame_ratio**frame_exponent
+        pixel_ratio = pixels / own.step.pixels
+        frame_ratio = frames / own.step.frames
+        features = feature_values(workload)
+        rate = own.step.rate(pixels, frames, learned_terms(own.step, workload, features) if own.learned else 0.0)
         if not math.isfinite(rate) or rate <= 0:
             return None
-        fixed_spread = HEURISTIC_STAGE_SPREAD
+        unseen = unseen_knobs(own.observed, {}, features) if own.learned else ()
+        fixed_spread = self.tunables.heuristic_stage_spread
         fixed_median_factor = math.exp(-(fixed_spread**2) / 2)
         stages: list[StagePlan] = []
         references = workload.get("reference_count")
         reference_count = references if isinstance(references, int) and not isinstance(references, bool) else 1
-        for stage in anchor.stages:
+        for stage in own.stages:
             if stage.name == "correct" and not workload.get("color_corrects"):
                 continue
             if backend == H3_BACKEND and stage.name in ("video_encode", "vision") and stage.key.endswith(("#2", "#3")) and int(stage.key[-1]) > reference_count:
@@ -614,42 +708,50 @@ class FittedModel:
                 stages.append(IterativeStage(stage.key, stage.name, stage.source, steps, reuse_interval(workload)))
             else:
                 duration = stage.seconds
-                if stage.name in ("ffmpeg", "finishing", "correct"):
-                    duration *= pixel_ratio * frame_ratio
+                if stage.pixel_exponent or stage.frame_exponent:
+                    duration *= pixel_ratio**stage.pixel_exponent * frame_ratio**stage.frame_exponent
                 stages.append(FixedStage(stage.key, stage.name, stage.source, duration * fixed_median_factor, fixed_spread))
         if backend == H3_BACKEND and pipeline == "i2av":
-            _h3_finishing_stages(stages, float(pixels), frames, fixed_spread, bool(workload.get("color_corrects")))
-        log_spread = 1.0 if pipeline != anchor.pipeline else HEURISTIC_LOG_SPREAD
-        prior_var = log_spread**2 + anchor.tau**2
+            _h3_finishing_stages(stages, float(pixels), frames, fixed_spread, bool(workload.get("color_corrects")), (anchor.step.pixels, anchor.step.frames))
+        own_pipeline = pipeline == calibrated.anchor or calibrated.has(pipeline)
+        log_spread = (own.spread if own.spread is not None else self.tunables.heuristic_log_spread) if own_pipeline else FOREIGN_LOG_SPREAD
+        if unseen:
+            log_spread *= self.tunables.unseen_knob_inflation
+        spreads = own.spreads
+        tau, rho = (spreads.tau, spreads.rho) if own.learned else (self.tunables.tau, self.tunables.rho)
+        prior_var = log_spread**2 + tau**2
         return Plan(
             tier=TIER_HEURISTIC,
             fidelity="heuristic",
-            runs=0,
-            executions=0,
+            runs=own.runs,
+            executions=own.executions,
             build_changed=False,
             skipped=self.skipped,
             penalty=None,
             stages=tuple(stages),
             log_step=math.log(rate) - prior_var / 2,
             log_step_var=log_spread**2,
-            tau=anchor.tau,
-            rho=anchor.rho,
+            tau=tau,
+            rho=rho,
             extra_var=0.0,
             df=1.0,
-            slope=anchor.slope if pipeline == anchor.pipeline else 0.0,
-            first_ratio=anchor.first_ratio if pipeline == anchor.pipeline else None,
-            step_noise=max(anchor.step_noise, DEFAULT_STEP_NOISE),
-            stage_factor=anchor.stage_factor,
-            other_sd=max(anchor.other_sd, rate * steps * 0.2),
-            slope_sd=anchor.slope_sd,
-            first_sd=max(anchor.first_sd, 0.15),
-            pause_share=0.0,
+            slope=spreads.slope if own_pipeline else 0.0,
+            first_ratio=spreads.first_ratio if own_pipeline else None,
+            step_noise=max(spreads.step_noise, DEFAULT_STEP_NOISE),
+            stage_factor=spreads.stage_factor,
+            other_sd=max(spreads.other_sd, rate * steps * 0.2),
+            slope_sd=spreads.slope_sd,
+            first_sd=max(spreads.first_sd, 0.15),
+            pause_share=spreads.pause_share if own.learned else 0.0,
             overhead_mean=0.0,
             overhead_sd=0.0,
+            knobs=self.calibration.source_of(backend, pipeline) if self.tunables == Tunables() else KNOBS_PINNED,
+            knobs_updated_at=own.updated_at,
+            unseen_knobs=unseen,
         )
 
-    def _factory_plan(self, factory: DrawThingsFactoryPoint | H3FactoryPoint) -> Plan:
-        stages: tuple[StagePlan, ...] = tuple(IterativeStage(stage.key, stage.name, stage.source, factory.steps) if stage.iterative else FixedStage(stage.key, stage.name, stage.source, stage.seconds, factory.spread) for stage in factory.stages)
+    def _factory_plan(self, factory: Any) -> Plan:
+        stages: tuple[StagePlan, ...] = tuple(IterativeStage(stage.key, stage.name, stage.source, factory.steps) if stage.iterative else FixedStage(stage.key, stage.name, stage.source, stage.seconds, self.tunables.factory_spread) for stage in factory.stages)
         return Plan(
             tier=TIER_FACTORY,
             fidelity="factory",
@@ -660,9 +762,9 @@ class FittedModel:
             penalty=None,
             stages=stages,
             log_step=math.log(factory.step_seconds),
-            log_step_var=factory.spread**2,
-            tau=factory.tau,
-            rho=factory.rho,
+            log_step_var=self.tunables.factory_spread**2,
+            tau=self.tunables.tau,
+            rho=self.tunables.rho,
             extra_var=0.0,
             df=1.0,  # One or two independent executions cannot estimate a narrower predictive tail.
             slope=factory.slope,
@@ -681,7 +783,7 @@ class FittedModel:
         cache_key = (backend, pipeline if tier == TIER_BACKEND else None, tier, pooled)
         if cache_key not in self._fit_cache:
             features_of = (lambda row: {**row.features, f"pipeline={row.run.pipeline}": 1.0}) if indicator else None
-            self._fit_cache[cache_key] = _fit_ridge(rows, features_of)
+            self._fit_cache[cache_key] = _fit_ridge(rows, features_of, self.tunables.penalties)
         return self._fit_cache[cache_key]
 
     def _signature_plan(self, backend: str, pipeline: str | None, key: Signature, workload: Mapping[str, Any], environment: Mapping[str, Any], same: list[_Row], stats: _BackendStats) -> Plan:
@@ -847,4 +949,10 @@ class FittedModel:
         return self._stage_cache[cache_key]
 
 
-__all__ = ["PENALTIES", "FittedModel", "FixedStage", "IterativeStage", "Plan", "StagePlan", "student_t_90", "student_t_975"]
+# What the calibration reads of a fitted history, kept to the module's own names for the rest.
+Row = _Row
+BackendStats = _BackendStats
+read_row = _read_row
+backend_stats = _stats
+
+__all__ = ["PENALTIES", "BackendStats", "Row", "backend_stats", "read_row", "slope_quantile", "FittedModel", "FixedStage", "IterativeStage", "Plan", "StagePlan", "student_t_90", "student_t_975"]
