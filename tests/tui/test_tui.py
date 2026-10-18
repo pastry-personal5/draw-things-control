@@ -173,6 +173,18 @@ class TuiTests(TuiTestCase):
                     self.assertIsInstance(app.screen, MainScreen)
                     self.assertIs(app.focused, component)
 
+    async def test_shortcut_help_groups_rows_by_category_with_the_component_first_and_general_last(self) -> None:
+        app = self.app()
+        async with app.run_test() as pilot:
+            await self.settle(pilot)
+            app.screen.query_one(JobsList).focus()
+            await pilot.press("question_mark")
+            await pilot.pause()
+            rows = self.text(app, "shortcut-help-rows")
+            categories = [line for line in rows.splitlines() if line and not line.startswith(" ")]
+        self.assertEqual(categories, ["Selection", "Jobs", "Sorting", "General"])
+        self.assertLess(rows.index("Submit the selected job"), rows.index("Show shortcut help"))
+
     async def test_jobs_lists_every_job_file_and_its_status(self) -> None:
         self.write_data_job("b-walk.yaml")
         self.write_data_job("a-still.yml", mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])

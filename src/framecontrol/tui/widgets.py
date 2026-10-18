@@ -13,19 +13,34 @@ from textual.visual import VisualType
 from textual.widgets import Input, RichLog, Static
 
 from framecontrol.tui.commands import CommandSuggester
-from framecontrol.tui.shortcut_help import ShortcutRows, refresh_status_line
+from framecontrol.tui.shortcut_help import ShortcutGroups, refresh_status_line
 
 MAX_MESSAGE_LINES = 5000
-COMMAND_FIELD_SHORTCUTS: ShortcutRows = (
-    ("Enter", "Run the command"),
-    ("Tab", "Complete; again to step through the choices"),
-    ("Up/Down", "Recall earlier commands, kept across sessions"),
-    ("PageUp/PageDown", "Scroll the Activity log"),
-    ("Shift-PageUp/PageDown", "Scroll the generation output"),
-    ("Tab (nothing to complete)", "Move focus to the Jobs list"),
-    ("Escape", "Clear the command field"),
-    ("Ctrl-C", "Clear it, or press twice to quit"),
-    ("F1", "Show shortcut help"),
+COMMAND_FIELD_SHORTCUTS: ShortcutGroups = (
+    (
+        "Command field",
+        (
+            ("Enter", "Run the command"),
+            ("Tab", "Complete; again to step through the choices"),
+            ("Up/Down", "Recall earlier commands, kept across sessions"),
+            ("Escape", "Clear the command field"),
+        ),
+    ),
+    (
+        "Scrolling",
+        (
+            ("PageUp/PageDown", "Scroll the Activity log"),
+            ("Shift-PageUp/PageDown", "Scroll the generation output"),
+        ),
+    ),
+    (
+        "General",
+        (
+            ("Tab (nothing to complete)", "Move focus to the Jobs list"),
+            ("Ctrl-C", "Clear it, or press twice to quit"),
+            ("F1", "Show shortcut help"),
+        ),
+    ),
 )
 
 

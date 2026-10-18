@@ -16,7 +16,7 @@ from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_reader import QueueReader
 from framecontrol.state.queue import FINISHED_STATES
 from framecontrol.tui.panes.base import SidewaysTable
-from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.queue import queue_cells, queue_row_to_dict
 
 if TYPE_CHECKING:
@@ -41,16 +41,28 @@ def counts_text(entries: list[dict[str, Any]]) -> str:
 
 
 QUEUE_LIST_SHORTCUTS = (
-    ("Up/Down", "Move the selected entry"),
-    ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Open the selected entry in a viewer"),
-    ("l", "Write the selected entry's details to the Activity log"),
-    ("c", "Cancel the selected entry"),
-    ("p / u", "Park / unpark the selected entry"),
-    ("Tab / Shift-Tab", "Move focus"),
-    ("Escape", "Focus the command field"),
-    ("Ctrl-C", "Press twice to quit"),
-    ("? / F1", "Show shortcut help"),
+    (
+        "Selection",
+        (
+            ("Up/Down", "Move the selected entry"),
+            ("PageUp/PageDown, Home/End", "Move selection further"),
+        ),
+    ),
+    (
+        "Viewing",
+        (
+            ("Enter", "Open the selected entry in a viewer"),
+            ("l", "Write the selected entry's details to the Activity log"),
+        ),
+    ),
+    (
+        "Queue actions",
+        (
+            ("c", "Cancel the selected entry"),
+            ("p / u", "Park / unpark the selected entry"),
+        ),
+    ),
+    GENERAL_SHORTCUTS,
 )
 
 

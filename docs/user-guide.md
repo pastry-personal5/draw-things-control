@@ -1169,7 +1169,7 @@ The Activity log says it could not be saved.
 | 1 | The phase (`starting`, `running`, `cooling down`, `stopping`, `parking after run 3/7`, `parking on its last run`, `finished (succeeded)`, `did not start`), the execution ID once the job is recorded, the job file's name without `.yaml`, and `run k/N`: `running  E0012: walk  run 2/3` |
 | 2 | `Job`: a bar, its percentage, and `ends ~16:42 (in 23 min)`; when the range the server gives is wide (over 3% of the time left) it stands in for the time left, `ends ~16:42 (16:31 to 16:58)`; `estimating` where the server has no number; or `parking` while the entry has a park reservation |
 | 3 | `Run`: the same for the running run; during a cooldown, a `Wait` bar with the time the wait ends |
-| 4 | The stage and its units (`denoise 12/30`) and the run's elapsed time; during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
+| 4 | The stage and its units (`denoise 12/30`) the run's elapsed time, and the run's time left when the forecast has an end (`denoise 33/40  3 min 40 s elapsed  2 min 25 s remaining`); during a cooldown, `next: run 3/5`; after the job, `job took 1 h 12 min` |
 | 5 | `last run took 7 min 12 s`: the job's last successful run, its `draw-things-cli` time without the cooldown |
 
 - The ends and the bars come from one forecast that `fc serve` makes and publishes; the TUI holds no model of
@@ -1290,7 +1290,7 @@ they succeed, unless you are in the history or the detail at that moment.
 | `a` | In Jobs list, submit the selected job |
 | `l` | In Jobs list or Queue list, write the selected job's or entry's details to the Activity log |
 | `s` / `r` | In Jobs list, sort by the next column / reverse the order |
-| `?` / F1 | In a focused list or detail, show shortcut help; `?`, F1 or Escape closes it. F1 also works in the command field, where it lists the command field's keys |
+| `?` / F1 | In a focused list or detail, show shortcut help, grouped by category with the pane's own keys first and the general keys last; `?`, F1 or Escape closes it. F1 also works in the command field, where it lists the command field's keys |
 | Escape | Clear the command field; in a focused list or detail, return to the command field |
 | Ctrl-C | Clear the command field; on an empty field, press twice within 2 seconds to quit |
 

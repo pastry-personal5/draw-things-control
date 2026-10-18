@@ -57,7 +57,7 @@ canonical term.
 | Canonical term | Visible label | Purpose |
 |---|---|---|
 | **delete confirmation** | deletion question with buttons | A modal confirmation before irreversible execution-history deletion. It blocks the main screen until a choice is made. |
-| **shortcut help overlay** | centered shortcut reference | A modal, centered reference that lists the keyboard shortcuts available in the focused list or detail, or in the command field (`F1`). |
+| **shortcut help overlay** | centered shortcut reference | A large modal, centered reference that lists, in categories (the pane's own first, general last), the keyboard shortcuts available in the focused list or detail, or in the command field (`F1`). |
 | **text viewer** | bordered, scrollable details | A modal that shows one queue entry's details at length (`Enter` in the Queue list). It changes nothing and closes with Escape, Enter or `q`. |
 | **toast** | short message in a corner | A passing message: the end of a job, or an error or warning from a key pressed in a list. It is not a modal and takes no input. |
 | **Delete** | `Delete` button | Deletes the execution currently named in the confirmation. |

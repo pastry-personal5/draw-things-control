@@ -131,9 +131,9 @@ ShortcutHelpOverlay {
 }
 
 #shortcut-help {
-    width: 58;
-    max-width: 100%;
-    height: auto;
+    width: 90%;
+    max-width: 110;
+    height: 90%;
     padding: 1 2;
     border: round $accent;
     background: $surface;
@@ -143,6 +143,10 @@ ShortcutHelpOverlay {
     margin-bottom: 1;
     text-style: bold;
     color: $accent;
+}
+
+#shortcut-help-scroll {
+    height: 1fr;
 }
 
 #shortcut-help-dismiss {

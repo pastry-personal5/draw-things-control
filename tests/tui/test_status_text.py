@@ -94,7 +94,7 @@ class WorkStatusTests(StatusTextCase):
         lines = self.lines(live)
         self.assertTrue(lines[1].startswith("Job ") and "4%  ends ~14:15 (14:14 to 14:16)" in lines[1], lines[1])
         self.assertIn("9%  ends ~14:07 (in 6 min 20 s)", lines[2])
-        self.assertEqual(lines[3], "denoise 12/30  40 s elapsed")
+        self.assertEqual(lines[3], "denoise 12/30  40 s elapsed  6 min 20 s remaining")
         self.assertEqual(lines[0], f"running  {live.path.stem}  run 1/2")  # type: ignore[union-attr]
 
     def test_with_no_forecast_or_no_number_the_bars_say_estimating(self) -> None:

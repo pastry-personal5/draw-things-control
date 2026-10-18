@@ -18,7 +18,7 @@ from framecontrol.services.history import PAGE_SIZE, HistoryFilter, HistoryPage
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.tui.panes.base import SidewaysTable
 from framecontrol.tui.reader import PaneHistory
-from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.history import history_cells
 
 # How often the history is checked while another process runs a job, and the data directory for changed job files when
@@ -29,15 +29,22 @@ HISTORY_POLL_SECONDS = 5
 # The history's height with its border and header: 5 rows show (owner decision); a horizontal scrollbar adds a line.
 HISTORY_LINES = 8
 EXECUTION_HISTORY_SHORTCUTS = (
-    ("Up/Down", "Move the selected execution"),
-    ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Open the selected execution"),
-    ("Space", "Mark or unmark the selected execution"),
-    ("d", "Delete marked or selected executions"),
-    ("Tab / Shift-Tab", "Move focus"),
-    ("Escape", "Focus the command field"),
-    ("Ctrl-C", "Press twice to quit"),
-    ("? / F1", "Show shortcut help"),
+    (
+        "Selection",
+        (
+            ("Up/Down", "Move the selected execution"),
+            ("PageUp/PageDown, Home/End", "Move selection further"),
+        ),
+    ),
+    (
+        "Executions",
+        (
+            ("Enter", "Open the selected execution"),
+            ("Space", "Mark or unmark the selected execution"),
+            ("d", "Delete marked or selected executions"),
+        ),
+    ),
+    GENERAL_SHORTCUTS,
 )
 
 

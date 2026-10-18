@@ -195,7 +195,7 @@ def work_status_lines(live: LiveRun | None, other_process: bool, width: int, *, 
         lines[3] = Text(f"next: run {live.cooldown.after_run + 1}/{len(live.runs)}")
     elif live.active_run is not None:
         lines[2] = bar_line("Run", *_bar_parts(live, forecast.get("run"), shown), width)
-        lines[3] = _details_line(live, now_moment)
+        lines[3] = _details_line(live, now_moment, shown)
     return lines
 
 
@@ -261,13 +261,17 @@ def job_display_name(path: Path) -> str:
     return path.stem if is_yaml_file(path) else path.name
 
 
-def _details_line(live: LiveRun, now: float) -> Text:
+def _details_line(live: LiveRun, now: float, shown: float) -> Text:
+    """The stage and its units, the run's elapsed time, and the time left in the run when the forecast has an end and it is still ahead."""
     parts = []
     stage = stage_text(live.forecast)
     if stage is not None:
         parts.append(stage)
     if live.run_started_at is not None:
         parts.append(f"{whole_duration(now - live.run_started_at)} elapsed")
+    span = (live.forecast or {}).get("run")
+    if span is not None and not live.stop_requested and seconds_left(span, shown) > 0:
+        parts.append(f"{whole_duration(seconds_left(span, shown))} remaining")
     return Text("  ".join(parts))
 
 

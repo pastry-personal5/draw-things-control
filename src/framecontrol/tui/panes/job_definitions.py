@@ -19,7 +19,7 @@ from framecontrol.tui.commands import SORT_KEYS
 from framecontrol.tui.job_sort import SortPreference
 from framecontrol.tui.job_watch import JobWatcher
 from framecontrol.tui.panes.base import SidewaysTable
-from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.jobs import job_definition_cells, job_display_names, sort_job_rows
 
 if TYPE_CHECKING:
@@ -37,16 +37,26 @@ JOBS_WATCH_PAUSE_SECONDS = 0.3
 # The Jobs list's height with its border and header: eight job rows show.
 JOBS_LIST_LINES = 11
 JOBS_LIST_SHORTCUTS = (
-    ("Up/Down", "Move the selected job"),
-    ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Write the selected job's details to the Activity log"),
-    ("l", "Write the selected job's details to the Activity log"),
-    ("a", "Submit the selected job"),
-    ("s / r", "Change the sort column / reverse the order"),
-    ("Tab / Shift-Tab", "Move focus"),
-    ("Escape", "Focus the command field"),
-    ("Ctrl-C", "Press twice to quit"),
-    ("? / F1", "Show shortcut help"),
+    (
+        "Selection",
+        (
+            ("Up/Down", "Move the selected job"),
+            ("PageUp/PageDown, Home/End", "Move selection further"),
+        ),
+    ),
+    (
+        "Jobs",
+        (
+            ("Enter", "Write the selected job's details to the Activity log"),
+            ("l", "Write the selected job's details to the Activity log"),
+            ("a", "Submit the selected job"),
+        ),
+    ),
+    (
+        "Sorting",
+        (("s / r", "Change the sort column / reverse the order"),),
+    ),
+    GENERAL_SHORTCUTS,
 )
 
 

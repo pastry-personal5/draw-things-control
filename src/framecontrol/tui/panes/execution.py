@@ -19,7 +19,7 @@ from framecontrol.state.executions import ExecutionRow
 from framecontrol.tui.desktop import open_run
 from framecontrol.tui.panes.base import Reads
 from framecontrol.tui.reader import PaneHistory
-from framecontrol.tui.shortcut_help import refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.common import STATUS_STYLE
 from framecontrol.tui.text.execution import ExecutionDetail, execution_detail, execution_detail_text
 
@@ -33,13 +33,18 @@ DETAIL_HEAD_LINES = 4
 
 DETAIL_RUN_LINES = 2
 EXECUTION_DETAIL_SHORTCUTS = (
-    ("Up/Down", "Move the selected run"),
-    ("PageUp/PageDown, Home/End", "Move selection further"),
-    ("Enter", "Reveal the selected run in Finder"),
-    ("Tab / Shift-Tab", "Move focus"),
-    ("Escape", "Focus the command field"),
-    ("Ctrl-C", "Press twice to quit"),
-    ("? / F1", "Show shortcut help"),
+    (
+        "Selection",
+        (
+            ("Up/Down", "Move the selected run"),
+            ("PageUp/PageDown, Home/End", "Move selection further"),
+        ),
+    ),
+    (
+        "Runs",
+        (("Enter", "Reveal the selected run in Finder"),),
+    ),
+    GENERAL_SHORTCUTS,
 )
 
 
@@ -107,7 +112,7 @@ class ExecutionDetailPane(VerticalScroll, Reads):
         refresh_status_line(self)
 
     def action_show_shortcut_help(self) -> None:
-        show_shortcut_help(self, "Execution detail", tuple(("Enter", "Open the selected run's file") if keys == "Enter" and self.file_opener is not None else (keys, what) for keys, what in EXECUTION_DETAIL_SHORTCUTS))
+        show_shortcut_help(self, "Execution detail", tuple((category, tuple(("Enter", "Open the selected run's file") if keys == "Enter" and self.file_opener is not None else (keys, what) for keys, what in rows)) for category, rows in EXECUTION_DETAIL_SHORTCUTS))
 
     def follow(self, execution_id: int | None, *, pause: bool = True) -> None:
         """Show ``execution_id``, after DETAIL_PAUSE_SECONDS unless ``pause`` is false; None shows the message instead."""
