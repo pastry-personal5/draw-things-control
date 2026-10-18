@@ -53,6 +53,15 @@ def whole_duration(seconds: float) -> str:
     return duration_text(max(0, round(seconds)))
 
 
+# A forecast whose range runs past this is shown as ending this far off: a date beyond the calendar cannot be written.
+MAX_DISPLAY_SECONDS = 366 * 86400.0
+
+
+def _bounded(seconds: float) -> float:
+    """``seconds`` kept within a year either way, so adding it to a clock reading always gives a date."""
+    return max(-MAX_DISPLAY_SECONDS, min(MAX_DISPLAY_SECONDS, seconds)) if seconds == seconds else 0.0
+
+
 def _clock_time(moment: datetime, now: datetime) -> str:
     return moment.strftime("%H:%M") if moment.date() == now.date() else moment.strftime("%m-%d %H:%M")
 
@@ -61,9 +70,9 @@ def end_text(remaining: float, now: datetime, bounds: tuple[float, float] | None
     """When something left ``remaining`` seconds from ``now`` ends: ``ends ~16:42 (in 23 min)``, dated when it is another day.
     With ``bounds`` (the least and most seconds it may have left) the range stands in for the time left:
     ``ends ~16:42 (16:31 to 16:58)``."""
-    end = now + timedelta(seconds=remaining)
+    end = now + timedelta(seconds=_bounded(remaining))
     if bounds is not None:
-        return f"ends ~{_clock_time(end, now)} ({_clock_time(now + timedelta(seconds=bounds[0]), now)} to {_clock_time(now + timedelta(seconds=bounds[1]), now)})"
+        return f"ends ~{_clock_time(end, now)} ({_clock_time(now + timedelta(seconds=_bounded(bounds[0])), now)} to {_clock_time(now + timedelta(seconds=_bounded(bounds[1])), now)})"
     return f"ends ~{_clock_time(end, now)} (in {whole_duration(remaining)})"
 
 

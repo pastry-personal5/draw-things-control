@@ -173,16 +173,56 @@ stderr, newline only after a phase's last reading), and a real Draw Things log g
 
 Owner host, like [Milestone 06's](../phase-4/milestone-06-h3-color.md). This does not block the milestone.
 
-Not yet run. To run it:
+Run on 2026-10-18 against the newest live runs of each backend in `state/framecontrol.db`, read through the database
+directly (read-only) because the `fc serve` listening on 8765 that day belongs to another checkout with its own state and
+does not know these executions. Step 3 (`fc timing import`) was not run: it writes to the store, and every run compared
+here already has live rows.
 
-1. Start `fc serve` on the new code and run one real Draw Things job and one real H3 job.
-2. For each run, `fc timing show EXXXX --run N`, and compare it with the log: every `phase` is a line the backend printed;
-   `start` and `duration` agree with the log's own stamps within 0.1 s; the stages add up to the run's time; a Draw Things
-   run's total and its sampling average and median agree with the CLI's `Generation timing:` block within 1%.
-3. `uv run fc timing import` on the logs that still exist; compare one imported H3 run with the same run's live rows if both
-   exist, and note which phases are marked `*`.
-4. Record below the executables' versions, any phase name that landed in `other`, and anything that disagrees.
+Method: for each run, the stored `run_stages` rows (`start_offset`, `end_offset`, units, marks) against the job log's own
+stamps, and for Draw Things the CLI's `Generation timing:` block.
 
 | Run | Backend | Compared with | Result |
 |-----|---------|---------------|--------|
-| | | | |
+| E0084 run 1 (`r2av`, 832x448, 30 steps, 504.4 s, executable 558688 bytes) | h3-metal-cli | its job log | Every printed phase is a named stage; none landed in `other`. Stage edges agree with the log's stamps within 0.2 s: denoise 24.48 to 423.43 s against the log's `0/30` at +24.5 s and `30/30` at +423.4 s, video VAE load ends at 425.13 s against +425.1 s, FFmpeg ends at 504.36 s against +504.2 s. FFmpeg's start is the previous stage's end (425.13 s), since H3 prints its first FFmpeg reading only at the end (`0/124` at +504.0 s). The 30 denoise steps are the 30 `denoise enqueue` readings after `0/30`. |
+| E0053 run 1 (`i2v`, 384x768, 33 frames, 25 steps, 345.8 s, executable 160477120 bytes) | draw-things-cli | its job log and the CLI's `Generation timing:` block | The 25 stored sampling marks agree with the log's `Sampling... n / 25` stamps to 0.1 s (log `5 / 25` at +56.3 s, mark 4 at 56.33 s). Starting, processing, sampling and finishing add up to 345.82 s against the child's 345.7 s. Per-step mean 12.82 s and median 12.53 s against the CLI's 12.84 s and 12.42 s (0.2% and 0.9%). The CLI's 343.53 s total is 0.7% under the child's wall time, which is the time before its own clock starts. |
+
+Both executables' versions are the sizes above. The recorder's stage timing is accurate on both backends. This
+checks the recorder, not the forecast.
+
+### Forecast accuracy on the retained runs
+
+`uv run fc timing replay`, each run scored with its own execution left out, 31 executions and 32 runs (26 `h3-metal-cli`
+`r2av`, 2 `draw-things-cli` `i2v`, and 4 older rows still under the backend id `h3`, which the rename did not migrate and
+which therefore form a separate backend for the fit). Only the 26-run cell has enough runs to be judged.
+
+| `h3-metal-cli` `r2av` run | 5% | 10% | 25% | 50% | 75% | 90% |
+|---------------------------|----|-----|-----|-----|-----|-----|
+| forecast before the reuse fix, median error | 11.7% | 13.0% | 25.5% | 28.0% | 30.4% | 7.7% |
+| forecast before the reuse fix, signed bias | +11.4% | +13.0% | +20.3% | +19.9% | +17.4% | +3.8% |
+| forecast, median error | 6.1% | 7.4% | 4.5% | 5.0% | 6.5% | 3.8% |
+| forecast, signed bias | +3.7% | +5.6% | -1.3% | -0.5% | +3.2% | +2.0% |
+| forecast, 80% range coverage | 0.85 | 0.81 | 0.85 | 0.81 | 0.65 | 0.77 |
+| last-signature, median error | 4.1% | 4.3% | 5.1% | 7.7% | 15.4% | 38.5% |
+| constant-pace, median error | 37.3% | 37.1% | 36.6% | 46.6% | 67.1% | 100.0% |
+
+Job level, same 26 runs (one run per job): identical to the run level from 10% on. The forecast gave a number at once for all
+32 runs (median 0.0 s), and the displayed share moved back 0 times, against 42.1 s and 1 and 2 moves for constant-pace. The
+two Draw Things runs, both E0053, are listed and not judged (median error 0.4% to 5.0% across checkpoints), and the 4 `h3`
+runs are not judged either.
+
+What this shows:
+
+- The first replay (the "before" rows) missed the run targets (15% at 10%, 5% at 50%, 10% at 90%) with a +20% bias. The cause
+  was H3's reuse: under `denoise_reuse` or `core_reuse` above 1 the `denoise enqueue` readings arrive in bursts (E0085 at
+  `core_reuse` 4 has gaps of 18 to 20 s then three of 0.0 s; E0087 at `denoise_reuse` 2 alternates), so a gap is not a
+  step time. The median gap was near 0.02 s, every real step was read as a pause, and a run's mean step came out at 0.0 to
+  9 s against a true 19 to 25 s. Those rows fed the fits, the slope and noise spreads and the heuristic's rate. H3
+  evaluates the first step, the last and every interval-th (`h3_dit_reuse_schedule`, and the core refresh at
+  `core_forward_count % interval`), which the data matches (E0085 has 9 real gaps in 30, E0087 16).
+- The step statistics, the live update, the steps still to come and the heuristic's priced stage now count evaluated steps,
+  and `denoise_reuse` and `core_reuse` act through that count rather than as fit features, so a reuse value the history has
+  not seen is still priced. After the fix the median error is 4.5% to 7.4% from 5% to 75% and 3.8% at 90%, the bias is
+  within +-6%, and the 10% and 50% checkpoints meet 15% but the 50% checkpoint's 5.0% only just meets 5%.
+- Coverage of the 80% range is 0.65 at 75% and 0.77 at 90%, under the 0.70 floor at 75%; this was not investigated.
+- Last-signature is still slightly closer from 5% to 25% (4% to 5%), and much worse after.
+- These are real-host numbers on a small window, not a gate; the run targets change only through a changelog entry.

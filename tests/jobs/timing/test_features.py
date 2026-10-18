@@ -6,7 +6,7 @@ import math
 import unittest
 from typing import Any
 
-from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, expected_stages, feature_values, signature, stage_keys, step_series
+from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, evaluated_count, expected_stages, feature_values, reuse_interval, signature, stage_keys, step_series
 
 
 def marks(start: float, gaps: list[float], first_done: int = 0) -> tuple[tuple[float, int], ...]:
@@ -165,3 +165,42 @@ class ExpectedStagesTests(unittest.TestCase):
         self.assertEqual([item.stage for item in expected_stages([old, new, other], old.signature, "draw-things-cli", "i2v")], ["prepare", "sampling", "correct"])
         self.assertEqual([item.stage for item in expected_stages([old, other], (("none", None),), "draw-things-cli", "i2v")], ["prepare"])
         self.assertEqual(expected_stages([old, new], (("none", None),), "h3-metal-cli", "r2av"), [])
+
+
+class ReuseTests(unittest.TestCase):
+    """H3 under ``denoise_reuse`` or ``core_reuse`` evaluates the first step, the last, and every interval-th, and the readings
+    of the reused steps arrive in the same burst as the evaluated one before them."""
+
+    @staticmethod
+    def bursts(interval: int, steps: int = 30, evaluated_seconds: float = 20.0) -> list[float]:
+        return [evaluated_seconds if index in (0, steps - 1) or index % interval == 0 else 0.02 for index in range(steps)]
+
+    def test_the_interval_is_the_reuse_knob_that_is_set(self) -> None:
+        self.assertEqual(reuse_interval({"denoise_reuse": 2, "core_reuse": 1}), 2)
+        self.assertEqual(reuse_interval({"denoise_reuse": 1, "core_reuse": 4}), 4)
+        self.assertEqual(reuse_interval({}), 1)
+
+    def test_the_evaluated_steps_are_the_first_the_last_and_every_interval(self) -> None:
+        self.assertEqual(evaluated_count(30, 1), 30)
+        self.assertEqual(evaluated_count(30, 2), 16)
+        self.assertEqual(evaluated_count(30, 4), 9)
+
+    def test_a_burst_stream_gives_the_time_of_an_evaluated_step_and_no_pauses(self) -> None:
+        for interval, evaluated_steps in ((2, 16), (4, 9)):
+            with self.subTest(interval=interval):
+                series = step_series(iterative(self.bursts(interval)), interval)
+                assert series is not None
+                self.assertAlmostEqual(series.mean_seconds, 20.0, delta=0.5)
+                self.assertEqual((series.pauses, series.steps), (0, evaluated_steps))
+                self.assertLess(series.noise, 0.01)
+
+    def test_read_without_the_interval_the_same_stream_is_all_pauses_and_the_wrong_pace(self) -> None:
+        series = step_series(iterative(self.bursts(4)))
+        assert series is not None
+        self.assertLess(series.mean_seconds, 5.0)
+
+    def test_the_reuse_knobs_are_not_fit_features(self) -> None:
+        values = feature_values({"width": 832, "height": 480, "pixels": 399360, "frames": 124, "steps": 30, "denoise_reuse": 2, "core_reuse": 1, "dit_layers": 50})
+        self.assertNotIn("denoise_reuse", values)
+        self.assertNotIn("core_reuse", values)
+        self.assertIn("dit_layers", values)

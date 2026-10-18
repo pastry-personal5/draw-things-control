@@ -20,7 +20,7 @@ from typing import Any
 
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, RunFinished, RunOutput, RunStarted, RunStatus, StageFinished, StageStarted, TimingStarted
-from framecontrol.jobs.timing.features import Signature, signature
+from framecontrol.jobs.timing.features import Signature, evaluated, evaluated_between, signature
 from framecontrol.jobs.timing.fit import FittedModel, FixedStage, IterativeStage, Plan, StagePlan, student_t_90
 from framecontrol.jobs.timing.model import SOURCE_CHILD
 from framecontrol.jobs.timing.parsers import STEP_STAGES
@@ -29,6 +29,8 @@ from framecontrol.jobs.timing.parsers import STEP_STAGES
 PAUSE_FACTOR = 3.0
 # Medians over fewer steps than this are not trusted: the predicted step stands in.
 MIN_MEDIAN_STEPS = 3
+# However wide a range comes out, a client is never given an end further than this past the estimate (a month).
+MAX_REACH_SECONDS = 30 * 86400.0
 # The spread of one step's time that an overrunning step is conditioned with, whatever the history's noise says: a step
 # that takes far longer than expected is the case that history rarely contains.
 OVERRUN_SIGMA = 0.3
@@ -173,6 +175,11 @@ class _Sum:
     @property
     def sd(self) -> float:
         return math.sqrt(self.var + sum(sd**2 for sd in self.coherent.values()))
+
+
+def _reuse(stage: _Stage) -> int:
+    """The reuse interval of the stage's plan, 1 for a stage that is not planned as steps."""
+    return stage.plan.reuse if isinstance(stage.plan, IterativeStage) else 1
 
 
 def _shape(slope: float, position: float) -> float:
@@ -358,8 +365,14 @@ class Forecaster:
             last_offset, last_done = stage.readings[-1]
             if done <= last_done or offset <= last_offset:
                 return
-            count = done - last_done
-            self._observe_gap(run, (offset - last_offset) / count, count, (last_done + count / 2) / total, first=len(stage.readings) == 1)
+            steps = done - last_done
+            count = evaluated_between(last_done, done, total, _reuse(stage))
+            if count < 1:
+                # Reused steps arrive with the evaluated step before them and take no time of their own: the next
+                # evaluated step's clock runs from this reading.
+                stage.readings[-1] = (offset, done)
+                return
+            self._observe_gap(run, (offset - last_offset) / count, count, (last_done + steps / 2) / total, first=len(stage.readings) == 1)
         stage.readings.append((offset, done))
 
     def _observe_gap(self, run: _Run, seconds: float, count: int, position: float, *, first: bool) -> None:
@@ -481,7 +494,7 @@ class Forecaster:
     @staticmethod
     def _span(started: float, now: float, total: _Sum, degrees: float) -> Span:
         end = now + total.mean
-        reach = student_t_90(degrees) * total.sd
+        reach = min(MAX_REACH_SECONDS, student_t_90(degrees) * total.sd)
         return Span(started, end, max(now, end - reach), end + reach)
 
     @staticmethod
@@ -556,7 +569,7 @@ class Forecaster:
     def _iterative_whole(self, plan: Plan, item: IterativeStage, u_mean: float, u_var: float) -> tuple[float, float]:
         """A stage of steps that has not started: its steps, and what the first gap and the pauses add."""
         level = self._step_level(plan, u_mean, u_var)
-        steps = [level * _shape(plan.slope, (index + 0.5) / item.steps) for index in range(item.steps)]
+        steps = [level * _shape(plan.slope, (index + 0.5) / item.steps) for index in range(item.steps) if evaluated(index, item.steps, item.reuse)]
         mean = plan.stage_factor * sum(steps)
         return mean, math.sqrt(sum((step * plan.step_noise) ** 2 for step in steps))
 
@@ -575,15 +588,20 @@ class Forecaster:
         offset, done = stage.readings[-1]
         if done >= n:
             return 0.0, 0.0
+        interval = _reuse(stage)
+        # Reused steps finish at once, so the step the clock is running on is the next evaluated one.
+        upcoming = next((index for index in range(done, n) if evaluated(index, n, interval)), n - 1)
         elapsed = max(0.0, now - (run.origin + offset))
-        current = level * _shape(plan.slope, (done + 0.5) / n)
+        current = level * _shape(plan.slope, (upcoming + 0.5) / n)
         overrun = min(1.0, max(0.0, (elapsed - current) / current)) if current > 0 else 1.0
         sigma = plan.step_noise + (OVERRUN_SIGMA - plan.step_noise) * overrun if OVERRUN_SIGMA > plan.step_noise else plan.step_noise
         mean, sd = lognormal_left(current, sigma, elapsed)
         var = sd**2
         centre = sum(position * count for _, count, position in run.gaps) / sum(count for _, count, _ in run.gaps) if run.gaps else 0.5
-        lean = current * ((done + 0.5) / n - centre)
-        for index in range(done + 1, n):
+        lean = current * ((upcoming + 0.5) / n - centre)
+        for index in range(upcoming + 1, n):
+            if not evaluated(index, n, interval):
+                continue
             position = (index + 0.5) / n
             step = level * _shape(plan.slope, position)
             # The pauses runs make add to the steps still to come, as many as they have added to the ones before them.

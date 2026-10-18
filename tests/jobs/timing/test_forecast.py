@@ -10,9 +10,9 @@ from typing import Any
 from framecontrol.core.cooldown import CooldownPolicy
 from framecontrol.jobs.timing.features import HistoryExecution, HistoryRun, HistoryStage
 from framecontrol.jobs.timing.fit import FittedModel
-from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun
+from framecontrol.jobs.timing.forecast import Forecast, Forecaster, JobPlan, PlannedRun, _Sum
 from framecontrol.jobs.timing.replay_stream import ReplayJob, replay_job
-from tests.timing.builders import dt_run, h3_run
+from tests.timing.builders import dt_run, h3_run, h3_workload
 from tests.timing.synthetic import synthetic_history
 
 ORIGIN = 1000.0
@@ -106,6 +106,27 @@ class RunForecastTests(unittest.TestCase):
             forecast = playback.at(seconds)
             assert forecast is not None and forecast.run is not None
             self.assertAlmostEqual(forecast.run.end_at - ORIGIN, total, delta=0.02 * total, msg=f"at {seconds}")
+
+    def test_h3_reuse_readings_that_arrive_in_bursts_are_not_pauses_and_do_not_wreck_the_rate(self) -> None:
+        for knob in ("denoise_reuse", "core_reuse"):
+            with self.subTest(knob=knob):
+                interval = 2 if knob == "denoise_reuse" else 4
+                gaps = [20.0 if index in (0, 29) or index % interval == 0 else 0.02 for index in range(30)]
+                workload = h3_workload(**{knob: interval})
+                history = [h3_run(execution, 1, gaps=gaps, workload=workload) for execution in range(1, 5)]
+                live = HistoryExecution(9, CooldownPolicy("off"), (h3_run(9, 1, gaps=gaps, workload=workload),))
+                playback = Playback(history, live)
+                truth = ORIGIN + live.runs[0].seconds
+                denoise = live.runs[0].stages[3]
+                for seconds in (denoise.start + 0.3 * denoise.duration, denoise.start + 0.6 * denoise.duration):
+                    forecast = playback.at(seconds)
+                    assert forecast is not None and forecast.run is not None
+                    self.assertAlmostEqual(forecast.run.end_at, truth, delta=0.03 * (truth - ORIGIN - seconds) + 5.0, msg=f"{knob} at {seconds}")
+                    self.assertLess(forecast.run.high - forecast.run.low, truth - ORIGIN)
+
+    def test_a_range_is_never_given_an_end_beyond_a_month_past_the_estimate(self) -> None:
+        span = Forecaster._span(ORIGIN, ORIGIN, _Sum(1000.0, 1e26), 1.0)  # noqa: SLF001
+        self.assertLessEqual(span.high - span.end_at, 30 * 86400.0)
 
     def test_the_pace_of_the_run_moves_the_forecast_toward_what_it_is_doing(self) -> None:
         slow = single_run(step=60.0)

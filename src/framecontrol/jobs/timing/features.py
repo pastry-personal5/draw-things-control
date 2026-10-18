@@ -22,7 +22,9 @@ from framecontrol.core.cooldown import CooldownPolicy
 IGNORED_KNOBS = frozenset({"seed", "seconds", "timeout_seconds", "reference_pair"})
 # Workload keys that are not features of the step time: the steps are counted, not timed, and the strings name what the
 # pipeline and signature already hold.
-_NOT_FEATURES = frozenset({"width", "height", "pixels", "frames", "steps", "seconds", "reference_count", "references", "render_width", "render_height", "knobs", "pipeline", "mode", "seed"})
+# The reuse knobs are not features either: they change how many steps are evaluated (see ``evaluated``), which the step
+# weights carry, so a reuse value the history has not seen is still priced.
+_NOT_FEATURES = frozenset({"width", "height", "pixels", "frames", "steps", "seconds", "reference_count", "references", "render_width", "render_height", "knobs", "pipeline", "mode", "seed", "denoise_reuse", "core_reuse"})
 # A gap longer than this many times the median of the others is a pause.
 PAUSE_FACTOR = 3.0
 # A within-stage slope is fitted only from this many ordinary gaps.
@@ -113,6 +115,33 @@ class HistoryExecution:
         return self.cooldown.wait_after(run.child_seconds).seconds
 
 
+def reuse_interval(workload: Mapping[str, Any]) -> int:
+    """H3's reuse interval: ``denoise_reuse`` or ``core_reuse``, whichever is set (the job cannot set both above 1), else 1."""
+    interval = 1
+    for name in ("denoise_reuse", "core_reuse"):
+        value = workload.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value > interval:
+            interval = value
+    return interval
+
+
+def evaluated(index: int, total: int, interval: int) -> bool:
+    """Whether step ``index`` (from 0) of ``total`` does the work of a step. With a reuse interval above 1 H3 evaluates
+    the first step, the last, and every step at a multiple of the interval, and the rest reuse an earlier result and
+    arrive in the same burst as the evaluated step before them (``h3_dit_reuse_schedule``, and the core refresh)."""
+    return interval <= 1 or index == 0 or index == total - 1 or index % interval == 0
+
+
+def evaluated_count(total: int, interval: int) -> int:
+    """How many of ``total`` steps are evaluated."""
+    return sum(1 for index in range(total) if evaluated(index, total, interval))
+
+
+def evaluated_between(done: int, later: int, total: int, interval: int) -> int:
+    """How many of the steps the counter passes from ``done`` to ``later`` (steps ``done`` to ``later - 1``) are evaluated."""
+    return sum(1 for index in range(done, later) if evaluated(index, total, interval))
+
+
 def signature(backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Signature:
     """What makes two runs the same job for timing: the backend, the pipeline, the model, and every workload value but
     ``seconds`` (the effective ``frames`` carries it), keys sorted, nested mappings flattened, floats rounded to six places.
@@ -194,9 +223,10 @@ class StepSeries:
     pause_seconds: float = 0.0
 
 
-def step_series(stage: HistoryStage) -> StepSeries | None:
-    """The per-step statistics of ``stage``'s marks; None when it keeps none."""
-    gaps = _gaps(stage)
+def step_series(stage: HistoryStage, interval: int = 1) -> StepSeries | None:
+    """The per-step statistics of ``stage``'s marks, per evaluated step when ``interval`` is a reuse interval; None when it
+    keeps none."""
+    gaps = _gaps(stage, interval)
     if not gaps:
         return None
     later = gaps[1:]
@@ -226,16 +256,26 @@ def step_series(stage: HistoryStage) -> StepSeries | None:
     return StepSeries(mean, first_ratio, slope, noise, pauses, sum(count for _, count, _ in gaps), pause_seconds)
 
 
-def _gaps(stage: HistoryStage) -> list[tuple[float, int, float]]:
-    """(seconds a step took, steps in the gap, the stage's position at the gap's middle) for each pair of marks."""
+def _gaps(stage: HistoryStage, interval: int = 1) -> list[tuple[float, int, float]]:
+    """(seconds an evaluated step took, evaluated steps in the gap, the stage's position at the gap's middle) for each pair
+    of marks. Under a reuse interval a reused step's reading arrives with the evaluated step before it, so a gap that
+    holds no evaluated step has no step time: its seconds join the next gap that does."""
     marks = stage.marks
     total = stage.total or (marks[-1][1] if marks else 0)
     gaps = []
+    carried = 0.0
     for (earlier_time, earlier_done), (later_time, later_done) in zip(marks, marks[1:], strict=False):
-        count, seconds = later_done - earlier_done, later_time - earlier_time
-        if count < 1 or seconds <= 0 or total < 1:
+        steps, seconds = later_done - earlier_done, later_time - earlier_time
+        if steps < 1 or seconds < 0 or total < 1:
             continue
-        gaps.append((seconds / count, count, (earlier_done + count / 2) / total))
+        count = evaluated_between(earlier_done, later_done, total, interval)
+        if count < 1:
+            carried += seconds
+            continue
+        seconds += carried
+        carried = 0.0
+        if seconds > 0:
+            gaps.append((seconds / count, count, (earlier_done + steps / 2) / total))
     return gaps
 
 

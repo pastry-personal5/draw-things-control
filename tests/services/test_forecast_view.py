@@ -94,3 +94,10 @@ class WordsTests(unittest.TestCase):
     def test_a_span_whose_end_has_passed_is_finishing(self) -> None:
         late = self.NOW + 3600
         self.assertEqual(forecast_text(self.forecast(), late), "denoise 12/30; run finishing, job finishing")
+
+
+class EndOfTheCalendarTests(unittest.TestCase):
+    def test_a_range_far_past_the_calendar_is_shown_and_does_not_raise(self) -> None:
+        now = datetime(2026, 10, 18, 12, 8, 34)
+        text = end_text(6164.0, now, (0.0, 1.38e13))
+        self.assertTrue(text.startswith("ends ~13:51 (12:08 to "))

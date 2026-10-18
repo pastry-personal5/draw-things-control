@@ -20,7 +20,7 @@ import numpy as np
 
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.jobs.timing.factory import H3_R2AV_E0051_E0054, DrawThingsFactoryPoint, H3FactoryPoint, factory_point, heuristic_anchor
-from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, expected_run, feature_values, iterative_stage, signature, stage_keys, step_series
+from framecontrol.jobs.timing.features import HistoryRun, HistoryStage, Signature, StepSeries, evaluated_count, expected_run, feature_values, iterative_stage, reuse_interval, signature, stage_keys, step_series
 
 TIER_SIGNATURE, TIER_BACKEND, TIER_PIPELINE, TIER_FACTORY, TIER_HEURISTIC, TIER_LIVE = "signature", "backend_fit", "pipeline_fit", "factory", "heuristic", "live_only"
 LIVE, LOG, POOLED = "live", "log", "pooled"
@@ -40,6 +40,10 @@ DEFAULT_STEP_NOISE = 0.10
 # The spread of a run's own within-stage slope about the backend's, when too few runs say, and the least it is taken to be.
 DEFAULT_SLOPE_SD, MIN_SLOPE_SD = 0.06, 0.02
 MIN_SLOPE_RUNS = 6
+# A stage's step time is not taken to change by more than a factor of e**2 across it, whatever a few runs seem to say.
+MAX_SLOPE = 2.0
+# Nor is a step time taken to be uncertain by more than this in the log from one step to the next.
+MAX_STEP_NOISE = 1.0
 # The least spread, in the log, the first gap's ratio to the later steps is taken to have from one run to the next.
 MIN_FIRST_SD = 0.02
 # The spread of a stage duration in the log, when no history says, and the least it is taken to be.
@@ -112,12 +116,14 @@ class FixedStage:
 
 @dataclass(frozen=True)
 class IterativeStage:
-    """The stage that counts steps, priced by the step model; ``steps`` is the count it is expected to show."""
+    """The stage that counts steps, priced by the step model; ``steps`` is the count it is expected to show and ``reuse`` the
+    reuse interval (H3's ``denoise_reuse`` or ``core_reuse``) under which only some of them are evaluated."""
 
     key: str
     stage: str
     source: str
     steps: int
+    reuse: int = 1
 
 
 StagePlan = FixedStage | IterativeStage
@@ -236,13 +242,15 @@ def _read_row(run: HistoryRun) -> _Row:
     keys = stage_keys(run)
     keyed = {key: stage for key, stage in zip(keys, stages, strict=True) if stage.stage != "unaccounted"}
     iterative = iterative_stage(run)
-    series = step_series(iterative) if iterative is not None else None
+    interval = reuse_interval(run.workload)
+    series = step_series(iterative, interval) if iterative is not None else None
     key = next((name for name, stage in keyed.items() if stage is iterative), None)
     y = math.log(series.mean_seconds) if series is not None and series.mean_seconds > 0 else None
     ratio = pause = None
     if series is not None and iterative is not None and iterative.total and series.mean_seconds > 0:
-        ratio = min(2.0, iterative.duration / (iterative.total * series.mean_seconds))
-        pause = min(2.0, series.pause_seconds / (iterative.total * series.mean_seconds))
+        evaluated_steps = evaluated_count(iterative.total, interval)
+        ratio = min(2.0, iterative.duration / (evaluated_steps * series.mean_seconds))
+        pause = min(2.0, series.pause_seconds / (evaluated_steps * series.mean_seconds))
     return _Row(run, run.signature, feature_values(run.workload, run.output_frames), series, y, keyed, sum(stage.duration for stage in stages if stage.stage == "unaccounted"), key, ratio, pause)
 
 
@@ -384,21 +392,21 @@ def _slope(rows: Sequence[_Row]) -> float:
         return 0.0
     average = sum(means) / len(means)
     error = _stdev(means) / math.sqrt(len(means))
-    return average if abs(average) > student_t_975(len(means) - 1) * error else 0.0
+    return max(-MAX_SLOPE, min(MAX_SLOPE, average)) if abs(average) > student_t_975(len(means) - 1) * error else 0.0
 
 
 def _stats(live: Sequence[_Row], all_rows: Sequence[_Row]) -> _BackendStats:
     stats = _BackendStats()
     series = [row.series for row in live if row.series is not None]
     if series:
-        stats.step_noise = max(0.01, statistics.median(item.noise for item in series))
+        stats.step_noise = min(MAX_STEP_NOISE, max(0.01, statistics.median(item.noise for item in series)))
     ratios = [item.first_ratio for item in series if item.first_ratio is not None]
     if len(ratios) >= MIN_FIRST_GAP_RUNS:
         stats.first_ratio = statistics.median(ratios)
         stats.first_sd = max(MIN_FIRST_SD, _stdev([math.log(ratio) for ratio in ratios]))
     slopes = [item.slope for item in series if item.slope is not None]
     if len(slopes) >= MIN_SLOPE_RUNS:
-        stats.slope_sd = max(MIN_SLOPE_SD, _stdev(slopes))
+        stats.slope_sd = min(MAX_SLOPE, max(MIN_SLOPE_SD, _stdev(slopes)))
     factors = [row.stage_ratio for row in live if row.stage_ratio is not None]
     if factors:
         stats.stage_factor = sum(factors) / len(factors)
@@ -532,7 +540,7 @@ class FittedModel:
         stage_spread = HEURISTIC_STAGE_SPREAD
         for name, stage in sample.keyed.items():
             if name == sample.iterative_key:
-                stages.append(IterativeStage(name, stage.stage, stage.source, steps))
+                stages.append(IterativeStage(name, stage.stage, stage.source, steps, reuse_interval(workload)))
             elif stage.stage not in ("correct", "copy_raw") or workload.get("color_corrects"):
                 duration = stage.duration * (duration_scale if stage.stage in ("ffmpeg", "finishing", "copy_raw", "correct") else 1.0)
                 stages.append(FixedStage(name, stage.stage, stage.source, max(duration, 0.001) * math.exp(-(stage_spread**2) / 2), stage_spread))
@@ -603,7 +611,7 @@ class FittedModel:
             if backend == H3_BACKEND and stage.name in ("video_encode", "vision") and stage.key.endswith(("#2", "#3")) and int(stage.key[-1]) > reference_count:
                 continue
             if stage.iterative:
-                stages.append(IterativeStage(stage.key, stage.name, stage.source, steps))
+                stages.append(IterativeStage(stage.key, stage.name, stage.source, steps, reuse_interval(workload)))
             else:
                 duration = stage.seconds
                 if stage.name in ("ffmpeg", "finishing", "correct"):
@@ -791,7 +799,7 @@ class FittedModel:
         features = feature_values(workload, self._frames.get(key))
         for name, stage in read.keyed.items():
             if name == read.iterative_key:
-                planned.append(IterativeStage(name, stage.stage, stage.source, self._steps(workload, sequence, stage)))
+                planned.append(IterativeStage(name, stage.stage, stage.source, self._steps(workload, sequence, stage), reuse_interval(workload)))
                 continue
             samples = [row.keyed[name].duration for row in same if name in row.keyed]
             median, sigma = self._duration(backend, pipeline, name, features, samples, scope, stage.duration, stats.stage_sigma)
