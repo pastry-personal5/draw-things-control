@@ -6,7 +6,7 @@
 # global-config.yaml's input_directory.
 # Validate: uv run fc validate-job data/jobs/example-job-mixed-backends.yaml
 version: 2
-name: corrected-mixed-story
+name: example-job-mixed-backends
 
 prompt_pairs:
   establish:

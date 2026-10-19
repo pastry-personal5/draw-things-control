@@ -2,7 +2,7 @@
 # The first image must already be 832x448, the size this profile generates.
 # Validate: uv run fc validate-job data/jobs/example-job-draw-things-per-run-frames.yaml
 version: 2
-name: draw-things-changing-frames
+name: example-job-draw-things-per-run-frames
 input: ./story/opening-832x448.png
 
 prompt_pairs:

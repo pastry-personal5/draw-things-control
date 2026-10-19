@@ -169,8 +169,7 @@ class JobDefinitionTests(TuiTestCase):
         self.assertFalse(running)
         self.assertIsNot(focused, table)
 
-    async def test_a_refuses_an_invalid_job_with_its_reason_and_asks_twice_for_a_job_already_queued(self) -> None:
-        self.write_data_job("walk.yaml")
+    async def test_a_submits_an_invalid_job_for_the_server_to_validate(self) -> None:
         (self.data / "broken.yaml").write_text("version: 2\nnot: [valid", encoding="utf-8")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
@@ -178,25 +177,7 @@ class JobDefinitionTests(TuiTestCase):
             table.focus()
             table.move_cursor(row=table.get_row_index("broken.yaml"))
             await pilot.press("a")
-            await pilot.pause()
-            refused = [line for line in self.said if "broken.yaml is invalid and was not submitted" in line]
-            submitted_after_invalid = list(self.server.submitted)
-            table.move_cursor(row=table.get_row_index("walk.yaml"))
-            await pilot.press("a")
-            await self.wait_for(pilot, lambda: len(self.server.submitted) == 1, "the first submission")
-            self.server.entries = [{"queue_id": "Q0001", "kind": "job", "backend": "draw-things-cli", "job_path": "/jobs/walk.yaml", "generation": None, "state": "queued", "total_runs": 5, "succeeded": 0, "park_requested": False}]
-            cast(FramecontrolApp, pilot.app).refresh_queue()
-            await self.wait_for(pilot, lambda: cast(FramecontrolApp, pilot.app).queued_entry_for(self.data / "walk.yaml") is not None, "the queue to show it")
-            await pilot.press("a")
-            await pilot.pause()
-            warned = [line for line in self.said if "walk.yaml is already queued as" in line]
-            after_warning = len(self.server.submitted)
-            await pilot.press("a")
-            await self.wait_for(pilot, lambda: len(self.server.submitted) == 2, "the second submission")
-        self.assertEqual(len(refused), 1, self.said)
-        self.assertEqual(submitted_after_invalid, [])
-        self.assertEqual(len(warned), 1, self.said)
-        self.assertEqual(after_warning, 1)
+            await self.wait_for(pilot, lambda: self.server.submitted == ["broken.yaml"], "the submission")
 
     async def test_a_new_or_changed_file_shows_at_the_next_check_and_only_it_is_read_again(self) -> None:
         walk = self.write_data_job("walk.yaml", prompt_pairs=ONE_PAIR)

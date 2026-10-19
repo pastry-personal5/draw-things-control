@@ -5,7 +5,7 @@
 # Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-metal-cli.yaml
 
 version: 2
-name: autumn-street-audio
+name: example-job-for-backend-h3-metal-cli
 input: ./9999-example/example-first-frame.png
 
 # H3 accepts positive prompts only. Run 2 receives the verified final frame

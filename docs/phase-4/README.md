@@ -41,6 +41,7 @@ Improve the product experience, make chained generation support multiple backend
 | 03 | [H3 image-to-audio-video support](milestone-03-h3-i2av.md) | in-progress |
 | 04 | [Rename to Framechain](milestone-04-framechain-rename.md) | done |
 | 05 | [H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) | in-progress |
+| 16 | [Idle, parallel validation and canonical job filenames](milestone-16-tui-local-validation.md) | done |
 | 06 | [H3 video color tags and correction](milestone-06-h3-color.md) | done |
 | 07 | [Check performance](milestone-07-check-performance.md) | done |
 | 08 | [Rename to Framecontrol](milestone-08-framecontrol-rename.md) | done |

@@ -14,6 +14,7 @@ from framecontrol.core.global_config import GlobalConfig
 from framecontrol.core.paths import ProjectPaths, linked_component
 from framecontrol.jobs.backend import BackendRegistry
 from framecontrol.jobs.backends import DEFAULT_BACKENDS
+from framecontrol.jobs.backends.h3 import H3JobData
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.files import job_files, read_job
 from framecontrol.services.job_details import error_text
@@ -196,7 +197,13 @@ class JobCatalog:
             row = JobRow(path, job, changed=changed)
             # A version-2 job reads one base configuration per Draw Things settings profile, not one for the whole job.
             config_files = sorted({view.config_file for view in (job.job_for_run(number) for number in range(1, job.run_count + 1)) if view.config_file})
-            inputs = ((job.input,) if job.input is not None else ()) + tuple(self._paths.params / name for name in config_files)
+            references: tuple[Path, ...] = ()
+            views = (job.job_for_run(number) for number in range(1, job.run_count + 1)) if job.effective_runs else (job,)
+            for view in views:
+                if isinstance(view.backend_data, H3JobData):
+                    selected = {run.reference_pair for run in view.backend_data.runs if run.pipeline == "r2av"}
+                    references += tuple(asset for pair in view.backend_data.reference_pairs if pair.name in selected for reference in pair.references for asset in (reference.path, reference.audio) if asset is not None)
+            inputs = ((job.input,) if job.input is not None else ()) + tuple(self._paths.params / name for name in config_files) + references
             dependencies = tuple((dependency, signature(dependency)) for dependency in inputs)
         with self._lock:
             self._cache[path] = (own, dependencies, row)

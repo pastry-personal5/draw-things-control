@@ -6,7 +6,7 @@
 # Validate: uv run fc validate-job data/jobs/example-job-for-backend-h3-metal-cli-r2av-two-images.yaml
 
 version: 2
-name: two-image-subjects
+name: example-job-for-backend-h3-metal-cli-r2av-two-images
 
 reference_pairs:
   two-subjects:

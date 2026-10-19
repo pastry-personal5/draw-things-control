@@ -98,14 +98,17 @@ class JobTestCase(unittest.TestCase):
             image.save(path, exif=exif)
         return path
 
-    def write_job(self, data: dict[str, Any], name: str = "job.yaml") -> Path:
+    def write_job(self, data: dict[str, Any], name: str = "") -> Path:
         """Write a job file in the format the product accepts: a version-1 mapping, which tests still build with
         ``job_data``, is written as its version-2 equivalent (``to_version_2``, below)."""
-        return self.write_legacy_job(to_version_2(data, self.params), name)
+        filename = name or f"{data['name']}.yaml"
+        converted = to_version_2(data, self.params)
+        converted["name"] = Path(filename).stem
+        return self.write_legacy_job(converted, filename)
 
-    def write_legacy_job(self, data: dict[str, Any], name: str = "job.yaml") -> Path:
+    def write_legacy_job(self, data: dict[str, Any], name: str = "") -> Path:
         """Write ``data`` exactly as given, for a test of the version-1 engine or of a job queued before the cutover."""
-        path = self.root / name
+        path = self.root / (name or f"{data['name']}.yaml")
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 

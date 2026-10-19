@@ -12,7 +12,7 @@
 # `config_file` is a file name only; the app finds it in data/params/.
 
 version: 2
-name: sunset-walk                      # job name, the base of output file names; [a-z0-9-]
+name: example-job-for-backend-draw-things-cli # exact job-file stem; [a-z0-9-]
 input: ./9999-example/example-first-frame.png   # run 1's image (required when run 1 is i2i or i2v; not allowed for t2v)
 
 # Named prompts. A run selects one by name; every pair must be used by some run.

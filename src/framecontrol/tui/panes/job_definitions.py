@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.text import Text
 from textual import events, work
@@ -22,12 +21,7 @@ from framecontrol.tui.panes.base import SidewaysTable
 from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
 from framecontrol.tui.text.jobs import job_definition_cells, job_display_names, sort_job_rows
 
-if TYPE_CHECKING:
-    from framecontrol.tui.app import FramecontrolApp
-
 JOBS_POLL_SECONDS = 5
-# How long after the warning for a job already queued a second ``a`` queues it again.
-REPEAT_SECONDS = 5
 
 
 # How long the job list waits after a file event for more, since one save can report several.
@@ -91,8 +85,6 @@ class JobsList(SidewaysTable):
         self.job_rows: list[JobRow] = []
         self.sort_key, self.descending = "changed", True
         self.note: str | None = None
-        # The job ``a`` warned is already queued, and when that warning stops counting.
-        self.repeat_of: tuple[Path, float] | None = None
         # The last listing's message, so a later check does not write it again.
         self.announced: str | None = None
         # Counts reads; only the newest one's result is shown.
@@ -127,7 +119,8 @@ class JobsList(SidewaysTable):
         self.border_subtitle = Text("Reading job files...")
         # Until the first listing says what can be watched.
         self.check_timer = self.set_interval(JOBS_POLL_SECONDS, self.load)
-        self.read_sort()
+        # Let Textual paint the initial shell before even cheap validation starts.
+        self.call_after_refresh(self.read_sort)
 
     def on_unmount(self) -> None:
         self.watcher.stop()
@@ -212,6 +205,15 @@ class JobsList(SidewaysTable):
         if selected is not None and any(row.path == selected.path for row in self.job_rows):
             self.move_cursor(row=self.get_row_index(selected.path.name))
 
+    def mark_invalid(self, path: Path, error: str, field: str | None = None) -> None:
+        """Immediately reflect a submission-time fast-validation refusal in the completed listing."""
+        for index, row in enumerate(self.job_rows):
+            if row.path == path:
+                self.job_rows[index] = JobRow(path, None, error, field, row.number, row.changed)
+                self.shown_key = None
+                self.render_rows()
+                return
+
     def set_sort(self, key: str, descending: bool) -> None:
         """Sort by ``key``, and keep the choice across sessions."""
         self.sort_key, self.descending = key, descending
@@ -243,22 +245,10 @@ class JobsList(SidewaysTable):
             self.log_job(row.path)
 
     def action_run_selected(self) -> None:
-        """``a``: submit the selected job. An invalid job is refused with its reason. A job already waiting or running asks for a
-        second ``a`` within ``REPEAT_SECONDS``, so a key pressed twice does not queue it twice."""
+        """``a``: submit the selected job."""
         row = self.selected
         if row is None:
             return
-        app = cast("FramecontrolApp", self.app)
-        if row.job is None:
-            app.say(f"{row.path.name} is invalid and was not submitted: {row.error}", "red")
-            return
-        queued = app.queued_entry_for(row.path)
-        now = time.monotonic()
-        if queued is not None and (self.repeat_of is None or self.repeat_of[0] != row.path or now > self.repeat_of[1]):
-            self.repeat_of = (row.path, now + REPEAT_SECONDS)
-            app.say(f"{row.path.name} is already queued as {queued}; press a again to queue it once more", "yellow")
-            return
-        self.repeat_of = None
         self.run_job(row.path)
 
     def action_leave(self) -> None:

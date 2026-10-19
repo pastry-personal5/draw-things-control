@@ -4,7 +4,7 @@
 # Reference paths are relative to global-config.yaml's input_directory.
 # Validate: uv run fc validate-job data/jobs/example-job-h3-r2av-defaults.yaml
 version: 2
-name: h3-reference-defaults
+name: example-job-h3-r2av-defaults
 
 prompt_pairs:
   establish:

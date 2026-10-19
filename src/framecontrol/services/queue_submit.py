@@ -107,7 +107,8 @@ def submit_job(job_path: Path, global_config: GlobalConfig, params_directory: Pa
 
 
 def _new_submitted_entry(path: Path, job_text: str, config_text: str, job: JobDefinition, global_config: GlobalConfig, submitted_at: str, submitted_by: str | None, reference_assets: list[dict[str, object]] | None = None) -> NewQueueEntry:
-    snapshot = {"version": 7 if job.version == 2 else 6 if job.backend == H3_BACKEND else 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
+    # Version 8 adds canonical job filenames. Older snapshots deliberately retain their historical text.
+    snapshot = {"version": 8 if job.version == 2 else 6 if job.backend == H3_BACKEND else 4 if reference_assets else 3, "kind": "job", "backend": job.backend, "job_path": str(path), "job_text": job_text, "config_file": job.config_file, "config_text": config_text, "input_directory": str(global_config.input_directory), "output_directory": str(global_config.output_directory), "cooldown_default": global_config.cooldown.as_dict() if global_config.cooldown is not None else None, "settings": json.loads(_execution_settings(job).to_json())}
     if job.version == 2:
         snapshot["effective_plan"] = list(job.effective_plan())
     if reference_assets:
@@ -193,14 +194,14 @@ def _legacy_h3_frames(snapshot: dict[str, object]) -> int | None:
 
 
 def is_version_2(entry: QueueRow) -> bool:
-    """Whether the entry holds a version-2 job (snapshot 7): its runs name their own backends and inputs."""
+    """Whether the entry holds a version-2 job (snapshots 7 and 8): its runs name their own backends and inputs."""
     if entry.snapshot is None:
         return False
     try:
         snapshot = json.loads(entry.snapshot)
     except (TypeError, ValueError):
         return False
-    return isinstance(snapshot, dict) and snapshot.get("version") == 7
+    return isinstance(snapshot, dict) and snapshot.get("version") in (7, 8)
 
 
 def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_missing_input: bool = False, first_run: int | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> Callable[[], JobDefinition]:
@@ -215,9 +216,9 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 snapshot = json.loads(entry.snapshot)
             except (TypeError, ValueError) as error:
                 raise InputError(f"{entry.label}: invalid queue snapshot") from error
-            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3, 4, 5, 6, 7):
+            if not isinstance(snapshot, dict) or snapshot.get("kind") != "job" or snapshot.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8):
                 raise InputError(f"{entry.label}: unsupported job snapshot")
-            if snapshot["version"] in (2, 3, 4, 5, 6, 7):
+            if snapshot["version"] in (2, 3, 4, 5, 6, 7, 8):
                 if snapshot.get("backend") != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between the queue row and snapshot", field="backend")
                 if not all(isinstance(snapshot.get(key), str) for key in ("job_path", "job_text", "config_file", "config_text", "input_directory", "output_directory")):
@@ -228,7 +229,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 if snapshot.get("cooldown_default") != entry.cooldown_default or snapshot.get("settings") != json.loads(entry.settings.to_json()):
                     raise InputError(f"{entry.label}: settings differ between the queue row and snapshot", field="settings")
                 config = GlobalConfig(input_directory=Path(snapshot["input_directory"]), output_directory=Path(snapshot["output_directory"]), write_job_records=live.write_job_records, cooldown=_cooldown_of(snapshot["cooldown_default"]) if snapshot.get("cooldown_default") is not None else None, history_retention_days=live.history_retention_days)
-                reference_assets = snapshot.get("reference_assets", []) if snapshot["version"] in (4, 5, 6, 7) else []
+                reference_assets = snapshot.get("reference_assets", []) if snapshot["version"] in (4, 5, 6, 7, 8) else []
                 if not isinstance(reference_assets, list) or any(not isinstance(item, dict) for item in reference_assets):
                     raise InputError(f"{entry.label}: invalid reference asset snapshot")
                 if snapshot["version"] == 4 and not reference_assets:
@@ -244,8 +245,8 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 inactive_pairs: frozenset[str] = frozenset()
                 start = first_run if first_run is not None else entry.resume_first_run or 1
                 # A resumed version-2 chain starts from its saved handoff; the job's own first input may be gone.
-                missing_input_ok = allow_missing_input or (snapshot["version"] == 7 and start > 1)
-                if start > 1 and reference_assets and snapshot["version"] == 7:
+                missing_input_ok = allow_missing_input or (snapshot["version"] in (7, 8) and start > 1)
+                if start > 1 and reference_assets and snapshot["version"] in (7, 8):
                     # A pair only finished runs selected need not be there: the stored plan says which runs select which.
                     plan = snapshot.get("effective_plan")
                     if not isinstance(plan, list):
@@ -266,7 +267,7 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                 reference_overrides = {key: Path(str(item["snapshot_path"])) for key, item in reference_facts.items()}
                 config_texts = None
                 base_config_text = snapshot["config_text"]
-                if snapshot["version"] == 7:
+                if snapshot["version"] in (7, 8):
                     try:
                         parsed_configs = json.loads(snapshot["config_text"])
                     except (TypeError, ValueError) as error:
@@ -275,8 +276,8 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                         raise InputError(f"{entry.label}: invalid settings-profile snapshots")
                     config_texts = parsed_configs
                     base_config_text = None
-                first_input_plan = _first_input_plan(snapshot) if snapshot["version"] == 7 else None
-                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=config_texts, allow_missing_input=missing_input_ok, first_input_plan=first_input_plan, reference_overrides=reference_overrides, require_reference_snapshots=bool(reference_assets), inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, legacy_h3_frames=_legacy_h3_frames(snapshot), allow_version_1=snapshot["version"] != 7, backends=backends)
+                first_input_plan = _first_input_plan(snapshot) if snapshot["version"] in (7, 8) else None
+                job = load_job_text(snapshot["job_text"], Path(snapshot["job_path"]), config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=config_texts, allow_missing_input=missing_input_ok, first_input_plan=first_input_plan, reference_overrides=reference_overrides, require_reference_snapshots=bool(reference_assets), inactive_reference_pairs=inactive_pairs, reference_facts=reference_facts, legacy_h3_frames=_legacy_h3_frames(snapshot), allow_version_1=snapshot["version"] not in (7, 8), enforce_filename=snapshot["version"] == 8, backends=backends)
                 if not reference_assets and any(run.backend == H3_BACKEND and run.knobs.get("reference_pair") for run in job.effective_runs):
                     raise InputError(f"{entry.label}: H3 references require a reference asset snapshot")
                 if not reference_assets and job.backend == H3_BACKEND:
@@ -286,18 +287,18 @@ def parse_snapshot(entry: QueueRow, live: GlobalConfig, params_directory: Path, 
                         raise InputError(f"{entry.label}: H3 references require a reference asset snapshot")
                 if job.backend != entry.backend:
                     raise InputError(f"{entry.label}: backend differs between job text and queue snapshot", field="backend")
-                if snapshot["version"] in (3, 4, 5, 6, 7):
+                if snapshot["version"] in (3, 4, 5, 6, 7, 8):
                     validated_settings = json.loads(_execution_settings(job).to_json())
                     if snapshot["version"] in (3, 4) and job.backend == H3_BACKEND:
                         validated_settings["backend_settings"].pop("color_policy", None)
                     expected = snapshot["settings"]
-                    if snapshot["version"] == 7 and missing_input_ok and job.input is not None and not job.input.is_file():
+                    if snapshot["version"] in (7, 8) and missing_input_ok and job.input is not None and not job.input.is_file():
                         # The first input is gone, and a resumed chain starts from its saved handoff: its resize plan
                         # cannot be recomputed, so it is the one stored setting that is not compared.
                         validated_settings, expected = {**validated_settings, "input_resize": None}, {**expected, "input_resize": None}
                     if validated_settings != expected:
                         raise InputError(f"{entry.label}: validated settings differ from the queue snapshot", field="settings")
-                    if snapshot["version"] == 7 and snapshot.get("effective_plan") != list(job.effective_plan()):
+                    if snapshot["version"] in (7, 8) and snapshot.get("effective_plan") != list(job.effective_plan()):
                         raise InputError(f"{entry.label}: effective plan differs from the queue snapshot", field="runs")
                     if entry.total_runs is not None and job.run_count != entry.total_runs:
                         raise InputError(f"{entry.label}: run count differs from the queue row", field="run_count")

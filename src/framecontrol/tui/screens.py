@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from urllib.parse import urlsplit
 
 from rich.text import Text
 from textual import events, work
@@ -14,6 +15,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Input, RichLog, Rule, Static
 
 from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.network import is_loopback_host
 from framecontrol.core.run_lock import CHILD_EXECUTABLE_NAME
 from framecontrol.services.history import HistoryReader
 from framecontrol.services.job_catalog import JobCatalog, JobListing
@@ -169,7 +171,7 @@ class MainScreen(Screen[None]):
         if not self.is_mounted:
             return
         fc = self.fc
-        self.query_one("#status-line", SteadyText).show_text(status_line_text(fc.data_directory, fc.live, fc.job_running, fc.quit_armed, shortcut_help=self.shortcut_help_available(), server=fc.feed_connected, completions=self.completions))
+        self.query_one("#status-line", SteadyText).show_text(status_line_text(fc.data_directory, fc.live, fc.job_running, fc.quit_armed, shortcut_help=self.shortcut_help_available(), server=fc.feed_connected, local_validation=is_loopback_host(urlsplit(fc.server_url).hostname or ""), completions=self.completions))
 
     def show_completions(self, choices: list[str], index: int) -> None:
         self.completions = (choices, index)

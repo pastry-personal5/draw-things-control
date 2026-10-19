@@ -3,8 +3,15 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 4](README.md). Newest first.
 
+## 2026-10-19
+
+- **Design decision** [M16]: Supersede the 2026-10-18 server-only submission rule. The TUI fast-validates a loopback submission locally immediately before it posts, while the server remains the authoritative full validator and snapshot writer. Remote servers deliberately bypass local file validation.
+- **Change** [M16]: Job `name` is now exactly the YAML filename stem, case-sensitive. New snapshots record this invariant; persisted snapshots before version 8 remain resumable under their historical names.
+
 ## 2026-10-18
 
+- **Owner decision**: The Jobs list's `a` follows `/apply` directly. It no longer refuses a locally invalid job or requires a second press for one already queued or running; server-side submission remains the single validation and queueing path. This supersedes Milestone 13's guarded-`a` decision.
+- **Design decision** [M15]: Review of the plan before work starts. The gate's verdict is now three-way (promote, reject, inconclusive) on a seeded paired bootstrap by execution, and never clear with fewer than five held-out executions, because a three-execution bootstrap has ten distinct resamples and "no worse beyond uncertainty" would approve nearly anything; the holdout is `max(3, 20%)` of executions up to 8, all after the group's 32nd run, and an attempt needs three new executions since the last, so repeated looks do not approve noise. The live provisional calibration is also judged against the validated baseline, because it was never approved and "restore the validated baseline" had nothing to trigger it. `slope_level` is searched over 0.80 and 0.95 only: the planned 0.9 to 0.99 lay outside `BOUNDS` and `SLOPE_LEVELS`. The grids are listed, the pure gate gets its own module `gate.py`, `validated.json` joins the transaction, `reset`, `rollback` and the digests, and the search gets a 10 s CPU budget. `factory_spread` stays unsearched although `knobs.SEARCHED` lists it. Alternatives rejected: a bootstrap over three executions (vacuous), a fixed three-execution holdout with a promote-on-tie rule (approves noise), a 10-fold replay as the gate (trained on its test data).
 - **Change**: The shortcut help overlay is larger (90% of the screen, up to 110 columns, scrolling when the terminal is short) and groups its rows under category headings: the focused component's own categories (for example Selection, Jobs, Sorting) first, and `General` (Tab, Escape, Ctrl-C, F1) last.
 - **Change**: The work status's details line shows the running run's time left after its elapsed time (`denoise 33/40  3 min 40 s elapsed  2 min 25 s remaining`), read from the same run forecast as the Run bar; it is left out while there is no run estimate, while the run is `finishing`, and after a stop is requested.
 - **Change** [M14]: `rollback N` counts only updates that replaced a knob file. A run that only added to the ring and the record was journaled as a transaction too, so `rollback` undid nothing and the 25-entry manifest filled with them; such a commit is no longer listed.

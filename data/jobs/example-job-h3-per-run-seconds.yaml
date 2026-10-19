@@ -3,7 +3,7 @@
 # A run's own `seconds` replaces the default's; the frame counts are derived and recorded per run.
 # Validate: uv run fc validate-job data/jobs/example-job-h3-per-run-seconds.yaml
 version: 2
-name: h3-changing-duration
+name: example-job-h3-per-run-seconds
 input: ./story/opening.png
 
 prompt_pairs:

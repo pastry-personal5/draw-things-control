@@ -30,10 +30,10 @@ class QueueV2TestCase(CompileV2TestCase):
 
 
 class SubmitV2Tests(QueueV2TestCase):
-    def test_a_mixed_job_is_stored_as_a_version_7_snapshot_with_its_plan(self) -> None:
+    def test_a_mixed_job_is_stored_as_a_version_8_snapshot_with_its_plan(self) -> None:
         entry = self.submit()
         snapshot = json.loads(entry.snapshot or "")
-        self.assertEqual((entry.backend, entry.total_runs, snapshot["version"], is_version_2(entry)), ("mixed", 4, 7, True))
+        self.assertEqual((entry.backend, entry.total_runs, snapshot["version"], is_version_2(entry)), ("mixed", 4, 8, True))
         self.assertEqual(entry.config_file, "")
         self.assertEqual(list(json.loads(entry.config_text)), ["wan"])
         self.assertIn("model: base.ckpt", json.loads(entry.config_text)["wan"])

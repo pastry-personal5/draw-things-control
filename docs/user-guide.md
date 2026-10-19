@@ -242,7 +242,7 @@ job-wide output and cooldown.
 | Key | Meaning |
 |-----|---------|
 | `version` | Format version, `2` |
-| `name` | Base of output file names; `a-z`, `0-9`, `-` only |
+| `name` | Exact job file stem and base of output file names; `a-z`, `0-9`, `-` only. `sunset-walk.yaml` or `sunset-walk.yml` requires `name: sunset-walk`, with exact case and separators. |
 | `input` | The first image, looked up in `input_directory`. Required when run 1 is `i2i`, `i2v`, or `i2av`; forbidden when run 1 is `t2v` or `r2av`, which take no image |
 | `prompt_pairs` | Named prompts; see [Prompt pairs](#prompt-pairs) |
 | `reference_pairs` | Named, ordered H3 reference lists; see [H3 controls and reference pipelines](#h3-controls-and-reference-pipelines) |
@@ -565,6 +565,12 @@ resumed run. The copies remain while retention can resume or trace the chain.
 references has a 600-second submission limit. A resume verifies the copies
 selected by unfinished `r2av` runs; an earlier pair can be missing if no
 remaining run uses it.
+
+The Jobs list's fast check visits every reference in every pair selected by an
+`r2av` run, including `video_audio`'s paired audio. Each must already be an
+existing regular non-symlink file confined to `input_directory`; the fast check
+reads image headers and media metadata but does not fully decode it. The server
+performs the full check and snapshot when it accepts the submission.
 
 An H3 profile's optional controls include `render_width` and
 `render_height` (together, same aspect ratio, no larger than output),
@@ -1228,10 +1234,14 @@ why.
   after valid ones by mode and runs. The sort is kept across sessions; the
   default is `changed`, newest first. The widget's subtitle names it.
 - Enter or a click on a job writes its details and dry-run plan to the Activity
-  log, as `/describe job` does; `l` does the same. `a` submits the job, as `/apply` does. It refuses an invalid job and says
-  why, and for a job that is already waiting or running it asks for a second `a`
-  within 5 seconds, so a key pressed twice does not queue it twice. While the first
-  listing is read, the subtitle says `Reading job files...`.
+  log, as `/describe job` does; `l` does the same. `a` submits the job, as
+  `/apply` does. While the first listing is read, the subtitle says `Reading job
+  files...`.
+- On a loopback server, `a`, `/apply`, and `/queue add` first say `Validating …`
+  and fast-check the current job and selected H3 references before any queue
+  request. A failure updates the row to invalid and is not sent. A remote server
+  deliberately bypasses this local check; the persistent footer says `Local
+  validation off` and the server validates it.
 - The directory is watched, so a file added, changed, renamed, or deleted
   shows within a moment, without `/get jobs` and without polling. While a
   directory cannot be watched, or an invalid job is listed, it is checked

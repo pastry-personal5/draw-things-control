@@ -291,7 +291,7 @@ def completions_text(choices: Sequence[str], index: int) -> Text:
     return text
 
 
-def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False, *, shortcut_help: bool = False, server: bool | None = None, completions: tuple[Sequence[str], int] = ((), 0)) -> Text:
+def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, quit_armed: bool = False, *, shortcut_help: bool = False, server: bool | None = None, local_validation: bool = True, completions: tuple[Sequence[str], int] = ((), 0)) -> Text:
     """The status line: job state, server connection, data directory, and help; or, after one Ctrl-C, how to quit, or, while Tab
     steps through completions, those. ``server`` is whether the feed to ``fc serve`` is up (None: not shown)."""
     if quit_armed:
@@ -311,6 +311,8 @@ def status_line_text(data_directory: Path, live: LiveRun | None, running: bool, 
     if server is not None:
         text.append("  |  ", style="dim")
         text.append("server connected", style="green") if server else text.append("server offline (read-only)", style="yellow")
+    if not local_validation:
+        text.append("  |  Local validation off", style="yellow")
     text.append("  |  ", style="dim")
     text.append(str(data_directory))
     text.append("  |  Press ? or F1 for shortcut help" if shortcut_help else "  |  F1: shortcut help", style="dim")

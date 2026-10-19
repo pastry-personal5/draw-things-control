@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import signal
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit
 
 from rich.text import Text
 from textual import work
@@ -16,7 +18,11 @@ from textual.notifications import SeverityLevel
 from framecontrol.core.client_config import job_argument
 from framecontrol.core.exit_codes import exit_code_for_signal
 from framecontrol.core.global_config import GlobalConfig
+from framecontrol.core.network import is_loopback_host
 from framecontrol.core.paths import ProjectPaths
+from framecontrol.jobs.backends.h3 import H3JobData
+from framecontrol.jobs.files import read_job
+from framecontrol.services.job_catalog import signature
 from framecontrol.services.queue_hold import HoldState, hold_outcome_text, release_outcome_text
 from framecontrol.services.queue_park_text import park_outcome_text, unpark_outcome_text
 from framecontrol.services.store_provider import StoreProvider
@@ -200,13 +206,6 @@ class FramecontrolApp(App[None]):
         if style in ("red", "yellow") and main.focused not in (None, main.command_field):
             self.notify(str(text), severity="error" if style == "red" else "warning", markup=False)
 
-    def queued_entry_for(self, path: Path) -> str | None:
-        """The queue ID of a waiting or running entry for this job file, as the Queue list shows it; None when there is none."""
-        main = self.main
-        if main is None:
-            return None
-        return next((queue_id for queue_id, entry in main.queue_list.rows_by_id.items() if entry["state"] in ("queued", "running") and entry.get("job_path") and Path(str(entry["job_path"])).name == path.name), None)
-
     def announce_finished(self, title: str, message: str, severity: str) -> None:
         """A job ended: ring the terminal bell, show a toast, and post a desktop notification, since a chain runs for hours
         and the person is rarely watching the terminal when it ends."""
@@ -257,9 +256,56 @@ class FramecontrolApp(App[None]):
     def start_flow(self, path: Path) -> None:
         """/apply <job>: submit it to the queue. No confirmation: queuing is reversible (/queue cancel undoes it),
         and fc serve, not this process, is what actually runs it."""
-        self.submit_job(job_argument(str(path), self.paths))
+        self.submit_path(path)
 
-    @work(exclusive=True, group="submit")
+    @work(group="submit")
+    async def submit_path(self, path: Path) -> None:
+        """Fast-check a local file immediately before its HTTP submission.
+
+        The server remains authoritative.  This check makes the common local mistake visible before a queue request,
+        without sending the user's files or reference paths to a remote server for inspection.
+        """
+        if not is_loopback_host(urlsplit(self.server_url).hostname or ""):
+            self.submit_job(job_argument(str(path), self.paths))
+            return
+        self.say(f"Validating {path.name}…")
+        for attempt in range(2):
+            before = signature(path)
+            try:
+                job = await asyncio.to_thread(read_job, path, self.settings, self.paths, decode_input=False)
+            except Exception as error:
+                self._local_validation_failed(path, error)
+                return
+            dependencies = self._validation_dependencies(job[0])
+            if before == signature(path) and all(before_dependency == signature(dependency) for dependency, before_dependency in dependencies):
+                self.submit_job(job_argument(str(path), self.paths))
+                return
+            if attempt == 0:
+                continue
+            self._local_validation_failed(path, "job file or a selected reference changed during validation")
+            return
+
+    @staticmethod
+    def _validation_dependencies(job: Any) -> tuple[tuple[Path, tuple[int, int] | None], ...]:
+        """Signatures that must remain stable from the fast parse through submission."""
+        paths: list[Path] = [job.path]
+        views = (job.job_for_run(number) for number in range(1, job.run_count + 1)) if job.effective_runs else (job,)
+        for view in views:
+            if isinstance(view.backend_data, H3JobData):
+                selected = {run.reference_pair for run in view.backend_data.runs if run.pipeline == "r2av"}
+                for pair in view.backend_data.reference_pairs:
+                    if pair.name in selected:
+                        for reference in pair.references:
+                            paths.extend(item for item in (reference.path, reference.audio) if item is not None)
+        return tuple((item, signature(item)) for item in paths)
+
+    def _local_validation_failed(self, path: Path, error: object) -> None:
+        message = getattr(error, "message", None) or str(error)
+        self.say(f"{path.name} is invalid and was not submitted: {message}", "red")
+        if self.main is not None:
+            self.main.jobs_list.mark_invalid(path, message, getattr(error, "field", None))
+
+    @work(group="submit-http")
     async def submit_job(self, job: str) -> None:
         try:
             entry = await submit(self.server_url, self.token_file, self.http_transport, job)

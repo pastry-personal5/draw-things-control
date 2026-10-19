@@ -48,7 +48,7 @@ class CommonJobFields:
     cooldown_source: str
 
 
-def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_version_1: bool = False, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_version_1: bool = False, enforce_filename: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
     When run 1 needs a resized copy, the input is fully decoded to catch broken pixel data. A caller that
@@ -59,14 +59,14 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: Job file uses a symbolic link", path=path)
     try:
         data, text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, allow_version_1=allow_version_1, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, allow_version_1=allow_version_1, enforce_filename=enforce_filename, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
         raise InputError(f"{path}: {error}", path=path) from error
 
 
-def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, first_input_plan: ResizePlan | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
+def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, first_input_plan: ResizePlan | None = None, enforce_filename: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job from its text, as a queue keeps it; ``path`` names the job file in messages and in the definition, and is not read.
 
     With ``base_config_text``, the base configuration is parsed from this text instead of read from
@@ -82,7 +82,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=base_config_texts, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, allow_version_1=allow_version_1, first_input_plan=first_input_plan, backends=backends).parse(data, text)
+        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=base_config_texts, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, allow_version_1=allow_version_1, first_input_plan=first_input_plan, enforce_filename=enforce_filename, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
@@ -92,7 +92,7 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, handoff_size: tuple[int, int] | None = None, run_view: bool = False, first_input_plan: ResizePlan | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, handoff_size: tuple[int, int] | None = None, run_view: bool = False, first_input_plan: ResizePlan | None = None, enforce_filename: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
         self._path = path
         self._global_config = global_config
         self._params_directory = params_directory
@@ -106,6 +106,7 @@ class JobParser:
         self._reference_facts = reference_facts or {}
         self.legacy_h3_frames = legacy_h3_frames
         self._allow_version_1 = allow_version_1
+        self._enforce_filename = enforce_filename
         # A version-2 run that consumes the previous run's output: that output's size, known before it exists.
         self._handoff_size = handoff_size
         # True for the parser of one version-2 run's view, whose profile may serve other runs and pipelines too.
@@ -262,6 +263,7 @@ class JobParser:
             handoff_size=handoff_size,
             run_view=True,
             first_input_plan=self._first_input_plan,
+            enforce_filename=self._enforce_filename,
             backends=self._backends,
         )
 
@@ -368,6 +370,8 @@ class JobParser:
     def _name(self, name: Any) -> str:
         if not isinstance(name, str) or not NAME_PATTERN.match(name):
             self._fail("name", "must be 1 to 64 lowercase letters, digits, and hyphens, starting and ending with a letter or digit")
+        if self._enforce_filename and self._path.stem != name:
+            self._fail("name", f"must equal the job filename stem '{self._path.stem}'")
         return name
 
     def _mode(self, value: Any) -> GenerationMode:

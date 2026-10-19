@@ -69,7 +69,9 @@ class TuiTestCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     def write_data_job(self, name: str, **changes: object) -> Path:
         path = self.data / name
-        path.write_text(yaml.safe_dump(to_version_2(job_data(**changes), self.paths.params), sort_keys=False), encoding="utf-8")
+        data = to_version_2(job_data(**changes), self.paths.params)
+        data["name"] = path.stem
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 
     def make_app(self, service: JobExecutor | None = None, *, data: Path | None = None, settings: GlobalConfig | None = None) -> FramecontrolApp:
