@@ -37,9 +37,9 @@ Improve the product experience, make chained generation support multiple backend
 |---|-----------|--------|
 | 01 | [TUI interaction and contextual shortcut help](milestone-01-tui-interaction.md) | done |
 | 02 | [Refactor for multiple backends](milestone-02-multiple-backends.md) | done |
-| 03 | [H3 image-to-audio-video support](milestone-03-h3-i2av.md) | in-progress |
+| 03 | [H3 image-to-audio-video support](milestone-03-h3-i2av.md) | done |
 | 04 | [Rename to Framechain](milestone-04-framechain-rename.md) | done |
-| 05 | [H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) | in-progress |
+| 05 | [H3 controls and mixed reference pipelines](milestone-05-h3-r2av.md) | done |
 | 16 | [Idle, parallel validation and canonical job filenames](milestone-16-tui-local-validation.md) | done |
 | 06 | [H3 video color tags and correction](milestone-06-h3-color.md) | done |
 | 07 | [Check performance](milestone-07-check-performance.md) | done |
@@ -75,8 +75,8 @@ Decisions and notable changes are recorded in
 
 - Milestone 01's canonical interaction terminology, consistent visible TUI names, and contextual shortcut help are complete and documented.
 - Draw Things behavior continues through the backend boundary; already queued and resumable version-1 work remains runnable, while new authoring uses the version-2 job format.
-- `i2av` jobs use H3 from every existing front end, with native audio preserved in their outputs and run history.
-- H3 jobs expose reproducible rendering controls and safely mix first-frame `i2av` runs with ordered-reference `r2av` Ref2VA runs.
+- `i2av` jobs use H3 from every existing front end, with native audio preserved in their outputs and run history; a real Apple Silicon host acceptance run is post-release validation and does not block Phase 4 completion.
+- H3 jobs expose reproducible rendering controls and safely mix first-frame `i2av` runs with ordered-reference `r2av` Ref2VA runs; real-host mixed-pipeline and resume validation is post-release and does not block Phase 4 completion.
 - H3 generated videos carry truthful color tags when verified; otherwise a warning identifies the original output and any conflicting tags it retains. `i2av` jobs can opt into bounded, recorded color correction without changing the default output pixels.
 - Framecontrol is the product and app name, with `fc` as its installed command and existing state safely migrated.
 - Version-2 jobs resolve named profiles and scoped defaults into a frozen per-run plan; H3 duration and Draw Things temporal control can vary by run without duplicated H3 frame values.

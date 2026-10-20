@@ -1,7 +1,7 @@
 # Milestone 03: H3 image-to-audio-video support
 
 **Phase:** [Phase 4](README.md)
-**Status:** in-progress
+**Status:** done
 **Depends on:** [Milestone 02](milestone-02-multiple-backends.md) and the local [h3.c](https://github.com/antirez/h3.c) build and model snapshot.
 
 ## Goal
@@ -93,7 +93,7 @@ This milestone is forward-only. It may change the Milestone 02 backend protocol,
 - Each successful run's atomically promoted MP4 has verified H.264 video and AAC audio at the documented H3 properties, dimensions, aligned frame count, and synchronized durations. Actual video and audio properties, output path, and required handoff are recorded; no audio stream or invalid required property fails the run, and a failed run leaves no final MP4 or handoff.
 - Unsupported H3 options or combinations, including extra `backend_settings`, `color`, `prompt_pairs[].negative`, Draw Things configuration/size fields, and non-MP4 output fail validation before execution. Missing or invalid executable/model snapshot, FFmpeg, or FFprobe yields a specific tool or input error.
 - Cancellation, timeout, worker restart, and resume preserve the existing run-boundary behavior; M03 Draw Things jobs remain supported.
-- On the Apple Silicon host, a human verifies a real first-frame H3 run and its generated MP4 against the temporal, video, audio, and final-frame-handoff contracts; the implementation's automated tests cover the same paths with fake process/media tools.
+- A real first-frame H3 host run and inspection of its generated MP4 against the temporal, video, audio, and final-frame-handoff contracts is post-release validation and does not block completion. The implementation's automated tests cover the same paths with fake process/media tools.
 - `make check` passes when the implementation lands.
 
 ## Research

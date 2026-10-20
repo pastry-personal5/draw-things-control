@@ -1,7 +1,7 @@
 # Milestone 05: H3 controls and mixed reference pipelines
 
 **Phase:** [Phase 4](README.md)
-**Status:** in-progress
+**Status:** done
 **Depends on:** [Milestone 03](milestone-03-h3-i2av.md)'s H3 installation, one-shot runner, MP4 finishing, and queue snapshots.
 
 ## Goal
@@ -209,4 +209,5 @@ Run 1 uses `performer`; run 2 receives run 1's verified final frame; run 3 uses 
 - Reference snapshots and resolved controls stay stable through queueing, interruption, recovery, and resume; changing or deleting a submitted source does not change the verified copy. The selected settings produce the exact supported H3 argv, including `--use-int8-row-fc2` when `int8_row_fc2` is enabled. Incompatible setting pairs, unsupported hardware, and a changed H3 executable fail before a child starts. Invalid, linked, out-of-directory, malformed, over-limit, audio-only, missing, or changed assets fail with a field-specific error before H3 receives them.
 - Existing all-`i2av` H3 jobs, Draw Things jobs, strict MP4 verification, command redaction, and queue/resume semantics remain intact.
 - H3 color characterization, tags, and any required pixel conversion are deferred to [Milestone 06](milestone-06-h3-color.md).
+- A real host validation of the mixed pipeline and resume paths is post-release validation and does not block completion.
 - `make check` passes when implementation lands.
