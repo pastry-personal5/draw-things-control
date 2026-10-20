@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rich.text import Text
-from textual import events, work
+from textual import work
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import DataTable
@@ -18,7 +18,7 @@ from framecontrol.services.history import PAGE_SIZE, HistoryFilter, HistoryPage
 from framecontrol.state.executions import ExecutionRow
 from framecontrol.tui.panes.base import SidewaysTable
 from framecontrol.tui.reader import PaneHistory
-from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, show_shortcut_help
 from framecontrol.tui.text.history import history_cells
 
 # How often the history is checked while another process runs a job, and the data directory for changed job files when
@@ -117,13 +117,6 @@ class ExecutionHistoryList(SidewaysTable):
         # At once, so a job another process was already running when the TUI opened is shown without waiting for a poll.
         self.check_lock()
         self.load()
-
-    def action_leave(self) -> None:
-        # Not focus_next: the Execution detail follows the history in the Tab order.
-        self.leave()
-
-    def on_focus(self, event: events.Focus) -> None:
-        refresh_status_line(self)
 
     def action_show_shortcut_help(self) -> None:
         show_shortcut_help(self, "Execution History list", EXECUTION_HISTORY_SHORTCUTS)

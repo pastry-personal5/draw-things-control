@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.text import Text
-from textual import events, work
+from textual import work
 from textual.binding import Binding
 from textual.timer import Timer
 from textual.widgets import DataTable
@@ -18,7 +18,7 @@ from framecontrol.tui.commands import SORT_KEYS
 from framecontrol.tui.job_sort import SortPreference
 from framecontrol.tui.job_watch import JobWatcher
 from framecontrol.tui.panes.base import SidewaysTable
-from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, show_shortcut_help
 from framecontrol.tui.text.jobs import job_definition_cells, job_display_names, sort_job_rows
 
 JOBS_POLL_SECONDS = 5
@@ -124,9 +124,6 @@ class JobsList(SidewaysTable):
 
     def on_unmount(self) -> None:
         self.watcher.stop()
-
-    def on_focus(self, event: events.Focus) -> None:
-        refresh_status_line(self)
 
     def action_show_shortcut_help(self) -> None:
         show_shortcut_help(self, "Jobs list", JOBS_LIST_SHORTCUTS)
@@ -250,9 +247,6 @@ class JobsList(SidewaysTable):
         if row is None:
             return
         self.run_job(row.path)
-
-    def action_leave(self) -> None:
-        self.leave()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         # Enter or a click writes the job's details to the Activity log; the screen's handler is for the history.

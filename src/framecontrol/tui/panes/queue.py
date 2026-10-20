@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from textual import events, work
+from textual import work
 from textual.binding import Binding
 from textual.widgets import DataTable
 from textual.worker import get_current_worker
@@ -16,7 +16,7 @@ from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_reader import QueueReader
 from framecontrol.state.queue import FINISHED_STATES
 from framecontrol.tui.panes.base import SidewaysTable
-from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, refresh_status_line, show_shortcut_help
+from framecontrol.tui.shortcut_help import GENERAL_SHORTCUTS, show_shortcut_help
 from framecontrol.tui.text.queue import queue_cells, queue_row_to_dict
 
 if TYPE_CHECKING:
@@ -97,12 +97,6 @@ class QueueList(SidewaysTable):
         self.add_columns("ID", "Job", "State", "Runs")
         self.set_interval(QUEUE_POLL_SECONDS, self.poll)
         self.poll()
-
-    def action_leave(self) -> None:
-        self.leave()
-
-    def on_focus(self, event: events.Focus) -> None:
-        refresh_status_line(self)
 
     def action_show_shortcut_help(self) -> None:
         show_shortcut_help(self, "Queue list", QUEUE_LIST_SHORTCUTS)

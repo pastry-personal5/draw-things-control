@@ -92,6 +92,20 @@ class _Context:
     reference: str | None
 
 
+@dataclass(frozen=True)
+class _Catalogs:
+    prompts: dict[str, PromptPair]
+    references: dict[str, dict[str, Any]]
+    profiles: dict[str, tuple[str, dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class _RootOptions:
+    output_directory: Path
+    cooldown: CooldownPolicy
+    cooldown_source: str
+
+
 class RunCompiler:
     """Turns a version-2 mapping into a ``JobDefinition`` whose ``effective_runs`` are its frozen per-run plan."""
 
@@ -103,33 +117,23 @@ class RunCompiler:
         parser = self._parser
         self._check_top_level(data)
         name = parser.job_name(data["name"])
-        prompts = self._prompts(data["prompt_pairs"])
-        references = self._references(data.get("reference_pairs", {}))
-        profiles = self._profiles(data["settings_profiles"])
-        defaults = self._defaults(data.get("defaults", []), prompts, references, profiles)
+        catalogs = self._catalogs(data)
+        defaults = self._defaults(data.get("defaults", []), catalogs.prompts, catalogs.references, catalogs.profiles)
         raw_runs = data["runs"]
         if not isinstance(raw_runs, list) or not raw_runs:
             parser.fail("runs", "must be a nonempty list")
-        output = data.get("output", {})
-        if isinstance(output, dict):
-            for key, message in REMOVED_OUTPUT_KEYS.items():
-                if key in output:
-                    parser.fail(f"output.{key}", message)
-        output_directory = parser.output_directory(output, name, {"directory"}).resolve()
-        cooldown, cooldown_source = parser.cooldown_policy(data)
-
-        selections = [self._select(index, item, prompts, references, profiles, defaults) for index, item in enumerate(raw_runs)]
-        self._check_all_used(selections, defaults, prompts, references, profiles)
-        first_pipeline = selections[0].pipeline
-        input_path = self._input(data.get("input"), first_pipeline)
-
-        effective: list[EffectiveRun] = []
-        for selection in selections:
-            producer = effective[-1].backend_job if effective else None
-            effective.append(self._compile_run(selection, name, prompts[selection.prompt], profiles, references, input_path, output_directory, producer, selection.number > 1 and selection.pipeline in VISUAL_INPUT_PIPELINES, source_text))
-        return self._root(name, effective, input_path, prompts, output_directory, cooldown, cooldown_source, source_text)
+        options = self._root_options(data, name)
+        selections = [self._select(index, item, catalogs.prompts, catalogs.references, catalogs.profiles, defaults) for index, item in enumerate(raw_runs)]
+        self._check_all_used(selections, defaults, catalogs.prompts, catalogs.references, catalogs.profiles)
+        input_path = self._input(data.get("input"), selections[0].pipeline)
+        effective = self._resolve_runs(selections, name, catalogs, input_path, options.output_directory, source_text)
+        self._check_edges(effective)
+        return self._root(name, effective, input_path, catalogs.prompts, options.output_directory, options.cooldown, options.cooldown_source, source_text)
 
     # --- catalogs -------------------------------------------------------------------------------------------------
+
+    def _catalogs(self, data: dict[str, Any]) -> _Catalogs:
+        return _Catalogs(self._prompts(data["prompt_pairs"]), self._references(data.get("reference_pairs", {})), self._profiles(data["settings_profiles"]))
 
     def _check_top_level(self, data: dict[str, Any]) -> None:
         parser = self._parser
@@ -390,6 +394,16 @@ class RunCompiler:
                 if isinstance(output, dict) and "video_format" in output:
                     parser.fail(f"{field}.output.video_format", "applies only to video runs, and no video run selects this profile")
 
+    def _root_options(self, data: dict[str, Any], name: str) -> _RootOptions:
+        output = data.get("output", {})
+        if isinstance(output, dict):
+            for key, message in REMOVED_OUTPUT_KEYS.items():
+                if key in output:
+                    self._parser.fail(f"output.{key}", message)
+        output_directory = self._parser.output_directory(output, name, {"directory"}).resolve()
+        cooldown, source = self._parser.cooldown_policy(data)
+        return _RootOptions(output_directory, cooldown, source)
+
     def _input(self, value: Any, first_pipeline: str) -> Path | None:
         parser = self._parser
         if first_pipeline not in VISUAL_INPUT_PIPELINES:
@@ -404,6 +418,14 @@ class RunCompiler:
         return path
 
     # --- one run's view -------------------------------------------------------------------------------------------
+
+    def _resolve_runs(self, selections: list[_Selection], name: str, catalogs: _Catalogs, input_path: Path | None, output_directory: Path, source_text: str) -> list[EffectiveRun]:
+        effective: list[EffectiveRun] = []
+        for selection in selections:
+            producer = effective[-1].backend_job if effective else None
+            consumes_handoff = selection.number > 1 and selection.pipeline in VISUAL_INPUT_PIPELINES
+            effective.append(self._compile_run(selection, name, catalogs.prompts[selection.prompt], catalogs.profiles, catalogs.references, input_path, output_directory, producer, consumes_handoff, source_text))
+        return effective
 
     def _compile_run(self, selection: _Selection, name: str, pair: PromptPair, profiles: dict[str, tuple[str, dict[str, Any]]], references: dict[str, dict[str, Any]], input_path: Path | None, output_directory: Path, producer: JobDefinition | None, consumes_handoff: bool, source_text: str) -> EffectiveRun:
         _backend, settings = profiles[selection.profile]
@@ -424,10 +446,7 @@ class RunCompiler:
         else:
             self._derive_temporal(selection, settings, knobs, sources, context)
         safe = self._safe_settings(selection, view, knobs, sources)
-        run = EffectiveRun(selection.number, selection.backend, selection.pipeline, selection.prompt, selection.profile, pair, knobs, sources, safe, view)
-        if consumes_handoff:
-            self._check_edge(run, producer)
-        return run
+        return EffectiveRun(selection.number, selection.backend, selection.pipeline, selection.prompt, selection.profile, pair, knobs, sources, safe, view)
 
     def _derive_temporal(self, selection: _Selection, settings: dict[str, Any], knobs: dict[str, Any], sources: dict[str, str], context: _Context) -> None:
         """Add the knobs a run's duration derives, to ``knobs`` and ``sources``, and return nothing."""
@@ -622,6 +641,11 @@ class RunCompiler:
         return safe
 
     # --- cross-run facts ------------------------------------------------------------------------------------------
+
+    def _check_edges(self, runs: list[EffectiveRun]) -> None:
+        for index, run in enumerate(runs[1:], start=1):
+            if run.pipeline in VISUAL_INPUT_PIPELINES:
+                self._check_edge(run, runs[index - 1].backend_job)
 
     def _static_size(self, view: JobDefinition | None) -> tuple[int, int] | None:
         """The size of what a run's output hands off, known from its profile before anything runs."""

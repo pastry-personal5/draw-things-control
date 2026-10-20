@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import cast
 
 from rich.text import Text
+from textual import events
 from textual.widget import Widget
 from textual.widgets import DataTable
+
+from framecontrol.tui.shortcut_help import refresh_status_line
 
 
 class Reads:
@@ -29,6 +33,14 @@ class SidewaysTable(DataTable[Text], Reads):
 
     # The height with its border and header, without a scrollbar.
     HEIGHT_LINES = 8
+    leave: Callable[[], None]
 
     def watch_show_horizontal_scrollbar(self, shown: bool) -> None:
         self.styles.height = self.HEIGHT_LINES + (1 if shown else 0)
+
+    def on_focus(self, event: events.Focus) -> None:
+        refresh_status_line(self)
+
+    def action_leave(self) -> None:
+        # These table panes explicitly return to the command line; focus_next would enter another pane.
+        self.leave()

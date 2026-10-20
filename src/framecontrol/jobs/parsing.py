@@ -48,6 +48,48 @@ class CommonJobFields:
     cooldown_source: str
 
 
+@dataclass(frozen=True)
+class _JobSource:
+    """The file identity and filesystem policy shared by every view parsed from one job."""
+
+    path: Path
+    global_config: GlobalConfig
+    params_directory: Path
+
+
+@dataclass(frozen=True)
+class _ParsePolicy:
+    """Input validation and compatibility choices owned by the caller of a parse."""
+
+    decode_input: bool = True
+    allow_missing_input: bool = False
+    allow_version_1: bool = False
+    first_input_plan: ResizePlan | None = None
+    enforce_filename: bool = True
+
+
+@dataclass(frozen=True)
+class _FrozenJobData:
+    """Configuration, references, and media facts frozen in a submitted queue snapshot."""
+
+    base_config_text: str | None = None
+    base_config_texts: dict[str, str] | None = None
+    reference_overrides: dict[tuple[str, int, str], Path] | None = None
+    require_reference_snapshots: bool = False
+    inactive_reference_pairs: frozenset[str] = frozenset()
+    reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None
+    legacy_h3_frames: int | None = None
+
+
+@dataclass(frozen=True)
+class _RunView:
+    """The extra context needed while validating one compiled version-2 run."""
+
+    base_config_text: str | None = None
+    handoff_size: tuple[int, int] | None = None
+    active: bool = False
+
+
 def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, allow_version_1: bool = False, enforce_filename: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> JobDefinition:
     """Parse a job file and validate everything that can be checked before running.
 
@@ -59,7 +101,9 @@ def load_job(path: Path, global_config: GlobalConfig, params_directory: Path, *,
         raise InputError(f"{path}: Job file uses a symbolic link", path=path)
     try:
         data, text = read_yaml_file(path, "Job file", max_bytes=global_config.api_limits.max_job_file_bytes)
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, allow_version_1=allow_version_1, enforce_filename=enforce_filename, backends=backends).parse(data, text)
+        source = _JobSource(path, global_config, params_directory)
+        policy = _ParsePolicy(decode_input=decode_input, allow_version_1=allow_version_1, enforce_filename=enforce_filename)
+        return JobParser(source, policy, _FrozenJobData(), backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
@@ -82,7 +126,10 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
         raise LimitExceededError(f"{size} bytes is over the max_job_file_bytes limit of {limit}", key="max_job_file_bytes", limit=limit, value=size)
     try:
         data = parse_yaml_mapping(text, path, "Job file")
-        return JobParser(path, global_config, params_directory, decode_input=decode_input, base_config_text=base_config_text, base_config_texts=base_config_texts, allow_missing_input=allow_missing_input, reference_overrides=reference_overrides, require_reference_snapshots=require_reference_snapshots, inactive_reference_pairs=inactive_reference_pairs, reference_facts=reference_facts, legacy_h3_frames=legacy_h3_frames, allow_version_1=allow_version_1, first_input_plan=first_input_plan, enforce_filename=enforce_filename, backends=backends).parse(data, text)
+        source = _JobSource(path, global_config, params_directory)
+        policy = _ParsePolicy(decode_input=decode_input, allow_missing_input=allow_missing_input, allow_version_1=allow_version_1, first_input_plan=first_input_plan, enforce_filename=enforce_filename)
+        frozen = _FrozenJobData(base_config_text, base_config_texts, reference_overrides, require_reference_snapshots, inactive_reference_pairs, reference_facts, legacy_h3_frames)
+        return JobParser(source, policy, frozen, backends=backends).parse(data, text)
     except (ValueError, RecursionError) as error:
         if isinstance(error, FramecontrolError):
             raise
@@ -92,27 +139,11 @@ def load_job_text(text: str, path: Path, global_config: GlobalConfig, params_dir
 class JobParser:
     """Validates one job file's mapping, one method per part of the file; every problem is an InputError naming the file and the field."""
 
-    def __init__(self, path: Path, global_config: GlobalConfig, params_directory: Path, *, decode_input: bool = True, base_config_text: str | None = None, base_config_texts: dict[str, str] | None = None, allow_missing_input: bool = False, reference_overrides: dict[tuple[str, int, str], Path] | None = None, require_reference_snapshots: bool = False, inactive_reference_pairs: frozenset[str] = frozenset(), reference_facts: dict[tuple[str, int, str], dict[str, Any]] | None = None, legacy_h3_frames: int | None = None, allow_version_1: bool = False, handoff_size: tuple[int, int] | None = None, run_view: bool = False, first_input_plan: ResizePlan | None = None, enforce_filename: bool = True, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
-        self._path = path
-        self._global_config = global_config
-        self._params_directory = params_directory
-        self._decode_input = decode_input
-        self._base_config_text = base_config_text
-        self._base_config_texts = base_config_texts or {}
-        self._allow_missing_input = allow_missing_input
-        self._reference_overrides = reference_overrides or {}
-        self.require_reference_snapshots = require_reference_snapshots
-        self.inactive_reference_pairs = inactive_reference_pairs
-        self._reference_facts = reference_facts or {}
-        self.legacy_h3_frames = legacy_h3_frames
-        self._allow_version_1 = allow_version_1
-        self._enforce_filename = enforce_filename
-        # A version-2 run that consumes the previous run's output: that output's size, known before it exists.
-        self._handoff_size = handoff_size
-        # True for the parser of one version-2 run's view, whose profile may serve other runs and pipelines too.
-        self._run_view = run_view
-        # A resumed version-2 job whose first input is gone: that input's frozen resize plan, from its queue snapshot.
-        self._first_input_plan = first_input_plan
+    def __init__(self, source: _JobSource, policy: _ParsePolicy, frozen: _FrozenJobData, *, view: _RunView | None = None, backends: BackendRegistry = DEFAULT_BACKENDS) -> None:
+        self._source = source
+        self._policy = policy
+        self._frozen = frozen
+        self._view = view or _RunView()
         self._backends = backends
 
     def parse(self, data: dict[str, Any], source_text: str) -> JobDefinition:
@@ -128,7 +159,7 @@ class JobParser:
         version = data.get("version")
         if version == 2 and not isinstance(version, bool):
             return RunCompiler(self).compile(data, source_text)
-        if not self._allow_version_1:
+        if not self._policy.allow_version_1:
             self._fail("version", VERSION_1_MESSAGE if version == 1 and not isinstance(version, bool) else "must be 2")
         self._check_top_level(data)
         backend = self._backend(data)
@@ -175,9 +206,9 @@ class JobParser:
         except ValueError as error:
             if isinstance(error, FramecontrolError):
                 raise
-            raise InputError(f"{self._path}: {error}", field="input", path=self._path) from error
+            raise InputError(f"{self.path}: {error}", field="input", path=self.path) from error
         return JobDefinition(
-            path=self._path,
+            path=self.path,
             name=name,
             mode=mode,
             input=input_path,
@@ -218,7 +249,7 @@ class JobParser:
 
     @property
     def path(self) -> Path:
-        return self._path
+        return self._source.path
 
     @property
     def backends(self) -> BackendRegistry:
@@ -227,7 +258,7 @@ class JobParser:
     @property
     def run_view(self) -> bool:
         """Whether this parser validates one version-2 run's view rather than a whole version-1 job."""
-        return self._run_view
+        return self._view.active
 
     def check_keys(self, data: dict[str, Any], allowed: set[str], prefix: str) -> None:
         self._check_keys(data, allowed, prefix)
@@ -247,47 +278,49 @@ class JobParser:
 
     def nested(self, *, profile: str | None = None, handoff_size: tuple[int, int] | None = None) -> JobParser:
         """A parser for one version-2 run's one-run view: the profile's frozen configuration, no input file required."""
-        text = self._base_config_texts.get(profile, self._base_config_text) if profile is not None else None
+        texts = self._frozen.base_config_texts or {}
+        text = texts.get(profile, self._frozen.base_config_text) if profile is not None else None
         return JobParser(
-            self._path,
-            self._global_config,
-            self._params_directory,
-            decode_input=self._decode_input,
-            base_config_text=text,
-            allow_missing_input=True,
-            reference_overrides=self._reference_overrides,
-            require_reference_snapshots=self.require_reference_snapshots,
-            inactive_reference_pairs=self.inactive_reference_pairs,
-            reference_facts=self._reference_facts,
-            legacy_h3_frames=self.legacy_h3_frames,
-            handoff_size=handoff_size,
-            run_view=True,
-            first_input_plan=self._first_input_plan,
-            enforce_filename=self._enforce_filename,
+            self._source,
+            replace(self._policy, allow_missing_input=True),
+            self._frozen,
+            view=_RunView(text, handoff_size, True),
             backends=self._backends,
         )
 
     @property
     def global_config(self) -> GlobalConfig:
-        return self._global_config
+        return self._source.global_config
 
     @property
     def decode_input(self) -> bool:
-        return self._decode_input
+        return self._policy.decode_input
 
     @property
     def allow_missing_input(self) -> bool:
         """Only a resumed backend chain may parse after its original input is gone."""
-        return self._allow_missing_input
+        return self._policy.allow_missing_input
+
+    @property
+    def require_reference_snapshots(self) -> bool:
+        return self._frozen.require_reference_snapshots
+
+    @property
+    def inactive_reference_pairs(self) -> frozenset[str]:
+        return self._frozen.inactive_reference_pairs
+
+    @property
+    def legacy_h3_frames(self) -> int | None:
+        return self._frozen.legacy_h3_frames
 
     def fail(self, field: str, problem: str) -> NoReturn:
         self._fail(field, problem)
 
     def reference_override(self, pair: str, ordinal: int, field: str) -> Path | None:
-        return self._reference_overrides.get((pair, ordinal, field))
+        return (self._frozen.reference_overrides or {}).get((pair, ordinal, field))
 
     def reference_fact(self, pair: str, ordinal: int, field: str) -> dict[str, Any] | None:
-        return self._reference_facts.get((pair, ordinal, field))
+        return (self._frozen.reference_facts or {}).get((pair, ordinal, field))
 
     def output_directory(self, value: Any, name: str, allowed_keys: set[str]) -> Path:
         if not isinstance(value, dict):
@@ -295,12 +328,12 @@ class JobParser:
         self._check_keys(value, allowed_keys, "output.")
         directory = value.get("directory")
         if directory is None:
-            output_directory = self._global_config.output_directory / name
+            output_directory = self.global_config.output_directory / name
         elif isinstance(directory, str) and directory:
-            output_directory = self._confined_path(directory, self._global_config.output_directory, "output.directory")
+            output_directory = self._confined_path(directory, self.global_config.output_directory, "output.directory")
         else:
             self._fail("output.directory", "must be a directory path")
-        output_directory = self._confined_path(str(output_directory), self._global_config.output_directory, "output.directory")
+        output_directory = self._confined_path(str(output_directory), self.global_config.output_directory, "output.directory")
         if output_directory.exists() and not output_directory.is_dir():
             self._fail("output.directory", f"is not a directory: {output_directory}")
         return output_directory
@@ -346,11 +379,11 @@ class JobParser:
                         stack.append((value[index], f"{field}[{index}]", False))
 
     def _fail(self, field: str, problem: str) -> NoReturn:
-        raise InputError(f"{self._path}: '{field}' {problem}", field=field, path=self._path)
+        raise InputError(f"{self.path}: '{field}' {problem}", field=field, path=self.path)
 
     def _wrap(self, error: Exception) -> InputError:
         """An error from a lower layer, with the job file's name in front."""
-        return InputError(f"{self._path}: {error}", path=self._path)
+        return InputError(f"{self.path}: {error}", path=self.path)
 
     def _check_keys(self, data: dict[str, Any], allowed: set[str], prefix: str) -> None:
         for key in data:
@@ -359,7 +392,7 @@ class JobParser:
 
     def _check_top_level(self, data: dict[str, Any]) -> None:
         if "cooldown_seconds" in data:
-            raise InputError(f"{self._path}: {replaced_cooldown_message(data['cooldown_seconds'])}", field="cooldown_seconds", path=self._path)
+            raise InputError(f"{self.path}: {replaced_cooldown_message(data['cooldown_seconds'])}", field="cooldown_seconds", path=self.path)
         self._check_keys(data, JOB_KEYS, "")
         for key in REQUIRED_JOB_KEYS:
             if key not in data:
@@ -370,8 +403,8 @@ class JobParser:
     def _name(self, name: Any) -> str:
         if not isinstance(name, str) or not NAME_PATTERN.match(name):
             self._fail("name", "must be 1 to 64 lowercase letters, digits, and hyphens, starting and ending with a letter or digit")
-        if self._enforce_filename and self._path.stem != name:
-            self._fail("name", f"must equal the job filename stem '{self._path.stem}'")
+        if self._policy.enforce_filename and self.path.stem != name:
+            self._fail("name", f"must equal the job filename stem '{self.path.stem}'")
         return name
 
     def _mode(self, value: Any) -> GenerationMode:
@@ -387,7 +420,7 @@ class JobParser:
                 return None
             if not isinstance(value, str) or not value.strip():
                 self._fail("input", "must be a file path")
-            return self._confined_path(value.strip(), self._global_config.input_directory, "input")
+            return self._confined_path(value.strip(), self.global_config.input_directory, "input")
         if not mode.requires_input:
             if value is not None:
                 self._fail("input", "is not allowed in t2v jobs; run 1 generates from text alone")
@@ -397,8 +430,8 @@ class JobParser:
         if not isinstance(value, str) or not value.strip():
             self._fail("input", "must be a file path")
         # Leading or trailing spaces and tabs are never part of the intended file name.
-        path = self._confined_path(value.strip(), self._global_config.input_directory, "input")
-        if not path.is_file() and not self._allow_missing_input:
+        path = self._confined_path(value.strip(), self.global_config.input_directory, "input")
+        if not path.is_file() and not self.allow_missing_input:
             self._fail("input", f"file does not exist: {path}")
         return path
 
@@ -414,18 +447,19 @@ class JobParser:
 
     def _base_config(self, config_file: str) -> dict[str, Any]:
         try:
-            if self._base_config_text is not None:
-                limit = max(1048576, self._global_config.api_limits.max_job_file_bytes)
-                size = len(self._base_config_text.encode("utf-8"))
+            text = self._view.base_config_text if self._view.active else self._frozen.base_config_text
+            if text is not None:
+                limit = max(1048576, self.global_config.api_limits.max_job_file_bytes)
+                size = len(text.encode("utf-8"))
                 if size > limit:
                     raise LimitExceededError(f"base configuration is over the limit of {limit} bytes", key="config_file", limit=limit, value=size)
-                base_config = parse_yaml_mapping(self._base_config_text, self._params_directory / config_file, "Configuration", require_json=True)
+                base_config = parse_yaml_mapping(text, self._source.params_directory / config_file, "Configuration", require_json=True)
             else:
-                base_config = draw_things_config.load_base_config(config_file, self._params_directory, max_bytes=max(1048576, self._global_config.api_limits.max_job_file_bytes))
+                base_config = draw_things_config.load_base_config(config_file, self._source.params_directory, max_bytes=max(1048576, self.global_config.api_limits.max_job_file_bytes))
         except ValueError as error:
             if isinstance(error, FramecontrolError):
                 raise
-            raise InputError(f"{self._path}: {error}", field="config_file", path=self._path) from error
+            raise InputError(f"{self.path}: {error}", field="config_file", path=self.path) from error
         base_seed = base_config.get("seed")
         if is_int(base_seed) and base_seed > MAX_SEED:
             self._fail("config_file", f"{config_file} sets seed {base_seed}, above the largest seed {MAX_SEED}")
@@ -451,8 +485,8 @@ class JobParser:
                 return parse_cooldown(data["cooldown"], "cooldown"), "job"
             except ValueError as error:
                 raise self._wrap(error) from error
-        if self._global_config.cooldown is not None:
-            return self._global_config.cooldown, "global_config"
+        if self.global_config.cooldown is not None:
+            return self.global_config.cooldown, "global_config"
         return DEFAULT_COOLDOWN, "default"
 
     def _color(self, value: Any, mode: GenerationMode) -> ColorPolicy:
@@ -519,18 +553,18 @@ class JobParser:
         """
         if input_path is None:
             return None, None, ()
-        if self._handoff_size is not None:
+        if self._view.handoff_size is not None:
             # A version-2 run that consumes the previous run's output: plan from the size that run is known to produce.
             # The exact-size rule for a run without desired sizes is checked by the compiler, which can name the runs.
             if desired is None:
-                return None, copy_plan(self._handoff_size, None), ()
+                return None, copy_plan(self._view.handoff_size, None), ()
             try:
-                return resize_plan(input_path.name, self._handoff_size, None, *desired), None, ()
+                return resize_plan(input_path.name, self._view.handoff_size, None, *desired), None, ()
             except ValueError as error:
                 raise self._wrap(error) from error
-        if self._allow_missing_input and not input_path.is_file() and self._first_input_plan is not None and desired is not None:
-            return self._first_input_plan, None, ()
-        if self._allow_missing_input and not input_path.is_file():
+        if self.allow_missing_input and not input_path.is_file() and self._policy.first_input_plan is not None and desired is not None:
+            return self._policy.first_input_plan, None, ()
+        if self.allow_missing_input and not input_path.is_file():
             target, _source = self._job_size(override, base_config, config_file)
             # A resumed job starts from its saved handoff, never this path; the exact target stands in for its plan.
             placeholder = ResizePlan(target[0], target[1], None, target, None, target, "none", target, None)
@@ -539,7 +573,7 @@ class JobParser:
         if desired is None:
             job_size, source = self._job_size(override, base_config, config_file)
             check_input_size(input_path, image_size, job_size, source)
-            if self._decode_input:
+            if self.decode_input:
                 decode_image(input_path)
             return None, copy_plan(image_size, orientation), ()
         desired_width, desired_height, max_crop_percent = desired
@@ -547,7 +581,7 @@ class JobParser:
             plan = resize_plan(input_path.name, image_size, orientation, desired_width, desired_height, max_crop_percent)
         except ValueError as error:
             raise self._wrap(error) from error
-        if self._decode_input:
+        if self.decode_input:
             decode_image(input_path)
         ignored: list[tuple[str, str, Any]] = []
         for key in ("width", "height"):
@@ -593,7 +627,7 @@ class JobParser:
         try:
             resolved = lexical.resolve()
         except (OSError, RuntimeError) as error:
-            raise InputError(f"'{field}' cannot be resolved", field=field, path=self._path) from error
+            raise InputError(f"'{field}' cannot be resolved", field=field, path=self.path) from error
         if not resolved.is_relative_to(resolved_base):
             raise OutsideDirectoryError(f"'{field}' must be inside its configured directory: {value}", field=field)
         return resolved

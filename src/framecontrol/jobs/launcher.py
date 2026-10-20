@@ -27,15 +27,14 @@ from framecontrol.jobs.timing.timeline import NO_TIMER, RunTimeline
 class RunLauncher:
     """Runs one planned run through the generation use case, under the job's cancel token."""
 
-    def __init__(self, runner_factory: JobRunnerFactory[StoppableRunner], find_executable: Callable[[str], str | None], media: MediaTools, token: CancelToken, backends: BackendRegistry, report: Callable[[int, MediaCheck], None]) -> None:
+    def __init__(self, runner_factory: JobRunnerFactory[StoppableRunner], find_executable: Callable[[str], str | None], media: MediaTools, token: CancelToken, backends: BackendRegistry) -> None:
         self._runner_factory = runner_factory
         self._find_executable = find_executable
         self._media = media
         self._token = token
         self._backends = backends
-        self._report = report
 
-    def launch(self, job: JobDefinition, run: PlannedRun, record: RunRecord, *, shutdown_grace: float, on_message: MessageCallback | None, on_start: ChildStartCallback | None, finish_state: object | None = None, timeline: RunTimeline | None = None) -> tuple[RunStatus, int]:
+    def launch(self, job: JobDefinition, run: PlannedRun, record: RunRecord, *, shutdown_grace: float, on_message: MessageCallback | None, on_start: ChildStartCallback | None, finish_state: object | None = None, timeline: RunTimeline | None = None, report: Callable[[int, MediaCheck], None] | None = None) -> tuple[RunStatus, int]:
         """Run ``run``, timing it into ``record`` (and its stages into ``timeline``); return how it ended: its status and exit code."""
         started = time.monotonic()
         try:
@@ -59,7 +58,7 @@ class RunLauncher:
         if not child_output.is_file():
             logger.error("{} exited with 0 but did not write {}", job.backend, child_output)
             return RunStatus.FAILED, 1
-        failed = backend.finish(job, run, record, lambda: self._token.requested, finish_state, self._media, self._report, timeline or NO_TIMER)
+        failed = backend.finish(job, run, record, lambda: self._token.requested, finish_state, self._media, report, timeline or NO_TIMER)
         if failed is None and job.backend != H3_BACKEND and run.last_frame is not None and not run.last_frame.is_file():
             logger.error("{} did not produce the handoff {}", job.backend, run.last_frame)
             return RunStatus.FAILED, 1
