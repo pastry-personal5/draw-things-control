@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,16 @@ from framecontrol.jobs.executor import JobExecutor, JobOutcome, JobRunOptions
 from framecontrol.jobs.media.info import MediaInfo
 from framecontrol.jobs.media.toolkit import MediaTools
 from framecontrol.jobs.parsing import load_job, load_job_text
+from framecontrol.jobs.timing.forecast import Forecast
+from framecontrol.server.event_backlog import EventBacklog
+from framecontrol.services.history_delete import DeleteReport, delete_executions
+from framecontrol.services.queue_events import QueueEventPublisher
+from framecontrol.services.queue_hold import HoldState, QueueHold
+from framecontrol.services.queue_worker import QueueWorker
 from framecontrol.services.toolkit import Toolkit
 from framecontrol.state.executions import ExecutionRow, ExecutionSettings, RunRow
+from framecontrol.state.queue import QueueRow, QueueState
+from framecontrol.state.store import Store
 
 BASE_CONFIG = {"model": "base.ckpt", "refinerModel": "base-refiner.ckpt", "refinerStart": 0.2, "width": 832, "height": 448, "seed": 42, "steps": 30}
 
@@ -205,6 +214,132 @@ class FakeToolkit(Toolkit):
 
     def job_executor(self, *, handle_signals: bool = True) -> JobExecutor:
         return self._executor or super().job_executor(handle_signals=handle_signals)
+
+
+class FakeQueueWorker(QueueWorker):
+    """A complete, typed ``QueueWorker`` test seam for server consumers.
+
+    It mirrors the worker's synchronous queue mutations and event publication, while exposing the live values that
+    route and transport tests need to script. It deliberately does not start a thread or an executor.
+    """
+
+    __test__ = False
+
+    def __init__(self, store: Store, event_backlog: EventBacklog | None = None, *, alive: bool = True, fail_enqueue: bool = False) -> None:
+        self._store = store
+        self._events = QueueEventPublisher(event_backlog.append if event_backlog is not None else None)
+        self._hold = QueueHold(store.settings, self._events)
+        self._alive = alive
+        self._fail_enqueue = fail_enqueue
+        self.woken = 0
+        self.cancelled: list[int] = []
+        self._current_id: int | None = None
+        self._current_run: tuple[int, float] | None = None
+        self._forecast: Forecast | None = None
+        self._cooldown_until: float | None = None
+        self._between_runs_after: int | None = None
+        self.parking: set[int] = set()
+        self.stop_reasons: dict[int, str] = {}
+        self.park_taken = False
+        self.held = False
+        self.on_park_read: Callable[[int], None] | None = None
+
+    def start(self) -> None:
+        self._alive = True
+
+    def is_quiet(self) -> bool:
+        return self.state() != "running" or self._between_runs_after is not None
+
+    def stop(self) -> None:
+        self._alive = False
+
+    def wake(self) -> None:
+        self.woken += 1
+
+    def enqueue(self, insert: Callable[[], QueueRow]) -> QueueRow:
+        if self._fail_enqueue:
+            raise AssertionError("enqueue must not be reached")
+        entry = insert()
+        self._events.entry_changed(entry.label, entry.state)
+        self.wake()
+        return entry
+
+    def cancel_queued(self, entry_id: int, label: str) -> bool:
+        cancelled = self._store.queue.cancel_queued(entry_id, now=datetime.now())
+        if cancelled:
+            self._events.entry_changed(label, str(QueueState.CANCELLED))
+            self.wake()
+        return cancelled
+
+    def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
+        return delete_executions(self._store, numbers, dry_run=dry_run)
+
+    def cancel_running(self, entry_id: int) -> bool:
+        self.cancelled.append(entry_id)
+        return True
+
+    def current_entry_id(self) -> int | None:
+        return self._current_id
+
+    def park_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
+        if entry_id != self._current_id or entry_id in self.stop_reasons:
+            return False
+        self._hold.hold(label, caller)
+        self.parking.add(entry_id)
+        return True
+
+    def unpark_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
+        if entry_id != self._current_id or self.park_taken:
+            return False
+        self._hold.release_if_by(label, caller)
+        self.parking.discard(entry_id)
+        return True
+
+    def parking_entry_id(self) -> int | None:
+        return self._current_id if self._current_id in self.parking else None
+
+    def park_requested(self, entry_id: int) -> bool:
+        if self.on_park_read is not None:
+            self.on_park_read(entry_id)
+        return entry_id in self.parking
+
+    def stop_reason(self, entry_id: int) -> str | None:
+        return self.stop_reasons.get(entry_id)
+
+    def hold(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        changed = self._hold.hold(None, caller)
+        return changed, self._hold.snapshot()
+
+    def release(self, caller: str | None = None) -> tuple[bool, HoldState]:
+        changed = self._hold.release(caller)
+        return changed, self._hold.snapshot()
+
+    def hold_state(self) -> HoldState:
+        return HoldState(held=True) if self.held else self._hold.snapshot()
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def state(self) -> str:
+        return "held" if self.hold_state().held else "idle"
+
+    def cooldown_until(self) -> float | None:
+        return self._cooldown_until
+
+    def current_run(self) -> tuple[int, float] | None:
+        return self._current_run
+
+    def latest_forecast(self, entry_id: int) -> Forecast | None:
+        return self._forecast if entry_id == self._current_id else None
+
+    def between_runs_after(self) -> int | None:
+        return self._between_runs_after
+
+    def run_forever(self) -> None:
+        return None
+
+    def claim_and_run_one(self) -> bool:
+        return False
 
 
 # Version-1 job mappings, and their version-2 equivalents.

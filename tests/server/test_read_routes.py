@@ -13,17 +13,9 @@ from framecontrol.server.context import ServerContext
 from framecontrol.state.execution_rows import MediaCheckRow
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
+from tests.fixtures import FakeQueueWorker, JobTestCase, job_data, job_executor, to_version_2
 
 TOKEN = "a" * 64
-
-
-class FakeWorker:
-    def __init__(self, alive: bool = True) -> None:
-        self._alive = alive
-
-    def is_alive(self) -> bool:
-        return self._alive
 
 
 class ReadRoutesTestCase(JobTestCase):
@@ -36,8 +28,8 @@ class ReadRoutesTestCase(JobTestCase):
         self.client = self.build_client()
 
     def build_client(self, *, worker_alive: bool = True) -> TestClient:
-        worker = FakeWorker(worker_alive)
-        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs is_alive() for these read-only routes)
+        worker = FakeQueueWorker(self.store, alive=worker_alive)
+        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766)
         app = create_app(context)
         return TestClient(app, base_url="http://127.0.0.1:8765")
 

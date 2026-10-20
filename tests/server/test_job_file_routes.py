@@ -20,17 +20,9 @@ from framecontrol.server import routes_job_files
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
+from tests.fixtures import FakeQueueWorker, JobTestCase, job_data, job_executor, to_version_2
 
 TOKEN = "b" * 64
-
-
-class FakeWorker:
-    def is_alive(self) -> bool:
-        return True
-
-    def enqueue(self, *args: object) -> None:
-        raise AssertionError("oversized configuration must be refused before enqueue")
 
 
 class JobFileRoutesTests(JobTestCase):
@@ -45,7 +37,7 @@ class JobFileRoutesTests(JobTestCase):
         self.text = yaml.safe_dump(to_version_2(job_data(name="fresh", run_timeout_seconds=10, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), sort_keys=False)
 
     def client_for(self, executor: JobExecutor, *, allow_write: bool) -> TestClient:
-        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=FakeWorker(), executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write)  # pyright: ignore[reportArgumentType]  # write routes do not call the worker
+        context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=FakeQueueWorker(self.store, fail_enqueue=True), executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write)
         return TestClient(create_app(context), base_url="http://127.0.0.1:8765")
 
     def request(self, client: TestClient, method: str, path: str, **kwargs: Any):

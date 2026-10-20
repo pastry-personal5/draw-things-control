@@ -91,12 +91,12 @@ class MixedChainTestCase(CompileV2TestCase):
             Image.new("RGB", frame_size).save(target)
 
         with ExitStack() as stack:
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.inspect_h3_declarations", return_value=declarations))
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.convert_h3_delivery", side_effect=ValueError("not converted")))
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3.tag_video_color_codes", side_effect=ValueError("not tagged")))
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._verify_h3_mp4", return_value=facts))
-            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=extract))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish._file_sha256", return_value=H3_RGB_CONVENTION_SHA256))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish.inspect_h3_declarations", return_value=declarations))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish.convert_h3_delivery", side_effect=ValueError("not converted")))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish.tag_video_color_codes", side_effect=ValueError("not tagged")))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish._verify_h3_mp4", return_value=facts))
+            stack.enter_context(mock.patch("framecontrol.jobs.backends.h3_finish._extract_h3_frame", side_effect=extract))
             yield
 
     def run_chain(self, data: dict[str, Any], **options: Any) -> JobOutcome:
@@ -260,7 +260,7 @@ class HandoffAvailabilityTests(MixedChainTestCase):
     def failing_handoff(self, data: dict[str, Any]) -> tuple[JobOutcome, dict[str, Any]]:
         job = load_job(self.write_job(data), self.global_config, self.params, backends=self.backends)
         with self.h3_media():
-            with mock.patch("framecontrol.jobs.backends.h3._extract_h3_frame", side_effect=ValueError("decode failed")):
+            with mock.patch("framecontrol.jobs.backends.h3_finish._extract_h3_frame", side_effect=ValueError("decode failed")):
                 outcome = run_job_with(self.executor(), job, executable="draw-things-cli", shutdown_grace=1, write_records=True)
         return outcome, self.manifest(outcome)
 

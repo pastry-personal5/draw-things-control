@@ -9,7 +9,6 @@ import json
 import threading
 import time
 import unittest
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 
@@ -18,55 +17,18 @@ import grpc.aio
 import httpx
 
 from framecontrol.jobs.executor import JobExecutor
-from framecontrol.jobs.timing.forecast import Forecast
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
 from framecontrol.server.generated import monitor_pb2, monitor_pb2_grpc
 from framecontrol.server.grpc_auth import TokenAuthInterceptor
 from framecontrol.server.grpc_service import MonitorServicer
-from framecontrol.services.queue_hold import HoldState
 from framecontrol.services.queue_submit import submit_job
 from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor
+from tests.fixtures import FakeQueueWorker, JobTestCase, job_data, job_executor
 from tests.timing.builders import sample_forecast
 
 TOKEN = "a" * 64
-
-
-class FakeWorker:
-    def __init__(self) -> None:
-        self._current_id: int | None = None
-        self._current_run: tuple[int, float] | None = None
-        self._forecast: Forecast | None = None
-        self._cooldown_until: float | None = None
-        self.parking: set[int] = set()
-        self.held = False
-        # Called as the reservation is read, before the answer: a test's way to land a change between two reads.
-        self.on_park_read: Callable[[int], None] | None = None
-
-    def park_requested(self, entry_id: int) -> bool:
-        if self.on_park_read is not None:
-            self.on_park_read(entry_id)
-        return entry_id in self.parking
-
-    def hold_state(self) -> HoldState:
-        return HoldState(held=self.held)
-
-    def current_entry_id(self) -> int | None:
-        return self._current_id
-
-    def current_run(self) -> tuple[int, float] | None:
-        return self._current_run
-
-    def latest_forecast(self, entry_id: int) -> Forecast | None:
-        return self._forecast if entry_id == self._current_id else None
-
-    def cooldown_until(self) -> float | None:
-        return self._cooldown_until
-
-    def is_alive(self) -> bool:
-        return True
 
 
 class GrpcServiceTestCase(JobTestCase):
@@ -76,8 +38,8 @@ class GrpcServiceTestCase(JobTestCase):
         self.store = Store.open(self.paths.database, mode=StoreMode.WRITE)
         self.addCleanup(self.store.close)
         executor: JobExecutor = job_executor(runner_factory=lambda *a: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False)
-        self.worker = FakeWorker()
-        self.context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8766, grpc_port=8767)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the servicer calls)
+        self.worker = FakeQueueWorker(self.store)
+        self.context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8766, grpc_port=8767)
         self.server: grpc.aio.Server | None = None
         self.channel: grpc.aio.Channel | None = None
 

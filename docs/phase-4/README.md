@@ -53,7 +53,7 @@ Improve the product experience, make chained generation support multiple backend
 | 13 | [TUI experience](milestone-13-tui-experience.md) | done |
 | 14 | [Timing knobs as external files](milestone-14-timing-knobs.md) | done |
 | 15 | [Held-out gate and tunables search](milestone-15-timing-gate-and-search.md) | done |
-| 17 | [Comprehensive cleanup and refactoring](milestone-17-cleanup-refactoring.md) | planned |
+| 17 | [Comprehensive cleanup and refactoring](milestone-17-cleanup-refactoring.md) | done |
 | 18 | [Deferred behavior changes from refactoring](milestone-18-deferred-behavior-changes.md) | planned |
 
 ## Depends on

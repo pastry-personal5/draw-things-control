@@ -26,8 +26,8 @@ from framecontrol.state.execution_rows import MediaCheckRow
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
 from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
-from tests.server.test_queue_routes import TOKEN, FakeWorker
+from tests.fixtures import FakeQueueWorker, JobTestCase, job_data, job_executor, to_version_2
+from tests.server.test_queue_routes import TOKEN
 
 SERVER_URL = "http://127.0.0.1:8765"
 
@@ -60,7 +60,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.store.close)
         self.executor: JobExecutor = job_executor(runner_factory=lambda *a: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False)
         self.event_backlog = EventBacklog()
-        self.worker = FakeWorker(self.store, self.event_backlog)
+        self.worker = FakeQueueWorker(self.store, self.event_backlog)
         self.paths.server_token.parent.mkdir(parents=True, exist_ok=True)
         self.paths.server_token.write_text(f"{TOKEN}\n", encoding="ascii")
         self.transport = ApiTransport()
@@ -72,7 +72,7 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
     def serve(self, *, allow_write: bool = False, api_limits: ApiLimits | None = None) -> None:
         """Start, or restart, ``fc serve`` in process, with or without ``--allow-write``."""
         global_config = replace(self.global_config, api_limits=api_limits) if api_limits is not None else self.global_config
-        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write, event_backlog=self.event_backlog)  # pyright: ignore[reportArgumentType]  (the fake worker only needs the methods the routes call)
+        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, allow_write=allow_write, event_backlog=self.event_backlog)
         self.transport.app = create_app(self.context)
 
     def client(self, **options: Any) -> Client:

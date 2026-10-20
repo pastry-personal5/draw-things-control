@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -17,120 +16,18 @@ from loguru import logger
 
 from framecontrol.core.global_config import ApiLimits
 from framecontrol.jobs.executor import JobExecutor
-from framecontrol.jobs.timing.forecast import Forecast
 from framecontrol.server import routes_queue
 from framecontrol.server.app import create_app
 from framecontrol.server.context import ServerContext
 from framecontrol.server.event_backlog import EventBacklog
-from framecontrol.services.history_delete import DeleteReport, delete_executions
-from framecontrol.services.queue_events import QueueEventPublisher
-from framecontrol.services.queue_hold import HoldState, QueueHold
 from framecontrol.services.queue_submit import submit_job
 from framecontrol.state.executions import ExecutionSettings, NewExecution, NewRun
-from framecontrol.state.queue import QueueRow, QueueState
+from framecontrol.state.queue import QueueState
 from framecontrol.state.store import Store, StoreMode
-from tests.fixtures import JobTestCase, job_data, job_executor, to_version_2
+from tests.fixtures import FakeQueueWorker, JobTestCase, job_data, job_executor, to_version_2
 from tests.timing.builders import sample_forecast
 
 TOKEN = "a" * 64
-
-
-class FakeWorker:
-    """Stands in for ``QueueWorker`` in the routes' own tests: ``enqueue`` and ``cancel_queued`` mirror the real
-    worker's insert-and-publish shape (minus its claim lock, which nothing here contends for) closely enough that a
-    route driving either sees the same store state and the same published event."""
-
-    def __init__(self, store: Store, event_backlog: EventBacklog) -> None:
-        self._store = store
-        self._events = QueueEventPublisher(event_backlog.append)
-        self.woken = 0
-        self.cancelled: list[int] = []
-        self._current_id: int | None = None
-        self._current_run: tuple[int, float] | None = None
-        self._forecast: Forecast | None = None
-        # A reservation per entry, the stop asked for one (refusing a park), whether its park has taken
-        # effect (refusing an unpark), and the real hold, over the real store.
-        self.parking: set[int] = set()
-        self.stop_reasons: dict[int, str] = {}
-        self.park_taken = False
-        self._between_runs_after: int | None = None
-        self._hold = QueueHold(store.settings, self._events)
-
-    def is_alive(self) -> bool:
-        return True
-
-    def state(self) -> str:
-        return "idle"
-
-    def cooldown_until(self) -> float | None:
-        return None
-
-    def current_entry_id(self) -> int | None:
-        return self._current_id
-
-    def current_run(self) -> tuple[int, float] | None:
-        return self._current_run
-
-    def latest_forecast(self, entry_id: int) -> Forecast | None:
-        return self._forecast if entry_id == self._current_id else None
-
-    def wake(self) -> None:
-        self.woken += 1
-
-    def enqueue(self, insert: Callable[[], QueueRow]) -> QueueRow:
-        entry = insert()
-        self._events.entry_changed(entry.label, entry.state)
-        self.wake()
-        return entry
-
-    def cancel_queued(self, entry_id: int, label: str) -> bool:
-        cancelled = self._store.queue.cancel_queued(entry_id, now=datetime.now())
-        if cancelled:
-            self._events.entry_changed(label, str(QueueState.CANCELLED))
-            self.wake()
-        return cancelled
-
-    def cancel_running(self, entry_id: int) -> bool:
-        self.cancelled.append(entry_id)
-        return True
-
-    def between_runs_after(self) -> int | None:
-        return self._between_runs_after
-
-    def park_requested(self, entry_id: int) -> bool:
-        return entry_id in self.parking
-
-    def parking_entry_id(self) -> int | None:
-        return self._current_id if self._current_id in self.parking else None
-
-    def stop_reason(self, entry_id: int) -> str | None:
-        return self.stop_reasons.get(entry_id)
-
-    def park_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
-        if entry_id != self._current_id or entry_id in self.stop_reasons:
-            return False
-        self._hold.hold(label, caller)
-        self.parking.add(entry_id)
-        return True
-
-    def unpark_running(self, entry_id: int, label: str, caller: str | None = None) -> bool:
-        if entry_id != self._current_id or self.park_taken:
-            return False
-        self._hold.release_if_by(label, caller)
-        self.parking.discard(entry_id)
-        return True
-
-    def hold(self, caller: str | None = None) -> tuple[bool, HoldState]:
-        return self._hold.hold(None, caller), self._hold.snapshot()
-
-    def release(self, caller: str | None = None) -> tuple[bool, HoldState]:
-        return self._hold.release(caller), self._hold.snapshot()
-
-    def hold_state(self) -> HoldState:
-        return self._hold.snapshot()
-
-    def delete_executions(self, numbers: Sequence[int], *, dry_run: bool = False) -> DeleteReport:
-        return delete_executions(self._store, numbers, dry_run=dry_run)
 
 
 class QueueRoutesTestCase(JobTestCase):
@@ -141,12 +38,12 @@ class QueueRoutesTestCase(JobTestCase):
         self.addCleanup(self.store.close)
         self.executor: JobExecutor = job_executor(runner_factory=lambda *a: None, find_executable=lambda name: name, frame_extractor=lambda video, png: None, require_ffmpeg=lambda: "ffmpeg", handle_signals=False)
         self.event_backlog = EventBacklog()
-        self.worker = FakeWorker(self.store, self.event_backlog)
+        self.worker = FakeQueueWorker(self.store, self.event_backlog)
         self.client = self.build_client()
 
     def build_client(self, *, api_limits: Any = None) -> TestClient:
         global_config = replace(self.global_config, api_limits=api_limits) if api_limits is not None else self.global_config
-        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, event_backlog=self.event_backlog)  # pyright: ignore[reportArgumentType]  (FakeWorker only needs the methods the queue routes call)
+        self.context = ServerContext(paths=self.paths, global_config=global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=8765, grpc_port=8766, event_backlog=self.event_backlog)
         return TestClient(create_app(self.context), base_url="http://127.0.0.1:8765")
 
     def request(self, method: str, path: str, **kwargs: Any):

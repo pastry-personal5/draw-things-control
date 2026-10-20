@@ -18,14 +18,15 @@ from framecontrol.server.event_backlog import EventBacklog
 from framecontrol.server.generated import monitor_pb2
 from framecontrol.server.grpc_service import MonitorServicer
 from framecontrol.state.store import Store
+from tests.fixtures import FakeQueueWorker
 from tests.server.live_app import LiveApp, loopback_socket, socket_port
-from tests.server.test_queue_routes import TOKEN, FakeWorker, QueueRoutesTestCase
+from tests.server.test_queue_routes import TOKEN, QueueRoutesTestCase
 from tests.timing.builders import sample_forecast
 
 SNAPSHOT_FIELDS = ("queue_id", "kind", "state", "execution_id", "current_run", "current_run_elapsed_seconds", "cooldown_until", "error", "total_runs", "park_requested", "queue_held", "forecast")
 
 
-class ScriptedWorker(FakeWorker):
+class ScriptedWorker(FakeQueueWorker):
     """Counts the snapshots read, and calls ``on_read`` with each count as the reservation is read, before the rest:
     a test's way to change what that snapshot holds, or to stop the server."""
 
@@ -218,7 +219,7 @@ class LiveWatchTests(WatchTestCase):
     def setUp(self) -> None:
         super().setUp()
         sock = loopback_socket()
-        self.live_context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=socket_port(sock), grpc_port=8766, event_backlog=self.event_backlog, watch_poll_seconds=0.01)  # pyright: ignore[reportArgumentType]  (the fake worker only needs the methods the routes call)
+        self.live_context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=socket_port(sock), grpc_port=8766, event_backlog=self.event_backlog, watch_poll_seconds=0.01)
         self.live = LiveApp(self.live_context, sock)
         self.live.start()
         self.addCleanup(self.live.stop)

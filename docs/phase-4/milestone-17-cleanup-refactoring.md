@@ -1,7 +1,7 @@
 # Milestone 17: Comprehensive cleanup and refactoring
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
+**Status:** done
 **Depends on:** [Milestone 15](milestone-15-timing-gate-and-search.md), completed 2026-10-20. The cleanup starts from the final timing gate and search design rather than an earlier in-progress shape.
 
 ## Goal
@@ -9,6 +9,10 @@
 Make the whole codebase easier to understand, test, and change without changing observable behavior. Test maintenance is the first priority: keep tests that protect distinct contracts, remove tests that repeat the same contract through the same production path, and make the remaining suite express behavior instead of implementation structure.
 
 The milestone applies clean-code and clean-architecture principles pragmatically. Responsibilities become cohesive, orchestration is separated from pure decisions and I/O adapters, dependencies remain explicit, and interfaces are defined at the boundary that consumes them. It does not add layers, abstractions, or indirection without a demonstrated maintenance benefit.
+
+## Completion (2026-10-20)
+
+The comprehensive review is complete. Test support now uses one honest typed queue-worker fake; the existing TUI table base owns shared focus and leave behavior; parser state is grouped by owner and lifetime; version-2 compilation exposes its phases; H3 finishing has a backend-owned staged workflow; and per-execution observer, log, and timing state no longer lives directly on the process-lifetime executor. Queue coordination, state persistence, timing, application services, and the remaining front-end boundaries were reviewed and retained where extraction would split an invariant or add indirection. No behavior-change candidate was found for Milestone 18, and final `make check` passed.
 
 ## What clean means here
 
@@ -238,19 +242,59 @@ Exit evidence: every package has a recorded keep/change conclusion, every remain
 
 ## Implementation record
 
+Implementation began from revision `8d482ce46b505bdcf6a48bef18cbd248a6877665` on 2026-10-20 with a clean worktree. Milestone 15 is present in its completed revision `c2b7ab6`. The baseline `make check` passed unchanged; its functional suite covered 2,147 tests, 2 skips, and 921 subtests. A first sandboxed run also established that the 59 socket-binding failures were environment restrictions, not product failures; the authorized run of the identical command passed.
+
+The supported-entry inventory used for dead-code decisions is:
+
+- the `fc` console entry point and Typer's root commands, `queue`, `history`, `timing`, and `timing knobs` command groups in `cli/`;
+- Textual `BINDINGS`, `action_*`, `on_*`, file-watch callbacks, and the command registry in `tui/`;
+- every `/v1` route registered by `server/app.py`, the authenticated OpenAPI route, and the `WatchEvents` and `WatchQueueEntry` gRPC methods;
+- the MCP server's schema-backed tool registry and its stdio and HTTP transports in `mcp_server/`;
+- SQLite migrations through `state/schema.py`, queue snapshot readers for legacy row snapshots and submitted snapshot versions 1, 3, 4, 6, and 8, history-manifest import, timing import and knob-schema readers;
+- `BackendRegistry` construction and optional backend hooks reached by planning, parsing, launching, finishing, and timing; and framework/string-dispatched callbacks found by the CLI, Textual, FastAPI, gRPC, and MCP runtimes.
+
+The contract map for the remaining slices is fixed as follows. A listed suite may protect more than one boundary; deletion requires a same-path, same-contract retained case inside that slice.
+
+| Slice | Primary contract tests | Coverage classification |
+|-------|------------------------|-------------------------|
+| 1 | `tests/server/test_*`, `tests/mcp_server/test_*`, `tests/cli/test_queue_wait_grpc.py` | adapter, transport, process, concurrency |
+| 2 | `tests/tui/test_*`, package-local `core`, CLI, and server tests for any simplified helper | adapter, integration, framework characterization |
+| 3 | `tests/jobs/test_parsing.py`, `test_compile_v2.py`, `test_job_characterization.py`, queue snapshot/resume tests | pure decision, adapter, integration, recovery, characterization |
+| 4 | `tests/jobs/test_compile_v2.py`, parser and backend argument tests, queue snapshot tests | pure decision, adapter, characterization |
+| 5 | `tests/jobs/test_h3_finish.py`, H3 inspection/color and media-check tests, `test_mixed_chain.py`, `test_executor_timing.py` | pure decision, adapter, integration, characterization |
+| 6 | `tests/jobs/test_executor.py`, `test_executor_timing.py`, `test_job_characterization.py`, `test_mixed_chain.py`, `test_color_executor.py` | integration, concurrency, recovery, characterization |
+| 7 | `tests/services/test_queue_worker.py`, queue park/cancel/forecast/recovery tests, server queue/SSE/gRPC tests | integration, transport, concurrency, recovery |
+| 8 | `tests/state/test_*`, queue snapshot/resume tests, history and timing import tests | adapter, integration, recovery, characterization |
+| 9 | `tests/jobs/timing/test_*`, timing service, knob, replay, CLI timing, and CPU-budget tests | pure decision, adapter, integration, recovery, characterization |
+| 10 | service tests plus corresponding CLI, TUI, server, and MCP consumer tests | adapter, integration, transport, process |
+| 11 | architecture tests, all front-end suites, deterministic characterization suites, and full `make check` | adapter, integration, transport, process, concurrency, recovery, characterization |
+
 Fill this table as M17 is implemented. One slice may use several small changes; it is complete only when its exit evidence holds.
 
 | Slice | Status | Review conclusion and contract evidence | Tests consolidated or removed | M18 candidate IDs |
 |-------|--------|-----------------------------------------|-------------------------------|-------------------|
-| 0. Baseline and map | planned | | | |
-| 1. Test support and capabilities | planned | | | |
-| 2. Local simplifications | planned | | | |
-| 3. Parsing context | planned | | | |
-| 4. Compilation phases | planned | | | |
-| 5. H3 finishing | planned | | | |
-| 6. Execution state | planned | | | |
-| 7. Queue coordination | planned | | | |
-| 8. State persistence | planned | | | |
-| 9. Timing pipeline | planned | | | |
-| 10. Application services | planned | | | |
-| 11. Front ends and final sweep | planned | | | |
+| 0. Baseline and map | done | Clean revision and passing baseline recorded above; supported entry points, persisted readers, dynamic registrations, and owning contract suites inventoried. Existing deterministic coverage is sufficient; no characterization assertion was missing. | None | None |
+| 1. Test support and capabilities | done | `ServerContext` intentionally retains its complete process-wide `QueueWorker`; one typed complete fake now serves HTTP, SSE, gRPC, and MCP tests without a production-only protocol. The 303 focused tests (348 subtests) and full `make check` passed. | Four partial worker fakes consolidated; no contract test deleted. | None |
+| 2. Local simplifications | done | The existing `SidewaysTable` now owns the identical focus-status refresh and command-line leave actions of all three table panes; Textual handler names and bindings are unchanged. All 247 TUI tests (117 subtests) and full `make check` passed. | None | None |
+| 3. Parsing context | done | Parser source/filesystem policy, caller policy, frozen queue data, and a nested run view now have separate immutable ownership values. The parser, compiler, characterization, submission, and resume tests (130 tests, 101 subtests) and full `make check` passed with exact errors and plans unchanged. | None | None |
+| 4. Compilation phases | done | `compile()` now names catalog validation, defaults and selection, root options, resolved-run construction, cross-run edge validation, and root assembly in order. `_Catalogs` and `_RootOptions` carry phase outputs; adapter parsing remains cached once per distinct view. Focused compiler/backend/queue tests and full `make check` passed. | None | None |
+| 5. H3 finishing | done | `H3Backend.finish` delegates to `h3_finish.py`; an explicit request, staged-artifact owner, and finish state separate verification, color interpretation, delivery, correction, handoff, promotion, recording, reporting, and cleanup. All 94 focused finishing, color, inspection, mixed-chain, timing, and media tests (8 subtests) passed; final full validation is recorded in Slice 11. | Test patch points moved to the owning finishing module; no contract test deleted. | None |
+| 6. Execution state | done | Observer, log writer, current timing, timing-read failure, pre-start spans, and child-start callback now belong to one per-run execution session passed with the chain; only `CancelToken` remains cross-thread process state. The 129 executor, timing, characterization, mixed-chain, and color tests (28 subtests) passed; final full validation is recorded in Slice 11. | None | None |
+| 7. Queue coordination | done | Keep: the claim loop already delegates job and generation workflows to named methods, while their finish, hold, park, forecast, and wait transitions share `_state_lock` ordering. A new object would split lock-coupled ownership or merely wrap these methods. Queue, race, recovery, forecast, route, SSE, and gRPC coverage remains at its existing boundaries. | None; apparent executor/worker park and cancel overlaps protect different state owners. | None |
+| 8. State persistence | done | Keep: `Database.transaction` is the single explicit begin/commit/rollback owner; row decoders belong to their schema-specific values and preserve missing-column compatibility; multi-table delete, recovery, retention, and import transactions remain visible. Snapshot readers for versions 1–8 and every schema migration were retained. | None; store, migration, queue, import, recorder, and timing-store cases protect distinct persisted boundaries. | None |
+| 9. Timing pipeline | done | Keep: `jobs/timing/` remains pure calculation; `timing_knobs`, `timing_knob_files`, `timing_replay`, and `knob_updater` separately own interpretation, transactions/recovery, replay, and scheduling. No calculation or approval decision was duplicated across those boundaries. | None; pure model, persistence/recovery, service, CLI, deterministic replay, and CPU-budget cases remain distinct. | None |
+| 10. Application services | done | Keep: queue submission/resume, catalogs, history, input listing, job files, generation, and deletion each have one service owner. Front-end imports of job/state values are representation, ID parsing, serialization, or composition—not duplicated application policy—and `Toolkit`, `QueueHost`, `ServerContext`, CLI, and TUI lifetimes remain explicit. | None | None |
+| 11. Front ends and final sweep | done | CLI, TUI, server, and MCP registrations and string/framework callbacks were rechecked; MCP still imports no application front end and uses HTTP only. No unreferenced top-level private production function was found. Package conclusions are recorded below. Architecture tests and final `make check` passed, including deterministic characterizations and CPU-budget gates. | No test deleted: apparent overlaps retained where they cross adapter, process, transport, concurrency, or recovery boundaries. | None |
+
+### Final package review
+
+| Package | Conclusion |
+|---------|------------|
+| `core` | Keep. Paths, configuration, process supervision, signals, and shared primitives already have cohesive modules and explicit injected paths; the entry-point and private-symbol sweep found no safe removal. |
+| `jobs` | Changed the four confirmed concentrations: parser context, compiler phases, H3 finishing, and execution-session ownership. Backend-neutral media, records, inputs, events, and pure timing modules remain cohesive and keep their separate failure and policy boundaries. |
+| `state` | Keep. Table-specific decoding and transactions preserve migration and persisted compatibility more clearly than a generic repository would. |
+| `services` | Test support was consolidated; queue coordination, timing orchestration, and application use cases retain their current explicit owners after review. |
+| `cli` | Keep as command registration, composition, and text/error translation. Its direct store imports are the two explicit import/maintenance commands, not shared application policy. |
+| `tui` | Shared table-pane focus and leave behavior moved to the existing base; other repeated-looking handlers carry pane-specific shortcuts, focus, or selection behavior and remain local. |
+| `server` | Production remains a transport/composition boundary. `ServerContext` intentionally owns the full worker; tests now use one honest typed fake instead of partial doubles or a test-driven production protocol. |
+| `mcp_server` | Keep. Its schema-backed tools, wait logic, and stdio/HTTP transports remain isolated clients of the HTTP API and do not import `services`, `server`, `jobs`, or `state`. |

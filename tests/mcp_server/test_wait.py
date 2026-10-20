@@ -94,7 +94,7 @@ class LiveWaitTests(McpCase):
         self.worker = ScriptedWorker(self.store, self.event_backlog)
         self.serve()
         sock = loopback_socket()
-        self.live_context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=socket_port(sock), grpc_port=8766, event_backlog=self.event_backlog, watch_poll_seconds=0.01, watch_keepalive_seconds=0.1)  # pyright: ignore[reportArgumentType]  (the fake worker only needs the methods the routes call)
+        self.live_context = ServerContext(paths=self.paths, global_config=self.global_config, store=self.store, worker=self.worker, executor=self.executor, executable="draw-things-cli", token=TOKEN, bound_host="127.0.0.1", bound_port=socket_port(sock), grpc_port=8766, event_backlog=self.event_backlog, watch_poll_seconds=0.01, watch_keepalive_seconds=0.1)
         self.live = LiveApp(self.live_context, sock)
         self.live.start()
         self.addCleanup(self.live.stop)

@@ -14,7 +14,7 @@ from typing import cast
 import numpy as np
 from PIL import Image
 
-from framecontrol.jobs.backends.h3 import _extract_h3_frame
+from framecontrol.jobs.backends.h3_finish import _extract_h3_frame
 from framecontrol.jobs.media.color_stats import ColorStats, measure
 from framecontrol.jobs.media.h3_color import DELIVERY, NATIVE, H3ColorCancelled, H3Declarations, convert_h3_delivery, declarations_match, inspect_h3_declarations, measure_h3_drift, packet_facts
 from framecontrol.jobs.media.h3_correction import CLIPPED_PIXEL_CAP, H3Params, _params, apply_h3_params, correct_h3_video
