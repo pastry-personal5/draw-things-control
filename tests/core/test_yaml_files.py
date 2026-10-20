@@ -10,7 +10,7 @@ from tests.fixtures import JobTestCase, job_data
 
 class StrictYamlTests(JobTestCase):
     def test_a_job_file_with_a_duplicate_key_is_refused_with_the_key_and_its_line(self) -> None:
-        path = self.write_job(job_data())
+        path = self.write_job(job_data(), name="job.yaml")
         path.write_text(path.read_text(encoding="utf-8") + "name: another\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, r"(?s)Job file is not valid YAML: .*job\.yaml \(.*key 'name' appears twice.*line \d+"):
             load_job(path, self.global_config, self.params)

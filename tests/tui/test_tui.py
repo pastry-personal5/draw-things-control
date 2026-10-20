@@ -189,7 +189,7 @@ class TuiTests(TuiTestCase):
         self.write_data_job("b-walk.yaml")
         self.write_data_job("a-still.yml", mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}])
         self.write_data_job("c-bad.yaml", mode="t2i")
-        (self.data / "d-bad-pairs.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), "runs": [{"backend": "draw-things-cli", "pipeline": "i2v", "prompt_pair": "ghost", "settings_profile": "main", "knobs": {"timeout_seconds": 60}}]}, sort_keys=False), encoding="utf-8")
+        (self.data / "d-bad-pairs.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), "name": "d-bad-pairs", "runs": [{"backend": "draw-things-cli", "pipeline": "i2v", "prompt_pair": "ghost", "settings_profile": "main", "knobs": {"timeout_seconds": 60}}]}, sort_keys=False), encoding="utf-8")
         (self.data / ".hidden.yaml").write_text("not: a job\n", encoding="utf-8")
         (self.data / "notes.txt").write_text("not a job\n", encoding="utf-8")
         for directory in (".trash", "nested"):
@@ -203,8 +203,8 @@ class TuiTests(TuiTestCase):
         lines = listing.splitlines()
         self.assertEqual(lines[0], "Jobs")
         self.assertEqual([line.split()[0] for line in lines[1:]], ["a-still.yml", "b-walk.yaml", "c-bad.yaml", "d-bad-pairs.yaml"])
-        self.assertEqual(lines[1].split()[1:], ["sunset-walk", "i2i", "1", "run", "valid"])
-        self.assertEqual(lines[2].split()[1:], ["sunset-walk", "i2v", "5", "runs", "valid"])
+        self.assertEqual(lines[1].split()[1:], ["a-still", "i2i", "1", "run", "valid"])
+        self.assertEqual(lines[2].split()[1:], ["b-walk", "i2v", "5", "runs", "valid"])
         self.assertIn("invalid: 'runs[0].pipeline'", lines[3])
         self.assertIn("invalid: 'runs[0].prompt_pair'", lines[4])
         self.assertNotIn(str(self.data), lines[4])
@@ -212,7 +212,7 @@ class TuiTests(TuiTestCase):
     async def test_brackets_in_errors_and_paths_are_shown_as_written(self) -> None:
         (self.data / "broken.yaml").write_text("name: x\npositive: a cat [smiling]: [/sad]\n", encoding="utf-8")
         self.write_data_job("[b] walk.yaml")
-        (self.data / "c-key.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(), self.paths.params), "[/sad]": 1}, sort_keys=False), encoding="utf-8")
+        (self.data / "c-key.yaml").write_text(yaml.safe_dump({**to_version_2(job_data(), self.paths.params), "name": "c-key", "[/sad]": 1}, sort_keys=False), encoding="utf-8")
         app = self.app()
         async with app.run_test() as pilot:
             await self.settle(pilot)
@@ -225,7 +225,7 @@ class TuiTests(TuiTestCase):
         self.assertIn("invalid: '[/sad]' is not a known key", listing)
         self.assertNotIn("a cat [smiling]: [/sad]", shown)
         self.assertIn("Invalid job:", shown)
-        self.assertIn(f"Job file: {self.data / '[b] walk.yaml'}", walk)
+        self.assertIn(f"Invalid job: {self.data / '[b] walk.yaml'}", walk)
         missing = self.root / "[/data]"
         app = self.app(data=missing)
         async with app.run_test() as pilot:

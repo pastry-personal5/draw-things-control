@@ -102,8 +102,8 @@ class ReadToolTests(McpCase):
         self.assertNotIn("text", (await self.api("GET", "/v1/jobs/walk.yaml?brief=1")).json())
 
     async def test_validate_job_text_checks_a_draft_without_writing_it(self) -> None:
-        text = self.write_catalog_job("draft.yaml")
-        (self.paths.jobs / "draft.yaml").unlink()
+        text = self.write_catalog_job("sunset-walk.yaml")
+        (self.paths.jobs / "sunset-walk.yaml").unlink()
         async with self.client() as client:
             body = await self.ok(client, "validate_job_text", {"yaml": text, "name": "sunset-walk"})
             self.assertEqual((body["name"], len(body["sha256"])), ("sunset-walk", 64))

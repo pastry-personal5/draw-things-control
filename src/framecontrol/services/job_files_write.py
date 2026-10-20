@@ -29,12 +29,12 @@ def validate_job_text(text: str, *, name: str | None, global_config: GlobalConfi
     if name is not None:
         _check_name(name)
     path = paths.jobs / f"{name if name is not None else '<draft>'}.yaml"
-    job = load_job_text(text, path, global_config, paths.params, decode_input=False)
+    job = load_job_text(text, path, global_config, paths.params, decode_input=False, enforce_filename=name is not None)
     if name is not None and job.name != name:
         raise InputError(f"'name' must match the job text's name ({job.name!r})", field="name")
     check_job_rules(job, global_config)
     check_job_limits(job, global_config.api_limits)
-    return load_job_text(text, path, global_config, paths.params, decode_input=True)
+    return load_job_text(text, path, global_config, paths.params, decode_input=True, enforce_filename=name is not None)
 
 
 def create_job(name: str, text: str, *, global_config: GlobalConfig, paths: ProjectPaths) -> tuple[Path, JobDefinition]:

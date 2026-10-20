@@ -105,7 +105,9 @@ class McpCase(JobTestCase, unittest.IsolatedAsyncioTestCase):
 
     def write_job(self, data: dict[str, Any], name: str = "job.yaml") -> Any:
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(to_version_2(data, self.paths.params), sort_keys=False), encoding="utf-8")
+        converted = to_version_2(data, self.paths.params)
+        converted["name"] = path.stem
+        path.write_text(yaml.safe_dump(converted, sort_keys=False), encoding="utf-8")
         return path
 
     def write_catalog_job(self, name: str = "walk.yaml", **changes: Any) -> str:

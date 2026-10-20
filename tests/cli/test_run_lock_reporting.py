@@ -33,7 +33,7 @@ class RunLockReportingTests(JobTestCase):
     def setUp(self) -> None:
         super().setUp()
         (self.root / "state").mkdir()
-        self.write_job(job_data(mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]))
+        self.write_job(job_data(mode="i2i", run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}]), name="job.yaml")
         # A stand-in for draw-things-cli that runs until it is killed; never the real one.
         self.executable = self.root / "fake-draw-things-cli"
         self.executable.write_text("#!/bin/sh\nexec sleep 60\n", encoding="utf-8")

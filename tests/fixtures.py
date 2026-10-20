@@ -106,9 +106,9 @@ class JobTestCase(unittest.TestCase):
         converted["name"] = Path(filename).stem
         return self.write_legacy_job(converted, filename)
 
-    def write_legacy_job(self, data: dict[str, Any], name: str = "") -> Path:
+    def write_legacy_job(self, data: dict[str, Any], name: str = "job.yaml") -> Path:
         """Write ``data`` exactly as given, for a test of the version-1 engine or of a job queued before the cutover."""
-        path = self.root / (name or f"{data['name']}.yaml")
+        path = self.root / name
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 
@@ -220,11 +220,11 @@ DEFAULT_TIMEOUT_SECONDS = 3600
 
 def load_legacy_job(path: Path, global_config: GlobalConfig, params_directory: Path, **options: Any) -> JobDefinition:
     """``load_job`` for a version-1 file: what a job queued before the cutover is read with."""
-    return load_job(path, global_config, params_directory, allow_version_1=True, **options)
+    return load_job(path, global_config, params_directory, allow_version_1=True, enforce_filename=False, **options)
 
 
 def load_legacy_job_text(text: str, path: Path, global_config: GlobalConfig, params_directory: Path, **options: Any) -> JobDefinition:
-    return load_job_text(text, path, global_config, params_directory, allow_version_1=True, **options)
+    return load_job_text(text, path, global_config, params_directory, allow_version_1=True, enforce_filename=False, **options)
 
 
 def to_version_2(data: dict[str, Any], params_directory: Path) -> dict[str, Any]:

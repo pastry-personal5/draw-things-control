@@ -8,7 +8,7 @@ live, and the forecaster's own tests play exact runs through it. Nothing here re
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from framecontrol.jobs.events import CooldownEnded, CooldownStarted, JobEvent, JobFinished, JobStarted, JobStatus, RunFinished, RunOutput, RunStarted, RunStatus, StageFinished, StageStarted, TimingFinished, TimingStarted
 from framecontrol.jobs.timing.features import FRAMECONTROL, HistoryExecution, HistoryRun, HistoryStage
@@ -28,7 +28,9 @@ class ReplayJob:
 
 
 def _stamp(time: float) -> str:
-    return datetime.fromtimestamp(time).astimezone().isoformat(timespec="milliseconds")
+    # Replays need a valid, deterministic event timestamp, not the host's local civil time. In particular, converting
+    # the tens of thousands of synthetic timestamps near the Unix epoch through a historical local timezone is costly.
+    return datetime.fromtimestamp(time, timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _readings(stage: HistoryStage) -> list[tuple[float, int | None, int | None]]:
@@ -87,7 +89,7 @@ def replay_job(execution: HistoryExecution, *, first_run: int = 1, origin: float
         if index < len(runs) - 1:
             wait = execution.wait_after(run)
             if wait > 0:
-                until = datetime.fromtimestamp(cursor + wait).astimezone().strftime("%H:%M:%S")
+                until = datetime.fromtimestamp(cursor + wait, timezone.utc).strftime("%H:%M:%S")
                 events.append((cursor, CooldownStarted(at=_stamp(cursor), after_run=run.run, seconds=wait, until=until, mode=execution.cooldown.mode, ratio=execution.cooldown.ratio if execution.cooldown.mode == "auto" else None, run_seconds=run.child_seconds)))
                 cursor += wait
                 events.append((cursor, CooldownEnded(at=_stamp(cursor), waited_seconds=wait, cut_short=False)))

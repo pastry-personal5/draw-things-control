@@ -44,7 +44,7 @@ class JobOutputTests(JobTestCase):
         return result.stdout.replace(str(self.root), "ROOT")
 
     def test_validate_job_output(self) -> None:
-        expected = "Valid job: ROOT/job.yaml\n  name: sunset-walk\n  format: version 2\n  backend: draw-things-cli\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  execution seed: 42 (run)\n  run 1: draw-things-cli/i2v, pair walk, profile main, seed 42, time limit 1 h\n  run 2: draw-things-cli/i2v, pair wave, profile main, seed 42, time limit 1 h\n  run 3: draw-things-cli/i2v, pair walk, profile main, seed 42, time limit 1 h\n"
+        expected = "Valid job: ROOT/sunset-walk.yaml\n  name: sunset-walk\n  format: version 2\n  backend: draw-things-cli\n  mode: i2v\n  runs: 3 (walk, wave, walk)\n  cooldown: 90 s between runs, from global_config (2 waits, 3 min total)\n  input: ROOT/input/photo.jpg\n  output directory: ROOT/output/sunset-walk\n  execution seed: 42 (run)\n  run 1: draw-things-cli/i2v, pair walk, profile main, seed 42, time limit 1 h\n  run 2: draw-things-cli/i2v, pair wave, profile main, seed 42, time limit 1 h\n  run 3: draw-things-cli/i2v, pair walk, profile main, seed 42, time limit 1 h\n"
         self.assertEqual(self.invoke("validate-job", str(self.job_path)), expected)
         self.assertEqual(self.logged, IGNORED)
 
@@ -52,7 +52,7 @@ class JobOutputTests(JobTestCase):
         self.write_base_config({"model": "m.ckpt", "width": 832, "height": 448}, name="noseed.yaml")
         job_path = self.write_job(job_data(run_count=1, prompt_pairs=[{"name": "only", "positive": "text"}], config_file="noseed.yaml", cooldown={"mode": "off"}), name="noseed.yaml")
         output = self.invoke("validate-job", str(job_path))
-        self.assertEqual(output.splitlines()[-5:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/sunset-walk", "  execution seed: (random, drawn when the job starts) (random)", "  run 1: draw-things-cli/i2v, pair only, profile main, execution seed, time limit 1 h"])
+        self.assertEqual(output.splitlines()[-5:], ["  cooldown: off (job)", "  input: ROOT/input/first-frame.png", "  output directory: ROOT/output/noseed", "  execution seed: (random, drawn when the job starts) (random)", "  run 1: draw-things-cli/i2v, pair only, profile main, execution seed, time limit 1 h"])
         # Run 1 reads an 8-bit sRGB copy of every input, so its plan is logged even without a desired size.
         self.assertEqual(self.logged, ["INFO Input first-frame.png is already 832x448; copied as 8-bit sRGB for run 1"])
 

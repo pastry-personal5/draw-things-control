@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from framecontrol.core.cooldown import DEFAULT_COOLDOWN, CooldownPolicy, CooldownWait, parse_cooldown
 from framecontrol.core.global_config import DEFAULT_API_LIMITS, ApiLimits, load_global_config
@@ -209,11 +210,13 @@ class GlobalConfigTests(unittest.TestCase):
         self.assertTrue(found.is_absolute() and os.access(found, os.X_OK))
 
     def test_file_opener_expands_home(self) -> None:
-        with tempfile.TemporaryDirectory(dir=Path.home()) as home:
-            opener = Path(home) / "opener"
+        home = self.root / "home"
+        home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            opener = home / "opener"
             opener.write_text("#!/bin/sh\n", encoding="utf-8")
             opener.chmod(0o755)
-            self.write(self.base() + f"file_opener: ~/{opener.relative_to(Path.home())}\n")
+            self.write(self.base() + "file_opener: ~/opener\n")
             self.assertEqual(load_global_config(self.path).file_opener, opener)
 
     def test_a_bad_file_opener_names_the_key(self) -> None:

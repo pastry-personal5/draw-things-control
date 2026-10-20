@@ -76,7 +76,7 @@ class ResourceTests(McpCase):
             self.assertEqual(listed.ttl_ms, 5000)
             [template] = (await client.list_resource_templates()).resource_templates
             self.assertEqual(template.uri_template, "job://{job}")
-            for uri in ("job://walk.yaml", "job://J0001"):
+            for uri in ("job://walk.yaml", "job://J0002"):
                 [contents] = (await client.read_resource(uri)).contents
                 assert isinstance(contents, types.TextResourceContents)
                 self.assertEqual((contents.text, contents.mime_type), (walk, "application/yaml"))

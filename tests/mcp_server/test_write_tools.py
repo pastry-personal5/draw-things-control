@@ -43,8 +43,8 @@ class WriteToolTests(McpCase):
 
     async def test_a_job_files_whole_life_through_its_sha256(self) -> None:
         self.serve(allow_write=True)
-        text = self.write_catalog_job("draft.yaml")
-        (self.paths.jobs / "draft.yaml").unlink()
+        text = self.write_catalog_job("sunset-walk.yaml")
+        (self.paths.jobs / "sunset-walk.yaml").unlink()
         async with self.client() as client:
             created = await self.ok(client, "create_job", {"name": "sunset-walk", "yaml": text})
             self.assertEqual(self.transport.sent()[-1], ("PUT", "/v1/jobs/sunset-walk"))

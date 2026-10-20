@@ -47,7 +47,9 @@ class ReadRoutesTestCase(JobTestCase):
 
     def write_job_in_catalog(self, name: str = "job.yaml", **changes: Any):
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params), sort_keys=False), encoding="utf-8")
+        data = to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params)
+        data["name"] = path.stem
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 
     def add_execution(self, name: str = "walk", *, started: str = "2026-09-28T09:00:00+00:00", finished: str = "2026-09-28T09:05:00+00:00", job_file: str | None = None) -> int:
@@ -117,12 +119,12 @@ class JobRoutesTests(ReadRoutesTestCase):
         listing = self.get("/v1/jobs").json()
         self.assertEqual(len(listing["jobs"]), 1)
         row = listing["jobs"][0]
-        self.assertEqual((row["file_name"], row["name"], row["mode"], row["runs"], row["valid"], row["job_id"]), ("walk.yaml", "sunset-walk", "i2v", 5, True, "J0001"))
+        self.assertEqual((row["file_name"], row["name"], row["mode"], row["runs"], row["valid"], row["job_id"]), ("walk.yaml", "walk", "i2v", 5, True, "J0001"))
         by_name = self.get("/v1/jobs/walk.yaml").json()
-        self.assertIn("name: sunset-walk", by_name["text"])
-        self.assertEqual(by_name["name"], "sunset-walk")
+        self.assertIn("name: walk", by_name["text"])
+        self.assertEqual(by_name["name"], "walk")
         by_id = self.get("/v1/jobs/J0001").json()
-        self.assertEqual(by_id["name"], "sunset-walk")
+        self.assertEqual(by_id["name"], "walk")
 
     def test_an_invalid_job_is_listed_with_its_error_and_field(self) -> None:
         path = self.write_job_in_catalog("bad.yaml")

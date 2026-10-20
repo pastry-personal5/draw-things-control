@@ -29,6 +29,7 @@ class RunStreamTests(unittest.TestCase):
         started = self.job.events[0][1]
         assert isinstance(started, JobStarted)
         self.assertEqual((started.total_runs, started.first_run, started.cooldown), (1, 1, CooldownPolicy("off")))
+        self.assertEqual(started.at, "1970-01-01T00:16:40.000+00:00")
 
     def test_a_run_has_the_events_the_executor_emits_in_its_order(self) -> None:
         kinds = self.kinds()

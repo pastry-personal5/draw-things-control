@@ -169,7 +169,7 @@ class JobDefinitionTests(TuiTestCase):
         self.assertFalse(running)
         self.assertIsNot(focused, table)
 
-    async def test_a_submits_an_invalid_job_for_the_server_to_validate(self) -> None:
+    async def test_a_refuses_an_invalid_job_before_submission(self) -> None:
         (self.data / "broken.yaml").write_text("version: 2\nnot: [valid", encoding="utf-8")
         async with self.app().run_test(size=(160, 50)) as pilot:
             await self.settle(pilot)
@@ -177,7 +177,8 @@ class JobDefinitionTests(TuiTestCase):
             table.focus()
             table.move_cursor(row=table.get_row_index("broken.yaml"))
             await pilot.press("a")
-            await self.wait_for(pilot, lambda: self.server.submitted == ["broken.yaml"], "the submission")
+            await self.wait_for(pilot, lambda: any("broken.yaml is invalid and was not submitted" in line for line in self.said), "the local refusal")
+        self.assertEqual(self.server.submitted, [])
 
     async def test_a_new_or_changed_file_shows_at_the_next_check_and_only_it_is_read_again(self) -> None:
         walk = self.write_data_job("walk.yaml", prompt_pairs=ONE_PAIR)
@@ -190,7 +191,9 @@ class JobDefinitionTests(TuiTestCase):
                 await self.settle(pilot)
             names = sorted(row[1] for row in self.rows(pilot.app))
             read_again = [call.args[0].name for call in read.call_args_list]
-            walk.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=ONE_PAIR, run_count=6), self.paths.params), sort_keys=False), encoding="utf-8")
+            changed = to_version_2(job_data(prompt_pairs=ONE_PAIR, run_count=6), self.paths.params)
+            changed["name"] = walk.stem
+            walk.write_text(yaml.safe_dump(changed, sort_keys=False), encoding="utf-8")
             self.touch(walk, walk.stat().st_mtime + 10)
             table.load()
             await self.settle(pilot)

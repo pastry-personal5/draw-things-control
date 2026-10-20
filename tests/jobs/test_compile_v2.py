@@ -489,7 +489,7 @@ class CutoverTests(CompileV2TestCase):
                 load_job_text(f"version: {bad}\nname: x\n", path, self.global_config, self.params, allow_version_1=False)
 
     def test_a_version_2_file_is_accepted_whether_or_not_version_1_is_allowed(self) -> None:
-        path = self.root / "job.yaml"
+        path = self.root / "story.yaml"
         text = self.text(v2_job())
         for allowed in (True, False):
             self.assertEqual(load_job_text(text, path, self.global_config, self.params, allow_version_1=allowed).version, 2)
@@ -497,7 +497,7 @@ class CutoverTests(CompileV2TestCase):
     def test_a_version_1_file_still_parses_when_allowed(self) -> None:
         from tests.fixtures import job_data
 
-        job = load_job_text(self.text(job_data()), self.root / "job.yaml", self.global_config, self.params, allow_version_1=True)
+        job = load_job_text(self.text(job_data()), self.root / "sunset-walk.yaml", self.global_config, self.params, allow_version_1=True)
         self.assertEqual((job.version, job.effective_runs, job.mode_label), (1, (), "i2v"))
 
 
@@ -505,10 +505,10 @@ class LegacyAccessorTests(CompileV2TestCase):
     def test_a_version_1_job_answers_the_per_run_questions_from_its_own_fields(self) -> None:
         from tests.fixtures import job_data
 
-        job = load_job_text(self.write_legacy_job(job_data(run_count=3, prompt_pairs=[{"name": "a", "positive": "x"}])).read_text(encoding="utf-8"), Path("job.yaml"), self.global_config, self.params, allow_version_1=True)
+        job = load_job_text(self.write_legacy_job(job_data(run_count=3, prompt_pairs=[{"name": "a", "positive": "x"}])).read_text(encoding="utf-8"), Path("sunset-walk.yaml"), self.global_config, self.params, allow_version_1=True)
         self.assertEqual([job.run_needs_visual_input(number) for number in range(0, 5)], [False, True, True, True, False])
         self.assertEqual((job.run_backend(2), job.job_for_run(2) is job, job.effective_run(1)), ("draw-things-cli", True, None))
-        t2v = load_job_text(self.write_legacy_job(job_data(mode="t2v", input=None, run_count=3, prompt_pairs=[{"name": "a", "positive": "x"}])).read_text(encoding="utf-8"), Path("job.yaml"), self.global_config, self.params, allow_version_1=True)
+        t2v = load_job_text(self.write_legacy_job(job_data(mode="t2v", input=None, run_count=3, prompt_pairs=[{"name": "a", "positive": "x"}])).read_text(encoding="utf-8"), Path("sunset-walk.yaml"), self.global_config, self.params, allow_version_1=True)
         # A version-1 t2v job's later runs continue from the previous run's last frame.
         self.assertEqual([t2v.run_needs_visual_input(number) for number in (1, 2, 3)], [False, True, True])
         self.assertEqual([t2v.run_checks_input(number) for number in (1, 2, 3)], [False, False, False])

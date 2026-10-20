@@ -5,6 +5,10 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-20
 
+- **Change** [M16]: `POST /v1/validate` without `?name=` validates a draft without comparing its `name` to the internal `<draft>` placeholder; supplying `?name=` still checks the canonical filename rule, as create and replace do.
+
+- **Change** [M15]: Synthetic timing replays now use deterministic UTC event timestamps instead of resolving the host's historical local timezone for every event. On the development host, the isolated 10-fold CI replay fell from 33.5 s to 3.7 s of CPU time, below its unchanged 20 s gate.
+
 - **Change** [M15]: A second gate review made paired bootstrapping invariant to execution order, kept live-regression restoration independent of candidate validity, kept learned evidence at the 32-run checkpoint, persisted the latest gate for `check`, and made a conflicting interrupted approval distrust the whole calibration/approval file set. `validated.json` now requires canonical calibration, tunables, evidence and holdout metadata even when its digest matches. Valid `tuning.yaml` edits are pins and are excluded from the saved machine baseline. CLI help and output now name validated values and gate results.
 
 - **Change** [M15]: The held-out gate now reloads `learned` calibrations, compares each workload's full step model, checks live calibration against the approved baseline independently, preserves owner pins outside the saved approval, and suspends approvals when `validated.json` is damaged. Existing checkpoint records recover their execution boundary conservatively; targeted reset updates the approval digest.

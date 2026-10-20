@@ -101,6 +101,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/queue/Q0001 | jq
 ```
 
+Add `?name=my-job` to `/v1/validate` to check the canonical filename rule too;
+without `name`, validation checks the draft without assuming a future filename.
+
 A running entry carries `forecast`, null when there is none:
 
 ```json

@@ -156,7 +156,9 @@ class QueueRoutesTestCase(JobTestCase):
     def write_job_in_catalog(self, name: str = "job.yaml", **changes: Any):
         changes.setdefault("run_timeout_seconds", 60)
         path = self.paths.jobs / name
-        path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params), sort_keys=False), encoding="utf-8")
+        data = to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}], **changes), self.paths.params)
+        data["name"] = path.stem
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 
     def submit(self, name: str = "job.yaml", *, caller: str | None = None, **changes: Any) -> dict[str, Any]:
@@ -299,7 +301,9 @@ class SubmitTests(QueueRoutesTestCase):
 
         def check_then_edit(*args: Any, **kwargs: Any) -> None:
             real_check(*args, **kwargs)
-            path.write_text(yaml.safe_dump(to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params), sort_keys=False), encoding="utf-8")
+            data = to_version_2(job_data(prompt_pairs=[{"name": "only", "positive": "text"}]), self.paths.params)
+            data["name"] = path.stem
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
         routes_queue.check_api_rules = check_then_edit  # type: ignore[assignment]
         try:
