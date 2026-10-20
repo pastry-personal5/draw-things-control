@@ -23,6 +23,8 @@ Improve the product experience, make chained generation support multiple backend
 - TUI experience in Milestone 13: a faster launch, a safer delete confirmation, a bell, toast and macOS notification when a job ends, keyboard scrolling of the logs, an idle work status, `F1`, a text viewer for job and queue details, Tab cycling, a saved command history, and a guarded `a`.
 - The forecast's heuristic knobs (tunables and per-backend, per-run-knob, per-size calibration) kept as external files under `data/timing-data-analysis/`, factory defaults where a value is missing, and provisional early learning, in Milestone 14.
 - Later knob updates validated on unseen executions, and a search of the tunables, in Milestone 15.
+- Comprehensive behavior-preserving cleanup and refactoring, with test maintenance first, in Milestone 17.
+- Behavioral changes discovered during refactoring evaluated separately in Milestone 18.
 
 ## Non-goals
 
@@ -50,7 +52,9 @@ Improve the product experience, make chained generation support multiple backend
 | 12 | [TUI enhancement](milestone-12-tui-enhancement.md) | done |
 | 13 | [TUI experience](milestone-13-tui-experience.md) | done |
 | 14 | [Timing knobs as external files](milestone-14-timing-knobs.md) | done |
-| 15 | [Held-out gate and tunables search](milestone-15-timing-gate-and-search.md) | planned |
+| 15 | [Held-out gate and tunables search](milestone-15-timing-gate-and-search.md) | done |
+| 17 | [Comprehensive cleanup and refactoring](milestone-17-cleanup-refactoring.md) | planned |
+| 18 | [Deferred behavior changes from refactoring](milestone-18-deferred-behavior-changes.md) | planned |
 
 ## Depends on
 
@@ -65,6 +69,8 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 13 depends on Milestone 12's TUI.
 - Milestone 14 depends on Milestone 11's landed forecast, fit, and replay harness, which it refactors onto a tunables and calibration seam, and on Milestone 10's timing rows.
 - Milestone 15 depends on Milestone 14's files, ring, and provisional checkpoints.
+- Milestone 17 depends on Milestone 15 being complete, so it reviews and refactors the timing subsystem's final design rather than work in progress.
+- Milestone 18 depends on Milestone 17's recorded behavior-change candidates; it makes none of them without an explicit owner decision.
 
 ## Changelog
 
@@ -84,3 +90,5 @@ Decisions and notable changes are recorded in
 - The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI's work status, `fc queue add --wait` and `fc queue show`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
 - The forecast's tunables and calibration live in files under `data/timing-data-analysis/`, factory defaults apply where a value is missing, early calibration is labeled provisional, an owner's hand edit is kept, and the forecast depends on each run's backend, knobs, width, and height, as defined in Milestone 14. Later changes pass a held-out replay gate with backups, and the tunables are searched under guards, as defined in Milestone 15.
 - H3 runs' arguments read correctly in the TUI's dry-run plan and Execution detail, and a file link can open with the executable named by `file_opener`, as defined in Milestone 12.
+- The codebase has completed Milestone 17's behavior-preserving responsibility, dependency, dead-code, and test-contract review; its small refactoring slices pass `make check` without changing observable or persisted contracts.
+- Every behavioral change discovered during Milestone 17 has the explicit disposition required by Milestone 18, whether accepted, rejected, moved, or closed with no code change.
