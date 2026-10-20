@@ -74,6 +74,7 @@ data/**
 !data/**/*example*
 data/jobs/.trash/
 data/jobs/.backups/
+data/jobs/prompt-example-to-create-job-definition-files.txt
 
 # Execution history database and run lock (created at run time)
 /state/
