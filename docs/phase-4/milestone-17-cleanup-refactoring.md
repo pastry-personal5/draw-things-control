@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 4](README.md)
 **Status:** planned
-**Depends on:** [Milestone 15](milestone-15-timing-gate-and-search.md); M15 must be complete before implementation begins. The cleanup starts from the final timing gate and search design rather than refactoring that subsystem while its behavior is still being built.
+**Depends on:** [Milestone 15](milestone-15-timing-gate-and-search.md), completed 2026-10-20. The cleanup starts from the final timing gate and search design rather than an earlier in-progress shape.
 
 ## Goal
 
@@ -50,7 +50,7 @@ The initial review found these maintenance concentrations:
 - Repeated TUI pane focus and leave actions are candidates for the existing pane base. Some version, stream, and client code looks similar across front ends but is intentionally separate because the enforced architecture forbids those front ends from importing one another, and the MCP server is HTTP-isolated from the application package.
 - The suite has no exact duplicate test-function bodies. Redundancy therefore has to be established from the protected contract and production path, not from textual similarity or test names. The large executor and queue suites contain deliberately different layers of coverage, so apparently similar state-transition tests need boundary-by-boundary review before deletion.
 
-The last clean baseline before the ongoing Milestone 15 work passed `make check`. M17 implementation does not begin until M15 is done and the then-current worktree passes it again.
+Milestone 15's completion revision passed `make check`. Slice 0 establishes a fresh baseline from the revision on which M17 implementation actually begins, so changes after M15 are included rather than assumed safe from the earlier result.
 
 ## Scope
 
@@ -70,6 +70,7 @@ Out of scope:
 - speculative interfaces for possible future backends or front ends;
 - replacing small explicit code with a generic framework, base class, repository, event bus, or service locator;
 - combining code across front ends when doing so would weaken their isolation or move framework dependencies into lower layers;
+- reading or refactoring the vendored Draw Things executable, virtual environments, caches, or generated gRPC stubs; review their checked-in source definitions and generation boundary instead;
 - modifying the protected user configuration and parameter files.
 
 ## Refactoring rules
@@ -80,10 +81,11 @@ Each change is small and independently reviewable:
 2. Identify the observable behavior and the smallest existing tests that protect it. Add a characterization test only when the behavior is otherwise unprotected.
 3. Move or simplify one seam. Do not combine the move with an intentional behavior correction.
 4. Delete dead code and redundant tests only after their callers and contract coverage have been checked.
-5. Compare deterministic outputs before and after the slice when it touches serialization, commands, events, manifests, timing, or media facts.
-6. Run the narrow affected tests, then `make check` before the next slice.
-7. Update `architecture.md` in the same slice when module ownership changes.
-8. Record a discovered behavior-change candidate in Milestone 18 with evidence and continue only if the refactor can preserve the current behavior.
+5. Treat the pre-refactor contract evidence as fixed. Do not update an expected value, golden file, or characterization result merely to make the refactor pass; first show that the expectation covered implementation structure rather than an observable contract.
+6. Compare deterministic outputs before and after the slice when it touches serialization, commands, events, manifests, timing, or media facts.
+7. Run the narrow affected tests, then `make check` before the next slice.
+8. Update `architecture.md` in the same slice when module ownership changes.
+9. Record a discovered behavior-change candidate in Milestone 18 with evidence and continue only if the refactor can preserve the current behavior. Candidate triage may happen during M17, but an accepted behavior change is not implemented until M17 is done.
 
 A helper is extracted only when it names one responsibility, reduces repeated policy, narrows a dependency, or makes a contract directly testable. Similar-looking code remains separate when its ownership, failure boundary, or dependency direction differs.
 
@@ -93,12 +95,25 @@ Stop a proposed extraction when it moves code without reducing the caller's know
 
 The review is comprehensive; the edits are selective. Each slice below is completed and validated before the next starts. Test organization and deletion happen inside the slice whose production contract they protect, not as a suite-wide deletion pass that weakens the safety net before refactoring.
 
+The slices provide this package coverage. Slice 0 records the exact tests and supported entry points for each row; the final sweep records a keep or change conclusion for every package even when an earlier slice made no edit.
+
+| Area | Primary slices | Review focus |
+|------|----------------|--------------|
+| `core` | 0, 2, 11 | Process and resource boundaries, path and configuration policy, shared primitives, dead private support |
+| `jobs` | 0, 3–6, 9, 11 | Parsing, compilation, backend finishing, execution state, media and timing decisions |
+| `state` | 0, 8, 11 | Schema-specific decoding, transactions, migrations, compatibility readers, retention |
+| `services` | 0, 1, 7, 9–11 | Process ownership, queue coordination, timing orchestration, shared application rules |
+| `cli` | 0, 1, 2, 9–11 | Composition, command registration, translation, timing presentation |
+| `tui` | 0–2, 10, 11 | Composition, pane behavior, service boundaries, framework-discovered handlers |
+| `server` | 0, 1, 10, 11 | Context capabilities, routes, SSE and gRPC translation, framework registration |
+| `mcp_server` | 0, 1, 10, 11 | HTTP-only isolation, tool/resource registration, client and transport translation |
+
 ### Slice 0: Stable baseline and contract map
 
-- After M15 is marked done, confirm a clean worktree and record one passing `make check` baseline.
+- Confirm M15 is done, identify the exact baseline revision, inventory unrelated worktree changes without discarding them, and record one passing `make check` from an isolated M17 baseline.
 - Inventory the supported entry points and persisted readers: console commands, Typer registration, Textual bindings and handlers, FastAPI routes, gRPC methods, MCP tools, queue snapshot versions, database migrations, manifest/history import, backend registry hooks, and string-dispatched callbacks.
-- For each later slice, list the owning tests and classify them as pure decision, adapter, integration, transport, process, concurrency, recovery, or characterization coverage. This is a working note in the milestone during implementation, not a new permanent documentation system.
-- Capture deterministic before-values only where existing tests do not already pin them: compiled plan, redacted command, event dictionaries, manifest, API serialization, timing replay, knob transaction, or media facts.
+- For each later slice, list the owning tests and classify them as pure decision, adapter, integration, transport, process, concurrency, recovery, or characterization coverage in the implementation record. This is a working record for the milestone, not a new permanent documentation system.
+- Add a focused characterization assertion only where existing tests do not already pin a deterministic contract: compiled plan, redacted command, event dictionaries, manifest, API serialization, timing replay, knob transaction, or media facts. Avoid opaque snapshots that make intentional fields indistinguishable from incidental representation.
 
 Exit evidence: current `make check` passes, every planned slice names its contract tests, and no production code has changed.
 
@@ -109,7 +124,7 @@ Exit evidence: current `make check` passes, every planned slice names its contra
 - Review `Toolkit`, `ServerContext`, CLI context, and TUI construction for hidden ownership or test-only mutation. Use constructor injection or a small composition factory only where it removes a real alternate construction path.
 - Remove duplicated fake setup, unused fake methods, and the associated type suppressions once every consumer uses a complete and honest seam.
 
-Exit evidence: the affected server and MCP tests use typed test support without pretending that a partial object is a `QueueWorker`; process-lifetime ownership remains explicit; API behavior is unchanged.
+Exit evidence: affected server tests, including MCP tests that host the real server application, use honest typed test support without an unexplained `QueueWorker` suppression. A production protocol exists only if a real consumer owns that narrow capability; process-lifetime ownership remains explicit and API behavior is unchanged.
 
 ### Slice 2: Small local simplifications
 
@@ -121,12 +136,12 @@ Exit evidence: each change is local to one package, visible TUI behavior and fra
 
 ### Slice 3: Job parsing context
 
-- Replace `JobParser`'s broad constructor with cohesive immutable context values for source and filesystem policy, frozen snapshot/reference data, and the internal version-2 run view. Keep `load_job` and `load_job_text` as the public entry points.
+- Classify `JobParser`'s constructor inputs by owner and lifetime: source and filesystem policy, frozen snapshot/reference data, and the internal version-2 run view. Replace the broad argument list with cohesive immutable context values only where that removes repeated forwarding through `load_job_text` and `nested`; keep `load_job` and `load_job_text` as the public entry points.
 - Keep parsing and error translation in `JobParser`; do not create a class for each field. Extract a validator only when both legacy and version-2 paths currently encode the same rule.
 - Preserve exact error type, path, field, and message, including filename enforcement, path confinement, missing resume inputs, reference snapshots, legacy frames, and frozen base configurations.
 - Review `test_parsing.py`, `test_compile_v2.py`, examples, queue snapshot, and resume tests together. Consolidate only cases that reach the same parser mode and validation branch; legacy, file-read, text-snapshot, and run-view tests are distinct boundaries.
 
-Exit evidence: parser call sites pass a small set of named contexts, no policy is duplicated between entry points, and all error and compiled-job characterization remains identical.
+Exit evidence: parser call sites no longer forward unrelated option groups independently, no context merely renames the full old argument list, no policy is duplicated between entry points, and all error and compiled-job characterization remains identical.
 
 ### Slice 4: Version-2 compilation phases
 
@@ -139,7 +154,7 @@ Exit evidence: `compile()` reads as those phases in order, a run is still parsed
 
 ### Slice 5: H3 finishing workflow
 
-- Keep `H3Backend` as the `JobBackend` facade. Move the 207-line `finish` workflow into one backend-owned finisher with explicit request, staged-artifact state, and result values; keep it near the H3 adapter rather than in backend-neutral media code.
+- Keep `H3Backend` as the `JobBackend` facade. Move the 207-line `finish` workflow into a backend-owned finishing module with explicit request, staged-artifact state, and result values; keep it near the H3 adapter rather than in backend-neutral media code. Do not introduce a finisher class if functions and one ownership value express the lifecycle more clearly.
 - Separate structural verification, source-color interpretation, delivery selection, optional correction, handoff extraction, promotion, record facts, reporting, and cleanup into named operations. Keep orchestration order visible in one method.
 - Keep staged-file ownership in one object or context so every exit path cleans exactly the artifacts it owns. Atomic promotion remains the final mutating step, with cancellation checked at the same points.
 - Preserve every warning, stage name, artifact role, media fact, record field, packet check, and success-without-handoff rule. Keep Draw Things and H3 color policy separate.
@@ -163,33 +178,48 @@ Exit evidence: process-lifetime versus execution-lifetime state is evident from 
 - Keep `QueueClaimGate`, `QueueHold`, and `WorkerStatus` as the existing focused collaborators unless the review finds duplicated policy. Preserve the documented lock order and event-publication order.
 - Review worker, cancellation, parking, forecast, recovery, route, SSE, and gRPC tests as distinct boundaries. Similar park/cancel cases in executor and worker suites stay when one protects executor semantics and the other queue state or races.
 
-Exit evidence: entry execution no longer obscures the claim loop, each mutable flag has one owner under one documented lock, and race, recovery, forecast, and cooldown behavior is unchanged.
+Exit evidence: the claim loop and its two entry workflows are readable without crossing lock ownership; extraction occurs only if it improves that boundary. Each mutable flag has one owner under one documented lock, and race, recovery, forecast, and cooldown behavior is unchanged.
 
-### Slice 8: State, timing, and application-service review
+### Slice 8: State persistence and compatibility
 
 - Review state repositories for repeated row decoding, transaction control, timestamp/id handling, and error translation. Extract only rules with identical schema meaning; do not add a generic repository over distinct tables.
-- Review queue submission/resume, history, catalogs, and job-file services for repeated path, snapshot, and representation policy. Keep one authority for each safety and compatibility rule.
-- Review the completed M15 implementation as one flow from pure fit/gate/search decisions through evidence selection, knob transactions, recovery, scheduling, and CLI presentation. Separate pure calculation from file transaction and background scheduling only where the final code still crosses those responsibilities.
-- Preserve byte-equivalent deterministic replay, selected candidate, approval data, knob documents, journals, backups, recovery, and CLI output for fixed inputs.
+- Trace every accepted schema and queue-snapshot version through its reader before removing a decoder, default, remapping branch, or migration. Repository-internal cleanup must not narrow the persisted compatibility boundary.
+- Keep transaction begin/commit/rollback and destructive retention ownership visible. Do not move a multi-table invariant behind a generic CRUD helper.
 
-Exit evidence: any extracted state or timing component owns a complete invariant; transaction and recovery boundaries remain visible; no abstraction unifies merely similar tables or files.
+Exit evidence: every retained compatibility branch names the persisted version or migration that needs it, every removed branch is unreachable from accepted data, transaction boundaries remain visible, and fixed database and queue fixtures read identically.
 
-### Slice 9: Front-end and dead-code sweep
+### Slice 9: Timing pipeline
+
+- Review the completed M15 implementation as one flow from pure fit, gate, and search decisions through evidence selection, knob transactions, recovery, scheduling, and CLI presentation.
+- Keep `jobs/timing/` pure. Separate calculation from file transaction and background scheduling only where the final code crosses those responsibilities or duplicates one decision in `services`.
+- Preserve byte-equivalent deterministic replay, selected candidate, approval provenance, knob documents, journals, backups, recovery, cancellation and CPU budgets, and CLI output for fixed inputs.
+
+Exit evidence: every timing component has one calculation, persistence, or scheduling responsibility; recovery and approval transactions remain visible; focused deterministic replays and CPU-budget checks pass unchanged.
+
+### Slice 10: Application-service boundaries
+
+- Review queue submission/resume, history, catalogs, input listing, job-file operations, generation sessions, and deletion for repeated path, snapshot, representation, authorization, and error-translation policy. Keep one authority for each safety and compatibility rule.
+- Check each front end's direct decisions against the service layer. Move a rule only when it is application behavior shared by consumers, not presentation or transport policy that properly differs.
+- Review process-lifetime construction in `Toolkit`, `QueueHost`, `ServerContext`, CLI services, and the TUI composition root after the earlier slices; remove alternate ownership paths that exist only for tests.
+
+Exit evidence: each shared application rule has one owner, front-end-specific translation remains local, and lifetime and cleanup ownership can be followed from each composition root without a service locator or framework dependency.
+
+### Slice 11: Front-end and dead-code sweep
 
 - Confirm CLI, TUI, server, and MCP remain translation layers. Move a business decision into services only when more than one front end implements it or the framework currently prevents direct contract testing.
 - Retain intentional duplicate clients, version helpers, and transport adapters where sharing would join front ends or make MCP import the application package.
 - Search registrations, dynamic framework lookup, string callbacks, protocol methods, serialization keys, migration readers, and tests before removing a command, handler, serializer, widget, client method, compatibility branch, or module.
 - Remove dead code together with its obsolete tests and fixtures. Update `architecture.md` after every ownership move, then perform the final package-by-package review and `make check`.
 
-Exit evidence: every package has a recorded keep/change conclusion, every remaining abstraction has a current caller and named responsibility, every M18 candidate has a disposition, and the final deterministic comparisons and `make check` pass.
+Exit evidence: every package has a recorded keep/change conclusion, every remaining abstraction has a current caller and named responsibility, every M18 candidate has an owner disposition, and the final deterministic comparisons and `make check` pass.
 
 ## Acceptance criteria
 
-- Milestone 15 is done before implementation begins.
+- Milestone 15 was completed and verified before implementation began.
 - Every package has been reviewed; unchanged areas are left alone because their current responsibility and dependency shape is adequate, not because the audit stopped early.
 - All documented and serialized behavior listed in the behavioral boundary remains unchanged. Deterministic job plans, snapshots, manifests, event dictionaries, forecasts, knob files, API bodies, and backend command vectors used by existing golden or characterization tests compare equal.
-- Large coordinators have fewer unrelated reasons to change: H3 finishing, job parsing/compilation, chain execution, and queue execution each expose a named workflow whose pure decisions and I/O effects can be tested independently.
-- Consumers that need only a worker view or another narrow capability depend on a protocol they own rather than the concrete process-wide implementation; test fakes satisfy those protocols without type suppressions.
+- Every confirmed responsibility concentration has fewer unrelated reasons to change: H3 finishing, job parsing/compilation, chain execution, and queue execution either expose a clearer named workflow whose decisions and effects can be tested at their owning boundary, or have a recorded keep conclusion showing why extraction would add indirection without reducing knowledge.
+- A consumer that genuinely owns a narrow worker or application capability depends on a protocol defined at that consumer boundary. Where `ServerContext` intentionally owns the complete process-wide worker, tests instead use one complete typed fake; no production abstraction exists solely to satisfy a test double.
 - Every deleted production symbol is shown unreachable from supported entry points, framework registration, accepted persisted formats, and reflection or string lookup. Every deleted test is redundant by production path and protected contract, with an equal or stronger retained test identified during the change.
 - Test cleanup is performed with its owning production slice. The remaining test layout names contracts clearly, shared fakes and builders have one home, and no deletion relies only on a lower-level or different-transport test.
 - No dependency direction is weakened, no lower layer imports a front-end framework, and MCP remains isolated over HTTP.
@@ -210,8 +240,8 @@ Exit evidence: every package has a recorded keep/change conclusion, every remain
 
 Fill this table as M17 is implemented. One slice may use several small changes; it is complete only when its exit evidence holds.
 
-| Slice | Status | Contract evidence | Tests consolidated or removed | M18 findings |
-|-------|--------|-------------------|-------------------------------|--------------|
+| Slice | Status | Review conclusion and contract evidence | Tests consolidated or removed | M18 candidate IDs |
+|-------|--------|-----------------------------------------|-------------------------------|-------------------|
 | 0. Baseline and map | planned | | | |
 | 1. Test support and capabilities | planned | | | |
 | 2. Local simplifications | planned | | | |
@@ -220,5 +250,7 @@ Fill this table as M17 is implemented. One slice may use several small changes; 
 | 5. H3 finishing | planned | | | |
 | 6. Execution state | planned | | | |
 | 7. Queue coordination | planned | | | |
-| 8. State, timing, and services | planned | | | |
-| 9. Front ends and final sweep | planned | | | |
+| 8. State persistence | planned | | | |
+| 9. Timing pipeline | planned | | | |
+| 10. Application services | planned | | | |
+| 11. Front ends and final sweep | planned | | | |

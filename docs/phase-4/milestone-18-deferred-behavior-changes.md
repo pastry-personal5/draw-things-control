@@ -2,7 +2,7 @@
 
 **Phase:** [Phase 4](README.md)
 **Status:** planned
-**Depends on:** [Milestone 17](milestone-17-cleanup-refactoring.md), which preserves current behavior and records candidates here instead of changing them.
+**Depends on:** Findings from [Milestone 17](milestone-17-cleanup-refactoring.md), which preserves current behavior and records candidates here instead of changing them. Candidate triage may occur while M17 is in progress; implementation of an accepted candidate waits until M17 is done.
 
 ## Goal
 
@@ -10,7 +10,7 @@ Evaluate and, only after explicit owner approval, implement behavioral changes d
 
 ## Candidate changes
 
-None yet. Milestone 17 records a candidate here before proceeding with any refactor that exposes a possible behavior change.
+None yet. Milestone 17 records a candidate here before proceeding with any refactor that exposes a possible behavior change. Give each candidate a stable ID (`M18-C01`, `M18-C02`, and so on), its source M17 slice, and one status: `pending`, `accepted`, `rejected`, `moved`, or `implemented`. A pending candidate may remain while later M17 slices proceed if they do not depend on it, but it blocks M17 completion.
 
 Each candidate must state:
 
@@ -20,7 +20,7 @@ Each candidate must state:
 - compatibility and migration consequences;
 - the smallest proposed change and the alternative of preserving current behavior;
 - tests and documentation that would change;
-- the owner's decision: accept, reject, or move to another phase or milestone.
+- the owner's decision and date: accept, reject, or move to another phase or milestone; accepted candidates remain `accepted` until implemented after M17.
 
 ## Scope
 
@@ -30,10 +30,10 @@ Out of scope: structural cleanup already owned by Milestone 17; unrelated featur
 
 ## Planned changes
 
-1. Triage every candidate after Milestone 17's relevant refactoring slice identifies it.
+1. Triage every candidate after Milestone 17's relevant refactoring slice identifies it. This disposition work may happen during M17.
 2. Group only candidates whose behavior, compatibility boundary, and validation are inseparable; otherwise implement them as independent small changes.
 3. Write the accepted behavior and compatibility plan into this document before implementation.
-4. Add or change tests to state the new contract, implement the smallest behavior change, and update user and architecture documentation where applicable.
+4. After M17 is done, add or change tests to state the new contract, implement the smallest behavior change, and update user and architecture documentation where applicable.
 5. Record each owner or design decision and each notable behavior change in the Phase 4 changelog.
 6. Run focused validation and `make check` for each accepted change.
 

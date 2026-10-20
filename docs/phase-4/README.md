@@ -70,7 +70,7 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 14 depends on Milestone 11's landed forecast, fit, and replay harness, which it refactors onto a tunables and calibration seam, and on Milestone 10's timing rows.
 - Milestone 15 depends on Milestone 14's files, ring, and provisional checkpoints.
 - Milestone 17 depends on Milestone 15 being complete, so it reviews and refactors the timing subsystem's final design rather than work in progress.
-- Milestone 18 depends on Milestone 17's recorded behavior-change candidates; it makes none of them without an explicit owner decision.
+- Milestone 18 receives behavior-change candidates from Milestone 17. Their owner triage may happen during M17 so it can finish with no pending decisions, but accepted behavior changes are implemented only after M17 is done.
 
 ## Changelog
 
