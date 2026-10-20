@@ -51,6 +51,8 @@ JOB_MIME_TYPE = "application/yaml"
 RESOURCE_NOT_FOUND = -32002
 DEFAULT_WAIT_TIMES = WaitTimes()
 WRITES_OFF = {"code": "writes_off", "message": "Deleting executions through MCP requires fc serve --allow-write"}
+REMOTE_REFUSED = {"code": "not_permitted", "message": "Deleting execution history is unavailable over remote MCP; use a local front end"}
+REMOTE_RESTRICTED_TOOLS = frozenset({"delete_executions"})
 
 
 class Connection:
@@ -73,10 +75,11 @@ class McpApp:
     """The handlers, and what they share: the API client, the last read of whether writes are on, and the open
     connections, for list-changed notifications."""
 
-    def __init__(self, api: ApiClient, *, clock: Callable[[], float], wait_times: WaitTimes) -> None:
+    def __init__(self, api: ApiClient, *, clock: Callable[[], float], wait_times: WaitTimes, remote: bool = False) -> None:
         self.api = api
         self._clock = clock
         self._wait_times = wait_times
+        self._remote = remote
         self._bus = InMemorySubscriptionBus()
         self._connections: set[Connection] = set()
         # The last read of allow_write (None when it failed), when it was made, and the setting the last tool list
@@ -162,13 +165,15 @@ class McpApp:
             # The other open connections hear of a change this list is the first to see.
             await self._announce(writes)
         self._listed_writes = writes
-        return types.ListToolsResult(tools=[_listing(tool) for tool in listed_tools(writes)])
+        return types.ListToolsResult(tools=[_listing(tool) for tool in listed_tools(writes) if not self._remote or tool.name not in REMOTE_RESTRICTED_TOOLS])
 
     async def _call_tool(self, ctx: ServerRequestContext[Connection], params: types.CallToolRequestParams) -> types.CallToolResult:
         self._remember(ctx)
         tool = TOOLS.get(params.name)
         if tool is None:
             raise MCPError(types.INVALID_PARAMS, f"Unknown tool: {params.name}")
+        if self._remote and tool.name in REMOTE_RESTRICTED_TOOLS:
+            return _result(dict(REMOTE_REFUSED), is_error=True)
         try:
             arguments = check_arguments(tool, params.arguments or {})
             request = tool.build(arguments)
@@ -256,10 +261,10 @@ def _version() -> str:
         return "0.0.0"
 
 
-def build_server(server_url: str, token_path: Path, *, http_transport: httpx.AsyncBaseTransport | None = None, clock: Callable[[], float] = time.monotonic, wait_times: WaitTimes = DEFAULT_WAIT_TIMES) -> Server[Connection]:
+def build_server(server_url: str, token_path: Path, *, http_transport: httpx.AsyncBaseTransport | None = None, clock: Callable[[], float] = time.monotonic, wait_times: WaitTimes = DEFAULT_WAIT_TIMES, remote: bool = False) -> Server[Connection]:
     """The MCP server for ``fc serve`` at ``server_url``, whose token is in ``token_path``. Nothing is read until the
     first request. ``http_transport`` replaces the network, and ``clock`` and ``wait_times`` the times, for tests."""
-    return McpApp(ApiClient(server_url, token_path, transport=http_transport), clock=clock, wait_times=wait_times).build()
+    return McpApp(ApiClient(server_url, token_path, transport=http_transport), clock=clock, wait_times=wait_times, remote=remote).build()
 
 
 def run(server_url: str, token_path: Path) -> None:
@@ -273,10 +278,10 @@ async def _serve_stdio(server_url: str, token_path: Path) -> None:
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-def run_http(server_url: str, token_path: Path, host: str, port: int) -> None:
+def run_http(server_url: str, token_path: Path, listener_token: str, host: str, port: int) -> None:
     """Serve MCP over Streamable HTTP at ``http://host:port/mcp`` until a signal stops it; ``BindError`` when the address cannot be bound."""
-    anyio.run(_serve_http, server_url, token_path, host, port)
+    anyio.run(_serve_http, server_url, token_path, listener_token, host, port)
 
 
-async def _serve_http(server_url: str, token_path: Path, host: str, port: int) -> None:
-    await serve_http(build_server(server_url, token_path), token_path, host, port)
+async def _serve_http(server_url: str, token_path: Path, listener_token: str, host: str, port: int) -> None:
+    await serve_http(build_server(server_url, token_path, remote=True), listener_token, host, port)

@@ -24,6 +24,7 @@ from framecontrol.core.exit_codes import EXIT_INVALID_INPUT, EXIT_STATE_UNAVAILA
 from framecontrol.core.global_config import DEFAULT_MAX_JOB_FILE_BYTES, GlobalConfig
 from framecontrol.core.network import is_loopback_host
 from framecontrol.core.paths import DEFAULT_PATHS, ProjectPaths
+from framecontrol.core.secret_file import load_or_create_token
 from framecontrol.jobs.definition import JobDefinition
 from framecontrol.jobs.files import read_job, read_settings
 from framecontrol.jobs.text import job_summary, report_ignored_config
@@ -264,21 +265,22 @@ def mcp_command(
     ctx: typer.Context,
     server_url: ServerUrlOption = DEFAULT_SERVER_URL,
     token_file: TokenFileOption = None,
+    listener_token_file: Annotated[Path | None, typer.Option(help="Private bearer token file for Streamable HTTP clients; created on first start, default config/mcp-token. Separate from --token-file, which is the host API token.")] = None,
     allow_remote_server: AllowRemoteServerOption = False,
     transport: Annotated[str, typer.Option(help="stdio, for a client that starts this command, or streamable-http, which listens at http://HOST:PORT/mcp for a client that cannot, such as an agent in a virtual machine.")] = "stdio",
     host: Annotated[str | None, typer.Option(help="Address to listen on, with --transport streamable-http; default 127.0.0.1, and refused unless loopback or --allow-remote-bind is given.")] = None,
     port: Annotated[int | None, typer.Option(help=f"Port to listen on, with --transport streamable-http; default {DEFAULT_MCP_PORT}.")] = None,
     allow_remote_bind: Annotated[bool, typer.Option("--allow-remote-bind", help="Allow --host beyond loopback; the token then crosses the network in plain HTTP (an SSH tunnel is the safer way in from elsewhere).")] = False,
 ) -> None:
-    """Run an MCP server that gives AI agents typed tools over fc serve's API: on stdio, or over Streamable HTTP, where
-    every request needs the server token as a bearer token. It starts whether or not fc serve is up, reads the token at
-    the first call, and acts only through the API."""
+    """Run an MCP server that gives AI agents typed tools over fc serve's API. Streamable HTTP requires a separate
+    MCP listener token on every request. The server starts whether or not fc serve is up, reads the API token at the
+    first call, and acts only through the API."""
     services = services_of(ctx)
     with errors_exit():
         if transport not in MCP_TRANSPORTS:
             raise InputError(f"--transport {transport} is not one of {', '.join(MCP_TRANSPORTS)}", field="transport")
-        if transport == "stdio" and (host is not None or port is not None or allow_remote_bind):
-            raise InputError("--host, --port, and --allow-remote-bind apply only with --transport streamable-http", field="transport")
+        if transport == "stdio" and (host is not None or port is not None or allow_remote_bind or listener_token_file is not None):
+            raise InputError("--host, --port, --allow-remote-bind, and --listener-token-file apply only with --transport streamable-http", field="transport")
         listen_host = host or "127.0.0.1"
         if transport == "streamable-http" and not allow_remote_bind and not is_loopback_host(listen_host):
             raise InputError(f"--host {listen_host} is not loopback; pass --allow-remote-bind to bind beyond it (the token then crosses the network in plain HTTP)", field="host")
@@ -297,11 +299,19 @@ def mcp_command(
             run_mcp(server_url, token_path)
             return
         listen_port = DEFAULT_MCP_PORT if port is None else port
+        listener_path = listener_token_file or services.paths.mcp_token
+        with errors_exit():
+            if listener_path.resolve() == token_path.resolve() or (listener_path.exists() and token_path.exists() and listener_path.samefile(token_path)):
+                raise InputError("--listener-token-file must differ from the host API --token-file", field="listener_token_file")
+            listener_token = load_or_create_token(listener_path, label="MCP listener token")
+            if token_path.exists() and listener_token == load_or_create_token(token_path):
+                raise InputError("The MCP listener token must differ from the host API token", field="listener_token_file")
         if allow_remote_bind and not is_loopback_host(listen_host):
             logger.warning("--allow-remote-bind: the bearer token crosses the network in plain HTTP; prefer an SSH tunnel")
+        logger.info("MCP listener token file: {}", listener_path)
         with errors_exit():
             try:
-                run_mcp_http(server_url, token_path, listen_host, listen_port)
+                run_mcp_http(server_url, token_path, listener_token, listen_host, listen_port)
             except BindError as error:
                 raise InputError(str(error), field="port") from error
     finally:

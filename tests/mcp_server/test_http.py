@@ -28,6 +28,7 @@ from framecontrol.mcp_server.http import MAX_HTTP_BODY_BYTES, BearerAuth, McpBod
 from tests.mcp_server.test_process import PROJECT_ROOT, unused_port
 from tests.server.test_queue_routes import TOKEN
 
+GUEST_TOKEN = "b" * 64
 INITIALIZE = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}
 MCP_HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
 
@@ -47,19 +48,15 @@ class Recorder:
 
 class BearerAuthTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.token_file = Path(directory.name) / "server-token"
-        self.token_file.write_text(f"{TOKEN}\n", encoding="ascii")
         self.inner = Recorder()
-        self.guard = BearerAuth(self.inner, self.token_file)
+        self.guard = BearerAuth(self.inner, GUEST_TOKEN)
 
     async def get(self, *headers: tuple[bytes, bytes]) -> httpx.Response:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.guard), base_url="http://test") as client:
             return await client.get("/mcp", headers=[(name.decode("latin-1"), value.decode("latin-1")) for name, value in headers])
 
-    async def test_the_token_in_the_file_passes_and_anything_else_is_a_bare_401_before_the_app_sees_it(self) -> None:
-        for header in (b"", b"Bearer", b"Bearer ", b"Bearer wrong", f"Basic {TOKEN}".encode(), TOKEN.encode(), f"Bearer {TOKEN}x".encode(), f"Bearer {TOKEN[:-1]}".encode()):
+    async def test_only_the_guest_token_passes_and_anything_else_is_a_bare_401(self) -> None:
+        for header in (b"", b"Bearer", b"Bearer ", b"Bearer wrong", f"Basic {GUEST_TOKEN}".encode(), GUEST_TOKEN.encode(), f"Bearer {GUEST_TOKEN}x".encode(), f"Bearer {GUEST_TOKEN[:-1]}".encode(), f"Bearer {TOKEN}".encode()):
             with self.subTest(header=header):
                 response = await self.get((b"authorization", header)) if header else await self.get()
                 self.assertEqual(response.status_code, 401)
@@ -68,21 +65,11 @@ class BearerAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.inner.scopes, [])
         for scheme in ("Bearer", "bearer", "BEARER"):
             with self.subTest(scheme=scheme):
-                self.assertEqual((await self.get((b"authorization", f"{scheme} {TOKEN}".encode()))).status_code, 204)
+                self.assertEqual((await self.get((b"authorization", f"{scheme} {GUEST_TOKEN}".encode()))).status_code, 204)
 
-    async def test_the_file_is_read_again_for_each_request_so_a_regenerated_token_counts(self) -> None:
-        self.assertEqual((await self.get((b"authorization", f"Bearer {TOKEN}".encode()))).status_code, 204)
-        self.token_file.write_text("a-new-token\n", encoding="ascii")
-        self.assertEqual((await self.get((b"authorization", f"Bearer {TOKEN}".encode()))).status_code, 401)
-        self.assertEqual((await self.get((b"authorization", b"Bearer a-new-token"))).status_code, 204)
-
-    async def test_a_missing_or_empty_token_file_refuses_everyone_without_naming_the_path(self) -> None:
-        for write in (lambda: self.token_file.unlink(), lambda: self.token_file.write_text("\n", encoding="ascii")):
-            write()
-            with self.subTest(file=self.token_file.exists()):
-                response = await self.get((b"authorization", f"Bearer {TOKEN}".encode()))
-                self.assertEqual(response.status_code, 401)
-                self.assertNotIn(str(self.token_file), response.text)
+    async def test_duplicate_authorization_headers_are_refused(self) -> None:
+        response = await self.get((b"authorization", f"Bearer {GUEST_TOKEN}".encode()), (b"authorization", f"Bearer {GUEST_TOKEN}".encode()))
+        self.assertEqual(response.status_code, 401)
 
     async def test_the_lifespan_passes_through_unchecked(self) -> None:
         async def receive() -> dict[str, str]:
@@ -95,31 +82,31 @@ class BearerAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.inner.scopes, ["lifespan"])
 
     async def test_an_authenticated_oversized_body_is_refused_before_the_sdk(self) -> None:
-        guard = BearerAuth(McpBodyLimit(self.inner), self.token_file)
+        guard = BearerAuth(McpBodyLimit(self.inner), GUEST_TOKEN)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://test") as client:
-            response = await client.post("/mcp", content=b"x" * (MAX_HTTP_BODY_BYTES + 1), headers={"Authorization": f"Bearer {TOKEN}"})
+            response = await client.post("/mcp", content=b"x" * (MAX_HTTP_BODY_BYTES + 1), headers={"Authorization": f"Bearer {GUEST_TOKEN}"})
             self.assertEqual((response.status_code, response.json()["code"], response.json()["limit"]), (413, "limit_exceeded", MAX_HTTP_BODY_BYTES))
-            self.assertNotIn(TOKEN, response.text)
+            self.assertNotIn(GUEST_TOKEN, response.text)
             unauthorized = await client.post("/mcp", content=b"x" * (MAX_HTTP_BODY_BYTES + 1))
             self.assertEqual(unauthorized.status_code, 401)
         self.assertEqual(self.inner.scopes, [])
 
     async def test_a_streamed_mcp_body_is_bounded_without_content_length(self) -> None:
-        guard = BearerAuth(McpBodyLimit(self.inner), self.token_file)
+        guard = BearerAuth(McpBodyLimit(self.inner), GUEST_TOKEN)
 
         async def chunks():
             yield b"x" * (MAX_HTTP_BODY_BYTES - 1)
             yield b"yz"
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://test") as client:
-            response = await client.post("/mcp", content=chunks(), headers={"Authorization": f"Bearer {TOKEN}"})
+            response = await client.post("/mcp", content=chunks(), headers={"Authorization": f"Bearer {GUEST_TOKEN}"})
         self.assertEqual((response.status_code, response.json()["value"]), (413, MAX_HTTP_BODY_BYTES + 1))
         self.assertEqual(self.inner.scopes, [])
 
     async def test_the_sdk_uses_the_same_eight_mib_limit_as_the_listener(self) -> None:
         server = Mock()
         server.streamable_http_app.return_value = self.inner
-        http_app(server, self.token_file, "127.0.0.1")
+        http_app(server, GUEST_TOKEN, "127.0.0.1")
         self.assertEqual(server.streamable_http_app.call_args.kwargs["max_request_body_size"], MAX_HTTP_BODY_BYTES)
 
 
@@ -131,12 +118,15 @@ class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(directory.cleanup)
         self.token_file = Path(directory.name) / "server-token"
         self.token_file.write_text(TOKEN, encoding="ascii")
+        self.token_file.chmod(0o600)
+        self.listener_token_file = Path(directory.name) / "mcp-token"
         self.port = unused_port()
         self.url = f"http://127.0.0.1:{self.port}/mcp"
         self.server_url = f"http://127.0.0.1:{unused_port()}"
-        self.process = subprocess.Popen([sys.executable, "-m", "framecontrol", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
+        self.process = subprocess.Popen([sys.executable, "-m", "framecontrol", "mcp", "--transport", "streamable-http", "--port", str(self.port), "--server-url", self.server_url, "--token-file", str(self.token_file), "--listener-token-file", str(self.listener_token_file)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         self.addCleanup(self.stop)
         self.wait_until_listening()
+        self.guest_token = self.listener_token_file.read_text(encoding="ascii")
 
     def stop(self) -> None:
         self.process.terminate()
@@ -160,8 +150,8 @@ class HttpProcessCase(unittest.IsolatedAsyncioTestCase):
                 time.sleep(0.1)
         self.fail("fc mcp did not listen in 60 seconds")
 
-    def authorized(self, token: str = TOKEN) -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(30.0))
+    def authorized(self, token: str | None = None) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(headers={"Authorization": f"Bearer {token or self.guest_token}"}, timeout=httpx2.Timeout(30.0))
 
 
 class HttpTransportTests(HttpProcessCase):
@@ -183,18 +173,22 @@ class HttpTransportTests(HttpProcessCase):
             self.assertTrue(result.is_error)
             assert isinstance(result.structured_content, dict)
             self.assertEqual(result.structured_content["code"], "server_unreachable")
-            self.assertNotIn(TOKEN, json.dumps(result.structured_content))
+            self.assertNotIn(self.guest_token, json.dumps(result.structured_content))
 
     async def test_a_client_with_a_wrong_token_cannot_connect(self) -> None:
         with self.assertRaises(Exception):  # noqa: B017 (the SDK's client raises its own error type or an exception group for the refused handshake)
             async with self.authorized("not-the-token") as http_client, Client(streamable_http_client(self.url, http_client=http_client)) as client:
                 await client.list_tools()
 
-    async def test_a_regenerated_token_is_the_one_that_counts_at_once(self) -> None:
-        self.token_file.write_text("regenerated", encoding="ascii")
+    async def test_the_api_token_cannot_authenticate_to_mcp(self) -> None:
         async with httpx.AsyncClient() as client:
             self.assertEqual((await client.post(self.url, json=INITIALIZE, headers={**MCP_HEADERS, "Authorization": f"Bearer {TOKEN}"})).status_code, 401)
-            self.assertEqual((await client.post(self.url, json=INITIALIZE, headers={**MCP_HEADERS, "Authorization": "Bearer regenerated"})).status_code, 200)
+            self.assertEqual((await client.post(self.url, json=INITIALIZE, headers={**MCP_HEADERS, "Authorization": f"Bearer {self.guest_token}"})).status_code, 200)
+
+    async def test_listener_token_is_created_private_and_is_distinct_from_api_token(self) -> None:
+        self.assertEqual(len(self.guest_token), 64)
+        self.assertNotEqual(self.guest_token, TOKEN)
+        self.assertEqual(self.listener_token_file.stat().st_mode & 0o777, 0o600)
 
 
 class CommandTests(unittest.TestCase):
@@ -206,7 +200,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2, result.output)
 
     def test_listen_options_without_streamable_http_are_refused_not_ignored(self) -> None:
-        for options in (["--host", "127.0.0.1"], ["--port", "9000"], ["--allow-remote-bind"]):
+        for options in (["--host", "127.0.0.1"], ["--port", "9000"], ["--allow-remote-bind"], ["--listener-token-file", "x"]):
             with self.subTest(options=options):
                 self.assertEqual(self.invoke(*options).exit_code, 2)
 
@@ -219,13 +213,42 @@ class CommandTests(unittest.TestCase):
             taken.bind(("127.0.0.1", 0))
             taken.listen()
             port = taken.getsockname()[1]
-            result = self.invoke("--transport", "streamable-http", "--port", str(port))
+            with tempfile.TemporaryDirectory() as directory:
+                result = self.invoke("--transport", "streamable-http", "--port", str(port), "--listener-token-file", str(Path(directory) / "mcp-token"))
         self.assertEqual(result.exit_code, 2, result.output)
         self.assertIn(f"127.0.0.1:{port}", result.output)
         errors = io.StringIO()
         with redirect_stderr(errors):
             logger.info("After the MCP command's captured stderr closes")
         self.assertEqual(errors.getvalue(), "")
+
+    def test_listener_token_must_not_be_the_api_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            token = Path(directory) / "token"
+            token.write_text(TOKEN, encoding="ascii")
+            result = self.invoke("--transport", "streamable-http", "--token-file", str(token), "--listener-token-file", str(token))
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("must differ", result.output)
+
+    def test_a_copied_api_token_cannot_be_used_as_the_listener_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            api_token = Path(directory) / "server-token"
+            guest_token = Path(directory) / "mcp-token"
+            for path in (api_token, guest_token):
+                path.write_text(TOKEN, encoding="ascii")
+                path.chmod(0o600)
+            result = self.invoke("--transport", "streamable-http", "--token-file", str(api_token), "--listener-token-file", str(guest_token))
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("must differ", result.output)
+
+    def test_an_insecure_listener_token_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            listener_token = Path(directory) / "mcp-token"
+            listener_token.write_text(GUEST_TOKEN, encoding="ascii")
+            listener_token.chmod(0o644)
+            result = self.invoke("--transport", "streamable-http", "--listener-token-file", str(listener_token))
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("readable by others", result.output)
 
 
 if __name__ == "__main__":

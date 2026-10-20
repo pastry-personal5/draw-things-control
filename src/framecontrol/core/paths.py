@@ -8,6 +8,7 @@ from pathlib import Path
 DATABASE_FILE_NAME = "framecontrol.db"
 LOCK_FILE_NAME = "run.lock"
 SERVER_TOKEN_FILE_NAME = "server-token"
+MCP_TOKEN_FILE_NAME = "mcp-token"
 TUI_PREFERENCES_FILE_NAME = "tui-preferences.yaml"
 TUI_COMMAND_HISTORY_FILE_NAME = "tui-command-history.txt"
 # As a person names them in messages: relative to the project root.
@@ -72,6 +73,11 @@ class ProjectPaths:
         """The API token ``fc serve`` generates on first start (0600, gitignored): beside ``global_config``, not in
         the state directory, so the secret stays out of a file that may be shared or committed."""
         return self.root / "config" / SERVER_TOKEN_FILE_NAME
+
+    @property
+    def mcp_token(self) -> Path:
+        """The separate credential a remote MCP client presents to the listener."""
+        return self.root / "config" / MCP_TOKEN_FILE_NAME
 
     @property
     def tui_preferences(self) -> Path:

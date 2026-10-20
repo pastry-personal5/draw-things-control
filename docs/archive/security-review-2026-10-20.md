@@ -1,0 +1,37 @@
+# Security review, 2026-10-20
+
+## Deployment and scope
+
+The owner runs OpenClaw in a UTM guest using Shared Network. It connects to Framecontrol's Streamable HTTP MCP listener on the host's `192.168.64.1` address. The owner wants to protect credentials, prompts and images, queue and history, and host filesystem access. This review examined the documented deployment, the HTTP and MCP entry points, token and caller handling, path confinement, process launch, the run lock, state storage, and their relevant tests. It is a targeted code and document review, not a penetration test of the guest, UTM network, or backend executables.
+
+## Findings and changes
+
+| Priority | Finding | Evidence and impact | Disposition |
+|----------|---------|---------------------|-------------|
+| High | The guest was given the host API token, and `run-host-network-device-server.sh` bound the REST API and gRPC to `192.168.64.1`. The guest could call REST directly, supply `X-Framecontrol-Caller: cli`, and bypass the MCP tool list and its agent restrictions. | [MCP access model](user-guide.md#ai-agents-over-mcp), `server/caller.py`, `services/queue_callers.py`, and the two launch scripts. The caller header is self-declared; `--allow-write` does not gate the REST execution-deletion endpoint. | The UTM scripts now bind the API and gRPC to `127.0.0.1`; only MCP faces the guest. The MCP listener forwards to host loopback using the API token stored on the host. The guest token is distinct and cannot authenticate to REST. |
+| Medium | The API's `Host` check parsed the header as a URL, accepting values such as `evil.example@127.0.0.1`, `127.0.0.1/path`, and `127.0.0.1?x` as loopback. | Reproduced against `host_header_is_allowed`. These forms violate the header's authority syntax and weaken the DNS-rebinding boundary, although bearer authentication still protects authenticated endpoints. | The check now rejects userinfo, URL suffixes, controls, escapes, and an empty port. Regression tests cover the malformed forms. The previously documented choice to accept a loopback name on another port remains. |
+| Medium, local attacker prerequisite | `RunLock._open` followed a symbolic link at `state/run.lock`. Someone able to replace that path could redirect holder writes to another file writable by the Framecontrol process. | `core/run_lock.py` opened the path with `O_RDWR | O_CREAT` and then wrote and truncated it. | The open now uses `O_NOFOLLOW` and `O_NONBLOCK`, checks for a regular file, and refuses a substituted symlink. A regression test confirms the target file is unchanged. |
+| High | The guest's MCP bearer token was the host API token. If the API became reachable again, it granted full API authority. OpenClaw configuration could also store the header in clear text. | [MCP access documentation](user-guide.md#ai-agents-over-mcp); MCP `BearerAuth` and `ApiClient` both read `config/server-token`. | The HTTP listener now auto-creates a distinct `config/mcp-token` (mode 0600), refuses the API token as a listener credential, and rejects reuse of the same file. Only the host MCP process reads the API token. `run-utm.sh` starts both services. OpenClaw can reference an environment variable in its header. The old API token in an existing guest must be rotated once after migration. |
+| Medium, deployment dependent | The MCP listener sends its bearer token over plain HTTP across the UTM Shared Network path. | The listener and guide explicitly use `http://192.168.64.1:8767/mcp`; no TLS or tunnel is configured. | Keep it bound to the VM-facing address rather than a wildcard or bridged LAN address. For an untrusted network path, use an authenticated encrypted tunnel or TLS. The separate listener token limits exposure to MCP actions if captured. |
+
+The existing code also has useful safeguards: the HTTP and MCP listeners check bearer tokens, their request bodies are bounded, job and reference paths are checked before use, backend commands use argument vectors without a shell, and authenticated state-changing REST actions are audited. The earlier [Phase 3 safety review](archive/phase-3/milestone-11-safety-hardening.md) describes those controls and its accepted local-file race assumption. This review did not find a committed credential in the searched source and documentation files.
+
+## Management choices
+
+The chosen setup has one host command, `./run-utm.sh`. It starts and supervises the loopback API and VM-facing MCP listener, while each service generates its own stable private token file on first start. This avoids two terminals, repeated token creation, and printing a credential into routine logs. OpenClaw needs one initial transfer of `config/mcp-token` into its private environment, because automatically enrolling an unauthenticated guest would defeat the authentication boundary. An existing deployment also needs one API-token rotation to invalidate the old full-access token already given to the guest.
+
+A shared API token would keep setup shorter but leave a direct REST bypass. A scoped REST token would be useful if the guest needs to call REST independently, but would add authorization rules to every endpoint and a second access model to manage. A new random MCP token on every start would require repeated OpenClaw reconfiguration. The stable separate listener token is the smallest change that limits the guest to MCP and keeps restarts unattended.
+
+## Verification and limits
+
+- The focused security suite passed: 92 tests and 48 subtests. One existing execution-deletion test was excluded because its `walk.yaml` fixture declares a different job name from its filename; it also fails in the full suite.
+- Ruff lint, Ruff format, and pyright passed in `make check`. Bash syntax and `git diff --check` passed.
+- The full `make check` test stage failed: 127 failed, 1,991 passed, 2 skipped, 898 subtests passed. Many failures involve the in-progress job-name/filename validation change and old fixtures. The full gate cannot be claimed green; the focused result does not establish that every full-suite failure is unrelated to these changes.
+- Launch-script commands have not been exercised against the real UTM guest or a running queue. Their new bind addresses need an end-to-end connection check after deployment.
+- The review did not run the checked-in Framecontrol MCP tools against the owner's real queue or history.
+
+## Remaining access decision
+
+The separate credential removes the direct REST-token bypass for a correctly configured guest. Remote MCP now omits and refuses permanent execution deletion even while `fc serve --allow-write`; local stdio MCP, the CLI, and the TUI retain it. The guest can still read all jobs, prompts, history, and output paths, and the current UTM server script advertises job-file creation, replacement, and recoverable deletion. The owner should decide whether those capabilities should be reduced further. Any lasting separation among API callers would require authenticated identities or scoped tokens at the API boundary; the `X-Framecontrol-Caller` header alone is not proof of identity.
+
+The guest still reaches MCP over plain HTTP on the UTM Shared Network. A token captured on that path can use all exposed MCP tools until it is rotated. See [the setup and rotation steps](user-guide.md#ai-agents-over-mcp). The existing guest copy of `config/server-token` remains valid until that API token is rotated; code changes cannot revoke a copy already issued.

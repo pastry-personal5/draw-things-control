@@ -54,6 +54,8 @@ config/global-config.yaml
 
 # The API server's bearer token (generated on first `fc serve`)
 config/server-token
+# The independent guest MCP credential (generated on first HTTP `fc mcp`)
+config/mcp-token
 
 # The terminal UI's own preferences (its verbose level), written by `/verbose`
 config/tui-preferences.yaml

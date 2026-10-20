@@ -149,6 +149,30 @@ class JobDefinitionTests(JobTestCase):
         assert isinstance(job.backend_data, H3JobData)
         self.assertEqual((job.backend_data.runs[0].pipeline, job.backend_data.runs[0].reference_pair, job.backend_data.reference_pairs[0].references[0].basename), ("r2av", "voice", "singer.png"))
 
+    def test_invalid_h3_reference_media_names_lookup_root_and_input_paths(self) -> None:
+        self.write_image("portrait.png", (160, 160))
+        (self.input_directory / "clips").mkdir()
+        (self.input_directory / "clips" / "scene.mp4").write_bytes(b"placeholder")
+        base = job_data(backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
+        for kind, references, field, paths in (
+            ("image", [{"kind": "image", "path": "people/missing.png"}], "path", ["  path: people/missing.png"]),
+            ("video", [{"kind": "video", "path": "clips/missing.mp4"}], "path", ["  path: clips/missing.mp4"]),
+            ("audio", [{"kind": "image", "path": "portrait.png"}, {"kind": "audio", "path": "voices/missing.wav"}], "path", ["  path: voices/missing.wav"]),
+            ("video_audio", [{"kind": "video_audio", "path": "clips/scene.mp4", "audio": "voices/missing.wav"}], "audio", ["  path: clips/scene.mp4", "  audio: voices/missing.wav"]),
+        ):
+            with self.subTest(kind=kind), self.assertRaises(InputError) as caught:
+                load_legacy_job(self.write_legacy_job(base | {"reference_pairs": [{"name": "voice", "references": references}]}), self.global_config, self.params)
+            message = str(caught.exception)
+            self.assertTrue((caught.exception.field or "").endswith(f".{field}"), message)
+            self.assertIn("must name an existing regular file", message)
+            expected = [f"Looked in: {self.input_directory}", *paths]
+            self.assertEqual(message.splitlines()[-len(expected) :], expected)
+
+        with mock.patch("framecontrol.jobs.backends.h3._inspect_reference", side_effect=ValueError("cannot decode media")):
+            with self.assertRaises(InputError) as caught:
+                load_legacy_job(self.write_legacy_job(base | {"reference_pairs": [{"name": "voice", "references": [{"kind": "video", "path": "clips/scene.mp4"}]}]}), self.global_config, self.params)
+        self.assertIn(f"cannot decode media\nLooked in: {self.input_directory}\n  path: clips/scene.mp4", str(caught.exception))
+
     def test_h3av_rejects_incompatible_reuse_controls_and_wrong_first_input(self) -> None:
         base = job_data(backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "i2av"}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42, "denoise_reuse": 2, "core_reuse": 2}, output={"extension": "mp4"})
         with self.assertRaises(InputError) as caught:

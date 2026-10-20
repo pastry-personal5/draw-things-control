@@ -1,22 +1,19 @@
-"""``fc mcp --transport streamable-http``: the same MCP server over Streamable HTTP at ``/mcp``, for a
-client that cannot spawn a process on this machine, such as an agent in a virtual machine. It adds no tool and no
-authority: every request still ends in ``fc serve``'s API, with the token in the server's own token file. What it adds is
-a listener, so every request must carry that token, as ``fc serve``'s own routes require it."""
+"""``fc mcp --transport streamable-http``: an authenticated listener at ``/mcp``.
+
+The listener has a credential separate from the API's; only this host process reads the API token.
+"""
 
 from __future__ import annotations
 
 import hmac
 import json
 import socket
-from pathlib import Path
 
 import uvicorn
 from loguru import logger
 from mcp.server.lowlevel.server import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-
-from framecontrol.mcp_server.api import ToolError, read_token
 
 MCP_PATH = "/mcp"
 UNAUTHORIZED_BODY = json.dumps({"code": "unauthorized", "message": "A valid bearer token is required"}, separators=(",", ":")).encode("ascii")
@@ -29,14 +26,11 @@ class BindError(OSError):
 
 
 class BearerAuth:
-    """Pure ASGI: every HTTP request must carry ``Authorization: Bearer <the token in the token file>``, else it is
-    answered 401 before the MCP app sees it. The file is read again for each request, so a token ``fc serve``
-    regenerated is the one that counts, as for the API client. The answer says nothing of why (the reason, which can
-    name a path, goes to the log): a caller without the token learns nothing from it."""
+    """Pure ASGI: every HTTP request must carry the listener's bearer token, else 401 before MCP sees it."""
 
-    def __init__(self, app: ASGIApp, token_path: Path) -> None:
+    def __init__(self, app: ASGIApp, token: str) -> None:
         self._app = app
-        self._token_path = token_path
+        self._token = token.encode("ascii")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and not self._permitted(scope):
@@ -46,16 +40,14 @@ class BearerAuth:
         await self._app(scope, receive, send)
 
     def _permitted(self, scope: Scope) -> bool:
-        supplied = next((value.decode("latin-1") for name, value in scope["headers"] if name == b"authorization"), "")
+        values = [value for name, value in scope["headers"] if name.lower() == b"authorization"]
+        if len(values) != 1:
+            return False
+        supplied = values[0].decode("latin-1")
         scheme, _, credentials = supplied.partition(" ")
         if scheme.lower() != "bearer" or not credentials:
             return False
-        try:
-            expected = read_token(self._token_path)
-        except ToolError as error:
-            logger.warning("Refusing an MCP request: {}", error)
-            return False
-        return hmac.compare_digest(credentials.strip().encode("utf-8"), expected.encode("utf-8"))
+        return hmac.compare_digest(credentials.encode("utf-8"), self._token)
 
 
 class McpBodyLimit:
@@ -107,12 +99,12 @@ class McpBodyLimit:
         await send({"type": "http.response.body", "body": body})
 
 
-def http_app(server: Server, token_path: Path, host: str) -> ASGIApp:
+def http_app(server: Server, listener_token: str, host: str) -> ASGIApp:
     """The SDK's Streamable HTTP app of ``server``, behind ``BearerAuth``. A loopback bind keeps the SDK's own check of
     the ``Host`` and ``Origin`` headers; beyond loopback, the clients' addresses are not known here, and the token is
     what keeps a caller out."""
     security = None if host in LOOPBACK_HOSTS else TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    return BearerAuth(McpBodyLimit(server.streamable_http_app(streamable_http_path=MCP_PATH, host=host, transport_security=security, max_request_body_size=MAX_HTTP_BODY_BYTES)), token_path)
+    return BearerAuth(McpBodyLimit(server.streamable_http_app(streamable_http_path=MCP_PATH, host=host, transport_security=security, max_request_body_size=MAX_HTTP_BODY_BYTES)), listener_token)
 
 
 def bind(host: str, port: int) -> socket.socket:
@@ -125,11 +117,11 @@ def bind(host: str, port: int) -> socket.socket:
         raise BindError(f"Cannot listen on {host}:{port}: {error.strerror or error}") from error
 
 
-async def serve_http(server: Server, token_path: Path, host: str, port: int) -> None:
+async def serve_http(server: Server, listener_token: str, host: str, port: int) -> None:
     """Serve ``server`` at ``http://host:port/mcp`` until a signal stops it (uvicorn handles them). ``ws="none"``, so
     the app sees only HTTP and the lifespan."""
     sock = bind(host, port)
-    config = uvicorn.Config(http_app(server, token_path, host), log_config=None, ws="none")
+    config = uvicorn.Config(http_app(server, listener_token, host), log_config=None, ws="none")
     logger.info("MCP over Streamable HTTP at http://{}:{}{}", f"[{host}]" if ":" in host else host, port, MCP_PATH)
     try:
         await uvicorn.Server(config).serve(sockets=[sock])

@@ -3,6 +3,18 @@
 Owner decisions, design decisions, and notable changes for
 [Phase 4](README.md). Newest first.
 
+## 2026-10-20
+
+- **Owner decision** [M20, Phase 5 M08]: Move the planned graph-based metadata work from Phase 4 Milestone 20 to [Phase 5 Milestone 08](../phase-5/milestone-08-graph-metadata.md). The milestone's status, scope, and plan are unchanged. Earlier entries retain their original milestone labels and references.
+
+- **Design decision**: The UTM guest gets a separate MCP listener token, created automatically in `config/mcp-token` and kept in memory until listener restart. The host MCP process uses `config/server-token` only on loopback. One `run-utm.sh` supervises both services; the token is transferred to the guest once and never printed during startup. This removes the direct API authority of the guest token while keeping the existing MCP tool flow. Alternatives rejected for this deployment: giving the guest a scoped REST token (a larger API authorization change) and printing a new pairing secret on every start (unnecessary secret exposure and repeated guest reconfiguration).
+- **Change**: `fc mcp --transport streamable-http` refuses to reuse the host API token file for its listener, and the listener rejects duplicate Authorization headers. The guest can use an environment-variable reference in OpenClaw configuration.
+- **Change**: Remote MCP no longer offers or forwards permanent execution deletion. Local stdio MCP and the human-facing CLI and TUI retain that action; remote job-file writes remain governed by `fc serve --allow-write`.
+- **Change**: The UTM Shared Network launchers now bind the REST API and gRPC to host loopback and expose only the MCP listener on `192.168.64.1`, removing direct API access from the guest.
+- **Change**: The run lock now refuses symbolic links and non-regular files, preventing a substituted `state/run.lock` from redirecting lock writes.
+- **Change**: The HTTP API now refuses malformed `Host` authorities, including userinfo and URL suffixes, rather than accepting them as loopback through URL parsing.
+- **Change** [M16]: Invalid H3 reference media errors now show the input lookup root and the reference paths in job definitions and the Activity log.
+
 ## 2026-10-19
 
 - **Design decision** [M16]: Supersede the 2026-10-18 server-only submission rule. The TUI fast-validates a loopback submission locally immediately before it posts, while the server remains the authoritative full validator and snapshot writer. Remote servers deliberately bypass local file validation.

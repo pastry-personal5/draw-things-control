@@ -570,7 +570,11 @@ The Jobs list's fast check visits every reference in every pair selected by an
 `r2av` run, including `video_audio`'s paired audio. Each must already be an
 existing regular non-symlink file confined to `input_directory`; the fast check
 reads image headers and media metadata but does not fully decode it. The server
-performs the full check and snapshot when it accepts the submission.
+performs the full check and snapshot when it accepts the submission. When a
+reference file is missing, outside the directory, or invalid media, the
+invalid-job reason in the Activity log shows the lookup root followed by the
+reference's `path` and, for `video_audio`, `audio`. Paths inside the root are
+shown relative to it; an outside absolute path is shown as supplied.
 
 An H3 profile's optional controls include `render_width` and
 `render_height` (together, same aspect ratio, no larger than output),
@@ -1607,8 +1611,9 @@ through MCP (the endpoint itself is always on, for `fc history delete` and the T
 `--allow-remote-bind` is given, since beyond loopback the bearer token below
 crosses the network in plain HTTP; an SSH tunnel is the safer way in from
 elsewhere. With the flag, `serve` starts but warns about it. Either way, an
-HTTP request whose `Host` header names neither loopback nor the bound address
-is refused, so a web page cannot reach the server through DNS rebinding. A
+HTTP request whose `Host` header names neither loopback nor the bound address,
+or contains URL userinfo, a path, a query, or a fragment, is refused, so a web
+page cannot reach the server through DNS rebinding. A
 `--port` or `--grpc-port` already in use is refused (exit 2) before the
 worker starts, so nothing it may have already queued is disturbed.
 
@@ -1846,40 +1851,73 @@ client started from anywhere else, give the project's directory:
 **Over HTTP, for a client that cannot start it.** A client in a virtual machine,
 such as OpenClaw, cannot start `fc mcp` here, and `fc serve`'s port is the
 REST API, not an MCP endpoint: a client's `--url` pointed at it gets a 404 for
-`/`, `/sse`, and `/mcp`. Run `fc mcp` as a listener instead (`./run-mcp-server.sh`
-does this for the `192.168.64.1` bridge):
+`/`, `/sse`, and `/mcp`. For the UTM Shared Network bridge, one host command
+starts both services and stops both when it exits:
 
 ```bash
-uv run fc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bind --server-url http://192.168.64.1:8765 --allow-remote-server
+./run-utm.sh
 ```
 
-It serves the same tools and resources at `http://HOST:PORT/mcp` (`--port`
-default 8767; `--host` default `127.0.0.1`). Every request must carry the
-same server token as the REST API, the text of `config/server-token`, as
-`Authorization: Bearer TOKEN`; any other is 401, and the token is read again for each request, so a
-regenerated one counts at once. A `--host` beyond loopback is refused (exit 2)
-without `--allow-remote-bind`, and then the token crosses the network in plain
-HTTP, as `fc serve --allow-remote-bind` warns; an SSH tunnel is the safer way
-in from elsewhere. `--host`, `--port`, and `--allow-remote-bind` with the default
-`--transport stdio` are refused, not ignored. Register it in the client with
-the URL, the transport `streamable-http` (not `sse`), and the header; for
-OpenClaw:
+It starts `run-host-network-device-server.sh`, which binds the API and gRPC
+only to host loopback, and `run-mcp-server.sh`, which exposes MCP on
+`192.168.64.1` and calls the loopback API. The two scripts can also be run
+separately. The listener's equivalent command is:
 
 ```bash
-#!/usr/bin/env bash
-
-if [[ -z "${TOKEN:-}" ]]; then
-  echo "Set the server token from framecontrol (config/server-token) as a shell variable TOKEN."
-  exit 1
-fi
-
-openclaw mcp add framecontrol-mcp \
-  --url http://192.168.64.1:8767/mcp \
-  --transport streamable-http \
-  --header "Authorization=Bearer ${TOKEN}" \
-  --timeout 1600
-openclaw mcp probe framecontrol-mcp
+uv run fc mcp --transport streamable-http --host 192.168.64.1 --allow-remote-bind --server-url http://127.0.0.1:8765
 ```
+
+It serves the MCP tools and resources at `http://HOST:PORT/mcp` (`--port`
+default 8767; `--host` default `127.0.0.1`). On first HTTP start it creates
+`config/mcp-token`, a 64-digit random token in a mode-0600 file. This is the
+only token to copy into the guest; `config/server-token` stays on the host.
+The two files cannot be the same. `--listener-token-file` selects another
+private file if needed. Every MCP request needs `Authorization: Bearer TOKEN`;
+the listener keeps its token in memory until it restarts. To rotate it, stop
+the listener, remove `config/mcp-token`, restart, and update the guest's copy.
+A `--host` beyond loopback is refused (exit 2) without `--allow-remote-bind`;
+then the MCP token crosses the network in plain HTTP, so keep the listener on
+the VM-facing address or use an encrypted tunnel. `--host`, `--port`,
+`--allow-remote-bind`, and `--listener-token-file` with the default
+`--transport stdio` are refused, not ignored.
+
+Register the URL, transport `streamable-http` (not `sse`), and the MCP token
+with OpenClaw in the guest. Transfer `config/mcp-token` once by a channel you
+trust; keep `config/server-token` out of the guest. OpenClaw supports an
+environment-variable reference in its MCP header, so the guest's config can
+hold `Bearer ${MCP_REMOTE_TOKEN}` rather than the token itself
+([OpenClaw MCP configuration](https://github.com/openclaw/openclaw/blob/main/docs/plugins/bundles.md)):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "framecontrol": {
+        "url": "http://192.168.64.1:8767/mcp",
+        "transport": "streamable-http",
+        "headers": {"Authorization": "Bearer ${MCP_REMOTE_TOKEN}"},
+        "requestTimeoutMs": 1600000
+      }
+    }
+  }
+}
+```
+
+Add `MCP_REMOTE_TOKEN=<the transferred token>` to the guest's
+`~/.openclaw/.env` and keep that file mode 0600; OpenClaw loads it when the
+Gateway starts ([OpenClaw environment loading](https://github.com/openclaw/openclaw/blob/main/docs/help/faq/env-vars.md)).
+Restart the Gateway, then verify the connection in the guest:
+
+```bash
+openclaw mcp doctor framecontrol --probe
+```
+
+After the guest uses the new
+credential, rotate `config/server-token` once to revoke the old API token
+previously stored there: stop `fc serve`, remove that file, and restart.
+Local Framecontrol clients read the replacement file; the host MCP process
+also reloads it after an API refusal. The guest's MCP token cannot
+authenticate to the REST API even if that port is exposed later.
 
 The HTTP listener bounds each authenticated JSON-RPC request at 8 MiB before
 the MCP SDK parses it. An oversized request gets HTTP 413 with `code`,
@@ -1888,15 +1926,14 @@ API's configured job limit. Use stdio MCP or the REST API for a larger
 configured job. A listener refusal never reaches the REST API or its audit;
 forwarded writes are audited there.
 
-`--timeout 1600` is OpenClaw's per-request timeout, 60 seconds by default, which
+`requestTimeoutMs: 1600000` sets OpenClaw's per-request timeout to 1600 seconds; its 60-second default
 would end a `get_queue_entry` wait of more than 50 seconds (see
 "Waiting for a change" below); 1600 covers a wait of up to the 1500
 seconds `fc mcp` allows a client that sends no progress token.
 
-`openclaw mcp add` connects before it saves, so a wrong URL, transport, or token
-saves nothing and says why. It writes the header, token included, to
-`openclaw.json` in the clear; OpenClaw's configuration documents `${VAR}` in a
-header value, `Bearer ${MCP_REMOTE_TOKEN}`, as the way to keep it out.
+If you use `openclaw mcp add --header` with the token's literal value instead,
+OpenClaw saves that value in `openclaw.json`; the environment-variable form
+above keeps the secret out of the configuration text.
 
 **Tools.** Each calls one API endpoint, with the API's argument names and
 bounds, and returns the API's JSON as it is: as structured content, and the
@@ -1931,9 +1968,11 @@ through MCP, and release only a hold an agent made: the rest answer
 All MCP sessions share the caller `mcp`, so this keeps agents off people's
 entries, not one agent off another's.
 
-**The write tools.** `create_job`, `replace_job`, `delete_job`, and
-`delete_executions` are listed only while `fc serve` runs with
-`--allow-write`. `fc mcp` reads `GET /capabilities` when a client asks for the
+**The write tools.** `create_job`, `replace_job`, and `delete_job` are listed
+only while `fc serve` runs with `--allow-write`. The stdio transport also
+offers `delete_executions` then; the HTTP transport never offers it and
+refuses a direct call without forwarding it. Delete history through a local
+front end. `fc mcp` reads `GET /capabilities` when a client asks for the
 tool list, and again before a call when its last read is over 5 seconds old,
 and when the setting has changed, it tells the client the tool list changed (on
 a `subscriptions/listen` stream for a 2026-07-28 client, and as
@@ -1941,9 +1980,9 @@ a `subscriptions/listen` stream for a 2026-07-28 client, and as
 cache hint too. A client that does not act on the notice keeps its old list:
 a job file write tool it calls once writes are off gets the API's `writes_off`,
 and write tools turned on appear only when it reads the list again.
-`delete_executions` reads the capabilities afresh before every call, and is
-refused with its own `writes_off` while writes are off, without reaching its
-endpoint; it is final, so its `dry_run` is required.
+On stdio, `delete_executions` reads the capabilities afresh before every call,
+and is refused with its own `writes_off` while writes are off, without reaching
+its endpoint; it is final, so its `dry_run` is required.
 
 **Waiting for a change.** `get_queue_entry` with `wait_seconds` (1 to 7200)
 answers once the entry changes in a way an agent acts on — its state, its
@@ -1975,13 +2014,16 @@ are still listed, and each call answers an error, and `fc mcp` keeps running:
 | `invalid_input` | An argument it refuses before any request |
 | `writes_off` | `delete_executions` while writes are off |
 
-**What an agent can do.** The token grants full API access: a session that can
-read `config/server-token` can call any endpoint as `cli`, `tui`, or `api`,
-including `POST /v1/executions/delete` with or without `--allow-write`. The
-MCP tool list guides an agent that uses it; it does not restrict a token holder.
-`--allow-write` enables job-file creation, replacement, and deletion and
-advertises MCP's execution deletion tool. `run-loopback-server.sh` and
-`run-host-network-device-server.sh` enable it. Replaced
+**What an agent can do.** The MCP token grants access to the listed MCP tools
+and resources, not direct REST access. The host MCP process alone holds the
+API token and forwards those calls. An agent with the MCP token can read jobs,
+prompts, execution details, and output paths, submit jobs, and act on entries
+submitted by an MCP caller. All MCP sessions share that caller. Anyone who
+also obtains `config/server-token` has full API access and can claim any caller.
+`--allow-write` enables job-file creation, replacement, and deletion; only
+stdio MCP also advertises execution deletion. `run-loopback-server.sh` and
+`run-host-network-device-server.sh` enable it; both bind the API to loopback.
+Replaced
 files stay in `data/jobs/.backups/`, deleted files in `data/jobs/.trash/`, and
 the audit rows in `state/framecontrol.db`. The [API limits](#server-http-api-and-grpc-monitoring)
 bound each submission and request. Cancel and server stop lose the current

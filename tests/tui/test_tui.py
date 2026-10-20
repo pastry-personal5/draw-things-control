@@ -325,6 +325,17 @@ class TuiTests(TuiTestCase):
         self.assertIn("'runs[0].pipeline'", shown)
         self.assertNotIn("Dry-run plan", shown)
 
+    async def test_invalid_reference_paths_show_the_input_lookup_root_in_the_activity_log(self) -> None:
+        self.write_data_job("bad-reference.yaml", backend="h3-metal-cli", mode="h3av", input=None, config_file=None, run_count=1, prompt_pairs=[{"name": "scene", "positive": "A singer"}], h3_runs=[{"run": 1, "pipeline": "r2av", "reference_pair": "voice"}], reference_pairs=[{"name": "voice", "references": [{"kind": "video_audio", "path": "clips/scene.mp4", "audio": "voices/missing.wav"}]}], backend_settings={"width": 768, "height": 1344, "frames": 96, "seconds": 4, "steps": 30, "seed": 42}, output={"extension": "mp4"})
+        (self.input_directory / "clips").mkdir()
+        (self.input_directory / "clips" / "scene.mp4").write_bytes(b"placeholder")
+        app = self.app()
+        async with app.run_test() as pilot:
+            await self.settle(pilot)
+            shown = await self.show(pilot, "bad-reference")
+        self.assertIn("'reference_pairs.voice.references[0].audio' must name an existing regular file", shown)
+        self.assertIn(f"Looked in: {self.input_directory}\n  path: clips/scene.mp4\n  audio: voices/missing.wav", shown)
+
     async def test_a_missing_tool_shows_the_message_and_the_rest_still_renders(self) -> None:
         self.write_data_job("walk.yaml")
         for missing in ("draw-things-cli", "ffmpeg"):

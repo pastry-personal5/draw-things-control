@@ -22,17 +22,19 @@ def host_header_is_allowed(host_header: str | None, *, bound_host: str, bound_po
     actually bound to, port included when the header gives one. When ``bound_host`` is a wildcard bind
     (``0.0.0.0`` or ``::``, only reachable with ``--allow-remote-bind``), any hostname is accepted: the owner
     already chose to expose every interface, and no Host header can name the wildcard address itself."""
-    if not host_header:
+    # Host is an authority, not a URL. urlsplit alone also accepts a userinfo prefix,
+    # path, query, or fragment and silently strips some control characters.
+    if not host_header or any(character in host_header for character in "/?#@\\%") or any(ord(character) <= 32 or ord(character) >= 127 for character in host_header):
         return False
     try:
         split = urlsplit(f"//{host_header}")
         hostname, port = split.hostname, split.port
     except ValueError:
         return False
-    if hostname is None:
+    if hostname is None or split.netloc != host_header or host_header.endswith(":"):
         return False
     if hostname in LOOPBACK_HOSTNAMES:
-        return True
+        return port is None or 0 < port <= 65535
     if bound_host.lower() in WILDCARD_HOSTNAMES:
         return port is None or port == bound_port
     return hostname == bound_host.lower() and (port is None or port == bound_port)

@@ -1,10 +1,10 @@
-# Phase 4: (1) Producing and Consuming Graph-based Metadata (2) Squashed Product Improvement
+# Phase 4: Squashed product improvement
 
 **Status:** in-progress
 
 ## Goal
 
-Improve the product experience, make chained generation support multiple backends, add H3 image-to-audio-video generation, and produce and consume graph-based metadata.
+Improve the product experience, make chained generation support multiple backends, and add H3 image-to-audio-video generation.
 
 ## Scope
 
@@ -23,7 +23,6 @@ Improve the product experience, make chained generation support multiple backend
 - TUI experience in Milestone 13: a faster launch, a safer delete confirmation, a bell, toast and macOS notification when a job ends, keyboard scrolling of the logs, an idle work status, `F1`, a text viewer for job and queue details, Tab cycling, a saved command history, and a guarded `a`.
 - The forecast's heuristic knobs (tunables and per-backend, per-run-knob, per-size calibration) kept as external files under `data/timing-data-analysis/`, factory defaults where a value is missing, and provisional early learning, in Milestone 14.
 - Later knob updates validated on unseen executions, and a search of the tunables, in Milestone 15.
-- Producing and consuming graph-based metadata in Milestone 20.
 
 ## Non-goals
 
@@ -52,7 +51,6 @@ Improve the product experience, make chained generation support multiple backend
 | 13 | [TUI experience](milestone-13-tui-experience.md) | done |
 | 14 | [Timing knobs as external files](milestone-14-timing-knobs.md) | done |
 | 15 | [Held-out gate and tunables search](milestone-15-timing-gate-and-search.md) | planned |
-| 20 | [Graph-based metadata](milestone-20-graph-metadata.md) | planned |
 
 ## Depends on
 
@@ -67,7 +65,6 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 13 depends on Milestone 12's TUI.
 - Milestone 14 depends on Milestone 11's landed forecast, fit, and replay harness, which it refactors onto a tunables and calibration seam, and on Milestone 10's timing rows.
 - Milestone 15 depends on Milestone 14's files, ring, and provisional checkpoints.
-- Milestone 20 follows Milestones 05, 06, and 09 so its provenance graph can record frozen references, retained video copies, and each run's backend and pipeline.
 
 ## Changelog
 
@@ -87,4 +84,3 @@ Decisions and notable changes are recorded in
 - The running job's completion time and progress come from one stage-aware forecast with a stated range and basis, computed once by the server, shown the same way by the TUI's work status, `fc queue add --wait` and `fc queue show`, the HTTP API, gRPC, and MCP, and measured against the previous estimator by replay, as defined in Milestone 11.
 - The forecast's tunables and calibration live in files under `data/timing-data-analysis/`, factory defaults apply where a value is missing, early calibration is labeled provisional, an owner's hand edit is kept, and the forecast depends on each run's backend, knobs, width, and height, as defined in Milestone 14. Later changes pass a held-out replay gate with backups, and the tunables are searched under guards, as defined in Milestone 15.
 - H3 runs' arguments read correctly in the TUI's dry-run plan and Execution detail, and a file link can open with the executable named by `file_opener`, as defined in Milestone 12.
-- Graph-based metadata is produced, consumed, and documented as defined in Milestone 20.

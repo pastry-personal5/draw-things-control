@@ -60,6 +60,7 @@ Launch with `fc` or `python -m framecontrol`.
 | Module | Responsibility |
 |--------|----------------|
 | `core/paths.py` | `ProjectPaths`: where the project keeps its files, including the project-owned H3 executable and model snapshot, worked out once and passed down; no module holds a path of its own |
+| `core/secret_file.py` | Create and validate private bearer-token files for the API and guest-facing MCP listener; the listener token never goes to the REST API |
 | `core/errors.py`, `core/exit_codes.py` | `FramecontrolError` and its coded subclasses (`invalid_input`, `tool_missing`, `not_found`, `busy`, `state_unavailable`, `conflict`, and `not_permitted`, among others); the exit codes, signal codes, and the one mapping from an error's code to an exit code |
 | `core/yaml_files.py` | The one strict YAML reader: duplicate and non-string keys, octal and base-60 numbers are refused |
 | `core/draw_things_config.py` | Draw Things configurations (YAML only), lookup in `data/params/`, and job overrides applied to them |

@@ -193,3 +193,11 @@ class RunLockTests(unittest.TestCase):
         blocker.write_text("")
         with self.assertRaisesRegex(RunLockError, "Cannot create the state directory"):
             RunLock("generate", directory=blocker / "state").acquire()
+
+    def test_a_linked_lock_file_cannot_overwrite_its_target(self) -> None:
+        target = self.directory / "valuable.txt"
+        target.write_text("keep this", encoding="utf-8")
+        (self.directory / "run.lock").symlink_to(target)
+        with self.assertRaisesRegex(RunLockError, "Cannot open the run lock"):
+            self.lock().acquire()
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep this")

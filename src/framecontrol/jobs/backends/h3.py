@@ -267,6 +267,21 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _reference_path_context(input_directory: Path, entry: dict[str, Any]) -> str:
+    """Show the lookup root before the paths written in a reference entry."""
+    root = input_directory.resolve()
+    lines = [f"Looked in: {root}"]
+    for key in ("path", "audio"):
+        raw = entry.get(key)
+        if isinstance(raw, str):
+            value = raw.strip()
+            candidate = Path(value)
+            if candidate.is_absolute() and candidate.is_relative_to(root):
+                value = str(candidate.relative_to(root))
+            lines.append(f"  {key}: {value}")
+    return "\n" + "\n".join(lines)
+
+
 def _inspect_reference(kind: str, path: Path, audio_path: Path | None, *, decode: bool = True) -> dict[str, Any]:
     """Decode a declared reference and validate the streams H3 will consume. ``decode=False`` (a caller that only reads the
     job's fields, such as the Jobs list) keeps every header and stream check but skips decoding the pixels and samples."""
@@ -523,7 +538,9 @@ class H3Backend:
                 expected = {"kind", "path", "audio"} if kind == "video_audio" else {"kind", "path"}
                 if set(entry) != expected:
                     parser.fail(entry_field, "has unknown or missing fields")
+                path_context = _reference_path_context(parser._global_config.input_directory, entry)
                 paths: dict[str, Path] = {}
+                snapshotted_any = False
                 for key in ("path", "audio") if kind == "video_audio" else ("path",):
                     raw = entry[key]
                     key_field = f"{entry_field}.{key}"
@@ -531,6 +548,7 @@ class H3Backend:
                         parser.fail(key_field, "must be a nonempty file path")
                     path = parser.reference_override(name, entry_index, key)
                     snapshotted = path is not None
+                    snapshotted_any |= snapshotted
                     if parser.require_reference_snapshots and not snapshotted:
                         parser.fail(key_field, "has no saved reference snapshot")
                     if path is None:
@@ -539,19 +557,22 @@ class H3Backend:
                         lexical = lexical if lexical.is_absolute() else input_directory / lexical
                         link = linked_component(lexical, input_directory)
                         if link is not None:
-                            parser.fail(key_field, f"must not use symbolic links: {link}")
-                        path = parser._confined_path(raw.strip(), parser._global_config.input_directory, key_field)
+                            parser.fail(key_field, f"must not use symbolic links: {link}{path_context}")
+                        try:
+                            path = parser._confined_path(raw.strip(), input_directory, key_field)
+                        except InputError as error:
+                            raise type(error)(f"{error}{path_context}", field=error.field, path=error.path) from error
                     if not inactive and (not path.is_file() or path.is_symlink()):
-                        parser.fail(key_field, "must name an existing regular file and must not be a symbolic link")
+                        parser.fail(key_field, f"must name an existing regular file and must not be a symbolic link{'' if snapshotted else path_context}")
                     if not snapshotted:
                         size = path.stat().st_size
                         file_limit = parser._global_config.api_limits.max_reference_file_bytes
                         if size > file_limit:
-                            parser.fail(key_field, f"is {size} bytes, over the max_reference_file_bytes limit of {file_limit}")
+                            parser.fail(key_field, f"is {size} bytes, over the max_reference_file_bytes limit of {file_limit}{path_context}")
                         aggregate_bytes += size
                         total_limit = parser._global_config.api_limits.max_reference_bytes
                         if aggregate_bytes > total_limit:
-                            parser.fail(key_field, f"makes reference assets exceed the max_reference_bytes limit of {total_limit}")
+                            parser.fail(key_field, f"makes reference assets exceed the max_reference_bytes limit of {total_limit}{path_context}")
                     paths[key] = path
                 if kind == "image":
                     images += 1
@@ -573,7 +594,7 @@ class H3Backend:
                         duration = _inspect_reference(kind, paths["path"], audio_path, decode=parser.decode_input)
                     except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
                         media_field = "audio" if kind == "video_audio" and audio_path is not None and "audio" in str(error).lower() else "path"
-                        parser.fail(f"{entry_field}.{media_field}", str(error))
+                        parser.fail(f"{entry_field}.{media_field}", f"{error}{'' if snapshotted_any else path_context}")
                 if kind in ("video", "video_audio") and effective_frames_count < 56:
                     parser.fail(f"{entry_field}.path", "video audio references require at least 56 effective output frames")
                 if kind in ("audio", "video", "video_audio") and not inactive:

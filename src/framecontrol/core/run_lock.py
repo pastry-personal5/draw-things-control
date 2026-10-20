@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -113,9 +114,18 @@ class RunLock:
     def _open(self) -> int:
         path = ensure_state_directory(self._directory) / LOCK_FILE_NAME
         try:
-            return os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+            descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
         except OSError as error:
             raise RunLockError(f"Cannot open the run lock {path}: {error.strerror}") from error
+        try:
+            regular = stat.S_ISREG(os.fstat(descriptor).st_mode)
+        except OSError as error:
+            os.close(descriptor)
+            raise RunLockError(f"Cannot inspect the run lock {path}: {error.strerror}") from error
+        if not regular:
+            os.close(descriptor)
+            raise RunLockError(f"The run lock {path} is not a regular file")
+        return descriptor
 
     def _flock(self, descriptor: int) -> bool:
         deadline = time.monotonic() + self._retry_seconds

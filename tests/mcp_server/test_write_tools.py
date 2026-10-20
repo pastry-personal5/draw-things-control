@@ -10,10 +10,24 @@ import anyio
 import httpx
 from mcp.shared.subscriptions import ToolsListChanged
 
-from tests.mcp_server.mcp_case import McpCase
+from framecontrol.mcp_server.app import build_server
+from tests.mcp_server.mcp_case import SERVER_URL, McpCase
 from tests.mcp_server.test_tools import READ_RUN_AND_QUEUE_CONTROL
 
 WRITE_TOOLS = ["create_job", "replace_job", "delete_job", "delete_executions"]
+
+
+class RemoteWriteToolTests(McpCase):
+    async def test_remote_mcp_never_offers_or_forwards_permanent_history_deletion(self) -> None:
+        self.serve(allow_write=True)
+        self.server = build_server(SERVER_URL, self.paths.server_token, http_transport=self.transport, clock=lambda: self.now, remote=True)
+        async with self.client() as client:
+            names = [tool.name for tool in (await client.list_tools()).tools]
+            self.assertIn("create_job", names)
+            self.assertNotIn("delete_executions", names)
+            refused = await self.error(client, "delete_executions", {"executions": ["E0001"], "dry_run": True})
+        self.assertEqual(refused["code"], "not_permitted")
+        self.assertEqual(self.transport.sent(), [])
 
 
 class WriteToolTests(McpCase):
