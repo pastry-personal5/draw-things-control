@@ -309,11 +309,13 @@ class ShowRow:
     path: str
     value: Any
     source: str
+    approved_against: str | None = None
 
 
 def show(files: KnobFiles) -> list[ShowRow]:
     """Every effective value with where it came from: factory, provisional, learned, pinned, backup, or the tunables file."""
     loaded = load_knobs(files)
+    written = files.read_written()
     rows: list[ShowRow] = []
     tuning = tunables_to_file(loaded.tunables)
     factory_tuning = flatten(tunables_to_file(factory_tunables()))
@@ -337,7 +339,10 @@ def show(files: KnobFiles) -> list[ShowRow]:
                 source = KNOBS_LEARNED if calibration.pipelines[parts[1]].source == KNOBS_LEARNED else "provisional"
             else:
                 source = KNOBS_FACTORY
-            rows.append(ShowRow(name, path, value, source))
+            group = f"{backend}/{parts[1]}" if len(parts) > 1 and parts[0] == "pipelines" else ""
+            record = written.groups.get(group, {})
+            approved_against = record.get("approved_against") if source == KNOBS_LEARNED and isinstance(record, Mapping) and record.get("approved_against") in ("factory", "learned") else None
+            rows.append(ShowRow(name, path, value, source, approved_against))
     return rows
 
 
@@ -348,6 +353,7 @@ class CheckReport:
     pins: Mapping[str, Mapping[str, Any]]
     deferred: tuple[str, ...]
     gates: Mapping[str, str]
+    search: str | None
     files: tuple[str, ...]
 
     @property
@@ -380,7 +386,9 @@ def check(files: KnobFiles) -> CheckReport:
     present = {name for name, state in loaded.files.items() if state.present}
     if files.path_of(VALIDATED_FILE).exists():
         present.add(VALIDATED_FILE)
-    return CheckReport(issues, tuple(sorted(suspended)), {name: dict(state.pins) for name, state in loaded.files.items() if state.pins}, tuple(deferred), gates, tuple(sorted(present)))
+    last_search = written.search.get("last_result")
+    search = json.dumps(last_search, sort_keys=True) if isinstance(last_search, Mapping) else None
+    return CheckReport(issues, tuple(sorted(suspended)), {name: dict(state.pins) for name, state in loaded.files.items() if state.pins}, tuple(deferred), gates, search, tuple(sorted(present)))
 
 
 def factory_texts() -> dict[str, str]:
@@ -418,6 +426,10 @@ def reset(files: KnobFiles, backend: str | None = None) -> list[str]:
         for group in list(written.groups):
             if backend is None or group.startswith(f"{backend}/"):
                 written.groups[group] = {"count": 0, "checkpoint": 0}
+        # A reset makes the processed-run total move backwards.  Start the
+        # global search cadence from that new total and discard the stale
+        # result rather than waiting for the old pre-reset total to be passed.
+        written.search = {"last_attempt_total": sum(int(record.get("count", 0)) for record in written.groups.values() if isinstance(record, Mapping))}
         # Validated baselines are machine state too: resetting all backends
         # removes it, while a targeted reset drops only that backend's entry.
         validated = files.read_text(VALIDATED_FILE)
@@ -451,7 +463,7 @@ def rollback(files: KnobFiles, count: int = 1) -> list[str]:
         return files.rollback(count, load_knobs(files).tunables.backup_count)
 
 
-def update_now(paths: ProjectPaths) -> UpdateReport:
+def update_now(paths: ProjectPaths, *, force_search: bool = False) -> UpdateReport:
     """Run one update now, as the server's updater would, from the runs the state database holds (read only; a missing
     database is no runs). It takes the same lock, so it can run beside a server."""
     from framecontrol.services.knob_updater import KnobUpdateEngine, runs_of_store
@@ -464,7 +476,7 @@ def update_now(paths: ProjectPaths) -> UpdateReport:
             runs = runs_of_store(store)
         finally:
             store.close()
-    return KnobUpdateEngine(knob_files(paths)).update(runs)
+    return KnobUpdateEngine(knob_files(paths)).update(runs, force_search=force_search)
 
 
 def tune_now(paths: ProjectPaths) -> UpdateReport:
@@ -473,4 +485,4 @@ def tune_now(paths: ProjectPaths) -> UpdateReport:
     The M15 search shares the updater's lock and eligibility checks; exposing
     this entry point keeps the CLI from acquiring a second, racy lock.
     """
-    return update_now(paths)
+    return update_now(paths, force_search=True)

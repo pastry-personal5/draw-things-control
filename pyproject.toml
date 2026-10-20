@@ -60,6 +60,9 @@ known-first-party = ["framecontrol", "tests"]
 # footgun B008 warns about: these calls build a marker FastAPI's dependency injection reads, never a shared mutable value.
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
 
+[tool.pytest.ini_options]
+markers = ["timing_performance: CPU-budget checks run serially after the parallel functional suite"]
+
 [tool.pyright]
 include = ["src", "tests"]
 # Generated gRPC stubs (see the ruff extend-exclude above): the .pyi files still give pyright what it needs to

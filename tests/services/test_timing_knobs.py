@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -216,6 +217,19 @@ class OperationTests(KnobFilesTestCase):
         self.assertEqual(rows[(DT_FILE, "pipelines/i2v/step/seconds")].source, "factory")
         self.assertEqual(rows[(TUNING, "tunables/pause_factor")].source, "factory")
 
+    def test_show_names_the_baseline_of_a_validated_value(self) -> None:
+        self.first_update()
+        workload = h3_workload(pixels=832 * 448, frames=362, steps=30, references=3)
+        runs = [h3_run(execution, 1, step=400.0 if execution <= 32 else 130.0, workload=workload) for execution in range(1, 41)]
+        report = self.engine.update(runs, force_search=True)
+        self.assertTrue(report.search and report.search.startswith("promote "))
+        learned = [row for row in show(self.files) if row.file == H3_FILE and row.source == "learned"]
+        self.assertTrue(learned)
+        self.assertTrue(all(row.approved_against == "factory" for row in learned))
+        search = check(self.files).search
+        self.assertIsNotNone(search)
+        self.assertEqual(json.loads(search or "{}")["verdict"], "promote")
+
     def test_check_lists_pins_and_is_ok_when_clean(self) -> None:
         self.first_update(self.runs(1))
         self.assertTrue(check(self.files).ok)
@@ -226,12 +240,16 @@ class OperationTests(KnobFilesTestCase):
 
     def test_reset_moves_the_file_aside_and_the_factory_applies_and_learning_starts_over(self) -> None:
         self.first_update(self.runs(4))
+        written = self.files.read_written()
+        written.search = {"last_attempt_total": 99, "last_result": {"verdict": "promote"}}
+        self.files.atomic_write(self.files.written_path, json.dumps(written.as_dict()))
         moved = reset(self.files, H3_BACKEND)
         self.assertEqual(moved, [H3_FILE])
         self.assertFalse((self.files.directory / H3_FILE).exists())
         self.assertEqual(load_knobs(self.files).calibration.backends[H3_BACKEND], factory_calibration().backends[H3_BACKEND])
         self.assertTrue((self.files.directory / DT_FILE).exists())
         self.assertEqual(self.files.read_written().groups[f"{H3_BACKEND}/r2av"]["count"], 0)
+        self.assertEqual(self.files.read_written().search, {"last_attempt_total": 0})
         report = self.engine.update(self.runs(4))
         self.assertEqual(report.fitted[f"{H3_BACKEND}/r2av"], 4)
         with self.assertRaises(FramecontrolError):

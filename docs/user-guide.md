@@ -1468,10 +1468,23 @@ completed runs of a pipeline it writes a *provisional* calibration: one run adju
 only the local step-time point; a size, frame, aspect or run-knob effect opens
 only when at least three independent executions vary it, and many runs of one job
 count as one execution. Each change is clamped and the range stays wide. After
-the 32nd run of a pipeline the file stops changing (later runs still enter the
-ring) until a later milestone adds a held-out check. Pruning the history does not
-remove what the files learned, and a signature the files remember is still priced
-from them.
+the 32nd run, later updates fit only on older executions and replay the full
+remaining-time forecast on the newest independent executions, which the fit did
+not see. Fewer than five held-out executions is always inconclusive. A candidate
+is written as *learned* only when its error clearly improves or stays within the
+margin and its 80% range coverage does not clearly get worse; a clearly worse live
+provisional calibration is restored to the last approved value (the factory before
+the first approval). Pruning the history does not remove what the files learned,
+and a signature the files remember is still priced from them.
+
+After each 20 new completed runs, the same idle updater may search the shared
+tunables when a group has at least 40 ring runs from six executions. It selects
+with older training executions, requires at least a 1% relative training-error
+gain, checks the single chosen value on later held-out
+executions, and can move at most one unpinned tunable by one grid step only when
+the 99% paired interval shows a strict gain. A search
+that is inconclusive, reaches 10 CPU seconds, or notices generation starting
+changes nothing.
 
 **Pinning a number.** Edit the number in the file and save. Framecontrol sees that
 the file no longer matches what it last wrote, keeps your value, and fits the
@@ -1485,9 +1498,9 @@ ignored and the factory value for that key is used, with the other keys kept.
 ```bash
 uv run fc timing knobs show                    # every effective value and where it came from
 uv run fc timing knobs show h3-metal-cli.yaml --source provisional
-uv run fc timing knobs check                   # problems, pins, and deferred updates; exits 1 if a file cannot be used
+uv run fc timing knobs check                   # problems, pins, deferred updates, and the latest gate and search results
 uv run fc timing knobs update                  # learn from the retained runs now (no server needed)
-uv run fc timing knobs tune                    # run the guarded held-out update pass now (the tunables search is pending)
+uv run fc timing knobs tune                    # run one guarded tunables search now, if enough evidence exists
 uv run fc timing knobs rollback                # put the files back as they were before the latest update
 uv run fc timing knobs rollback 3              # ... before the update three back (a rollback is an update too, so one more undoes it)
 uv run fc timing knobs reset h3-metal-cli      # move that file aside; the factory applies and learning starts over
@@ -1497,7 +1510,10 @@ uv run fc timing knobs export-defaults
 A rollback keeps the count of completed runs, so learning resumes at the next of 1, 2, 4, 8, 16 and 32 and does not
 write again the calibration you just undid; `reset` starts a backend's learning over from the runs in the ring. If you
 save an edit while Framecontrol is writing a file, it keeps your edit, logs that it did, and reads it as a pin at its next
-update. Valid edits to `tuning.yaml` are pins too, so the automatic search will not move them.
+update. A searched `tuning.yaml`, the refitted backend files, and the approved baseline in
+`.machine/validated.json` are one transaction, so rollback restores them together. Reset drops the affected approved
+baseline and restarts the search cadence. Valid edits to `tuning.yaml` are pins too, so the automatic search will not move
+them. `show` names whether a learned value was approved against the factory or an earlier learned value.
 
 **Broken files.** A file that is not valid YAML, or is from a newer version of
 Framecontrol, is not used and not overwritten: the forecast uses its newest valid

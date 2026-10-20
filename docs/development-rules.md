@@ -62,9 +62,11 @@ The rules for changing `framecontrol`, for people and AI agents alike.
   pyright names its rule and says why.
 - `make test` and `make test-tui` are silent on success and show failures; use
   their `-verbose` variants while identifying an individual test. `make test`
-  and `make check` use eight workers by default; set `TEST_WORKERS` to select a
-  safe worker count for CI. `make test-profile` reports the 20 slowest tests;
-  set `TEST_PROFILE_LIMIT` to change that number.
+  and `make check` use eight workers by default for the functional suite, then
+  run CPU-budget benchmarks serially so their fixed-work thresholds are not
+  affected by concurrent worker load. Set `TEST_WORKERS` to select a safe
+  worker count for CI. `make test-profile` reports the 20 slowest tests; set
+  `TEST_PROFILE_LIMIT` to change that number.
 - `make proto` is silent on success and shows build errors.
 - `make format` applies Ruff's formatter.
 

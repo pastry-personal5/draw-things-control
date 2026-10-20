@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import math
+import time
 import unittest
 from dataclasses import replace
 from typing import Any
 
+import pytest
+
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
-from framecontrol.jobs.timing.calibrate import CHECKPOINTS, MAX_SHIFT, calibrate, checkpoint_reached
+from framecontrol.jobs.timing.calibrate import CHECKPOINTS, MAX_SHIFT, VALIDATED_MAX_MOVE, calibrate, calibrate_rows, calibrate_validated, checkpoint_reached
 from framecontrol.jobs.timing.factory import factory_calibration, factory_tunables
-from framecontrol.jobs.timing.features import HistoryRun
-from framecontrol.jobs.timing.knobs import KNOBS_PROVISIONAL, PipelineCalibration
+from framecontrol.jobs.timing.features import HistoryRun, feature_values
+from framecontrol.jobs.timing.fit import read_row
+from framecontrol.jobs.timing.gate import compare_replays
+from framecontrol.jobs.timing.knobs import KNOBS_LEARNED, KNOBS_PROVISIONAL, PipelineCalibration
+from framecontrol.jobs.timing.step_terms import learned_terms
 from tests.timing.builders import dt_run, dt_workload, h3_run, h3_workload
 
 BASE = factory_calibration().backends[DRAW_THINGS_BACKEND].pipelines["i2v"]
@@ -41,6 +47,70 @@ class CheckpointTests(unittest.TestCase):
     def test_the_checkpoints_are_the_powers_of_two_to_32(self) -> None:
         self.assertEqual(CHECKPOINTS, (1, 2, 4, 8, 16, 32))
         self.assertEqual([checkpoint_reached(count) for count in (0, 1, 3, 4, 31, 32, 99)], [0, 1, 2, 4, 16, 32, 32])
+
+    def test_a_validated_fit_selects_on_training_and_bounds_one_update(self) -> None:
+        runs = [run_at(execution, 1, REFERENCE[0], REFERENCE[1], BASE.step.seconds * 5) for execution in range(1, 9)]
+        result = calibrate_validated(BASE, runs, factory_tunables(), checkpoint=32, stamp=STAMP)
+        assert result is not None
+        self.assertEqual(result.source, KNOBS_LEARNED)
+        self.assertLessEqual(abs(result.step.shift - BASE.step.shift), VALIDATED_MAX_MOVE + 1e-12)
+        self.assertLessEqual(abs(math.log(result.step.seconds / BASE.step.seconds)), VALIDATED_MAX_MOVE + 1e-12)
+
+    def test_prepared_rows_produce_the_same_calibration_as_runs(self) -> None:
+        runs = [run_at(execution, 1, REFERENCE[0] + execution * 1024, REFERENCE[1] + execution, BASE.step.seconds + execution) for execution in range(1, 9)]
+        tunables = factory_tunables()
+
+        direct = calibrate(BASE, BASE, runs, tunables, checkpoint=8, stamp=STAMP)
+        prepared = calibrate_rows(BASE, BASE, [read_row(run, tunables) for run in runs], tunables, checkpoint=8, stamp=STAMP)
+
+        self.assertEqual(prepared, direct)
+
+    def test_a_validated_fit_is_shrunk_toward_the_approved_model_not_zero(self) -> None:
+        approved = replace(
+            BASE,
+            step=replace(
+                BASE.step,
+                shift=0.5,
+                aspect=0.8,
+                render_exponent=0.5,
+                reference_exponent=0.3,
+                knobs={"guidance_scale": 0.2},
+                sizes={"512x768": 0.4, "768x512": -0.3},
+            ),
+        )
+        runs = []
+        for execution in range(1, 13):
+            width = 512 if execution % 2 else 768
+            height = 768 if execution % 3 else 512
+            workload = dt_workload(pixels=width * height, frames=17 + 16 * (execution % 3), steps=25, width=width, height=height, guidance=5 + execution % 2)
+            step = approved.step.rate(workload["pixels"], workload["frames"], learned_terms(approved.step, workload, feature_values(workload)))
+            runs.append(dt_run(execution, 1, step=step, workload=workload))
+
+        result = calibrate_validated(approved, runs, factory_tunables(), checkpoint=32, stamp=STAMP)
+
+        assert result is not None
+        for name in ("pixel_exponent", "frame_exponent", "shift", "aspect", "render_exponent", "reference_exponent"):
+            self.assertAlmostEqual(getattr(result.step, name), getattr(approved.step, name), places=7, msg=name)
+        self.assertEqual(set(result.step.knobs), set(approved.step.knobs))
+        for name, value in approved.step.knobs.items():
+            self.assertAlmostEqual(result.step.knobs[name], value, places=7, msg=name)
+        for name, value in approved.step.sizes.items():
+            self.assertAlmostEqual(result.step.sizes[name], value, places=7, msg=name)
+        self.assertTrue(all(abs(value) < 1e-7 for name, value in result.step.sizes.items() if name not in approved.step.sizes))
+
+    @pytest.mark.timing_performance
+    def test_a_300_run_validated_fit_and_full_holdout_replay_fit_the_cpu_budget(self) -> None:
+        runs = [h3_run(execution, 1, step=130.0 + execution % 7, workload=h3_workload(pixels=832 * 448, frames=362, steps=30, references=3)) for execution in range(1, 301)]
+        factory = factory_calibration()
+        backend = factory.backends[H3_BACKEND]
+        started = time.process_time()
+        fitted = calibrate_validated(H3_BASE, runs[:-8], factory_tunables(), checkpoint=32, stamp=STAMP)
+        assert fitted is not None
+        candidate = replace(factory, backends={**factory.backends, H3_BACKEND: replace(backend, pipelines={**backend.pipelines, "r2av": fitted})})
+        comparison = compare_replays(runs[-8:], factory_tunables(), factory, factory_tunables(), candidate)
+        elapsed = time.process_time() - started
+        self.assertEqual((len(comparison.execution_ids), comparison.candidate.observations), (8, 48))
+        self.assertLess(elapsed, 3.0, f"300-run fit and held-out replay took {elapsed:.3f} CPU seconds")
 
 
 class OneExecutionTests(unittest.TestCase):

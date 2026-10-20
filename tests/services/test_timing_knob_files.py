@@ -233,6 +233,19 @@ class RollbackTests(FilesTestCase):
         self.assertEqual(self.files.read_written().groups["x/y"], {"count": 8, "checkpoint": 8})
         self.assertEqual(self.files.read_written().files["a.yaml"]["digest"], digest("a1"))
 
+    def test_a_rollback_restores_approval_provenance_but_keeps_current_counters(self) -> None:
+        self.commit(**{"a.yaml": "a1"})
+        with self.files.lock():
+            earlier = written_for(**{"a.yaml": "a2"})
+            earlier.groups["x/y"] = {"count": 8, "checkpoint": 8, "approved_against": "factory"}
+            self.files.commit({"a.yaml": "a2"}, earlier)
+            current = written_for(**{"a.yaml": "a3"})
+            current.groups["x/y"] = {"count": 9, "checkpoint": 8, "approved_against": "learned"}
+            self.files.commit({"a.yaml": "a3"}, current)
+            self.files.rollback(1)
+
+        self.assertEqual(self.files.read_written().groups["x/y"], {"count": 9, "checkpoint": 8, "approved_against": "factory"})
+
     def test_an_interrupted_rollback_is_finished_and_never_reads_as_a_hand_edit(self) -> None:
         self.commit(**{"a.yaml": "a1", "b.yaml": "b1"})
         self.commit(**{"a.yaml": "a2", "b.yaml": "b2"})

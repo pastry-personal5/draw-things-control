@@ -46,13 +46,15 @@ typecheck:
 
 test:
 	@output=$$(mktemp); \
-	$(PYTEST) -q -n "$(TEST_WORKERS)" --dist loadfile >"$$output" 2>&1; result=$$?; \
+	$(PYTEST) -q -n "$(TEST_WORKERS)" --dist loadfile -m "not timing_performance" >"$$output" 2>&1; result=$$?; \
+	if [ "$$result" -eq 0 ]; then $(PYTEST) -q -m timing_performance >>"$$output" 2>&1; result=$$?; fi; \
 	if [ "$$result" -ne 0 ]; then cat "$$output"; fi; \
 	rm -f "$$output"; \
 	exit "$$result"
 
 test-verbose:
-	$(PYTEST) -vv -n "$(TEST_WORKERS)" --dist loadfile
+	$(PYTEST) -vv -n "$(TEST_WORKERS)" --dist loadfile -m "not timing_performance"
+	$(PYTEST) -vv -m timing_performance
 
 test-tui:
 	@output=$$(mktemp); \

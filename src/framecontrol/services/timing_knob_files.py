@@ -88,16 +88,17 @@ class Written:
 
     files: dict[str, dict[str, Any]] = field(default_factory=dict)
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
+    search: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"schema": WRITTEN_SCHEMA, "files": self.files, "groups": self.groups}
+        return {"schema": WRITTEN_SCHEMA, "files": self.files, "groups": self.groups, "search": self.search}
 
     @classmethod
     def from_dict(cls, data: Any) -> Written:
         if not isinstance(data, dict) or data.get("schema") != WRITTEN_SCHEMA:
             return cls()
-        files, groups = data.get("files"), data.get("groups")
-        return cls(files if isinstance(files, dict) else {}, groups if isinstance(groups, dict) else {})
+        files, groups, search = data.get("files"), data.get("groups"), data.get("search")
+        return cls(files if isinstance(files, dict) else {}, groups if isinstance(groups, dict) else {}, search if isinstance(search, dict) else {})
 
 
 class KnobFiles:
@@ -450,6 +451,16 @@ class KnobFiles:
                 raise FramecontrolError(f"The backup {backup} for {name} is gone, so the update cannot be rolled back") from None
         prior = Written.from_dict(chosen[0]["prior_written"])
         current = self.read_written()
-        self.commit(texts, Written(prior.files, current.groups), keep=keep)
+        groups = {name: dict(record) if isinstance(record, dict) else record for name, record in current.groups.items()}
+        for name, record in groups.items():
+            if not isinstance(record, dict):
+                continue
+            earlier = prior.groups.get(name)
+            approved_against = earlier.get("approved_against") if isinstance(earlier, dict) else None
+            if approved_against in ("factory", "learned"):
+                record["approved_against"] = approved_against
+            else:
+                record.pop("approved_against", None)
+        self.commit(texts, Written(prior.files, groups, current.search), keep=keep)
         self.log(f"rolled back {count} update(s): {', '.join(sorted(restored))}")
         return sorted(restored)

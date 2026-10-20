@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
-from framecontrol.jobs.timing.factory import SEARCH_GRIDS
+from framecontrol.core.backend_ids import H3_BACKEND
+from framecontrol.jobs.timing.factory import SEARCH_GRIDS, factory_calibration, factory_tunables
 from framecontrol.jobs.timing.knobs import BOUNDS, SLOPE_LEVELS, Tunables
-from framecontrol.jobs.timing.tune import neighbours
+from framecontrol.jobs.timing.tune import MIN_RELATIVE_TRAINING_GAIN, SearchGroup, neighbours, select
+from tests.timing.builders import h3_run
 
 
 class SearchNeighbourTests(unittest.TestCase):
@@ -30,6 +33,17 @@ class SearchNeighbourTests(unittest.TestCase):
         names = {name for name, _candidate in neighbours(Tunables(), {"pause_factor"}, rho_measured=True)}
         self.assertNotIn("pause_factor", names)
         self.assertNotIn("rho", names)
+
+    def test_selection_does_not_open_holdout_for_a_noise_sized_training_gain(self) -> None:
+        factory = factory_calibration()
+        group = SearchGroup(H3_BACKEND, "r2av", (h3_run(1, 1),), factory.backends[H3_BACKEND].baseline_pipeline("r2av"), {})
+        candidate_count = len(neighbours(factory_tunables()))
+        tiny_gain = 1.0 - MIN_RELATIVE_TRAINING_GAIN / 2.0
+
+        with mock.patch("framecontrol.jobs.timing.tune._cross_validated_error", side_effect=[1.0, *([tiny_gain] * candidate_count)]):
+            choice = select(factory_tunables(), factory, (group,), stamp="now")
+
+        self.assertIsNone(choice)
 
 
 if __name__ == "__main__":

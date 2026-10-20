@@ -18,11 +18,11 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from framecontrol.jobs.timing.features import HistoryRun
+from framecontrol.jobs.timing.features import HistoryRun, feature_values
 from framecontrol.jobs.timing.fit import MIN_STAGE_SIGMA, BackendStats, Row, backend_stats, read_row
-from framecontrol.jobs.timing.knobs import KNOBS_PROVISIONAL, FactoryStage, PipelineCalibration, Spreads, StepModel, Summary, Tunables
+from framecontrol.jobs.timing.knobs import KNOBS_LEARNED, KNOBS_PROVISIONAL, FactoryStage, PipelineCalibration, Spreads, StepModel, Summary, Tunables
 from framecontrol.jobs.timing.ring import signature_id
-from framecontrol.jobs.timing.step_terms import KNOB_PREFIX, STRUCTURAL, columns, size_key
+from framecontrol.jobs.timing.step_terms import KNOB_PREFIX, STRUCTURAL, columns, learned_terms, size_key
 
 CHECKPOINTS = (1, 2, 4, 8, 16, 32)
 # Independent executions that must vary a term before it is fitted.
@@ -40,6 +40,7 @@ MAX_SIGNATURES = 40
 MAX_STAGE_SIGMA = 3.0
 MAX_OBSERVED_NAMES = 60
 _RIDGE_FLOOR = 1e-9
+VALIDATED_MAX_MOVE = 0.1
 
 
 def checkpoint_at(count: int) -> bool:
@@ -120,36 +121,44 @@ def fit_step(base: StepModel, samples: Sequence[_Sample], tunables: Tunables, pi
     """The step model fitted on ``samples`` (rows with a mean step) away from ``base``, the weighted residual variance, and the
     names of the knob terms opened. ``pins`` hold the step values the owner fixed, by ``step/...`` path."""
     seconds = pins.get("step/seconds", base.seconds)
-    exponents = {"pixel_exponent": pins.get("step/pixel_exponent", base.pixel_exponent), "frame_exponent": pins.get("step/frame_exponent", base.frame_exponent)}
-    target = np.array([sample.row.y if sample.row.y is not None else 0.0 for sample in samples]) - math.log(seconds)
-    target = target - np.array([sum(exponents[name] * sample.columns.get(name, 0.0) for name in exponents) for sample in samples])
-    fixed = {name: pins[f"step/{name}"] for name in ("aspect", "render_exponent", "reference_exponent") if f"step/{name}" in pins}
+    prior = {
+        "pixel_exponent": base.pixel_exponent,
+        "frame_exponent": base.frame_exponent,
+        "aspect": base.aspect,
+        "render_exponent": base.render_exponent,
+        "reference_exponent": base.reference_exponent,
+        **{f"knob:{name}": value for name, value in base.knobs.items()},
+    }
+    fixed = {name: pins[f"step/{name}"] for name in ("pixel_exponent", "frame_exponent", "aspect", "render_exponent", "reference_exponent") if f"step/{name}" in pins}
     fixed.update({f"knob:{name}": pins[f"step/knobs/{name}"] for name in {path.split("/", 2)[2] for path in pins if path.startswith("step/knobs/")}})
-    for name, value in fixed.items():
-        target = target - value * np.array([sample.columns.get(name, 0.0) for sample in samples])
+    starting = {**prior, **fixed}
+    target = np.array([sample.row.y if sample.row.y is not None else 0.0 for sample in samples]) - math.log(seconds)
+    target = target - np.array([sum(starting.get(name, 0.0) * value for name, value in sample.columns.items()) for sample in samples])
+    prior_sizes = {**base.sizes, **{path.split("/", 2)[2]: value for path, value in pins.items() if path.startswith("step/sizes/")}}
+    target = target - np.array([prior_sizes.get(size_key(sample.row.run.workload) or "", 0.0) for sample in samples])
     candidates = ["pixel_exponent", "frame_exponent", "aspect", "render_exponent", "reference_exponent"]
-    candidates.extend(sorted({name for sample in samples for name in sample.columns if name.startswith(KNOB_PREFIX)}))
-    pinned_exponents = {name for name in ("pixel_exponent", "frame_exponent") if f"step/{name}" in pins}
-    opened = [name for name in candidates if name not in fixed and name not in pinned_exponents and _independent(samples, name)]
+    candidates.extend(sorted({*{name for name in prior if name.startswith(KNOB_PREFIX)}, *{name for sample in samples for name in sample.columns if name.startswith(KNOB_PREFIX)}}))
+    opened = [name for name in candidates if name not in fixed and _independent(samples, name)]
     # A term whose column the fixed ones already span adds nothing; the ridge keeps the solve stable.
     coefficients = _ridge(samples, target, opened, tunables.prior_weight_cap)
-    learned: dict[str, float] = {}
+    moves: dict[str, float] = {}
     for name, value in coefficients.items():
         if name in ("pixel_exponent", "frame_exponent"):
-            learned[name] = _clamp(value, -MAX_EXPONENT_MOVE, MAX_EXPONENT_MOVE)
+            moves[name] = _clamp(value, -MAX_EXPONENT_MOVE, MAX_EXPONENT_MOVE)
         else:
-            learned[name] = _clamp(value, -MAX_TERM, MAX_TERM)
-    terms = {**learned, **fixed}
-    shift, variance = _shift_and_variance(samples, target, terms)
+            moves[name] = _clamp(value, -MAX_TERM, MAX_TERM)
+    shift_prior = pins.get("step/shift", base.shift)
+    shift_move, variance = _shift_and_variance(samples, target - shift_prior, moves)
     if "step/shift" in pins:
-        shift = pins["step/shift"]
-        variance = _shift_and_variance(samples, target, {**terms})[1]
-    shift = _clamp(shift, -MAX_SHIFT, MAX_SHIFT)
-    exponent_values = {name: _clamp(exponents[name] + learned.get(name, 0.0), 0.0, MAX_EXPONENT) for name in exponents}
-    knob_terms = {**{name[len(KNOB_PREFIX) :]: value for name, value in fixed.items() if name.startswith(KNOB_PREFIX)}, **{name[len(KNOB_PREFIX) :]: value for name, value in learned.items() if name.startswith(KNOB_PREFIX)}}
-    sizes: dict[str, float] = {}
+        shift_move = 0.0
+    shift = shift_prior if "step/shift" in pins else _clamp(shift_prior + shift_move, -MAX_SHIFT, MAX_SHIFT)
+    exponent_values = {name: fixed.get(name, _clamp(prior[name] + moves.get(name, 0.0), 0.0, MAX_EXPONENT)) for name in ("pixel_exponent", "frame_exponent")}
+    terms = {name: fixed.get(name, _clamp(prior.get(name, 0.0) + moves.get(name, 0.0), -MAX_TERM, MAX_TERM)) for name in {*prior, *fixed, *moves} if name not in ("pixel_exponent", "frame_exponent")}
+    knob_terms = {name[len(KNOB_PREFIX) :]: value for name, value in terms.items() if name.startswith(KNOB_PREFIX)}
+    sizes: dict[str, float] = prior_sizes
     if len({sample.row.execution for sample in samples}) >= 2:
-        sizes = _size_offsets(samples, target, terms, shift, tunables, {path.split("/", 2)[2]: value for path, value in pins.items() if path.startswith("step/sizes/")})
+        pinned_sizes = {path.split("/", 2)[2]: value for path, value in pins.items() if path.startswith("step/sizes/")}
+        sizes = _size_offsets(samples, target - shift_prior, moves, shift_move, tunables, prior_sizes, pinned_sizes)
     model = replace(
         base,
         seconds=seconds,
@@ -162,10 +171,10 @@ def fit_step(base: StepModel, samples: Sequence[_Sample], tunables: Tunables, pi
         knobs=knob_terms,
         sizes=sizes,
     )
-    return model, variance, [name[len(KNOB_PREFIX) :] for name in learned if name.startswith(KNOB_PREFIX)]
+    return model, variance, [name[len(KNOB_PREFIX) :] for name in moves if name.startswith(KNOB_PREFIX)]
 
 
-def _size_offsets(samples: Sequence[_Sample], target: np.ndarray, terms: Mapping[str, float], shift: float, tunables: Tunables, pinned: Mapping[str, float]) -> dict[str, float]:
+def _size_offsets(samples: Sequence[_Sample], target: np.ndarray, terms: Mapping[str, float], shift: float, tunables: Tunables, prior: Mapping[str, float], pinned: Mapping[str, float]) -> dict[str, float]:
     offset = np.array([sum(terms.get(name, 0.0) * sample.columns.get(name, 0.0) for name in terms) for sample in samples])
     residual = target - offset - shift
     groups: dict[str, list[int]] = defaultdict(list)
@@ -173,13 +182,13 @@ def _size_offsets(samples: Sequence[_Sample], target: np.ndarray, terms: Mapping
         key = size_key(sample.row.run.workload)
         if key is not None:
             groups[key].append(index)
-    result: dict[str, float] = dict(pinned)
+    result: dict[str, float] = dict(prior)
     for key, indices in groups.items():
         if key in pinned:
             continue
         weight = sum(samples[index].weight for index in indices)
         mean = sum(samples[index].weight * residual[index] for index in indices) / weight
-        result[key] = float(_clamp(mean * weight / (weight + tunables.size_offset_shrinkage), -MAX_SIZE_OFFSET, MAX_SIZE_OFFSET))
+        result[key] = float(_clamp(result.get(key, 0.0) + mean * weight / (weight + tunables.size_offset_shrinkage), -MAX_SIZE_OFFSET, MAX_SIZE_OFFSET))
     return result
 
 
@@ -268,8 +277,13 @@ def _summaries(rows: Sequence[Row], previous: Mapping[str, Summary]) -> dict[str
 def calibrate(base: PipelineCalibration, previous: PipelineCalibration | None, runs: Sequence[HistoryRun], tunables: Tunables, *, checkpoint: int, stamp: str, pins: Mapping[str, float] | None = None, source: str = KNOBS_PROVISIONAL) -> PipelineCalibration | None:
     """The provisional calibration of one pipeline from its ``runs`` (live and complete), away from ``base`` (the factory) and
     carrying the observed values and summaries of ``previous``; None when no run has a step time to learn from."""
-    pins = pins or {}
     rows = [read_row(run, tunables) for run in runs if run.fidelity == "live"]
+    return calibrate_rows(base, previous, rows, tunables, checkpoint=checkpoint, stamp=stamp, pins=pins, source=source)
+
+
+def calibrate_rows(base: PipelineCalibration, previous: PipelineCalibration | None, rows: Sequence[Row], tunables: Tunables, *, checkpoint: int, stamp: str, pins: Mapping[str, float] | None = None, source: str = KNOBS_PROVISIONAL) -> PipelineCalibration | None:
+    """Fit an already parsed set of live rows, for callers that reuse them across cross-validation folds."""
+    pins = pins or {}
     if not rows:
         return None
     weights = _weights(rows, tunables.half_life_runs)
@@ -289,9 +303,98 @@ def calibrate(base: PipelineCalibration, previous: PipelineCalibration | None, r
     return PipelineCalibration(base.pipeline, step, spreads, stages, spread, source, len(rows), executions, checkpoint, stamp, _observed(rows, carried.observed), _summaries(rows, carried.summaries))
 
 
+def _step_error(step: StepModel, run: HistoryRun, row: Row) -> float | None:
+    pixels, frames = run.workload.get("pixels"), run.workload.get("frames")
+    if row.y is None or not isinstance(pixels, int | float) or isinstance(pixels, bool) or not isinstance(frames, int | float) or isinstance(frames, bool):
+        return None
+    try:
+        rate = step.rate(float(pixels), float(frames), learned_terms(step, run.workload, feature_values(run.workload)))
+        return abs(math.log(rate) - row.y) if math.isfinite(rate) and rate > 0 else None
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _validation_error(base: PipelineCalibration, runs: Sequence[HistoryRun], tunables: Tunables, *, pins: Mapping[str, float]) -> float:
+    """Leave-one-execution-out step-rate error on training evidence only."""
+    rows = [(run, read_row(run, tunables)) for run in runs if run.fidelity == "live"]
+    by_execution = sorted({run.execution for run, row in rows if row.y is not None})
+    errors = []
+    for execution in by_execution:
+        training = [(run, row) for run, row in rows if run.execution != execution and row.y is not None and math.isfinite(row.y)]
+        if not training:
+            continue
+        weights = _weights([row for _run, row in training], tunables.half_life_runs)
+        reference = (base.step.pixels, base.step.frames)
+        samples = [_Sample(row, weight, columns(run.workload, row.features, reference)) for (run, row), weight in zip(training, weights, strict=True)]
+        step, _variance, _opened = fit_step(base.step, samples, tunables, pins)
+        fold = [error for run, row in rows if run.execution == execution if (error := _step_error(step, run, row)) is not None]
+        if fold:
+            errors.append(statistics.fmean(fold))
+    return statistics.fmean(errors) if errors else math.inf
+
+
+def _clamp_linear(value: float, baseline: float, maximum: float = VALIDATED_MAX_MOVE) -> float:
+    return max(baseline - maximum, min(baseline + maximum, value))
+
+
+def _clamp_positive(value: float, baseline: float, maximum: float = VALIDATED_MAX_MOVE) -> float:
+    if baseline <= 0 or value <= 0:
+        return baseline
+    return baseline * math.exp(max(-maximum, min(maximum, math.log(value / baseline))))
+
+
+def _clamp_mapping(candidate: Mapping[str, float], baseline: Mapping[str, float]) -> dict[str, float]:
+    return {name: _clamp_linear(float(candidate.get(name, value)), float(value)) for name, value in baseline.items()} | {name: _clamp_linear(float(value), 0.0) for name, value in candidate.items() if name not in baseline}
+
+
+def _bounded_validated(base: PipelineCalibration, candidate: PipelineCalibration) -> PipelineCalibration:
+    """Clamp one approved update to a 0.1 movement in log/coefficient space."""
+    step = replace(
+        candidate.step,
+        seconds=_clamp_positive(candidate.step.seconds, base.step.seconds),
+        pixel_exponent=_clamp_linear(candidate.step.pixel_exponent, base.step.pixel_exponent),
+        frame_exponent=_clamp_linear(candidate.step.frame_exponent, base.step.frame_exponent),
+        shift=_clamp_linear(candidate.step.shift, base.step.shift),
+        aspect=_clamp_linear(candidate.step.aspect, base.step.aspect),
+        render_exponent=_clamp_linear(candidate.step.render_exponent, base.step.render_exponent),
+        reference_exponent=_clamp_linear(candidate.step.reference_exponent, base.step.reference_exponent),
+        knobs=_clamp_mapping(candidate.step.knobs, base.step.knobs),
+        sizes=_clamp_mapping(candidate.step.sizes, base.step.sizes),
+    )
+    base_stages = {stage.key: stage for stage in base.stages}
+    stages = []
+    for stage in candidate.stages:
+        earlier = base_stages.get(stage.key)
+        if earlier is None:
+            stages.append(stage)
+        else:
+            stages.append(replace(stage, seconds=_clamp_positive(stage.seconds, earlier.seconds) if earlier.seconds > 0 else stage.seconds, pixel_exponent=_clamp_linear(stage.pixel_exponent, earlier.pixel_exponent), frame_exponent=_clamp_linear(stage.frame_exponent, earlier.frame_exponent), sigma=_clamp_positive(stage.sigma, earlier.sigma) if stage.sigma is not None and earlier.sigma is not None else earlier.sigma))
+    spread = _clamp_positive(candidate.spread, base.spread) if candidate.spread is not None and base.spread is not None else candidate.spread
+    return replace(candidate, step=step, stages=tuple(stages), spread=spread)
+
+
+def calibrate_validated(base: PipelineCalibration, runs: Sequence[HistoryRun], tunables: Tunables, *, checkpoint: int, stamp: str, pins: Mapping[str, float] | None = None, source: str = KNOBS_LEARNED) -> PipelineCalibration | None:
+    """Fit a post-checkpoint candidate without consulting its reserved evidence.
+
+    The ridge strength is selected by execution-level cross-validation on the
+    training partition and capped by ``prior_weight_cap``.  Evidence spanning
+    executable builds halves that cap, so a rebuilt child leans less heavily
+    on its old approved prior.  The final movement is bounded per update.
+    """
+    pins = pins or {}
+    if len({run.execution for run in runs}) < MIN_TERM_EXECUTIONS:
+        return None
+    builds = {(run.environment.get("executable_bytes"), run.environment.get("executable_mtime")) for run in runs if run.environment.get("executable_bytes") is not None and run.environment.get("executable_mtime") is not None}
+    cap = tunables.prior_weight_cap * (0.5 if len(builds) > 1 else 1.0)
+    penalties = sorted({min(float(value), cap) for value in (*tunables.penalties, cap) if value > 0})
+    best = min(penalties, key=lambda value: (_validation_error(base, runs, replace(tunables, prior_weight_cap=value), pins=pins), value))
+    candidate = calibrate(base, base, runs, replace(tunables, prior_weight_cap=best), checkpoint=checkpoint, stamp=stamp, pins=pins, source=source)
+    return _bounded_validated(base, candidate) if candidate is not None else None
+
+
 def _measured_spreads(base: Spreads, stats: BackendStats) -> Spreads:
     values = {name: getattr(stats, name) for name in ("tau", "rho", "slope", "slope_sd", "first_ratio", "first_sd", "step_noise", "stage_factor", "other_sd", "pause_share") if name in stats.measured}
     return replace(base, **values)
 
 
-__all__ = ["CHECKPOINTS", "calibrate", "checkpoint_at", "checkpoint_reached", "fit_step"]
+__all__ = ["CHECKPOINTS", "VALIDATED_MAX_MOVE", "calibrate", "calibrate_rows", "calibrate_validated", "checkpoint_at", "checkpoint_reached", "fit_step"]

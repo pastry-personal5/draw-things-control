@@ -80,7 +80,8 @@ def knobs_show(ctx: typer.Context, file: Annotated[str | None, typer.Argument(he
     """Every effective value with where it came from: the factory, a provisional or validated calibration, a value you pinned by editing the file, or a compatible backup standing in for a file that cannot be read."""
     rows = [row for row in timing_knobs.show(timing_knobs.knob_files(services_of(ctx).paths)) if (file is None or row.file == file) and (source is None or row.source == source)]
     for row in rows:
-        typer.echo(f"{row.file}  {row.path} = {row.value}  [{row.source}]")
+        approval = f"; approved against {row.approved_against}" if row.approved_against is not None else ""
+        typer.echo(f"{row.file}  {row.path} = {row.value}  [{row.source}{approval}]")
     if not rows:
         typer.echo("No values match")
 
@@ -98,6 +99,8 @@ def knobs_check(ctx: typer.Context) -> None:
         typer.echo(f"deferred: {line}")
     for group, result in report.gates.items():
         typer.echo(f"gate: {group}: {result}")
+    if report.search is not None:
+        typer.echo(f"search: {report.search}")
     typer.echo(f"Files present: {', '.join(report.files) or 'none (the factory knobs apply)'}")
     if report.suspended:
         raise typer.Exit(code=1)
@@ -117,6 +120,8 @@ def _print_update_report(report: timing_knobs.UpdateReport) -> None:
         typer.echo(f"  {group}: provisional calibration at {checkpoint} run{'s' if checkpoint != 1 else ''}")
     for group, verdict in sorted(report.gates.items()):
         typer.echo(f"  {group}: held-out gate {verdict}")
+    if report.search is not None:
+        typer.echo(f"  tunables search: {report.search}")
     for name in report.written:
         typer.echo(f"  wrote {name}")
     for name in report.suspended:
@@ -127,12 +132,12 @@ def _print_update_report(report: timing_knobs.UpdateReport) -> None:
 
 @knobs_app.command("tune")
 def knobs_tune(ctx: typer.Context) -> None:
-    """Run the currently implemented held-out calibration gate now; tunables selection remains pending."""
+    """Run one guarded tunables search now, using the same evidence and lock as the background updater."""
     with errors_exit():
         report = timing_knobs.tune_now(services_of(ctx).paths)
     _print_update_report(report)
-    if not report.gates:
-        typer.echo("No group currently has enough held-out evidence")
+    if report.search == "insufficient_evidence":
+        typer.echo("No group currently has enough held-out evidence for a tunables search")
 
 
 @knobs_app.command("rollback")

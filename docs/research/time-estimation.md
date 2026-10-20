@@ -321,3 +321,39 @@ Measured on the development machine (Apple silicon, Python 3.12, LibYAML parser)
 Pending, like [Milestone 11's](#host-validation) first pass: the learning curve on the real runs the host completes after the
 knobs go live (the first number's error with the factory, and at provisional counts 1, 2, 4, 8, 16 and 32), and one real H3
 job and one real Draw Things job forecast from the files compared with the actual end. It does not block the milestone.
+
+## Held-out gate and tunables search
+
+The completion evidence for [Milestone 15](../phase-4/milestone-15-timing-gate-and-search.md) uses
+`uv run python -m tests.timing.knob_gate --executions 120`. The script continues the same seeded synthetic history beyond each
+pipeline's 32-run provisional checkpoint. At every later execution it compares the guarded updater with the calibration frozen
+at that checkpoint, then feeds the execution to the real updater. It repeats the run with the truth left at the factory, and a
+separate deliberately stale provisional calibration exercises restoration even when no candidate can be fitted. These are
+measurements, not accuracy gates.
+
+| Synthetic stream, after the 32-run checkpoint | Guarded | Frozen provisional |
+|------------------------------------------------|---------|--------------------|
+| Truth 30% from factory: median remaining-time error, 2,107 observations | 3.18% | 3.73% |
+| Truth 30% from factory: 80% range coverage | 82.82% | 78.60% |
+| No true change: median remaining-time error, 2,107 observations | 3.25% | 3.78% |
+| No true change: 80% range coverage | 83.01% | 77.55% |
+
+For the shifted stream the calibration gate reported 8 `insufficient_evidence`, 6 `inconclusive`, and 26 `promote` outcomes.
+For the unchanged stream it reported 8 `insufficient_evidence`, 10 `inconclusive`, 21 `promote`, and 1 `reject`. A promotion
+means the later held-out forecast passed the error and coverage guards; it is not evidence of a changed physical truth by
+itself, because the model can still improve its calibration to the stream's ordinary noise and stage mix. The search did not
+move a tunable in either broad stream. Of 13 attempts, the shifted stream produced 2 `inconclusive`, 10 `no_improvement`, and
+1 `timeout`; the unchanged stream produced 12 `no_improvement` and 1 `timeout`. Search selection requires at least a 1%
+relative training-error gain before opening holdout, and promotion requires a strict gain on a 99% paired interval. The
+bad-provisional scenario restored the factory baseline once. A focused deterministic acceptance case, 32 slower executions
+followed by 8 near-factory executions, selected and held-out-approved only `half_life_runs`, from 60 to its adjacent grid value
+100; rollback restored the tuning, calibration, and approval files together.
+
+The gate replays the complete `Forecaster` at 5%, 10%, 25%, 50%, 75%, and 90% of every held-out run. Event streams are prepared
+once and shared by the compared models. On the development host, a 300-run validated fit plus full held-out replay took 1.35 s
+of CPU against the 3 s target; a prepared full search over 300 runs took 3.97 s after parsed training rows were reused across
+cross-validation folds, against the 10 s cap. The automated performance
+tests keep those targets, and the background updater still yields before a generation starts.
+
+Owner-host validation remains pending and nonblocking: report the learning curve after validated updates on the real runs the
+host completes.

@@ -13,19 +13,23 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import pytest
 import yaml
 
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.core.paths import ProjectPaths
 from framecontrol.jobs.timing.calibrate import MAX_SHIFT
-from framecontrol.jobs.timing.factory import factory_calibration
+from framecontrol.jobs.timing.factory import SEARCH_GRIDS, factory_calibration, factory_tunables
 from framecontrol.jobs.timing.features import HistoryRun
 from framecontrol.jobs.timing.fit import FittedModel
+from framecontrol.jobs.timing.gate import ReplayComparison, ReplayScore
 from framecontrol.jobs.timing.ring import valid_entry
+from framecontrol.jobs.timing.tune import SEARCH_CONFIDENCE, SearchChoice
 from framecontrol.services.knob_updater import KnobUpdateEngine, KnobUpdater, UpdateReport
 from framecontrol.services.timing_knob_files import VALIDATED_FILE, KnobFiles, digest
 from framecontrol.services.timing_knobs import check, load_knobs, read_validated, reset, rollback
 from tests.timing.builders import dt_run, dt_workload, h3_run, h3_workload
+from tests.timing.synthetic import synthetic_history
 
 STAMP = "2026-10-18T12:00:00+09:00"
 H3_GROUP, DT_GROUP = f"{H3_BACKEND}/r2av", f"{DRAW_THINGS_BACKEND}/i2v"
@@ -33,8 +37,8 @@ H3_WORKLOAD = h3_workload(pixels=832 * 448, frames=362, steps=30, references=3)
 DT_WORKLOAD = dt_workload(pixels=294_912, frames=33, steps=25)
 
 
-def h3(execution: int, run: int = 1, step: float = 130.0) -> HistoryRun:
-    return h3_run(execution, run, step=step, workload=H3_WORKLOAD)
+def h3(execution: int, run: int = 1, step: float = 130.0, tail: float = 100.0) -> HistoryRun:
+    return h3_run(execution, run, step=step, tail=tail, workload=H3_WORKLOAD)
 
 
 def dt(execution: int, run: int = 1, step: float = 12.0) -> HistoryRun:
@@ -89,12 +93,13 @@ class CheckpointTests(UpdaterTestCase):
 
     def test_after_the_32nd_run_a_clear_regression_restores_the_validated_baseline_and_every_run_enters_the_ring(self) -> None:
         for count in range(1, 33):
-            self.feed(h3(count, step=400.0))
+            self.feed(h3(count, step=400.0, tail=10.0))
         writes = []
-        for count in range(33, 49):
-            report = self.feed(h3(count))
-            self.assertEqual(report.fitted, {})
-            writes.extend(report.written)
+        with mock.patch("framecontrol.services.knob_updater.calibrate_validated", return_value=None):
+            for count in range(33, 49):
+                report = self.feed(h3(count, step=138.6683, tail=190.0))
+                self.assertEqual(report.fitted, {})
+                writes.extend(report.written)
         self.assertIn("h3-metal-cli.yaml", writes)
         self.assertEqual(self.calibration().source, "factory")
         counts, entries = self.files.read_ring()
@@ -116,19 +121,35 @@ class CheckpointTests(UpdaterTestCase):
         self.assertIn(VALIDATED_FILE, self.files.read_written().files)
         self.assertIn("candidate promote", check(self.files).gates[H3_GROUP])
 
+    def test_holdout_executions_are_excluded_from_ring_and_retained_training(self) -> None:
+        self.feed(*(h3(count, step=400.0) for count in range(1, 33)))
+        from framecontrol.services import knob_updater
+
+        real = knob_updater.calibrate_validated
+        training_executions: list[set[int]] = []
+
+        def record_training(base, runs, tunables, **options):
+            training_executions.append({run.execution for run in runs})
+            return real(base, runs, tunables, **options)
+
+        with mock.patch.object(knob_updater, "calibrate_validated", record_training):
+            self.feed(*(h3(count, step=400.0) for count in range(33, 41)))
+        self.assertTrue(training_executions)
+        self.assertEqual(training_executions[0], set(range(1, 33)))
+
     def test_an_approval_keeps_owner_pins_out_of_the_saved_baseline(self) -> None:
         for count in range(1, 33):
             self.feed(h3(count, step=400.0))
         document = yaml.safe_load(self.text("h3-metal-cli.yaml"))
-        document["pipelines"]["r2av"]["step"]["seconds"] = 200.0
+        document["pipelines"]["r2av"]["step"]["frame_exponent"] = 1.7
         (self.files.directory / "h3-metal-cli.yaml").write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         for count in range(33, 41):
             self.feed(h3(count, step=400.0))
-        self.assertEqual(self.calibration().step.seconds, 200.0)
+        self.assertEqual(self.calibration().step.frame_exponent, 1.7)
         _document, baselines, problem = read_validated(self.files)
         self.assertIsNone(problem)
-        self.assertEqual(baselines[H3_GROUP].step.seconds, factory_calibration().backends[H3_BACKEND].baseline_pipeline("r2av").step.seconds)
-        self.assertEqual(load_knobs(self.files).files["h3-metal-cli.yaml"].pins["pipelines/r2av/step/seconds"], 200.0)
+        self.assertEqual(baselines[H3_GROUP].step.frame_exponent, factory_calibration().backends[H3_BACKEND].baseline_pipeline("r2av").step.frame_exponent)
+        self.assertEqual(load_knobs(self.files).files["h3-metal-cli.yaml"].pins["pipelines/r2av/step/frame_exponent"], 1.7)
 
     def test_an_approval_keeps_owner_tunable_pins_out_of_the_saved_baseline(self) -> None:
         self.feed(h3(1, step=400.0))
@@ -143,21 +164,21 @@ class CheckpointTests(UpdaterTestCase):
 
     def test_an_invalid_candidate_does_not_prevent_a_bad_live_calibration_from_being_restored(self) -> None:
         for count in range(1, 33):
-            self.feed(h3(count, step=400.0))
+            self.feed(h3(count, step=400.0, tail=10.0))
         from framecontrol.services import knob_updater
 
-        real = knob_updater.calibrate
+        real = knob_updater.calibrate_validated
 
-        def invalid_candidate(base, previous, runs, tunables, **options):
-            result = real(base, previous, runs, tunables, **options)
-            if result is not None and options.get("source") == "learned":
+        def invalid_candidate(base, runs, tunables, **options):
+            result = real(base, runs, tunables, **options)
+            if result is not None:
                 return replace(result, step=replace(result.step, seconds=-5.0))
             return result
 
         report = UpdateReport()
-        with mock.patch.object(knob_updater, "calibrate", invalid_candidate):
+        with mock.patch.object(knob_updater, "calibrate_validated", invalid_candidate):
             for count in range(33, 41):
-                report = self.feed(h3(count))
+                report = self.feed(h3(count, step=138.6683, tail=190.0))
         self.assertEqual(report.gates[H3_GROUP], "restored")
         self.assertEqual(self.calibration().source, "factory")
         self.assertTrue(any("invalid candidate calibration" in reason for reason in report.rejected))
@@ -237,6 +258,112 @@ class CheckpointTests(UpdaterTestCase):
         again = self.engine.update(self.history)
         self.assertEqual((again.runs_added, again.fitted, again.written), (0, {}, []))
         self.assertEqual(self.feed(*(h3(count) for count in range(21, 33))).fitted, {H3_GROUP: 32})
+
+
+class SearchTests(UpdaterTestCase):
+    def shifted(self) -> list[HistoryRun]:
+        return [h3(execution, step=400.0 if execution <= 32 else 130.0) for execution in range(1, 41)]
+
+    def test_search_waits_for_20_runs_and_40_runs_from_6_executions(self) -> None:
+        self.feed(*self.shifted()[:20])
+        self.assertEqual(self.files.read_written().search, {})
+        report = self.feed(*self.shifted()[20:])
+        self.assertIsNotNone(report.search)
+        self.assertEqual(self.files.read_written().search["last_attempt_total"], 40)
+
+    def test_forty_runs_from_only_five_executions_are_not_eligible(self) -> None:
+        runs = [h3(execution, run, step=200.0) for execution in range(1, 6) for run in range(1, 9)]
+        report = self.engine.update(runs, force_search=True)
+        self.assertEqual(report.search, "insufficient_evidence")
+        self.assertEqual(self.files.read_written().search, {})
+
+    def test_an_accepted_search_moves_one_grid_step_and_writes_the_whole_approval(self) -> None:
+        runs = self.shifted()
+        self.feed()
+        report = self.feed(*runs)
+        self.assertEqual(report.search, "promote half_life_runs")
+        self.assertEqual(self.files.read_written().search["last_result"]["confidence"], SEARCH_CONFIDENCE)
+        loaded = load_knobs(self.files)
+        self.assertEqual(loaded.tunables.half_life_runs, 100.0)
+        changed = {name for name in SEARCH_GRIDS if getattr(loaded.tunables, name) != getattr(factory_tunables(), name)}
+        self.assertEqual(changed, {"half_life_runs"})
+        self.assertTrue({"tuning.yaml", "h3-metal-cli.yaml", VALIDATED_FILE} <= set(report.written))
+        restored = rollback(self.files)
+        self.assertTrue({"tuning.yaml", "h3-metal-cli.yaml", VALIDATED_FILE} <= set(restored))
+        self.assertEqual(load_knobs(self.files).tunables.half_life_runs, 60.0)
+
+    def test_a_tunable_pin_survives_search_and_is_not_saved_in_the_machine_baseline(self) -> None:
+        runs = self.shifted()
+        self.feed()
+        document = yaml.safe_load(self.text("tuning.yaml"))
+        document["tunables"]["pause_factor"] = 4.0
+        (self.files.directory / "tuning.yaml").write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        report = self.feed(*runs)
+        self.assertTrue(report.search and report.search.startswith("promote "))
+        self.assertEqual(load_knobs(self.files).tunables.pause_factor, 4.0)
+        approved = json.loads(self.files.read_text(VALIDATED_FILE) or "{}")
+        self.assertEqual(approved["backends"][H3_BACKEND]["r2av"]["tunables"]["tunables"]["pause_factor"], 3.0)
+
+    def test_one_scored_groups_clear_regression_vetoes_the_shared_change(self) -> None:
+        factory = factory_calibration()
+        choice = SearchChoice(
+            "half_life_runs",
+            replace(factory_tunables(), half_life_runs=100.0),
+            {H3_GROUP: factory.backends[H3_BACKEND].baseline_pipeline("r2av"), DT_GROUP: factory.backends[DRAW_THINGS_BACKEND].baseline_pipeline("i2v")},
+            0.2,
+            0.1,
+        )
+
+        def comparison(executions: range, difference: float) -> ReplayComparison:
+            ids = tuple(executions)
+            baseline = ReplayScore(dict.fromkeys(ids, 0.2), dict.fromkeys(ids, 0.0), len(ids) * 6)
+            candidate = ReplayScore(dict.fromkeys(ids, 0.2 + difference), dict.fromkeys(ids, 0.0), len(ids) * 6)
+            return ReplayComparison(ids, (difference,) * len(ids), (0.0,) * len(ids), baseline, candidate)
+
+        runs = [h3(execution, step=200.0) for execution in range(1, 41)] + [dt(execution, step=20.0) for execution in range(101, 141)]
+        with (
+            mock.patch("framecontrol.services.knob_updater.select", return_value=choice) as selected,
+            mock.patch(
+                "framecontrol.services.knob_updater.compare_replays",
+                side_effect=(comparison(range(1, 17), -0.1), comparison(range(101, 109), 0.1)),
+            ),
+        ):
+            report = self.engine.update(runs)
+        self.assertEqual(len(selected.call_args.args[2]), 2)
+        self.assertEqual(report.search, "inconclusive")
+        self.assertTrue(self.files.read_written().search["last_result"]["reason"].endswith("_regression"))
+        self.assertEqual(load_knobs(self.files).tunables.half_life_runs, 60.0)
+        self.assertNotIn(VALIDATED_FILE, report.written)
+
+    def test_an_invalid_later_search_group_cannot_leave_an_earlier_approval_staged(self) -> None:
+        factory = factory_calibration()
+        h3_candidate = replace(factory.backends[H3_BACKEND].baseline_pipeline("r2av"), source="learned", runs=32, executions=32, checkpoint=32, updated_at=STAMP)
+        dt_candidate = replace(factory.backends[DRAW_THINGS_BACKEND].baseline_pipeline("i2v"), step=replace(factory.backends[DRAW_THINGS_BACKEND].baseline_pipeline("i2v").step, seconds=-1.0), source="learned", runs=32, executions=32, checkpoint=32, updated_at=STAMP)
+        choice = SearchChoice("half_life_runs", replace(factory_tunables(), half_life_runs=100.0), {H3_GROUP: h3_candidate, DT_GROUP: dt_candidate}, 0.2, 0.1)
+        runs = [h3(execution, step=200.0) for execution in range(1, 41)] + [dt(execution, step=20.0) for execution in range(101, 141)]
+
+        with mock.patch("framecontrol.services.knob_updater.select", return_value=choice):
+            report = self.engine.update(runs)
+
+        self.assertEqual(report.search, "invalid_candidate")
+        self.assertNotIn(VALIDATED_FILE, report.written)
+        self.assertEqual(self.calibration().source, "provisional")
+        self.assertEqual(self.calibration(DRAW_THINGS_BACKEND, "i2v").source, "provisional")
+
+    def test_a_search_stops_before_selection_when_generation_starts(self) -> None:
+        report = self.engine.update(self.shifted(), force_search=True, should_stop=lambda: True)
+        self.assertEqual(report.search, "stopped")
+        self.assertNotIn(VALIDATED_FILE, report.written)
+
+    @pytest.mark.timing_performance
+    def test_a_full_300_run_search_fits_the_cpu_budget(self) -> None:
+        runs = synthetic_history(executions=100, away=0.3).runs[:300]
+        self.engine.update(runs, force_search=True, should_stop=lambda: True)
+        started = time.process_time()
+        report = self.engine.update(runs, force_search=True)
+        elapsed = time.process_time() - started
+        self.assertNotEqual(report.search, "timeout")
+        self.assertLess(elapsed, 10.0, f"full search took {elapsed:.3f} CPU seconds")
 
 
 class RingTests(UpdaterTestCase):
