@@ -22,7 +22,7 @@ from framecontrol.tui.app import FramecontrolApp
 class IdentityTests(unittest.TestCase):
     def test_installed_entry_points(self) -> None:
         installed = distribution("framecontrol")
-        self.assertEqual(installed.version, "3.0.0")
+        self.assertEqual(installed.version, "4.0.0")
         self.assertEqual([(entry.name, entry.value) for entry in installed.entry_points if entry.group == "console_scripts"], [("fc", "framecontrol.cli.app:main")])
         for command in ([sys.executable, "-m", "framecontrol", "--help"], [str(Path(sys.executable).with_name("fc")), "--help"]):
             result = subprocess.run(command, check=True, capture_output=True, text=True)

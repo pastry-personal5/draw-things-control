@@ -5,6 +5,8 @@ Owner decisions, design decisions, and notable changes for
 
 ## 2026-10-20
 
+- **Change** [M18]: Milestone 18 is done with no code or behavior change. Milestone 17 completed every review slice with no behavior-change candidate, so there was nothing to accept, reject, move, implement, migrate, or validate separately; M18's planned no-candidate closeout applies.
+
 - **Change** [M17]: The behavior-preserving cleanup is complete. Server, SSE, gRPC, and MCP tests now share one complete typed queue-worker fake; common TUI table focus and leave actions live in the existing base; parser inputs are grouped by source, policy, frozen snapshot evidence, and nested run view; version-2 compilation names its phases; H3 finishing is a backend-owned staged workflow; and per-execution observer, log, and timing state belongs to an execution session rather than the long-lived executor. The queue, persistence, timing, application-service, and front-end reviews recorded keep conclusions where another extraction would split invariants or add indirection. No redundant contract test or dead production symbol was proven safe to delete, no M18 behavior candidate was found, and `make check` passes.
 
 - **Design decision** [M17, M18]: Make the cleanup audit executable rather than treating its planned extractions as mandatory. Each package gets a recorded keep or change conclusion, characterization evidence is fixed before refactoring, a production protocol is added only for a real consumer capability, and the broad state/timing/services review is split at its persistence, calculation, scheduling, and application-policy boundaries. M18 candidates may be triaged during M17 so pending owner decisions do not remain hidden, but accepted behavior changes wait until M17 is complete.

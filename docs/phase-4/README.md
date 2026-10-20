@@ -1,6 +1,8 @@
 # Phase 4: Squashed product improvement
 
-**Status:** in-progress
+**Status:** done (2026-10-20)
+
+Released as [Version v4.0.0](../releases/4.0.0.md). The remaining Apple Silicon and owner-host checks are documented post-release validation and do not block phase completion.
 
 ## Goal
 
@@ -24,7 +26,7 @@ Improve the product experience, make chained generation support multiple backend
 - The forecast's heuristic knobs (tunables and per-backend, per-run-knob, per-size calibration) kept as external files under `data/timing-data-analysis/`, factory defaults where a value is missing, and provisional early learning, in Milestone 14.
 - Later knob updates validated on unseen executions, and a search of the tunables, in Milestone 15.
 - Comprehensive behavior-preserving cleanup and refactoring, with test maintenance first, in Milestone 17.
-- Behavioral changes discovered during refactoring evaluated separately in Milestone 18.
+- The separate Milestone 18 behavior-change gate, closed without code changes after Milestone 17 found no candidates.
 
 ## Non-goals
 
@@ -54,7 +56,7 @@ Improve the product experience, make chained generation support multiple backend
 | 14 | [Timing knobs as external files](milestone-14-timing-knobs.md) | done |
 | 15 | [Held-out gate and tunables search](milestone-15-timing-gate-and-search.md) | done |
 | 17 | [Comprehensive cleanup and refactoring](milestone-17-cleanup-refactoring.md) | done |
-| 18 | [Deferred behavior changes from refactoring](milestone-18-deferred-behavior-changes.md) | planned |
+| 18 | [Deferred behavior changes from refactoring](milestone-18-deferred-behavior-changes.md) | done |
 
 ## Depends on
 
@@ -70,7 +72,7 @@ Improve the product experience, make chained generation support multiple backend
 - Milestone 14 depends on Milestone 11's landed forecast, fit, and replay harness, which it refactors onto a tunables and calibration seam, and on Milestone 10's timing rows.
 - Milestone 15 depends on Milestone 14's files, ring, and provisional checkpoints.
 - Milestone 17 depends on Milestone 15 being complete, so it reviews and refactors the timing subsystem's final design rather than work in progress.
-- Milestone 18 receives behavior-change candidates from Milestone 17. Their owner triage may happen during M17 so it can finish with no pending decisions, but accepted behavior changes are implemented only after M17 is done.
+- Milestone 18 received no behavior-change candidates from Milestone 17 and closed without a code change.
 
 ## Changelog
 

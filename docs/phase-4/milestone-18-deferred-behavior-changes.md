@@ -1,16 +1,22 @@
 # Milestone 18: Deferred behavior changes from refactoring
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
-**Depends on:** Findings from [Milestone 17](milestone-17-cleanup-refactoring.md), which preserves current behavior and records candidates here instead of changing them. Candidate triage may occur while M17 is in progress; implementation of an accepted candidate waits until M17 is done.
+**Status:** done
+**Depends on:** [Milestone 17](milestone-17-cleanup-refactoring.md) (done), which preserved current behavior and would have recorded candidates here instead of changing them during refactoring.
+
+## Completion (2026-10-20)
+
+Closed with no code or behavior change. Milestone 17 completed all planned review slices and recorded `None` in every row of its M18 candidate column. Its final package review found no product, compatibility, safety-policy, or error-handling change that needed M18 triage, and its final `make check` passed. There was therefore no candidate to accept, reject, move, implement, migrate, document, or validate separately.
 
 ## Goal
 
 Evaluate and, only after explicit owner approval, implement behavioral changes discovered while cleaning up and refactoring the codebase. This keeps Milestone 17 reviewable as a structural change and gives each product change its own rationale, compatibility assessment, tests, documentation, and changelog entry.
 
-## Candidate changes
+## Candidate outcome
 
-None yet. Milestone 17 records a candidate here before proceeding with any refactor that exposes a possible behavior change. Give each candidate a stable ID (`M18-C01`, `M18-C02`, and so on), its source M17 slice, and one status: `pending`, `accepted`, `rejected`, `moved`, or `implemented`. A pending candidate may remain while later M17 slices proceed if they do not depend on it, but it blocks M17 completion.
+None. Milestone 17's implementation record is the authoritative slice-by-slice evidence: every candidate entry is `None`, and its completion summary confirms that no behavior-change candidate was found. The milestone therefore followed the planned no-candidate path below and did not invent unrelated work.
+
+Had a candidate been found, it would have received a stable ID (`M18-C01`, `M18-C02`, and so on), its source M17 slice, and one status: `pending`, `accepted`, `rejected`, `moved`, or `implemented`. A pending candidate could have remained while later independent M17 slices proceeded, but it would have blocked M17 completion.
 
 Each candidate must state:
 
@@ -20,11 +26,11 @@ Each candidate must state:
 - compatibility and migration consequences;
 - the smallest proposed change and the alternative of preserving current behavior;
 - tests and documentation that would change;
-- the owner's decision and date: accept, reject, or move to another phase or milestone; accepted candidates remain `accepted` until implemented after M17.
+- the owner's decision and date: accept, reject, or move to another phase or milestone; an accepted candidate would have remained `accepted` until implemented after M17.
 
 ## Scope
 
-In scope only after candidates exist and the owner approves them: the accepted behavior corrections discovered in Milestone 17 and their tests, compatibility handling, documentation, and changelog entries.
+The conditional scope was accepted behavior corrections discovered in Milestone 17 and their tests, compatibility handling, documentation, and changelog entries. No candidate entered that scope.
 
 Out of scope: structural cleanup already owned by Milestone 17; unrelated feature requests; automatically treating cleaner code, a simpler test, or a surprising behavior as authority to change a public contract.
 
@@ -37,15 +43,14 @@ Out of scope: structural cleanup already owned by Milestone 17; unrelated featur
 5. Record each owner or design decision and each notable behavior change in the Phase 4 changelog.
 6. Run focused validation and `make check` for each accepted change.
 
-If Milestone 17 finishes with no accepted candidates, mark this milestone done with no code change and record that disposition; do not invent work to fill it.
+Milestone 17 finished with no candidates, so this milestone is done with no code change; no work was invented to fill it.
 
 ## Acceptance criteria
 
-- Every candidate discovered in Milestone 17 has evidence and an explicit owner disposition.
-- Rejected candidates leave behavior unchanged. Moved candidates link to their destination and are not implemented here.
-- Every accepted candidate has a specified compatibility boundary and focused acceptance criteria added to this document before implementation.
-- Accepted changes include tests at the owning boundary, any required migration or backward-compatibility handling, current user and architecture documentation, and a new changelog entry.
-- Changes remain small and independently validated, and `make check` passes.
+- Milestone 17 completed with no candidate pending or omitted: its implementation record and completion summary both record that none was found.
+- No behavior, compatibility boundary, persisted format, test contract, or user or architecture documentation changed under M18.
+- The no-candidate disposition is recorded in this document, the Phase 4 index, and the Phase 4 changelog.
+- Milestone 17's final `make check` passed; M18 requires no separate product validation because it contains no product change.
 
 ## Decisions for the owner
 
