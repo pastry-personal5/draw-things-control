@@ -9,6 +9,19 @@ from typing import Any
 from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.jobs.timing.knobs import BackendCalibration, Calibration, FactoryStage, PipelineCalibration, Spreads, StepModel, Tunables
 
+# The deliberately small, bounded neighbourhood the M15 search may inspect.
+# ``factory_spread`` remains in tuning.yaml for compatibility but is a safety
+# floor, not a search dimension.
+SEARCH_GRIDS: dict[str, tuple[float, ...]] = {
+    "pause_factor": (2.0, 2.5, 3.0, 4.0, 5.0),
+    "size_offset_shrinkage": (1.0, 2.0, 3.0, 5.0, 10.0),
+    "prior_weight_cap": (4.0, 8.0, 12.0, 20.0, 40.0),
+    "half_life_runs": (20.0, 40.0, 60.0, 100.0, 200.0),
+    "unseen_knob_inflation": (1.1, 1.25, 1.5, 2.0, 3.0),
+    "rho": (0.2, 0.35, 0.5, 0.65, 0.8),
+    "slope_level": (0.80, 0.95),
+}
+
 # The stages whose seconds grow with the pixels and frames of the output.
 SCALED_STAGES = frozenset({"ffmpeg", "finishing", "correct"})
 

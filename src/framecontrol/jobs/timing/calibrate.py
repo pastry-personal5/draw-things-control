@@ -265,7 +265,7 @@ def _summaries(rows: Sequence[Row], previous: Mapping[str, Summary]) -> dict[str
     return dict(ranked[:MAX_SIGNATURES])
 
 
-def calibrate(base: PipelineCalibration, previous: PipelineCalibration | None, runs: Sequence[HistoryRun], tunables: Tunables, *, checkpoint: int, stamp: str, pins: Mapping[str, float] | None = None) -> PipelineCalibration | None:
+def calibrate(base: PipelineCalibration, previous: PipelineCalibration | None, runs: Sequence[HistoryRun], tunables: Tunables, *, checkpoint: int, stamp: str, pins: Mapping[str, float] | None = None, source: str = KNOBS_PROVISIONAL) -> PipelineCalibration | None:
     """The provisional calibration of one pipeline from its ``runs`` (live and complete), away from ``base`` (the factory) and
     carrying the observed values and summaries of ``previous``; None when no run has a step time to learn from."""
     pins = pins or {}
@@ -286,7 +286,7 @@ def calibrate(base: PipelineCalibration, previous: PipelineCalibration | None, r
     spread = max(tunables.factory_spread, math.sqrt(variance + tunables.heuristic_log_spread**2 / (1.0 + effective)))
     stages = _stage_fits(base, rows, weights, reference, tunables, pins)
     carried = previous if previous is not None else base
-    return PipelineCalibration(base.pipeline, step, spreads, stages, spread, KNOBS_PROVISIONAL, len(rows), executions, checkpoint, stamp, _observed(rows, carried.observed), _summaries(rows, carried.summaries))
+    return PipelineCalibration(base.pipeline, step, spreads, stages, spread, source, len(rows), executions, checkpoint, stamp, _observed(rows, carried.observed), _summaries(rows, carried.summaries))
 
 
 def _measured_spreads(base: Spreads, stats: BackendStats) -> Spreads:

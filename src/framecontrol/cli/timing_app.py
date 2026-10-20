@@ -76,8 +76,8 @@ timing_app.add_typer(knobs_app, name="knobs")
 
 
 @knobs_app.command("show")
-def knobs_show(ctx: typer.Context, file: Annotated[str | None, typer.Argument(help="Only the values of this file (tuning.yaml, draw-things-cli.yaml, h3-metal-cli.yaml).", show_default=False)] = None, source: Annotated[str | None, typer.Option("--source", help="Only values from this source: factory, provisional, pinned, backup or file.")] = None) -> None:
-    """Every effective value with where it came from: the factory, a provisional calibration, a value you pinned by editing the file, or a compatible backup standing in for a file that cannot be read."""
+def knobs_show(ctx: typer.Context, file: Annotated[str | None, typer.Argument(help="Only the values of this file (tuning.yaml, draw-things-cli.yaml, h3-metal-cli.yaml).", show_default=False)] = None, source: Annotated[str | None, typer.Option("--source", help="Only values from this source: factory, provisional, learned, pinned, backup or file.")] = None) -> None:
+    """Every effective value with where it came from: the factory, a provisional or validated calibration, a value you pinned by editing the file, or a compatible backup standing in for a file that cannot be read."""
     rows = [row for row in timing_knobs.show(timing_knobs.knob_files(services_of(ctx).paths)) if (file is None or row.file == file) and (source is None or row.source == source)]
     for row in rows:
         typer.echo(f"{row.file}  {row.path} = {row.value}  [{row.source}]")
@@ -96,6 +96,8 @@ def knobs_check(ctx: typer.Context) -> None:
             typer.echo(f"pinned: {name} {path} = {value}")
     for line in report.deferred:
         typer.echo(f"deferred: {line}")
+    for group, result in report.gates.items():
+        typer.echo(f"gate: {group}: {result}")
     typer.echo(f"Files present: {', '.join(report.files) or 'none (the factory knobs apply)'}")
     if report.suspended:
         raise typer.Exit(code=1)
@@ -103,18 +105,34 @@ def knobs_check(ctx: typer.Context) -> None:
 
 @knobs_app.command("update")
 def knobs_update(ctx: typer.Context) -> None:
-    """Run one calibration update now from the retained runs, as the server would after a run: it adds new complete runs to the ring and writes a provisional calibration at 1, 2, 4, 8, 16 and 32 completed runs of a pipeline. It needs no server and waits for the same lock."""
+    """Run one calibration update now from the retained runs, including an eligible post-checkpoint held-out gate. It needs no server and waits for the same lock."""
     with errors_exit():
         report = timing_knobs.update_now(services_of(ctx).paths)
+    _print_update_report(report)
+
+
+def _print_update_report(report: timing_knobs.UpdateReport) -> None:
     typer.echo(f"Added {report.runs_added} run{'s' if report.runs_added != 1 else ''} to the ring")
     for group, checkpoint in sorted(report.fitted.items()):
         typer.echo(f"  {group}: provisional calibration at {checkpoint} run{'s' if checkpoint != 1 else ''}")
+    for group, verdict in sorted(report.gates.items()):
+        typer.echo(f"  {group}: held-out gate {verdict}")
     for name in report.written:
         typer.echo(f"  wrote {name}")
     for name in report.suspended:
         typer.echo(f"  {name}: automatic updates are suspended; repair it, roll it back, or reset it")
     for reason in report.rejected:
         typer.echo(f"  rejected: {reason}")
+
+
+@knobs_app.command("tune")
+def knobs_tune(ctx: typer.Context) -> None:
+    """Run the currently implemented held-out calibration gate now; tunables selection remains pending."""
+    with errors_exit():
+        report = timing_knobs.tune_now(services_of(ctx).paths)
+    _print_update_report(report)
+    if not report.gates:
+        typer.echo("No group currently has enough held-out evidence")
 
 
 @knobs_app.command("rollback")

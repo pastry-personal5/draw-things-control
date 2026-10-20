@@ -4,12 +4,13 @@ thread, only while the queue is idle or cooling down, and a run that finishes du
 Nothing here raises into the worker.
 
 ``KnobUpdateEngine.update`` is the whole step, synchronous and under the files' lock, so ``fc timing knobs update`` runs the
-same code with no server. After the 32nd run of a pipeline its learning is frozen; every later run still enters the ring."""
+same code with no server. Later runs enter the ring and may pass the held-out gate."""
 
 from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
 import sys
 import threading
@@ -23,15 +24,18 @@ from loguru import logger
 from framecontrol.core.backend_ids import KNOWN_BACKENDS
 from framecontrol.core.paths import ProjectPaths
 from framecontrol.jobs.timing.calibrate import CHECKPOINTS, calibrate
-from framecontrol.jobs.timing.factory import factory_calibration
-from framecontrol.jobs.timing.features import HistoryRun
+from framecontrol.jobs.timing.factory import factory_calibration, factory_tunables
+from framecontrol.jobs.timing.features import HistoryRun, feature_values
+from framecontrol.jobs.timing.fit import read_row
+from framecontrol.jobs.timing.gate import decide, partition
 from framecontrol.jobs.timing.knob_codec import backend_from_mapping, backend_to_mapping, flatten, pipeline_to_mapping, tunables_to_file
-from framecontrol.jobs.timing.knobs import BackendCalibration, PipelineCalibration
+from framecontrol.jobs.timing.knobs import KNOBS_LEARNED, BackendCalibration, PipelineCalibration
 from framecontrol.jobs.timing.ring import history_run as ring_history_run
 from framecontrol.jobs.timing.ring import ring_entry, valid_entry
+from framecontrol.jobs.timing.step_terms import learned_terms
 from framecontrol.services.timing_history import history_run
-from framecontrol.services.timing_knob_files import TUNING_FILE, KnobBusyError, KnobConflictError, KnobFiles, Written, digest, dump_yaml, stamp_now
-from framecontrol.services.timing_knobs import FileState, LoadedKnobs, backend_file, extract_readonly, load_knobs, pins_of_state
+from framecontrol.services.timing_knob_files import TUNING_FILE, VALIDATED_FILE, KnobBusyError, KnobConflictError, KnobFiles, Written, digest, dump_yaml, stamp_now
+from framecontrol.services.timing_knobs import FileState, LoadedKnobs, backend_file, extract_readonly, load_knobs, pins_of_state, read_validated
 
 if TYPE_CHECKING:
     from framecontrol.state.store import Store
@@ -47,6 +51,7 @@ class UpdateReport:
     fitted: dict[str, int] = field(default_factory=dict)
     rejected: list[str] = field(default_factory=list)
     suspended: list[str] = field(default_factory=list)
+    gates: dict[str, str] = field(default_factory=dict)
 
     @property
     def changed(self) -> bool:
@@ -72,6 +77,17 @@ def _set_path(mapping: dict[str, Any], path: str, value: Any) -> None:
             child = node[part] = {}
         node = child
     node[parts[-1]] = value
+
+
+def _drop_path(mapping: dict[str, Any], path: str) -> None:
+    node = mapping
+    parts = path.split("/")
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            return
+        node = child
+    node.pop(parts[-1], None)
 
 
 class KnobUpdateEngine:
@@ -102,8 +118,14 @@ class KnobUpdateEngine:
         files = self._files
         loaded = load_knobs(files)
         tunables = loaded.tunables
+        validated_digest = files.current_digest(VALIDATED_FILE)
+        validated_document, validated_baselines, validated_problem = read_validated(files)
         written = files.read_written()
         before = json.dumps(written.as_dict(), sort_keys=True)
+        for name, state in loaded.files.items():
+            record = written.files.get(name)
+            if isinstance(record, dict) and state.present and not state.suspended:
+                record["pins"] = dict(state.pins)
         ring_state = files.read_ring_state()
         counts, high = ring_state.added, dict(ring_state.high)
         entries = [entry for entry in ring_state.entries if valid_entry(entry)]
@@ -134,6 +156,7 @@ class KnobUpdateEngine:
                 entries = [entry for entry in entries if id(entry) not in dropped]
                 grouped[group] = members[len(members) - tunables.ring_size :]
         replacements: dict[str, dict[str, PipelineCalibration]] = defaultdict(dict)
+        approved: dict[str, PipelineCalibration] = {}
         for group in sorted(grouped):
             backend, _, pipeline = group.partition("/")
             state = loaded.files.get(backend_file(backend))
@@ -146,8 +169,21 @@ class KnobUpdateEngine:
                     report.suspended.append(backend_file(backend))
                 continue
             record["count"] = added
+            if added > FROZEN_AFTER and record.get("checkpoint", 0) >= FROZEN_AFTER and not isinstance(record.get("checkpoint_execution"), int):
+                # Older written records do not have this mark. Reconstruct it
+                # only when the whole prefix remains in the ring; otherwise
+                # start after the newest known execution, conservatively.
+                complete_prefix = added == len(grouped[group]) and len(grouped[group]) >= FROZEN_AFTER
+                record["checkpoint_execution"] = grouped[group][FROZEN_AFTER - 1]["e"] if complete_prefix else max(item["e"] for item in grouped[group])
             crossed = [point for point in CHECKPOINTS if processed < point <= added]
             if not crossed:
+                if added > FROZEN_AFTER:
+                    if validated_problem:
+                        report.gates[group] = "validated_baseline_unavailable"
+                    else:
+                        fitted = self._validated_fit(loaded, backend, pipeline, grouped[group], record, state, report, validated_baselines, approved)
+                        if fitted is not None:
+                            replacements[backend][pipeline] = fitted
                 continue
             checkpoint = max(crossed)
             fitted = self._fit(loaded, backend, pipeline, grouped[group], added, checkpoint, state, report)
@@ -156,15 +192,158 @@ class KnobUpdateEngine:
                 record["checkpoint"] = checkpoint
                 record["fit_at"] = fitted.updated_at
                 report.fitted[group] = checkpoint
+                if checkpoint == FROZEN_AFTER:
+                    complete_prefix = added == len(grouped[group]) and len(grouped[group]) >= FROZEN_AFTER
+                    record["checkpoint_execution"] = grouped[group][FROZEN_AFTER - 1]["e"] if complete_prefix else max(item["e"] for item in grouped[group])
         texts = self._texts(loaded, replacements, written, report)
+        if approved:
+            approval_tunables = tunables_to_file(loaded.tunables)
+            tuning_state = loaded.files.get(TUNING_FILE)
+            tuning_record = written.files.get(TUNING_FILE)
+            machine_tunables = tuning_record.get("values", {}) if isinstance(tuning_record, Mapping) else {}
+            factory_tuning = flatten(tunables_to_file(factory_tunables()))
+            for path in tuning_state.pins if tuning_state is not None else ():
+                _set_path(approval_tunables, path, machine_tunables.get(path, factory_tuning[path]))
+            for group, calibration in approved.items():
+                backend, _, pipeline = group.partition("/")
+                bucket = validated_document["backends"].setdefault(backend, {})
+                bucket[pipeline] = {"approved_at": calibration.updated_at, "runs": calibration.runs, "executions": calibration.executions, "holdout_executions": written.groups[group].get("last_gate_holdout_executions", 0), "calibration": pipeline_to_mapping(calibration), "tunables": approval_tunables}
+            text = json.dumps(validated_document, sort_keys=True, separators=(",", ":")) + "\n"
+            texts[VALIDATED_FILE] = text
+            written.files[VALIDATED_FILE] = {"digest": digest(text), "values": {}, "pins": {}}
         ring = files.ring_text(counts, entries, high)
         if not texts and files.read_text("ring.jsonl") == ring and json.dumps(written.as_dict(), sort_keys=True) == before:
             return
         expected = {name: loaded.files[name].digest for name in texts if name in loaded.files}
+        if VALIDATED_FILE in texts:
+            expected[VALIDATED_FILE] = validated_digest
         files.commit(texts, written, ring=ring, keep=tunables.backup_count, expected=expected)
         report.written = sorted(texts)
         for name in report.written:
             files.log(f"wrote {name}")
+
+    def _validated_fit(self, loaded: LoadedKnobs, backend: str, pipeline: str, members: list[dict[str, Any]], record: dict[str, Any], state: FileState | None, report: UpdateReport, baselines: Mapping[str, PipelineCalibration], approved: dict[str, PipelineCalibration]) -> PipelineCalibration | None:
+        """Try one post-checkpoint fit only after three fresh executions.
+
+        The ring is the sole input.  In particular, the held-out members are
+        removed before fitting, even if the state database still retains them.
+        """
+        checkpoint_execution = record.get("checkpoint_execution")
+        split = partition(members, checkpoint_execution if isinstance(checkpoint_execution, int) else None)
+        group = f"{backend}/{pipeline}"
+        if split.reason:
+            report.gates[group] = split.reason
+            return None
+        held_ids = sorted({int(item["e"]) for item in split.holdout})
+        previous = int(record.get("last_gate_execution", -1))
+        if previous >= 0 and sum(item > previous for item in held_ids) < 3:
+            return None
+        pins = pins_of_state(state, pipeline) if state is not None else {}
+        numeric = {path: float(value) for path, value in pins.items() if isinstance(value, int | float) and not isinstance(value, bool)}
+        factory = factory_calibration().backends[backend].baseline_pipeline(pipeline)
+        baseline = baselines.get(group, factory)
+        candidate = calibrate(baseline, baseline, [ring_history_run(entry) for entry in split.training], loaded.tunables, checkpoint=int(record.get("checkpoint", FROZEN_AFTER)), stamp=self._clock(), pins=numeric, source=KNOBS_LEARNED)
+        candidate_was_fit = candidate is not None
+        candidate_invalid = False
+
+        def pinned(calibration: PipelineCalibration, label: str) -> PipelineCalibration | None:
+            mapping = pipeline_to_mapping(calibration)
+            for path, value in pins.items():
+                _set_path(mapping, path, value)
+            checked, problems = backend_from_mapping({"pipelines": {pipeline: mapping}}, factory_calibration().backends[backend])
+            if problems:
+                report.rejected.append(f"{group}: invalid {label} calibration ({'; '.join(problems[:3])})")
+                return None
+            return checked.pipelines[pipeline]
+
+        if candidate is not None:
+            candidate = pinned(candidate, "candidate")
+            candidate_invalid = candidate is None
+        pinned_baseline = pinned(baseline, "validated baseline")
+        live = pinned(loaded.calibration.backends[backend].pipelines.get(pipeline, factory), "live")
+        if pinned_baseline is None or live is None:
+            report.gates[group] = "validated_baseline_unavailable"
+            return None
+
+        def log_rate(calibration: PipelineCalibration, run: HistoryRun) -> float | None:
+            pixels, frames = run.workload.get("pixels"), run.workload.get("frames")
+            if not isinstance(pixels, int | float) or not isinstance(frames, int | float) or isinstance(pixels, bool) or isinstance(frames, bool):
+                return None
+            try:
+                terms = learned_terms(calibration.step, run.workload, feature_values(run.workload))
+                rate = calibration.step.rate(float(pixels), float(frames), terms)
+                return math.log(rate) if math.isfinite(rate) and rate > 0 else None
+            except (ValueError, OverflowError, ZeroDivisionError):
+                return None
+
+        candidate_differences: list[float] = []
+        live_differences: list[float] = []
+        candidate_ids: list[int] = []
+        live_ids: list[int] = []
+        live_invalid = False
+        for execution in held_ids:
+            runs = [ring_history_run(entry) for entry in split.holdout if int(entry["e"]) == execution]
+            candidate_errors: list[float] = []
+            live_errors: list[float] = []
+            for run in runs:
+                row = read_row(run, loaded.tunables)
+                if row.y is not None:
+                    old = log_rate(pinned_baseline, run)
+                    if old is None:
+                        continue
+                    current = log_rate(live, run)
+                    if current is None:
+                        live_invalid = True
+                    else:
+                        live_errors.append(abs(current - row.y) - abs(old - row.y))
+                    if candidate is not None and not candidate_invalid:
+                        new = log_rate(candidate, run)
+                        if new is None:
+                            candidate_invalid = True
+                            candidate_errors.clear()
+                        else:
+                            candidate_errors.append(abs(new - row.y) - abs(old - row.y))
+            if candidate_errors:
+                candidate_differences.append(sum(candidate_errors) / len(candidate_errors))
+                candidate_ids.append(execution)
+            if live_errors:
+                live_differences.append(sum(live_errors) / len(live_errors))
+                live_ids.append(execution)
+        if candidate_invalid:
+            result = decide(candidate_differences, candidate_ids, valid=False)
+        elif not candidate_was_fit:
+            result = decide((), ())
+        else:
+            result = decide(candidate_differences, candidate_ids)
+        live_result = decide(live_differences, live_ids, valid=not live_invalid)
+        record["last_gate_execution"] = max(held_ids)
+        record["last_gate_holdout_executions"] = len(candidate_ids)
+        record["last_gate"] = {"candidate": result.verdict, "candidate_reason": result.reason, "live": live_result.verdict, "live_reason": live_result.reason, "holdout_executions": len(candidate_ids), "through_execution": max(held_ids)}
+        report.gates[group] = result.verdict
+        self._files.log(f"{group}: candidate {result.verdict} ({result.reason}; holdout={len(candidate_ids)}; interval={result.interval}); live {live_result.verdict} ({live_result.reason}; holdout={len(live_ids)}; interval={live_result.interval})")
+        if result.verdict == "promote":
+            assert candidate is not None
+            approval_mapping = pipeline_to_mapping(candidate)
+            baseline_mapping = pipeline_to_mapping(baseline)
+            baseline_values = flatten(baseline_mapping)
+            for path in pins:
+                if path in baseline_values:
+                    _set_path(approval_mapping, path, baseline_values[path])
+                else:
+                    _drop_path(approval_mapping, path)
+            checked, problems = backend_from_mapping({"pipelines": {pipeline: approval_mapping}}, factory_calibration().backends[backend])
+            if problems:
+                report.gates[group] = "invalid_candidate"
+                record["last_gate"]["candidate"] = "reject"
+                record["last_gate"]["candidate_reason"] = "invalid_approval_without_pins"
+                report.rejected.append(f"{group}: invalid approval without pins ({'; '.join(problems[:3])})")
+                return None
+            approved[group] = checked.pipelines[pipeline]
+            return candidate
+        if live_result.verdict == "reject":
+            report.gates[group] = "restored"
+            return pinned_baseline
+        return None
 
     def _fit(self, loaded: LoadedKnobs, backend: str, pipeline: str, members: list[dict[str, Any]], added: int, checkpoint: int, state: FileState | None, report: UpdateReport) -> PipelineCalibration | None:
         factory = factory_calibration().backends[backend]

@@ -499,9 +499,10 @@ class FittedModel:
     def plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Plan:
         """Price a run of ``backend`` and ``pipeline`` with this ``workload`` (as ``TimingStarted`` will record it) on the
         first tier whose history qualifies, and never from another backend's. The plan's ``knobs`` names where the numbers
-        that are not the history's came from: the factory, a provisional calibration, or a value the owner pinned."""
+        that are not the history's came from: the factory, a provisional or validated calibration, or a value the owner pinned."""
         plan = self._plan(backend, pipeline, workload, environment)
-        return replace(plan, knobs=KNOBS_PINNED) if plan.knobs == KNOBS_FACTORY and self.tunables != Tunables() else plan
+        tuning_pinned = any(name.startswith("tuning/") for name in self.calibration.pinned)
+        return replace(plan, knobs=KNOBS_PINNED) if plan.knobs == KNOBS_FACTORY and (tuning_pinned or self.tunables != Tunables()) else plan
 
     def _plan(self, backend: str, pipeline: str | None, workload: Mapping[str, Any], environment: Mapping[str, Any]) -> Plan:
         key = signature(backend, pipeline, workload, environment)

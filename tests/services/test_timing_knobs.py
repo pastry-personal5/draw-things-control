@@ -13,6 +13,7 @@ from framecontrol.core.backend_ids import DRAW_THINGS_BACKEND, H3_BACKEND
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.core.paths import ProjectPaths
 from framecontrol.jobs.timing.factory import factory_calibration, factory_tunables
+from framecontrol.jobs.timing.fit import FittedModel
 from framecontrol.jobs.timing.knobs import KNOBS_FACTORY, KNOBS_PINNED, Tunables
 from framecontrol.services.knob_updater import KnobUpdateEngine
 from framecontrol.services.timing_knob_files import KnobFiles, dump_yaml
@@ -124,7 +125,20 @@ class HandEditTests(KnobFilesTestCase):
         self.write(TUNING, document)
         loaded = load_knobs(self.files)
         self.assertEqual((loaded.tunables.pause_factor, loaded.tunables.rho, loaded.tunables.ring_size), (4.5, 0.5, 50))
+        self.assertEqual(loaded.files[TUNING].pins, {"tunables/pause_factor": 4.5, "floors/ring_size": 50})
+        self.assertEqual({row.path for row in show(self.files) if row.file == TUNING and row.source == "pinned"}, {"tunables/pause_factor", "floors/ring_size"})
+        self.assertEqual(check(self.files).pins[TUNING], {"tunables/pause_factor": 4.5, "floors/ring_size": 50})
         self.assertTrue(any(issue.file == TUNING and "rho" in issue.message for issue in loaded.issues))
+
+        self.engine.update([])
+        document["tunables"]["pause_factor"] = 3.0
+        document["floors"]["ring_size"] = 300
+        self.write(TUNING, document)
+        loaded = load_knobs(self.files)
+        self.assertEqual(loaded.files[TUNING].pins, {"tunables/pause_factor": 3.0, "floors/ring_size": 300})
+        self.assertTrue({"tuning/tunables/pause_factor", "tuning/floors/ring_size"} <= loaded.calibration.pinned)
+        plan = FittedModel([], tunables=loaded.tunables, calibration=loaded.calibration).plan(H3_BACKEND, "r2av", h3_workload(pixels=832 * 448, frames=362, steps=30, references=3), {"model": "h3"})
+        self.assertEqual(plan.knobs, "pinned")
 
     def test_the_reader_notices_a_change_and_not_a_touch(self) -> None:
         reader = KnobReader(self.files)

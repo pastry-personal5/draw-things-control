@@ -17,9 +17,10 @@ from framecontrol.core.backend_ids import KNOWN_BACKENDS
 from framecontrol.core.errors import FramecontrolError
 from framecontrol.core.paths import ProjectPaths
 from framecontrol.jobs.timing.factory import factory_calibration, factory_tunables
-from framecontrol.jobs.timing.knob_codec import backend_from_mapping, backend_to_mapping, flatten, schema_state, tunables_from_file, tunables_to_file
-from framecontrol.jobs.timing.knobs import KNOBS_FACTORY, KNOBS_PINNED, BackendCalibration, Calibration, Tunables
-from framecontrol.services.timing_knob_files import TUNING_FILE, KnobFiles, Written, dump_yaml, read_yaml
+from framecontrol.jobs.timing.knob_codec import backend_from_mapping, backend_to_mapping, flatten, pipeline_to_mapping, schema_state, tunables_from_file, tunables_to_file
+from framecontrol.jobs.timing.knobs import KNOBS_FACTORY, KNOBS_LEARNED, KNOBS_PINNED, BackendCalibration, Calibration, PipelineCalibration, Tunables
+from framecontrol.jobs.timing.ring import PIPELINES
+from framecontrol.services.timing_knob_files import TUNING_FILE, VALIDATED_FILE, KnobFiles, Written, digest, dump_yaml, read_yaml
 
 if TYPE_CHECKING:
     from framecontrol.services.knob_updater import UpdateReport
@@ -144,6 +145,54 @@ def _usable(raw: Any) -> bool:
     return isinstance(raw, Mapping) and schema_state(raw) in ("ok", "older")
 
 
+def read_validated(files: KnobFiles) -> tuple[dict[str, Any], dict[str, PipelineCalibration], str | None]:
+    """The approved baselines, or a valid backup with an error that suspends automatic approval."""
+    empty: dict[str, Any] = {"schema": 1, "backends": {}}
+
+    def parse(text: str) -> tuple[dict[str, Any], dict[str, PipelineCalibration]]:
+        document = json.loads(text)
+        if not isinstance(document, dict) or set(document) != {"schema", "backends"} or document.get("schema") != 1 or not isinstance(document.get("backends"), dict):
+            raise ValueError("expected schema 1 and a backends mapping")
+        baselines: dict[str, PipelineCalibration] = {}
+        for backend, pipelines in document["backends"].items():
+            if backend not in KNOWN_BACKENDS or not isinstance(pipelines, dict):
+                raise ValueError(f"invalid backend {backend!r}")
+            for pipeline, record in pipelines.items():
+                if pipeline not in PIPELINES or not isinstance(record, dict) or set(record) != {"approved_at", "runs", "executions", "holdout_executions", "calibration", "tunables"} or not isinstance(record.get("calibration"), dict) or not isinstance(record.get("tunables"), dict):
+                    raise ValueError(f"invalid approval for {backend}/{pipeline}")
+                tunables, tuning_problems = tunables_from_file(record["tunables"])
+                if schema_state(record["tunables"]) != "ok" or tuning_problems or tunables_to_file(tunables) != record["tunables"]:
+                    raise ValueError(f"invalid tunables for {backend}/{pipeline}")
+                parsed, problems = backend_from_mapping({"pipelines": {pipeline: record["calibration"]}}, factory_calibration().backends[backend])
+                calibration = parsed.pipelines[pipeline]
+                counts = (record.get("runs"), record.get("executions"), record.get("holdout_executions"))
+                valid_counts = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in counts)
+                if problems or calibration.source != KNOBS_LEARNED or pipeline_to_mapping(calibration) != record["calibration"] or not isinstance(record.get("approved_at"), str) or record["approved_at"] != calibration.updated_at or not valid_counts or record["runs"] != calibration.runs or record["executions"] != calibration.executions or not 3 <= record["holdout_executions"] <= 8:
+                    detail = "; ".join(problems[:2]) or "metadata or canonical calibration differs"
+                    raise ValueError(f"invalid calibration for {backend}/{pipeline}: {detail}")
+                baselines[f"{backend}/{pipeline}"] = calibration
+        return document, baselines
+
+    path = files.path_of(VALIDATED_FILE)
+    if not path.exists():
+        return (empty, {}, "is missing despite a recorded machine write; automatic approvals are suspended") if VALIDATED_FILE in files.read_written().files else (empty, {}, None)
+    try:
+        text = path.read_text(encoding="utf-8")
+        recorded = files.read_written().files.get(VALIDATED_FILE)
+        if not isinstance(recorded, dict) or recorded.get("digest") != digest(text):
+            raise ValueError("digest differs from the last machine write")
+        return *parse(text), None
+    except (OSError, UnicodeDecodeError, ValueError, KeyError) as error:
+        problem = f"cannot be used ({error}); automatic approvals are suspended"
+    for backup in reversed(files.backups_of(VALIDATED_FILE)):
+        try:
+            document, baselines = parse(backup.read_text(encoding="utf-8"))
+            return document, baselines, f"{problem}; using backup {backup.name} for comparison"
+        except (OSError, UnicodeDecodeError, ValueError, KeyError):
+            continue
+    return empty, {}, problem
+
+
 def _load_backend(files: KnobFiles, backend: str, written: Written, issues: list[Issue]) -> tuple[BackendCalibration, FileState]:
     name = backend_file(backend)
     factory = factory_calibration().backends[backend]
@@ -215,9 +264,18 @@ def _load(files: KnobFiles) -> LoadedKnobs:
         if isinstance(source, Mapping):
             tunables, problems = tunables_from_file(source)
             issues.extend(Issue(TUNING_FILE, text) for text in problems)
-        states[TUNING_FILE] = FileState(TUNING_FILE, origin, suspended, detail, {}, source if isinstance(source, Mapping) else None, True, tuning_seen)
+        pins: dict[str, Any] = {}
+        if origin == "file" and isinstance(source, Mapping):
+            effective = flatten(tunables_to_file(tunables))
+            valid = {path: value for path, value in flatten(source).items() if path in effective and effective[path] == value}
+            record = written.files.get(TUNING_FILE)
+            pins = detect_pins(valid, record if isinstance(record, Mapping) else None, flatten(tunables_to_file(factory_tunables())))
+        states[TUNING_FILE] = FileState(TUNING_FILE, origin, suspended, detail, pins, source if isinstance(source, Mapping) else None, True, tuning_seen)
     backends: dict[str, BackendCalibration] = {}
     pinned: set[str] = set()
+    tuning_state = states.get(TUNING_FILE)
+    if tuning_state is not None:
+        pinned.update(f"tuning/{path}" for path in tuning_state.pins)
     for backend in KNOWN_BACKENDS:
         calibration, state = _load_backend(files, backend, written, issues)
         pinned.update(f"{backend}/{path}" for path in state.pins)
@@ -254,14 +312,14 @@ class ShowRow:
 
 
 def show(files: KnobFiles) -> list[ShowRow]:
-    """Every effective value with where it came from: ``factory``, ``provisional``, ``pinned``, ``backup`` or ``file`` (tunables)."""
+    """Every effective value with where it came from: factory, provisional, learned, pinned, backup, or the tunables file."""
     loaded = load_knobs(files)
     rows: list[ShowRow] = []
     tuning = tunables_to_file(loaded.tunables)
     factory_tuning = flatten(tunables_to_file(factory_tunables()))
     state = loaded.files.get(TUNING_FILE)
     for path, value in flatten(tuning).items():
-        source = "backup" if state is not None and state.origin == "backup" else "file" if value != factory_tuning.get(path) else "factory"
+        source = KNOBS_PINNED if state is not None and path in state.pins else "backup" if state is not None and state.origin == "backup" else "file" if value != factory_tuning.get(path) else "factory"
         rows.append(ShowRow(TUNING_FILE, path, value, source))
     for backend in KNOWN_BACKENDS:
         name = backend_file(backend)
@@ -276,7 +334,7 @@ def show(files: KnobFiles) -> list[ShowRow]:
             elif state is not None and state.origin == "backup":
                 source = "backup"
             elif learned and value != factory_flat.get(path):
-                source = "provisional"
+                source = KNOBS_LEARNED if calibration.pipelines[parts[1]].source == KNOBS_LEARNED else "provisional"
             else:
                 source = KNOBS_FACTORY
             rows.append(ShowRow(name, path, value, source))
@@ -289,6 +347,7 @@ class CheckReport:
     suspended: tuple[str, ...]
     pins: Mapping[str, Mapping[str, Any]]
     deferred: tuple[str, ...]
+    gates: Mapping[str, str]
     files: tuple[str, ...]
 
     @property
@@ -298,17 +357,30 @@ class CheckReport:
 
 def check(files: KnobFiles) -> CheckReport:
     loaded = load_knobs(files)
+    _document, _baselines, validated_problem = read_validated(files)
     written = files.read_written()
     counts, entries = files.read_ring()
     deferred = []
+    gates: dict[str, str] = {}
     for group, record in sorted(written.groups.items()):
         pending = counts.get(group, 0) - int(record.get("count", 0)) if isinstance(record, dict) else 0
         if pending > 0:
             deferred.append(f"{group}: {pending} run(s) in the ring are not yet processed")
+        gate = record.get("last_gate") if isinstance(record, dict) else None
+        if isinstance(gate, dict) and all(isinstance(gate.get(name), str) for name in ("candidate", "candidate_reason", "live", "live_reason")) and isinstance(gate.get("holdout_executions"), int) and not isinstance(gate.get("holdout_executions"), bool) and isinstance(gate.get("through_execution"), int) and not isinstance(gate.get("through_execution"), bool):
+            gates[group] = f"candidate {gate['candidate']} ({gate['candidate_reason']}), live {gate['live']} ({gate['live_reason']}), {gate['holdout_executions']} held-out execution(s) through {gate['through_execution']}"
     for name in sorted(loaded.suspended):
         deferred.append(f"{name}: automatic updates are suspended")
+    suspended = set(loaded.suspended)
+    if validated_problem:
+        suspended.add(VALIDATED_FILE)
+        deferred.append(f"{VALIDATED_FILE}: automatic approvals are suspended")
     del entries
-    return CheckReport(loaded.issues, tuple(sorted(loaded.suspended)), {name: dict(state.pins) for name, state in loaded.files.items() if state.pins}, tuple(deferred), tuple(sorted(name for name, state in loaded.files.items() if state.present)))
+    issues = loaded.issues + ((Issue(VALIDATED_FILE, validated_problem, "error"),) if validated_problem else ())
+    present = {name for name, state in loaded.files.items() if state.present}
+    if files.path_of(VALIDATED_FILE).exists():
+        present.add(VALIDATED_FILE)
+    return CheckReport(issues, tuple(sorted(suspended)), {name: dict(state.pins) for name, state in loaded.files.items() if state.pins}, tuple(deferred), gates, tuple(sorted(present)))
 
 
 def factory_texts() -> dict[str, str]:
@@ -346,7 +418,29 @@ def reset(files: KnobFiles, backend: str | None = None) -> list[str]:
         for group in list(written.groups):
             if backend is None or group.startswith(f"{backend}/"):
                 written.groups[group] = {"count": 0, "checkpoint": 0}
-        files.commit(dict.fromkeys(moved), written, keep=keep)
+        # Validated baselines are machine state too: resetting all backends
+        # removes it, while a targeted reset drops only that backend's entry.
+        validated = files.read_text(VALIDATED_FILE)
+        texts: dict[str, str | None] = dict.fromkeys(moved)
+        if backend is None:
+            texts[VALIDATED_FILE] = None
+            written.files.pop(VALIDATED_FILE, None)
+        elif validated is not None:
+            _document, _baselines, problem = read_validated(files)
+            if problem:
+                raise FramecontrolError(f"{VALIDATED_FILE} cannot be used; reset all backends to remove it")
+            try:
+                document = json.loads(validated)
+            except ValueError:
+                raise FramecontrolError(f"{VALIDATED_FILE} is damaged; reset all backends to remove it") from None
+            if not isinstance(document, dict) or document.get("schema") != 1 or not isinstance(document.get("backends"), dict):
+                raise FramecontrolError(f"{VALIDATED_FILE} is damaged; reset all backends to remove it")
+            if backend in document["backends"]:
+                document["backends"].pop(backend)
+                text = json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+                texts[VALIDATED_FILE] = text
+                written.files[VALIDATED_FILE] = {"digest": digest(text), "values": {}, "pins": {}}
+        files.commit(texts, written, keep=keep)
         files.log(f"moved {', '.join(moved) or 'nothing'} to the backups")
     return moved
 
@@ -371,3 +465,12 @@ def update_now(paths: ProjectPaths) -> UpdateReport:
         finally:
             store.close()
     return KnobUpdateEngine(knob_files(paths)).update(runs)
+
+
+def tune_now(paths: ProjectPaths) -> UpdateReport:
+    """Run the same guarded background pass on demand.
+
+    The M15 search shares the updater's lock and eligibility checks; exposing
+    this entry point keeps the CLI from acquiring a second, racy lock.
+    """
+    return update_now(paths)

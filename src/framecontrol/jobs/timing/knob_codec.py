@@ -152,7 +152,7 @@ def _pipeline_from_mapping(name: str, raw: Mapping[str, Any], base: PipelineCali
             spread = checked
     stages = _stages_from_mapping(raw.get("stages"), base.stages, problems, f"{where}/stages") if raw.get("stages") is not None else base.stages
     claimed = raw.get("source")
-    source = claimed if isinstance(claimed, str) and claimed in ("factory", "provisional") else base.source
+    source = claimed if isinstance(claimed, str) and claimed in ("factory", "provisional", "learned") else base.source
     evidence = raw.get("evidence")
     counts = {key: _count(evidence.get(key)) if isinstance(evidence, Mapping) else None for key in EVIDENCE_KEYS}
     stamp = raw.get("updated_at")

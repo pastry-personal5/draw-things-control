@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, fields, replace
 from typing import Any, Protocol
 
 # Where the effective numbers of a forecast came from (the basis's ``knobs``).
-KNOBS_FACTORY, KNOBS_PROVISIONAL, KNOBS_PINNED = "factory", "provisional", "pinned"
+KNOBS_FACTORY, KNOBS_PROVISIONAL, KNOBS_LEARNED, KNOBS_PINNED = "factory", "provisional", "learned", "pinned"
 
 # The tunables the Milestone 15 search may move, in the order tuning.yaml lists them.
 SEARCHED = ("pause_factor", "size_offset_shrinkage", "prior_weight_cap", "half_life_runs", "unseen_knob_inflation", "rho", "slope_level", "factory_spread")
@@ -278,7 +278,7 @@ class BackendCalibration:
 
 @dataclass(frozen=True)
 class Calibration:
-    """Every supported backend's calibration, and the names of the values a hand edit pinned (``backend/path/to/value``)."""
+    """Every supported backend's calibration, and hand-pinned ``backend/path/to/value`` or ``tuning/path/to/value`` names."""
 
     backends: Mapping[str, BackendCalibration]
     pinned: frozenset[str] = frozenset()
@@ -293,8 +293,7 @@ class Calibration:
         return next((point for point in found.points if point.matches(backend, pipeline, workload, environment)), None)
 
     def source_of(self, backend: str, pipeline: str | None) -> str:
-        """``pinned`` when a hand-edited value of this pipeline touches its figures, else ``provisional`` for a learned
-        calibration, else ``factory``."""
+        """``pinned`` when a hand-edited value touches the pipeline, else its factory, provisional, or learned source."""
         found = self.backends.get(backend)
         if found is None:
             return KNOBS_FACTORY

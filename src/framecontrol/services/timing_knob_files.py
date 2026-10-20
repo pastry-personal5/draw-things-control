@@ -29,6 +29,7 @@ LOCK_TIMEOUT_SECONDS = 15.0
 MANIFEST_LIMIT = 25
 TUNING_FILE = "tuning.yaml"
 RING_FILE = "ring.jsonl"
+VALIDATED_FILE = "validated.json"
 # LibYAML's loader when this PyYAML has it: the same safe subset, several times faster on the larger files.
 SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 HEADER = "# Framecontrol timing knobs. Edit a number to pin it; delete a key to return it to automatic. Comments are not kept when Framecontrol rewrites this file; `notes:` is.\n"
@@ -116,7 +117,7 @@ class KnobFiles:
     # ------------------------------------------------------------ paths
 
     def path_of(self, name: str) -> Path:
-        return self.machine / RING_FILE if name == RING_FILE else self.directory / name
+        return self.machine / name if name in (RING_FILE, VALIDATED_FILE) else self.directory / name
 
     @property
     def written_path(self) -> Path:
@@ -218,6 +219,11 @@ class KnobFiles:
             result.append(("written", info.st_mtime_ns, info.st_size))
         except OSError:
             result.append(("written", None, None))
+        try:
+            info = self.path_of(VALIDATED_FILE).stat()
+            result.append((VALIDATED_FILE, info.st_mtime_ns, info.st_size))
+        except OSError:
+            result.append((VALIDATED_FILE, None, None))
         return tuple(result)
 
     # ------------------------------------------------------------ the record
@@ -352,12 +358,19 @@ class KnobFiles:
         return True
 
     def _apply(self, journal: Mapping[str, Any], ring: str | None, *, recovering: bool = False) -> None:
-        skipped: list[str] = []
+        skipped: set[str] = set()
+        if recovering:
+            skipped = {name for name in journal["texts"] if self.current_digest(name) not in (journal["files"][name]["prior"], journal["files"][name]["new"])}
+            if skipped and VALIDATED_FILE in journal["texts"]:
+                # An approval and the calibration it validates are one logical
+                # write. Preserve every conflicting byte, but restore every
+                # file record to its prior digest so a partial set is surfaced
+                # as an edit or a damaged approval rather than trusted.
+                skipped = set(journal["texts"])
         for name, text in journal["texts"].items():
             facts = journal["files"][name]
             current = self.current_digest(name)
-            if recovering and current not in (facts["prior"], facts["new"]):
-                skipped.append(name)
+            if name in skipped:
                 continue
             if current != facts["new"]:
                 if text is None:
@@ -370,7 +383,7 @@ class KnobFiles:
             self.atomic_write(self.path_of(RING_FILE), ring)
             self.checkpoint("ring")
         written = dict(journal["written"])
-        for name in skipped:
+        for name in sorted(skipped):
             # A hand edit arrived first: keep its prior record, so the next load reads the edit as one.
             prior_files = journal["prior_written"].get("files", {})
             if name in prior_files:

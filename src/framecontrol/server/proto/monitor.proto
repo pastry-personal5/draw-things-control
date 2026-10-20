@@ -86,7 +86,7 @@ message ForecastSpan {
 // What a forecast rests on: the history tier (signature, backend_fit, pipeline_fit, live_only), whether that history is
 // live or pooled with rows rebuilt from logs, how many runs and executions, whether the newest was timed on another
 // build, the stages the history had not seen, the ridge penalty, and the rows that could not be read. `knobs` says where
-// the numbers that are not the history's came from (factory, provisional, or pinned by a hand edit), and `knobs_updated_at`
+// the numbers that are not the history's came from (factory, provisional, learned, or pinned by a hand edit), and `knobs_updated_at`
 // when the calibration they come from was written (unset for the factory).
 message ForecastBasis {
   string tier = 1;

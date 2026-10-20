@@ -98,12 +98,11 @@ def _end_phrase(span: Span, now: float) -> str:
     return end_text(left, datetime.fromtimestamp(read_at), bounds)
 
 
-KNOBS_NOTES = {"provisional": "from provisional calibration", "pinned": "with pinned timing knobs"}
+KNOBS_NOTES = {"provisional": "from provisional calibration", "learned": "from validated calibration", "pinned": "with pinned timing knobs"}
 
 
 def knobs_note(forecast: Mapping[str, Any] | None) -> str | None:
-    """Where a forecast's non-history numbers came from, when that is not the factory: ``from provisional calibration`` or
-    ``with pinned timing knobs``; None for the factory and for a snapshot that predates the field."""
+    """Where non-history numbers came from: provisional or validated calibration, or pinned knobs; None for the factory or an old snapshot."""
     basis = forecast.get("basis") if forecast is not None else None
     return KNOBS_NOTES.get(str(basis.get("knobs"))) if isinstance(basis, Mapping) else None
 

@@ -1,8 +1,10 @@
 # Milestone 15: Held-out gate and tunables search
 
 **Phase:** [Phase 4](README.md)
-**Status:** planned
+**Status:** in-progress
 **Depends on:** [Milestone 14](milestone-14-timing-knobs.md): the knob files, the ring, the provisional checkpoints, pins, backups, and `fc timing knobs`. Milestone 14 freezes a group's calibration after its 32nd run; this milestone lets later runs change it again, but only through a gate.
+
+The current implementation partitions the ring by execution, compares workload-adjusted step-rate errors on held-out executions, judges the live and candidate calibrations independently, records the latest gate for `check`, tracks edits to tunables as pins, and strictly validates and journals approved baselines with the knob files. `fc timing knobs tune` currently runs that same guarded updater on demand. Full remaining-time replay, coverage gating, and tunables selection described below remain to be implemented before this milestone is done.
 
 ## Goal
 

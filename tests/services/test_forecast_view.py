@@ -120,6 +120,7 @@ class KnobsNoteTests(unittest.TestCase):
 
     def test_a_learned_or_pinned_forecast_says_so(self) -> None:
         self.assertEqual(knobs_note(self.forecast(knobs="provisional")), "from provisional calibration")
+        self.assertEqual(knobs_note(self.forecast(knobs="learned")), "from validated calibration")
         self.assertEqual(knobs_note(self.forecast(knobs="pinned")), "with pinned timing knobs")
         self.assertTrue(forecast_text(self.forecast(knobs="provisional"), 150.0).endswith("; from provisional calibration"))
         self.assertTrue(forecast_text(self.forecast(knobs="pinned"), 150.0).endswith("; with pinned timing knobs"))

@@ -1,4 +1,4 @@
-"""``fc timing knobs``: the knob files shown, checked, updated from the retained runs, rolled back, reset, and exported."""
+"""``fc timing knobs``: the knob files shown, checked, updated or tuned from retained runs, rolled back, reset, and exported."""
 
 from __future__ import annotations
 
@@ -70,6 +70,11 @@ class TimingKnobsCliTests(JobTestCase):
         result = self.invoke("update")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Added 0 runs", result.stdout)
+
+    def test_tune_with_no_eligible_group_explains_that_no_gate_ran(self) -> None:
+        result = self.invoke("tune")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("No group currently has enough held-out evidence", result.stdout)
 
     def test_a_hand_edit_is_reported_as_pinned(self) -> None:
         self.invoke("update")

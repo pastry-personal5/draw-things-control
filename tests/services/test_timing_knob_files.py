@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from framecontrol.core.errors import FramecontrolError
-from framecontrol.services.timing_knob_files import KnobBusyError, KnobConflictError, KnobFiles, Written, digest, dump_yaml, read_yaml
+from framecontrol.services.timing_knob_files import VALIDATED_FILE, KnobBusyError, KnobConflictError, KnobFiles, Written, digest, dump_yaml, read_yaml
 
 
 class Interrupted(Exception):
@@ -157,6 +157,21 @@ class CommitTests(FilesTestCase):
             restarted.recover()
         self.assertEqual((self.root / "a.yaml").read_text(encoding="utf-8"), "the owner's edit")
         self.assertEqual(restarted.read_written().files["a.yaml"]["digest"], digest("a1"))
+
+    def test_a_conflict_keeps_an_approval_and_its_calibration_at_the_prior_record(self) -> None:
+        self.commit(**{"a.yaml": "a1", VALIDATED_FILE: "v1"})
+        self.files.checkpoint = lambda name: (_ for _ in ()).throw(Interrupted) if name == "pending" else None
+        with self.assertRaises(Interrupted), self.files.lock():
+            self.files.commit({"a.yaml": "a2", VALIDATED_FILE: "v2"}, written_for(**{"a.yaml": "a2", VALIDATED_FILE: "v2"}))
+        (self.root / "a.yaml").write_text("the owner's edit", encoding="utf-8")
+        restarted = KnobFiles(self.root)
+        with restarted.lock():
+            restarted.recover()
+        self.assertEqual((self.root / "a.yaml").read_text(encoding="utf-8"), "the owner's edit")
+        self.assertEqual(restarted.read_text(VALIDATED_FILE), "v1")
+        record = restarted.read_written()
+        self.assertEqual(record.files["a.yaml"]["digest"], digest("a1"))
+        self.assertEqual(record.files[VALIDATED_FILE]["digest"], digest("v1"))
 
     def test_an_unreadable_journal_is_discarded_not_fatal(self) -> None:
         self.files.machine.mkdir(parents=True)

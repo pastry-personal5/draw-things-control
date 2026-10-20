@@ -76,7 +76,7 @@ different file.
 | `timing show EXECUTION` | Show what each stage of a run took, through `fc serve` |
 | `timing import` | Rebuild stage timing from the job logs that still exist |
 | `timing replay` | Replay the retained runs through an estimator and print how close its remaining time was |
-| `timing knobs ...` | Show, check, update, roll back, reset and export the forecast's knob files (`show`, `check`, `update`, `rollback`, `reset`, `export-defaults`) |
+| `timing knobs ...` | Show, check, update, tune, roll back, reset and export the forecast's knob files (`show`, `check`, `update`, `tune`, `rollback`, `reset`, `export-defaults`) |
 | `mcp` | Give AI agents typed tools over `fc serve`'s API, as an MCP server on stdio or over Streamable HTTP |
 
 Add `--help` to any command for its full option list.
@@ -1487,6 +1487,7 @@ uv run fc timing knobs show                    # every effective value and where
 uv run fc timing knobs show h3-metal-cli.yaml --source provisional
 uv run fc timing knobs check                   # problems, pins, and deferred updates; exits 1 if a file cannot be used
 uv run fc timing knobs update                  # learn from the retained runs now (no server needed)
+uv run fc timing knobs tune                    # run the guarded held-out update pass now (the tunables search is pending)
 uv run fc timing knobs rollback                # put the files back as they were before the latest update
 uv run fc timing knobs rollback 3              # ... before the update three back (a rollback is an update too, so one more undoes it)
 uv run fc timing knobs reset h3-metal-cli      # move that file aside; the factory applies and learning starts over
@@ -1496,7 +1497,7 @@ uv run fc timing knobs export-defaults
 A rollback keeps the count of completed runs, so learning resumes at the next of 1, 2, 4, 8, 16 and 32 and does not
 write again the calibration you just undid; `reset` starts a backend's learning over from the runs in the ring. If you
 save an edit while Framecontrol is writing a file, it keeps your edit, logs that it did, and reads it as a pin at its next
-update.
+update. Valid edits to `tuning.yaml` are pins too, so the automatic search will not move them.
 
 **Broken files.** A file that is not valid YAML, or is from a newer version of
 Framecontrol, is not used and not overwritten: the forecast uses its newest valid
@@ -1508,9 +1509,9 @@ candidate was rejected. `fc timing knobs update` takes the same lock as the serv
 so it can run beside it.
 
 **In the forecast.** A forecast built from learned numbers says so: the basis has
-`knobs: provisional` (or `pinned` when a value you set touches it, or `factory`)
+`knobs: provisional` before held-out approval, `knobs: learned` after approval (or `pinned` when a value you set touches it, or `factory`)
 and when the calibration was written; `fc queue show` and `fc queue add --wait`
-print `from provisional calibration` or `with pinned timing knobs`, and the TUI's
+print `from provisional calibration`, `from validated calibration`, or `with pinned timing knobs`, and the TUI's
 run summary says the same. A run knob value never seen before widens the range
 and is named under `unseen` in the basis.
 
